@@ -72,10 +72,49 @@ fn build_router(state: AppState) -> Router {
                 .put(resource::update_namespaced_resource)
                 .delete(resource::delete_namespaced_resource),
         )
-        // Cross-namespace list (e.g., kubectl get pods --all-namespaces)
+        // Apps v1 — cluster-scoped list (e.g., kubectl get deployments --all-namespaces)
         .route(
-            "/api/v1/{resource}",
-            get(resource::list_all_namespaces_resources),
+            "/apis/apps/v1/{resource}",
+            get(resource::list_cluster_resources),
+        )
+        // Coordination v1
+        .route(
+            "/apis/coordination.k8s.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/coordination.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource),
+        )
+        .route(
+            "/apis/coordination.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources),
+        )
+        // RBAC v1
+        .route(
+            "/apis/rbac.authorization.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/rbac.authorization.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource),
+        )
+        .route(
+            "/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource),
         )
         .with_state(state)
 }

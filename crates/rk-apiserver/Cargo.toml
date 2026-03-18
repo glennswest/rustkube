@@ -45,3 +45,9 @@ metrics-exporter-prometheus = { workspace = true }
 reqwest = { workspace = true }
 x509-parser = { workspace = true }
 anyhow = { workspace = true }
+clap = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[bin]]
+name = "rustkube-apiserver"
+path = "src/bin/rustkube-apiserver.rs"
