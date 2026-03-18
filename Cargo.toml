@@ -117,6 +117,10 @@ rtnetlink = { version = "0.14" }
 socket2 = { version = "0.5" }
 ipnet = { version = "2" }
 
+# OCI container runtime (youki libcontainer)
+libcontainer = { version = "0.6", default-features = false, features = ["v2"] }
+oci-spec = { version = "0.9" }
+
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 

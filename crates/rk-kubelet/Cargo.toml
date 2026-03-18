@@ -18,3 +18,9 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libcontainer = { workspace = true }
+oci-spec = { workspace = true }
+nix = { workspace = true }

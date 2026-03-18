@@ -10,6 +10,8 @@ pub mod health;
 pub mod kubelet;
 pub mod node_status;
 pub mod pod_manager;
+pub mod runtime;
 
 pub use cri_client::{CriClient, detect_cri_socket};
 pub use kubelet::{Kubelet, KubeletConfig};
+pub use runtime::{NativeRuntime, NativeImageService};
