@@ -27,6 +27,25 @@
   - Plugin trait framework for Phase 3 extensibility
 - **feat:** Single-binary control plane (rustkube) — apiserver + controllers + scheduler
 - **feat:** End-to-end verified: Deployment → ReplicaSet → 3 Pods → scheduled to node
+- **feat:** rk-kubelet — Node agent with CRI, pod lifecycle, health probes
+  - CRI trait definitions (RuntimeService, ImageService) matching K8s CRI v1
+  - Pod lifecycle manager (Pending → Running → Succeeded/Failed)
+  - Health probes: HTTP GET, TCP connect, exec, gRPC
+  - Node registration and Lease heartbeat reporting
+- **feat:** rk-proxy — Service proxy with iptables DNAT
+  - Service map tracking ClusterIP → pod endpoint backends
+  - iptables rule generation with probabilistic load balancing
+  - NodePort support, session affinity, IP masquerade
+- **feat:** rk-dns — Cluster DNS server (hickory-dns 0.25)
+  - A records for ClusterIP services and headless pod IPs
+  - SRV records for named service ports
+  - PTR records for reverse DNS
+  - Pod DNS: `<ip-dashed>.namespace.pod.cluster.local`
+- **feat:** rk-cni — CNI plugins for pod networking
+  - CNI v1.0 spec types (config, result, error)
+  - Host-local IPAM with disk-persisted allocations
+  - Bridge plugin: veth pair, netns, IP assignment, routing
+  - VXLAN overlay: VTEP creation, FDB entries, peer routes
 
 ### 2026-03-17
 - **chore:** Initial repository setup — Cargo workspace with 10 member crates
