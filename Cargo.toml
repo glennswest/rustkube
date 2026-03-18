@@ -1,0 +1,124 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rk-core",
+    "crates/rk-store",
+    "crates/rk-apiserver",
+    "crates/rk-scheduler",
+    "crates/rk-controllers",
+    "crates/rk-kubelet",
+    "crates/rk-proxy",
+    "crates/rk-dns",
+    "crates/rk-cni",
+    "crates/rk-cloud",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+repository = "https://github.com/glennswest/rustkube"
+
+[workspace.dependencies]
+# Internal crates
+rk-core = { path = "crates/rk-core" }
+rk-store = { path = "crates/rk-store" }
+rk-apiserver = { path = "crates/rk-apiserver" }
+rk-scheduler = { path = "crates/rk-scheduler" }
+rk-controllers = { path = "crates/rk-controllers" }
+rk-kubelet = { path = "crates/rk-kubelet" }
+rk-proxy = { path = "crates/rk-proxy" }
+rk-dns = { path = "crates/rk-dns" }
+rk-cni = { path = "crates/rk-cni" }
+rk-cloud = { path = "crates/rk-cloud" }
+
+# Stormforce — etcd-compatible KV, consensus, PKI, security, registry
+stormforce-kv = { path = "../stormforce/crates/stormforce-kv" }
+stormforce-raft = { path = "../stormforce/crates/stormforce-raft" }
+stormforce-vault = { path = "../stormforce/crates/stormforce-vault" }
+stormforce-registry = { path = "../stormforce/crates/stormforce-registry" }
+stormforce-security = { path = "../stormforce/crates/stormforce-security" }
+stormforce-meta = { path = "../stormforce/crates/stormforce-meta" }
+
+# Kubernetes types — pinned to K8s 1.32 (matches kube 0.99)
+k8s-openapi = { version = "0.24", features = ["v1_32"] }
+kube = { version = "0.99", default-features = false, features = ["client", "runtime", "rustls-tls"] }
+kube-runtime = { version = "0.99", default-features = false }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+
+# TLS (rustls only — no OpenSSL)
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "tls12"] }
+tokio-rustls = { version = "0.26" }
+rustls-pemfile = { version = "2" }
+rcgen = { version = "0.13" }
+x509-parser = { version = "0.16" }
+
+# gRPC (CRI/CSI client)
+tonic = { version = "0.12", features = ["tls"] }
+tonic-build = { version = "0.12" }
+prost = { version = "0.13" }
+prost-types = { version = "0.13" }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+serde_yaml = { version = "0.9" }
+toml = { version = "0.8" }
+
+# Auth
+jsonwebtoken = { version = "9" }
+
+# Error handling
+thiserror = { version = "2" }
+anyhow = { version = "1" }
+
+# Observability
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = { version = "0.24" }
+metrics-exporter-prometheus = { version = "0.16" }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+json-patch = { version = "3" }
+base64 = { version = "0.22" }
+rand = { version = "0.8" }
+bytes = { version = "1" }
+futures = { version = "0.3" }
+async-trait = { version = "0.1" }
+dashmap = { version = "6" }
+parking_lot = { version = "0.12" }
+url = { version = "2" }
+regex = { version = "1" }
+clap = { version = "4", features = ["derive", "env"] }
+
+# DNS
+hickory-server = { version = "0.25" }
+hickory-resolver = { version = "0.25" }
+hickory-proto = { version = "0.25" }
+
+# Networking
+nix = { version = "0.29", features = ["net", "socket", "ioctl", "process"] }
+rtnetlink = { version = "0.14" }
+socket2 = { version = "0.5" }
+ipnet = { version = "2" }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Testing
+tempfile = { version = "3" }

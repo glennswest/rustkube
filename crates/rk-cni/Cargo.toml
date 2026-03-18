@@ -1,0 +1,21 @@
+[package]
+name = "rk-cni"
+description = "CNI plugins for RustKube (bridge, VXLAN, IPAM)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rk-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+ipnet = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { workspace = true }
+rtnetlink = { workspace = true }
+socket2 = { workspace = true }

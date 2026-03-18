@@ -1,0 +1,43 @@
+[package]
+name = "rk-core"
+description = "Shared types, traits, and error handling for RustKube"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Stormforce — PKI/certs and security
+stormforce-vault = { workspace = true }
+stormforce-security = { workspace = true }
+
+# Kubernetes types
+k8s-openapi = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+metrics = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+base64 = { workspace = true }
+
+# Auth
+jsonwebtoken = { workspace = true }
+
+# Cert utilities
+rcgen = { workspace = true }
+x509-parser = { workspace = true }

@@ -1,0 +1,19 @@
+[package]
+name = "rk-cloud"
+description = "Cloud controller manager framework for RustKube"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rk-core = { workspace = true }
+k8s-openapi = { workspace = true }
+kube = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }

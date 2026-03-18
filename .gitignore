@@ -1,0 +1,37 @@
+# Build artifacts
+target/
+dist/
+build/
+
+# Secrets and environment
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# IDE and OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# Generated protobuf
+proto/generated/
+
+# Fuzz corpus/artifacts
+fuzz/corpus/
+fuzz/artifacts/
+
+# Benchmark output
+target/criterion/
