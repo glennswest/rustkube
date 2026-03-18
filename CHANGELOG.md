@@ -46,6 +46,17 @@
   - Host-local IPAM with disk-persisted allocations
   - Bridge plugin: veth pair, netns, IP assignment, routing
   - VXLAN overlay: VTEP creation, FDB entries, peer routes
+- **feat:** Native container runtime via youki libcontainer
+  - NativeRuntime: OCI container lifecycle without containerd/runc
+  - Full OCI spec builder (rootfs, process, mounts, cgroups v2)
+  - NativeImageService: image pulls via skopeo
+  - Architecture: kubelet → libcontainer → kernel (no Go)
+- **feat:** VM runtime for microVM-isolated pods
+  - VmRuntime: each pod sandbox runs as a microVM with own kernel
+  - Supports cloud-hypervisor (Rust-native), Firecracker, QEMU/KVM
+  - Per-pod VM config via annotations (rustkube.io/vm-*)
+  - virtiofs volume sharing, guest agent exec, SSH fallback
+  - Runtime selection: `--runtime=native|vm|cri --vmm=auto|cloud-hypervisor|qemu|firecracker`
 
 ### 2026-03-17
 - **chore:** Initial repository setup — Cargo workspace with 10 member crates
