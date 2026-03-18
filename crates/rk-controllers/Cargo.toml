@@ -8,15 +8,11 @@ license.workspace = true
 
 [dependencies]
 rk-core = { workspace = true }
-k8s-openapi = { workspace = true }
-kube = { workspace = true }
-kube-runtime = { workspace = true }
 tokio = { workspace = true }
-tokio-stream = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-thiserror = { workspace = true }
-async-trait = { workspace = true }
-futures = { workspace = true }
+anyhow = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
+reqwest = { workspace = true }
