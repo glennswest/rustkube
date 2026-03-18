@@ -44,3 +44,4 @@ metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 reqwest = { workspace = true }
 x509-parser = { workspace = true }
+anyhow = { workspace = true }
