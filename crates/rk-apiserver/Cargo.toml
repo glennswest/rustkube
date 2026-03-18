@@ -47,6 +47,7 @@ x509-parser = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tracing-subscriber = { workspace = true }
+libc = "0.2"
 
 [[bin]]
 name = "rustkube-apiserver"
@@ -61,3 +62,12 @@ path = "../rk-controllers"
 
 [dependencies.rk-scheduler]
 path = "../rk-scheduler"
+
+[dependencies.rk-kubelet]
+path = "../rk-kubelet"
+
+[dependencies.rk-proxy]
+path = "../rk-proxy"
+
+[dependencies.rk-dns]
+path = "../rk-dns"

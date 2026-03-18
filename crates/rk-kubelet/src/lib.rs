@@ -5,9 +5,11 @@
 //! and reports node status via Lease heartbeats.
 
 pub mod cri;
+pub mod cri_client;
 pub mod health;
 pub mod kubelet;
 pub mod node_status;
 pub mod pod_manager;
 
-pub use kubelet::Kubelet;
+pub use cri_client::{CriClient, detect_cri_socket};
+pub use kubelet::{Kubelet, KubeletConfig};
