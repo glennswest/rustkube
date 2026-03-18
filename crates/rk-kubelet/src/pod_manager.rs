@@ -268,6 +268,35 @@ impl PodManager {
         })
     }
 
+    /// Get the sandbox ID for a pod by UID.
+    pub async fn get_sandbox_id(&self, uid: &str) -> Option<String> {
+        let pods = self.pods.read().await;
+        pods.get(uid).and_then(|s| s.sandbox_id.clone())
+    }
+
+    /// Register a pod that was restored from a checkpoint/migration.
+    pub async fn register_restored_pod(
+        &self,
+        uid: &str,
+        namespace: &str,
+        name: &str,
+        sandbox_id: &str,
+    ) {
+        let mut pods = self.pods.write().await;
+        pods.insert(
+            uid.to_string(),
+            PodState {
+                namespace: namespace.to_string(),
+                name: name.to_string(),
+                uid: uid.to_string(),
+                sandbox_id: Some(sandbox_id.to_string()),
+                container_ids: HashMap::new(),
+                phase: "Running".to_string(),
+            },
+        );
+        info!("Registered restored pod {namespace}/{name} with sandbox {sandbox_id}");
+    }
+
     /// Stop and remove a pod.
     pub async fn stop_pod(&self, uid: &str) -> Result<(), CriError> {
         let state = {

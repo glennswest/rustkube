@@ -69,6 +69,11 @@ pub async fn api_groups() -> impl IntoResponse {
                 "name": "coordination.k8s.io",
                 "versions": [{"groupVersion": "coordination.k8s.io/v1", "version": "v1"}],
                 "preferredVersion": {"groupVersion": "coordination.k8s.io/v1", "version": "v1"}
+            },
+            {
+                "name": "rustkube.io",
+                "versions": [{"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}],
+                "preferredVersion": {"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}
             }
         ]
     }))
@@ -269,6 +274,24 @@ pub async fn api_coordination_v1_resources() -> impl IntoResponse {
                 "namespaced": true,
                 "kind": "Lease",
                 "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/rustkube.io/v1alpha1 — RustKube CRD resources.
+pub async fn api_rustkube_v1alpha1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "rustkube.io/v1alpha1",
+        "resources": [
+            {
+                "name": "podmigrations",
+                "singularName": "podmigration",
+                "namespaced": true,
+                "kind": "PodMigration",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["pm"]
             }
         ]
     }))

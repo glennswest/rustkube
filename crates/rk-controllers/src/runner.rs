@@ -1,6 +1,6 @@
 //! Controller manager — runs all controllers concurrently.
 
-use crate::{deployment, namespace, node, replicaset, service};
+use crate::{deployment, migration, namespace, node, replicaset, service};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
@@ -134,6 +134,11 @@ impl ControllerManager {
         let api = self.api.clone();
         tasks.spawn(async move {
             node::NodeLifecycleController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            migration::MigrationController::new(api).run().await;
         });
 
         info!("All controllers started");

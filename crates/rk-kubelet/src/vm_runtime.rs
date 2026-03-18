@@ -17,6 +17,7 @@
 #[cfg(target_os = "linux")]
 mod linux {
     use crate::cri::*;
+    use crate::vm_migrate;
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -790,6 +791,181 @@ mod linux {
         }
     }
 
+    #[async_trait]
+    impl MigrationService for VmRuntime {
+        fn migration_strategy(&self, sandbox_id: &str) -> MigrationStrategy {
+            // Check the backend for this sandbox (or use the default)
+            let backend = tokio::runtime::Handle::current()
+                .block_on(async {
+                    let vms = self.vms.read().await;
+                    vms.get(sandbox_id).map(|v| v.backend)
+                })
+                .unwrap_or(self.backend);
+
+            match backend {
+                VmmBackend::CloudHypervisor | VmmBackend::Qemu => MigrationStrategy::LiveMigrate,
+                VmmBackend::Firecracker => MigrationStrategy::Snapshot,
+            }
+        }
+
+        async fn checkpoint_pod(&self, sandbox_id: &str) -> Result<CheckpointRef, CriError> {
+            let vms = self.vms.read().await;
+            let vm = vms.get(sandbox_id)
+                .ok_or_else(|| CriError::NotFound(sandbox_id.to_string()))?;
+
+            match vm.backend {
+                VmmBackend::Firecracker => {
+                    let snapshot_dir = self.vm_dir(sandbox_id).join("snapshot");
+                    vm_migrate::firecracker_create_snapshot(&vm.api_socket, &snapshot_dir)?;
+                    let size = std::fs::metadata(snapshot_dir.join("memory"))
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    Ok(CheckpointRef {
+                        path: snapshot_dir.to_string_lossy().to_string(),
+                        size,
+                        is_stream: false,
+                        stream_endpoint: None,
+                    })
+                }
+                VmmBackend::CloudHypervisor => {
+                    // Pause + snapshot for cold checkpoint
+                    let _ = self.ch_api(sandbox_id, "PUT", "pause", None).await;
+                    // CH doesn't have a file-based snapshot like FC; use migration
+                    Err(CriError::Migration(
+                        "cloud-hypervisor uses live migration, not checkpoint".into(),
+                    ))
+                }
+                VmmBackend::Qemu => {
+                    Err(CriError::Migration(
+                        "QEMU uses live migration, not checkpoint".into(),
+                    ))
+                }
+            }
+        }
+
+        async fn restore_pod(
+            &self,
+            checkpoint: &CheckpointRef,
+            config: &PodSandboxConfig,
+        ) -> Result<String, CriError> {
+            // Only Firecracker supports snapshot restore
+            let snapshot_dir = PathBuf::from(&checkpoint.path);
+
+            // Create a new VM sandbox
+            let sandbox_id = self.run_pod_sandbox(config).await?;
+
+            let vms = self.vms.read().await;
+            let vm = vms.get(&sandbox_id)
+                .ok_or_else(|| CriError::NotFound(sandbox_id.clone()))?;
+
+            match vm.backend {
+                VmmBackend::Firecracker => {
+                    vm_migrate::firecracker_load_snapshot(&vm.api_socket, &snapshot_dir)?;
+                    Ok(sandbox_id)
+                }
+                _ => Err(CriError::Migration(
+                    "only Firecracker supports snapshot restore".into(),
+                )),
+            }
+        }
+
+        async fn prepare_migration_target(
+            &self,
+            config: &PodSandboxConfig,
+        ) -> Result<String, CriError> {
+            // Create a new VM sandbox that will receive the migration
+            let sandbox_id = self.run_pod_sandbox(config).await?;
+
+            let vms = self.vms.read().await;
+            let vm = vms.get(&sandbox_id)
+                .ok_or_else(|| CriError::NotFound(sandbox_id.clone()))?;
+
+            match vm.backend {
+                VmmBackend::CloudHypervisor => {
+                    // Pick a port for migration based on sandbox ID hash
+                    let port = 4000 + (sandbox_id.len() as u16 % 1000);
+                    let endpoint = vm_migrate::ch_prepare_receive(&vm.api_socket, port)?;
+                    Ok(format!("{sandbox_id}:{endpoint}"))
+                }
+                VmmBackend::Qemu => {
+                    let port = 4000 + (sandbox_id.len() as u16 % 1000);
+                    let endpoint = format!("tcp:0.0.0.0:{port}");
+                    // QEMU incoming mode is set at VM launch — the sandbox
+                    // was already started with -incoming in run_pod_sandbox
+                    Ok(format!("{sandbox_id}:{endpoint}"))
+                }
+                VmmBackend::Firecracker => {
+                    // Firecracker uses snapshot, not live migration
+                    Err(CriError::Migration(
+                        "Firecracker uses snapshot strategy, not live migration".into(),
+                    ))
+                }
+            }
+        }
+
+        async fn live_migrate(
+            &self,
+            sandbox_id: &str,
+            target_endpoint: &str,
+        ) -> Result<(), CriError> {
+            let vms = self.vms.read().await;
+            let vm = vms.get(sandbox_id)
+                .ok_or_else(|| CriError::NotFound(sandbox_id.to_string()))?;
+
+            match vm.backend {
+                VmmBackend::CloudHypervisor => {
+                    vm_migrate::ch_send_migration(&vm.api_socket, target_endpoint)?;
+                    Ok(())
+                }
+                VmmBackend::Qemu => {
+                    let monitor = self.vm_dir(sandbox_id).join("qemu-monitor.sock");
+                    vm_migrate::qemu_migrate_to(&monitor, target_endpoint)?;
+                    Ok(())
+                }
+                VmmBackend::Firecracker => {
+                    Err(CriError::Migration(
+                        "Firecracker does not support live migration".into(),
+                    ))
+                }
+            }
+        }
+
+        async fn migration_progress(
+            &self,
+            sandbox_id: &str,
+        ) -> Result<MigrationProgress, CriError> {
+            let vms = self.vms.read().await;
+            let vm = vms.get(sandbox_id)
+                .ok_or_else(|| CriError::NotFound(sandbox_id.to_string()))?;
+
+            match vm.backend {
+                VmmBackend::Qemu => {
+                    let monitor = self.vm_dir(sandbox_id).join("qemu-monitor.sock");
+                    let (status, transferred, total) = vm_migrate::qemu_query_progress(&monitor)?;
+                    let percent = if total > 0 {
+                        ((transferred * 100) / total) as u8
+                    } else {
+                        0
+                    };
+                    Ok(MigrationProgress {
+                        phase: status,
+                        percent,
+                        bytes_transferred: transferred,
+                        elapsed_ms: 0,
+                        message: format!("{transferred}/{total} bytes"),
+                    })
+                }
+                _ => Ok(MigrationProgress {
+                    phase: "migrating".into(),
+                    percent: 0,
+                    bytes_transferred: 0,
+                    elapsed_ms: 0,
+                    message: "progress tracking not available for this VMM".into(),
+                }),
+            }
+        }
+    }
+
     /// Parse Kubernetes-style memory values to MiB.
     fn parse_memory_mib(s: &str) -> Option<u64> {
         let s = s.trim();
@@ -872,6 +1048,28 @@ pub mod stub {
             Err(CriError::Runtime("VM runtime not supported on this platform".into()))
         }
         pub fn with_vm_config(self, _config: VmConfig) -> Self { self }
+    }
+
+    #[async_trait]
+    impl MigrationService for VmRuntime {
+        fn migration_strategy(&self, _sandbox_id: &str) -> MigrationStrategy {
+            MigrationStrategy::Evacuate
+        }
+        async fn checkpoint_pod(&self, _sandbox_id: &str) -> Result<CheckpointRef, CriError> {
+            Err(CriError::Migration("VM runtime not supported on this platform".into()))
+        }
+        async fn restore_pod(&self, _checkpoint: &CheckpointRef, _config: &PodSandboxConfig) -> Result<String, CriError> {
+            Err(CriError::Migration("VM runtime not supported on this platform".into()))
+        }
+        async fn prepare_migration_target(&self, _config: &PodSandboxConfig) -> Result<String, CriError> {
+            Err(CriError::Migration("VM runtime not supported on this platform".into()))
+        }
+        async fn live_migrate(&self, _sandbox_id: &str, _target_endpoint: &str) -> Result<(), CriError> {
+            Err(CriError::Migration("VM runtime not supported on this platform".into()))
+        }
+        async fn migration_progress(&self, _sandbox_id: &str) -> Result<MigrationProgress, CriError> {
+            Err(CriError::Migration("VM runtime not supported on this platform".into()))
+        }
     }
 
     #[async_trait]

@@ -146,9 +146,10 @@ async fn main() -> anyhow::Result<()> {
         let vmm_backend = cli.vmm.clone();
         let cri_socket_opt = cli.cri_socket.clone();
         Some(tokio::spawn(async move {
-            let (runtime, images): (
+            let (runtime, images, migration): (
                 Arc<dyn rk_kubelet::cri::RuntimeService>,
                 Arc<dyn rk_kubelet::cri::ImageService>,
+                Arc<dyn rk_kubelet::cri::MigrationService>,
             ) = match runtime_type.as_str() {
                 "vm" => {
                     let backend = match vmm_backend.as_str() {
@@ -160,29 +161,33 @@ async fn main() -> anyhow::Result<()> {
 
                     if let Some(backend) = backend {
                         tracing::info!("Kubelet using VM runtime ({:?})", backend);
-                        let rt = VmRuntime::new(backend);
-                        let img = NativeImageService::new();
-                        (Arc::new(rt) as _, Arc::new(img) as _)
+                        let rt = Arc::new(VmRuntime::new(backend));
+                        let img = Arc::new(NativeImageService::new());
+                        let mig = rt.clone() as Arc<dyn rk_kubelet::cri::MigrationService>;
+                        (rt as _, img as _, mig)
                     } else {
                         tracing::error!("No VMM found, falling back to native runtime");
-                        let rt = NativeRuntime::new();
-                        let img = NativeImageService::new();
-                        (Arc::new(rt) as _, Arc::new(img) as _)
+                        let rt = Arc::new(NativeRuntime::new());
+                        let img = Arc::new(NativeImageService::new());
+                        let mig = rt.clone() as Arc<dyn rk_kubelet::cri::MigrationService>;
+                        (rt as _, img as _, mig)
                     }
                 }
                 "cri" => {
                     let socket = cri_socket_opt.unwrap_or_else(detect_cri_socket);
                     tracing::info!("Kubelet using CRI runtime ({})", socket);
-                    let rt = CriClient::new(&socket);
-                    let img = CriClient::new(&socket);
-                    (Arc::new(rt) as _, Arc::new(img) as _)
+                    let rt = Arc::new(CriClient::new(&socket));
+                    let img = Arc::new(CriClient::new(&socket));
+                    let mig = rt.clone() as Arc<dyn rk_kubelet::cri::MigrationService>;
+                    (rt as _, img as _, mig)
                 }
                 _ => {
                     // "native" — default
                     tracing::info!("Kubelet using native runtime (libcontainer)");
-                    let rt = NativeRuntime::new();
-                    let img = NativeImageService::new();
-                    (Arc::new(rt) as _, Arc::new(img) as _)
+                    let rt = Arc::new(NativeRuntime::new());
+                    let img = Arc::new(NativeImageService::new());
+                    let mig = rt.clone() as Arc<dyn rk_kubelet::cri::MigrationService>;
+                    (rt as _, img as _, mig)
                 }
             };
 
@@ -192,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
 
-            let kubelet = Kubelet::new(config, runtime, images);
+            let kubelet = Kubelet::new(config, runtime, images, migration);
             if let Err(e) = kubelet.run().await {
                 tracing::error!("Kubelet failed: {e}");
             }

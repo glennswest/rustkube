@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### 2026-03-18
+- **feat:** Pod migration controller — runtime-aware pod migration between nodes
+  - MigrationService trait with per-runtime strategies (CRIU, live migrate, snapshot, evacuate)
+  - CRIU checkpoint/restore for native containers (~100ms downtime)
+  - VM live migration helpers: cloud-hypervisor REST API, QEMU QMP, Firecracker snapshot
+  - MigrationService implemented for NativeRuntime, VmRuntime, CriClient
+  - PodMigration custom resource (rustkube.io/v1alpha1) with state machine controller
+  - Migration state machine: Pending → Checkpointing → Transferring → Restoring → Verifying → Completed
+  - Kubelet migration annotation handling (checkpoint, prepare-target, live-migrate, restore)
+  - Node drain helper (creates PodMigration for all non-DaemonSet pods)
+  - Non-Linux stubs for macOS development
 - **feat:** rk-store — KvStore trait implementation wrapping stormforce-kv (CRUD, CAS, watch, lease)
 - **feat:** rk-apiserver — Full K8s REST API server (axum 0.8)
   - Discovery: /api, /apis, /version, /healthz, /livez, /readyz

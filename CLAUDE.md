@@ -80,6 +80,9 @@ Cargo.toml → workspace.package.version
 - [ ] rk-dns: A/SRV records for services
 - [ ] rk-cni: Bridge + host-local IPAM + VXLAN overlay
 
+### Completed Features
+- [x] Pod migration controller (MigrationService trait, CRIU, VM live migrate, PodMigration CRD)
+
 ### Phase 2: Production Features
 - [ ] CRD support
 - [ ] StatefulSet, DaemonSet, Job, CronJob controllers

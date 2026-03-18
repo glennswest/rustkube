@@ -10,6 +10,7 @@
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use crate::checkpoint::CriuCheckpointer;
     use crate::cri::*;
     use async_trait::async_trait;
     use libcontainer::container::builder::ContainerBuilder;
@@ -539,6 +540,119 @@ mod linux {
         }
     }
 
+    #[async_trait]
+    impl MigrationService for NativeRuntime {
+        fn migration_strategy(&self, _sandbox_id: &str) -> MigrationStrategy {
+            if CriuCheckpointer::is_available() {
+                MigrationStrategy::Checkpoint
+            } else {
+                MigrationStrategy::Evacuate
+            }
+        }
+
+        async fn checkpoint_pod(&self, sandbox_id: &str) -> Result<CheckpointRef, CriError> {
+            let checkpointer = CriuCheckpointer::new();
+
+            // Get all container PIDs in this sandbox
+            let sandboxes = self.sandboxes.read().await;
+            let sandbox = sandboxes
+                .get(sandbox_id)
+                .ok_or_else(|| CriError::NotFound(sandbox_id.to_string()))?;
+
+            let container_ids = sandbox.containers.clone();
+            drop(sandboxes);
+
+            // Checkpoint each container
+            let mut checkpoint_dirs = Vec::new();
+            for cid in &container_ids {
+                let state_dir = self.container_state(cid);
+                let container = Container::load(&state_dir)
+                    .map_err(|e| CriError::Migration(format!("load container {cid}: {e}")))?;
+
+                let pid = container
+                    .state
+                    .pid
+                    .ok_or_else(|| CriError::Migration(format!("container {cid} has no PID")))?;
+
+                let dump_dir = checkpointer.checkpoint_container(cid, pid as u32)?;
+                checkpoint_dirs.push(dump_dir);
+            }
+
+            // Package the first checkpoint (multi-container packaging in Phase 2)
+            let archive = if let Some(first_dir) = checkpoint_dirs.first() {
+                checkpointer.package_checkpoint(first_dir)?
+            } else {
+                return Err(CriError::Migration("no containers to checkpoint".into()));
+            };
+
+            let size = std::fs::metadata(&archive).map(|m| m.len()).unwrap_or(0);
+
+            Ok(CheckpointRef {
+                path: archive.to_string_lossy().to_string(),
+                size,
+                is_stream: false,
+                stream_endpoint: None,
+            })
+        }
+
+        async fn restore_pod(
+            &self,
+            checkpoint: &CheckpointRef,
+            config: &PodSandboxConfig,
+        ) -> Result<String, CriError> {
+            let checkpointer = CriuCheckpointer::new();
+            let archive = PathBuf::from(&checkpoint.path);
+
+            // Unpack checkpoint
+            let checkpoint_dir = checkpointer.unpack_checkpoint(&archive)?;
+
+            // Create a new sandbox
+            let sandbox_id = self.run_pod_sandbox(config).await?;
+
+            // Restore into the sandbox's container root
+            let root_dir = self.container_root(&sandbox_id).join("rootfs");
+            std::fs::create_dir_all(&root_dir)
+                .map_err(|e| CriError::Migration(format!("create rootfs: {e}")))?;
+
+            let _pid = checkpointer.restore_container(&checkpoint_dir, &root_dir)?;
+
+            info!("Pod restored from checkpoint into sandbox {sandbox_id}");
+            Ok(sandbox_id)
+        }
+
+        async fn prepare_migration_target(
+            &self,
+            _config: &PodSandboxConfig,
+        ) -> Result<String, CriError> {
+            Err(CriError::Migration(
+                "native runtime uses checkpoint strategy, not live migration".into(),
+            ))
+        }
+
+        async fn live_migrate(
+            &self,
+            _sandbox_id: &str,
+            _target_endpoint: &str,
+        ) -> Result<(), CriError> {
+            Err(CriError::Migration(
+                "native runtime uses checkpoint strategy, not live migration".into(),
+            ))
+        }
+
+        async fn migration_progress(
+            &self,
+            _sandbox_id: &str,
+        ) -> Result<MigrationProgress, CriError> {
+            Ok(MigrationProgress {
+                phase: "unknown".into(),
+                percent: 0,
+                bytes_transferred: 0,
+                elapsed_ms: 0,
+                message: "checkpoint-based migration does not support progress tracking".into(),
+            })
+        }
+    }
+
     /// Image service that pulls OCI images and unpacks layers.
     pub struct NativeImageService {
         image_store: PathBuf,
@@ -646,6 +760,28 @@ pub mod stub {
     pub struct NativeRuntime;
     impl NativeRuntime {
         pub fn new() -> Self { Self }
+    }
+
+    #[async_trait]
+    impl MigrationService for NativeRuntime {
+        fn migration_strategy(&self, _sandbox_id: &str) -> MigrationStrategy {
+            MigrationStrategy::Evacuate
+        }
+        async fn checkpoint_pod(&self, _sandbox_id: &str) -> Result<CheckpointRef, CriError> {
+            Err(CriError::Migration("not supported on this platform".into()))
+        }
+        async fn restore_pod(&self, _checkpoint: &CheckpointRef, _config: &PodSandboxConfig) -> Result<String, CriError> {
+            Err(CriError::Migration("not supported on this platform".into()))
+        }
+        async fn prepare_migration_target(&self, _config: &PodSandboxConfig) -> Result<String, CriError> {
+            Err(CriError::Migration("not supported on this platform".into()))
+        }
+        async fn live_migrate(&self, _sandbox_id: &str, _target_endpoint: &str) -> Result<(), CriError> {
+            Err(CriError::Migration("not supported on this platform".into()))
+        }
+        async fn migration_progress(&self, _sandbox_id: &str) -> Result<MigrationProgress, CriError> {
+            Err(CriError::Migration("not supported on this platform".into()))
+        }
     }
 
     #[async_trait]

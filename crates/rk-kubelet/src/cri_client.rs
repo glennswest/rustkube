@@ -408,6 +408,57 @@ impl RuntimeService for CriClient {
 }
 
 #[async_trait]
+impl MigrationService for CriClient {
+    fn migration_strategy(&self, _sandbox_id: &str) -> MigrationStrategy {
+        MigrationStrategy::Evacuate
+    }
+
+    async fn checkpoint_pod(&self, _sandbox_id: &str) -> Result<CheckpointRef, CriError> {
+        Err(CriError::Migration(
+            "CRI runtime uses evacuate strategy — checkpoint not supported".into(),
+        ))
+    }
+
+    async fn restore_pod(
+        &self,
+        _checkpoint: &CheckpointRef,
+        _config: &PodSandboxConfig,
+    ) -> Result<String, CriError> {
+        Err(CriError::Migration(
+            "CRI runtime uses evacuate strategy — restore not supported".into(),
+        ))
+    }
+
+    async fn prepare_migration_target(
+        &self,
+        _config: &PodSandboxConfig,
+    ) -> Result<String, CriError> {
+        Err(CriError::Migration(
+            "CRI runtime uses evacuate strategy — live migration not supported".into(),
+        ))
+    }
+
+    async fn live_migrate(
+        &self,
+        _sandbox_id: &str,
+        _target_endpoint: &str,
+    ) -> Result<(), CriError> {
+        Err(CriError::Migration(
+            "CRI runtime uses evacuate strategy — live migration not supported".into(),
+        ))
+    }
+
+    async fn migration_progress(
+        &self,
+        _sandbox_id: &str,
+    ) -> Result<MigrationProgress, CriError> {
+        Err(CriError::Migration(
+            "CRI runtime uses evacuate strategy — no migration in progress".into(),
+        ))
+    }
+}
+
+#[async_trait]
 impl ImageService for CriClient {
     async fn pull_image(&self, image: &str) -> Result<String, CriError> {
         let output = self.crictl(&["pull", image])?;

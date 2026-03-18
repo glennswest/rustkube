@@ -5,6 +5,7 @@
 //! dependent resources to match the desired spec.
 
 pub mod deployment;
+pub mod migration;
 pub mod replicaset;
 pub mod service;
 pub mod namespace;

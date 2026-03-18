@@ -199,6 +199,71 @@ pub trait ImageService: Send + Sync + 'static {
     async fn remove_image(&self, image: &str) -> Result<(), CriError>;
 }
 
+/// Migration strategy for a pod sandbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MigrationStrategy {
+    /// CRIU checkpoint/restore for native containers.
+    Checkpoint,
+    /// VM live migration (cloud-hypervisor/QEMU).
+    LiveMigrate,
+    /// Firecracker snapshot + restore.
+    Snapshot,
+    /// Kill + reschedule (CRI or unsupported runtimes).
+    Evacuate,
+}
+
+/// Reference to a checkpoint artifact.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointRef {
+    pub path: String,
+    pub size: u64,
+    pub is_stream: bool,
+    pub stream_endpoint: Option<String>,
+}
+
+/// Progress of an ongoing migration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationProgress {
+    pub phase: String,
+    pub percent: u8,
+    pub bytes_transferred: u64,
+    pub elapsed_ms: u64,
+    pub message: String,
+}
+
+/// Migration service trait — implemented per runtime.
+#[async_trait]
+pub trait MigrationService: Send + Sync + 'static {
+    /// Determine the migration strategy for a sandbox.
+    fn migration_strategy(&self, sandbox_id: &str) -> MigrationStrategy;
+
+    /// Checkpoint a pod sandbox (freeze state to disk/stream).
+    async fn checkpoint_pod(&self, sandbox_id: &str) -> Result<CheckpointRef, CriError>;
+
+    /// Restore a pod from a checkpoint.
+    async fn restore_pod(
+        &self,
+        checkpoint: &CheckpointRef,
+        config: &PodSandboxConfig,
+    ) -> Result<String, CriError>;
+
+    /// Prepare target node to receive a live migration.
+    async fn prepare_migration_target(
+        &self,
+        config: &PodSandboxConfig,
+    ) -> Result<String, CriError>;
+
+    /// Live-migrate a sandbox to a target endpoint.
+    async fn live_migrate(
+        &self,
+        sandbox_id: &str,
+        target_endpoint: &str,
+    ) -> Result<(), CriError>;
+
+    /// Query migration progress.
+    async fn migration_progress(&self, sandbox_id: &str) -> Result<MigrationProgress, CriError>;
+}
+
 /// CRI error type.
 #[derive(Debug, thiserror::Error)]
 pub enum CriError {
@@ -216,4 +281,7 @@ pub enum CriError {
 
     #[error("timeout")]
     Timeout,
+
+    #[error("migration error: {0}")]
+    Migration(String),
 }

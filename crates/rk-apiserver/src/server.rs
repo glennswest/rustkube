@@ -94,6 +94,26 @@ fn build_router(state: AppState) -> Router {
             get(resource::list_cluster_resources),
         )
         // RBAC v1
+        // RustKube v1alpha1 (PodMigration)
+        .route(
+            "/apis/rustkube.io/v1alpha1",
+            get(discovery::api_rustkube_v1alpha1_resources),
+        )
+        .route(
+            "/apis/rustkube.io/v1alpha1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/rustkube.io/v1alpha1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource),
+        )
+        .route(
+            "/apis/rustkube.io/v1alpha1/{resource}",
+            get(resource::list_cluster_resources),
+        )
         .route(
             "/apis/rbac.authorization.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources)
