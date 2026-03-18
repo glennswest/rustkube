@@ -15,6 +15,18 @@
   - Bootstrap namespaces (default, kube-system, kube-public, kube-node-lease)
 - **feat:** rustkube-apiserver binary with clap CLI
 - **feat:** kubectl verified: get ns/nodes/pods, version, api-resources all working
+- **feat:** rk-controllers — 5 built-in controllers
+  - Deployment: creates/manages ReplicaSets, rolling updates, scale up/down
+  - ReplicaSet: creates/deletes Pods to maintain replica count
+  - Service: creates/updates Endpoints from selector-matched pods
+  - Namespace: ensures default ServiceAccount in each namespace
+  - Node Lifecycle: monitors Lease heartbeats, marks nodes NotReady
+- **feat:** rk-scheduler — pod scheduling with filter/score framework
+  - Filters: NodeReady, Unschedulable, TaintToleration, NodeSelector, ResourceFit
+  - Scores: LeastRequested, ImageLocality, NodeAffinity
+  - Plugin trait framework for Phase 3 extensibility
+- **feat:** Single-binary control plane (rustkube) — apiserver + controllers + scheduler
+- **feat:** End-to-end verified: Deployment → ReplicaSet → 3 Pods → scheduled to node
 
 ### 2026-03-17
 - **chore:** Initial repository setup — Cargo workspace with 10 member crates
