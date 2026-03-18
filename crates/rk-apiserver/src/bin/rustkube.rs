@@ -12,7 +12,10 @@ use clap::Parser;
 use rk_apiserver::ApiServerConfig;
 use rk_controllers::ControllerManager;
 use rk_dns::{ClusterDns, server::DnsConfig};
-use rk_kubelet::{CriClient, Kubelet, KubeletConfig, detect_cri_socket};
+use rk_kubelet::{
+    CriClient, Kubelet, KubeletConfig, NativeRuntime, NativeImageService,
+    VmRuntime, VmmBackend, detect_cri_socket,
+};
 use rk_proxy::{ServiceProxy, proxy::ProxyConfig};
 use rk_scheduler::Scheduler;
 use std::path::PathBuf;
@@ -50,9 +53,17 @@ struct Cli {
     #[arg(long, env = "NODE_NAME")]
     node_name: Option<String>,
 
-    /// CRI socket path
+    /// CRI socket path (only used with --runtime=cri)
     #[arg(long, env = "CRI_SOCKET")]
     cri_socket: Option<String>,
+
+    /// Container runtime: native (libcontainer), vm (microVM), cri (external CRI)
+    #[arg(long, default_value = "native", value_parser = ["native", "vm", "cri"])]
+    runtime: String,
+
+    /// VMM backend for --runtime=vm: cloud-hypervisor, qemu, firecracker, auto
+    #[arg(long, default_value = "auto", value_parser = ["auto", "cloud-hypervisor", "qemu", "firecracker"])]
+    vmm: String,
 
     /// DNS listen port
     #[arg(long, default_value_t = 10053)]
@@ -129,15 +140,51 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Kubelet ──
     let kubelet_handle = if !cli.no_kubelet {
-        let cri_socket = cli.cri_socket.unwrap_or_else(detect_cri_socket);
         let kubelet_url = internal_url.clone();
         let kubelet_node = node_name.clone();
+        let runtime_type = cli.runtime.clone();
+        let vmm_backend = cli.vmm.clone();
+        let cri_socket_opt = cli.cri_socket.clone();
         Some(tokio::spawn(async move {
-            let cri_client = CriClient::new(&cri_socket);
-            let runtime: Arc<dyn rk_kubelet::cri::RuntimeService> = Arc::new(cri_client);
-            // CriClient implements both traits, but we need a second Arc
-            let images: Arc<dyn rk_kubelet::cri::ImageService> =
-                Arc::new(CriClient::new(&cri_socket));
+            let (runtime, images): (
+                Arc<dyn rk_kubelet::cri::RuntimeService>,
+                Arc<dyn rk_kubelet::cri::ImageService>,
+            ) = match runtime_type.as_str() {
+                "vm" => {
+                    let backend = match vmm_backend.as_str() {
+                        "cloud-hypervisor" => Some(VmmBackend::CloudHypervisor),
+                        "qemu" => Some(VmmBackend::Qemu),
+                        "firecracker" => Some(VmmBackend::Firecracker),
+                        _ => VmmBackend::detect(),
+                    };
+
+                    if let Some(backend) = backend {
+                        tracing::info!("Kubelet using VM runtime ({:?})", backend);
+                        let rt = VmRuntime::new(backend);
+                        let img = NativeImageService::new();
+                        (Arc::new(rt) as _, Arc::new(img) as _)
+                    } else {
+                        tracing::error!("No VMM found, falling back to native runtime");
+                        let rt = NativeRuntime::new();
+                        let img = NativeImageService::new();
+                        (Arc::new(rt) as _, Arc::new(img) as _)
+                    }
+                }
+                "cri" => {
+                    let socket = cri_socket_opt.unwrap_or_else(detect_cri_socket);
+                    tracing::info!("Kubelet using CRI runtime ({})", socket);
+                    let rt = CriClient::new(&socket);
+                    let img = CriClient::new(&socket);
+                    (Arc::new(rt) as _, Arc::new(img) as _)
+                }
+                _ => {
+                    // "native" — default
+                    tracing::info!("Kubelet using native runtime (libcontainer)");
+                    let rt = NativeRuntime::new();
+                    let img = NativeImageService::new();
+                    (Arc::new(rt) as _, Arc::new(img) as _)
+                }
+            };
 
             let config = KubeletConfig {
                 node_name: kubelet_node,
@@ -198,7 +245,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("RustKube cluster running on :{}", cli.secure_port);
     tracing::info!("  API server:  http://{}:{}", cli.bind_addr, cli.secure_port);
     if kubelet_handle.is_some() {
-        tracing::info!("  Kubelet:     node={node_name}");
+        tracing::info!("  Kubelet:     node={node_name} runtime={}", cli.runtime);
     }
     if proxy_handle.is_some() {
         tracing::info!("  Proxy:       iptables mode");
