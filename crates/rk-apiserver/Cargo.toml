@@ -51,3 +51,13 @@ tracing-subscriber = { workspace = true }
 [[bin]]
 name = "rustkube-apiserver"
 path = "src/bin/rustkube-apiserver.rs"
+
+[[bin]]
+name = "rustkube"
+path = "src/bin/rustkube.rs"
+
+[dependencies.rk-controllers]
+path = "../rk-controllers"
+
+[dependencies.rk-scheduler]
+path = "../rk-scheduler"
