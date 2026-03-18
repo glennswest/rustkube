@@ -13,9 +13,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 ipnet = { workspace = true }
-tokio = { workspace = true }
+rand = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { workspace = true }
-rtnetlink = { workspace = true }
-socket2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
