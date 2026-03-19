@@ -51,7 +51,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - stormforce-kv 0.9 (etcd replacement)
 
-## Current Version: `v0.1.0`
+## Current Version: `v0.2.0`
 
 ## Work Plan
 
@@ -63,9 +63,9 @@ Cargo.toml → workspace.package.version
 ### Phase 1: Minimal Viable Cluster (IN PROGRESS)
 - [ ] rk-store: KvStore trait impl wrapping stormforce-kv KvEngine
 - [ ] rk-apiserver: Core resource CRUD (namespaces, pods, services, configmaps, secrets, nodes)
-- [ ] rk-apiserver: Watch/list with resourceVersion, pagination, label/field selectors
-- [ ] rk-apiserver: Auth (x509, ServiceAccount JWT)
-- [ ] rk-apiserver: RBAC authorization
+- [x] rk-apiserver: Watch/list with resourceVersion, pagination, label/field selectors
+- [x] rk-apiserver: Auth (JWT bearer, RBAC engine, anonymous fallback)
+- [x] rk-apiserver: RBAC authorization (ClusterRole/RoleBindings, system:masters)
 - [ ] rk-apiserver: API discovery (/api, /apis, /version, /healthz)
 - [ ] rk-scheduler: Basic scheduling (filter by resources/taints, score by least-loaded, bind)
 - [ ] rk-controllers: Deployment → ReplicaSet → Pod
@@ -84,8 +84,8 @@ Cargo.toml → workspace.package.version
 - [x] Pod migration controller (MigrationService trait, CRIU, VM live migrate, PodMigration CRD)
 
 ### Phase 2: Production Features
-- [ ] CRD support
-- [ ] StatefulSet, DaemonSet, Job, CronJob controllers
+- [x] CRD support (dynamic resource registration, catch-all routes, dynamic discovery)
+- [x] StatefulSet, DaemonSet, Job, CronJob controllers
 - [ ] CSI volume support
 - [ ] Admission webhooks (mutating + validating)
 - [ ] eBPF proxy (aya)
@@ -105,4 +105,5 @@ Cargo.toml → workspace.package.version
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.2.0 | 2026-03-18 | Label/field selectors, auth/RBAC, workload controllers, CRD support |
 | v0.1.0 | 2026-03-17 | Initial scaffold — 10 crates, stormforce integration |
