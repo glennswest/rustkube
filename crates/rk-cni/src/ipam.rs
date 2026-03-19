@@ -148,12 +148,10 @@ impl HostLocalIpam {
         let entries = std::fs::read_dir(&alloc_dir)
             .map_err(|e| CniError::IpamError(format!("failed to read alloc dir: {e}")))?;
 
-        for entry in entries {
-            if let Ok(entry) = entry {
-                if let Ok(contents) = std::fs::read_to_string(entry.path()) {
-                    if let Ok(ip) = contents.trim().parse::<Ipv4Addr>() {
-                        allocated.insert(ip);
-                    }
+        for entry in entries.flatten() {
+            if let Ok(contents) = std::fs::read_to_string(entry.path()) {
+                if let Ok(ip) = contents.trim().parse::<Ipv4Addr>() {
+                    allocated.insert(ip);
                 }
             }
         }

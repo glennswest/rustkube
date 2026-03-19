@@ -1,9 +1,9 @@
-/// Certificate utilities for RustKube.
-///
-/// Wraps rcgen for generating TLS certificates used by the API server,
-/// kubelet, and inter-node communication. Stormforce-vault provides
-/// the full PKI/CA infrastructure; this module offers quick helpers
-/// for bootstrap scenarios.
+//! Certificate utilities for RustKube.
+//!
+//! Wraps rcgen for generating TLS certificates used by the API server,
+//! kubelet, and inter-node communication. Stormforce-vault provides
+//! the full PKI/CA infrastructure; this module offers quick helpers
+//! for bootstrap scenarios.
 
 use crate::Result;
 

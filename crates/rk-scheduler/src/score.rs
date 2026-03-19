@@ -25,11 +25,11 @@ fn least_requested_score(_pod: &Value, node: &Value) -> i64 {
 
     let cpu = allocatable["cpu"]
         .as_str()
-        .map(|s| parse_cpu_millis(s))
+        .map(parse_cpu_millis)
         .unwrap_or(1000);
     let mem = allocatable["memory"]
         .as_str()
-        .map(|s| parse_memory_bytes(s))
+        .map(parse_memory_bytes)
         .unwrap_or(1024 * 1024 * 1024);
 
     // Simple heuristic: more resources = higher score
@@ -69,7 +69,7 @@ fn image_locality_score(pod: &Value, node: &Value) -> i64 {
     let mut matched = 0;
     for container in &containers {
         if let Some(image) = container["image"].as_str() {
-            if node_image_names.iter().any(|n| *n == image) {
+            if node_image_names.contains(&image) {
                 matched += 1;
             }
         }

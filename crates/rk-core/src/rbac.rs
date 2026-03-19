@@ -1,8 +1,8 @@
-/// RBAC evaluation engine.
-///
-/// Evaluates whether a given user (identified by username and groups)
-/// is authorized to perform a specific verb on a resource, based on
-/// the set of Role/ClusterRole bindings in the cluster.
+//! RBAC evaluation engine.
+//!
+//! Evaluates whether a given user (identified by username and groups)
+//! is authorized to perform a specific verb on a resource, based on
+//! the set of Role/ClusterRole bindings in the cluster.
 
 /// An RBAC request to evaluate.
 #[derive(Debug, Clone)]

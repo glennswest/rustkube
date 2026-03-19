@@ -41,6 +41,12 @@ pub struct ServiceMap {
     services: Arc<DashMap<String, ServiceInfo>>,
 }
 
+impl Default for ServiceMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ServiceMap {
     pub fn new() -> Self {
         Self {

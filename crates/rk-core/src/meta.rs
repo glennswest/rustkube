@@ -1,8 +1,8 @@
-/// Internal object metadata extensions.
-///
-/// The API server stores the Kubernetes `resourceVersion` as a stringified
-/// u64 revision from the KV store. This module provides helpers for
-/// converting between the two.
+//! Internal object metadata extensions.
+//!
+//! The API server stores the Kubernetes `resourceVersion` as a stringified
+//! u64 revision from the KV store. This module provides helpers for
+//! converting between the two.
 
 /// Convert a store revision to a Kubernetes resourceVersion string.
 pub fn revision_to_resource_version(revision: u64) -> String {

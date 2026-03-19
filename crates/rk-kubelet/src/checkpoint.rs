@@ -220,6 +220,10 @@ pub mod stub {
 
     pub struct CriuCheckpointer;
 
+    impl Default for CriuCheckpointer {
+        fn default() -> Self { Self }
+    }
+
     impl CriuCheckpointer {
         pub fn new() -> Self { Self }
 

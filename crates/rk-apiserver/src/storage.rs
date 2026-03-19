@@ -84,7 +84,7 @@ impl ResourceStorage {
     /// Create a resource (fails if it already exists).
     pub async fn create(&self, key: &str, mut obj: Value) -> Result<Value, ApiError> {
         // Check for existing
-        if let Some(_) = self.store.get(key).await.map_err(ApiError::from)? {
+        if self.store.get(key).await.map_err(ApiError::from)?.is_some() {
             let name = obj["metadata"]["name"]
                 .as_str()
                 .unwrap_or("unknown");

@@ -758,6 +758,11 @@ pub mod stub {
     use async_trait::async_trait;
 
     pub struct NativeRuntime;
+
+    impl Default for NativeRuntime {
+        fn default() -> Self { Self }
+    }
+
     impl NativeRuntime {
         pub fn new() -> Self { Self }
     }
@@ -814,6 +819,11 @@ pub mod stub {
     }
 
     pub struct NativeImageService;
+
+    impl Default for NativeImageService {
+        fn default() -> Self { Self }
+    }
+
     impl NativeImageService {
         pub fn new() -> Self { Self }
     }

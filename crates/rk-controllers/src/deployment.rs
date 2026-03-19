@@ -108,9 +108,8 @@ impl DeploymentController {
             .iter()
             .find(|rs| rs["metadata"]["name"].as_str() == Some(&rs_name));
 
-        if current_rs.is_some() {
+        if let Some(rs) = current_rs {
             // ReplicaSet exists — ensure replica count matches
-            let rs = current_rs.unwrap();
             let current_replicas = rs["spec"]["replicas"].as_u64().unwrap_or(0);
             if current_replicas != desired_replicas {
                 let mut updated_rs = (*rs).clone();

@@ -95,7 +95,7 @@ async fn http_get_probe(
     match client.get(&url).send().await {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            if status >= 200 && status < 400 {
+            if (200..400).contains(&status) {
                 ProbeResult::Success
             } else {
                 ProbeResult::Failure(format!("HTTP {status}"))
