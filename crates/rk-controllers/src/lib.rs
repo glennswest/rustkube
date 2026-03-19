@@ -7,6 +7,8 @@
 pub mod cronjob;
 pub mod daemonset;
 pub mod deployment;
+pub mod gateway;
+pub mod hpa;
 pub mod job;
 pub mod migration;
 pub mod namespace;

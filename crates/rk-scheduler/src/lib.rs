@@ -5,6 +5,7 @@
 
 pub mod filter;
 pub mod plugins;
+pub mod preemption;
 pub mod scheduler;
 pub mod score;
 

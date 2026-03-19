@@ -85,6 +85,28 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    pub fn unauthorized(message: &str) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            reason: "Unauthorized".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn forbidden(message: &str) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            reason: "Forbidden".into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.reason, self.message)
+    }
 }
 
 impl IntoResponse for ApiError {

@@ -277,6 +277,124 @@ pub async fn delete_namespaced_resource(
     Ok(Json(status))
 }
 
+// --- Status subresource handlers ---
+
+/// GET status for a cluster-scoped resource.
+pub async fn get_cluster_status(
+    State(state): State<AppState>,
+    Path((resource, name)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let obj = state.storage.get(&key).await?;
+    Ok(Json(obj))
+}
+
+/// PUT status for a cluster-scoped resource.
+pub async fn update_cluster_status(
+    State(state): State<AppState>,
+    Path((resource, name)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let mut existing = state.storage.get(&key).await?;
+
+    // Only update the status field, preserve everything else
+    if let Some(status) = body.get("status") {
+        existing["status"] = status.clone();
+    }
+
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    Ok(Json(obj))
+}
+
+/// PATCH status for a cluster-scoped resource.
+pub async fn patch_cluster_status(
+    State(state): State<AppState>,
+    Path((resource, name)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let mut existing = state.storage.get(&key).await?;
+
+    // Merge the patch into the status field
+    if let Some(status_patch) = body.get("status") {
+        merge_json(&mut existing["status"], status_patch);
+    }
+
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    Ok(Json(obj))
+}
+
+/// GET status for a namespace-scoped resource.
+pub async fn get_namespaced_status(
+    State(state): State<AppState>,
+    Path((namespace, resource, name)): Path<(String, String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let obj = state.storage.get(&key).await?;
+    Ok(Json(obj))
+}
+
+/// PUT status for a namespace-scoped resource.
+pub async fn update_namespaced_status(
+    State(state): State<AppState>,
+    Path((namespace, resource, name)): Path<(String, String, String)>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let mut existing = state.storage.get(&key).await?;
+
+    if let Some(status) = body.get("status") {
+        existing["status"] = status.clone();
+    }
+
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    Ok(Json(obj))
+}
+
+/// PATCH status for a namespace-scoped resource.
+pub async fn patch_namespaced_status(
+    State(state): State<AppState>,
+    Path((namespace, resource, name)): Path<(String, String, String)>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let mut existing = state.storage.get(&key).await?;
+
+    if let Some(status_patch) = body.get("status") {
+        merge_json(&mut existing["status"], status_patch);
+    }
+
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    Ok(Json(obj))
+}
+
+/// Recursively merge src JSON into dst.
+fn merge_json(dst: &mut Value, src: &Value) {
+    match (dst, src) {
+        (Value::Object(dst_map), Value::Object(src_map)) => {
+            for (key, value) in src_map {
+                merge_json(dst_map.entry(key.clone()).or_insert(Value::Null), value);
+            }
+        }
+        (dst, src) => {
+            *dst = src.clone();
+        }
+    }
+}
+
 /// Public version of ensure_metadata for use by other modules (e.g. CRD handlers).
 pub fn ensure_metadata_pub(obj: &mut Value, name: &str, namespace: Option<&str>) {
     ensure_metadata(obj, name, namespace);
@@ -336,6 +454,17 @@ fn resource_to_list_kind(resource: &str) -> String {
         "clusterrolebindings" => "ClusterRoleBinding",
         "roles" => "Role",
         "rolebindings" => "RoleBinding",
+        "horizontalpodautoscalers" => "HorizontalPodAutoscaler",
+        "networkpolicies" => "NetworkPolicy",
+        "ingresses" => "Ingress",
+        "ingressclasses" => "IngressClass",
+        "mutatingwebhookconfigurations" => "MutatingWebhookConfiguration",
+        "validatingwebhookconfigurations" => "ValidatingWebhookConfiguration",
+        "gatewayclasses" => "GatewayClass",
+        "gateways" => "Gateway",
+        "httproutes" => "HTTPRoute",
+        "apiservices" => "APIService",
+        "podmigrations" => "PodMigration",
         other => other,
     };
     format!("{singular}List")

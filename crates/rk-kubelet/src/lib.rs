@@ -7,6 +7,7 @@
 pub mod checkpoint;
 pub mod cri;
 pub mod cri_client;
+pub mod csi;
 pub mod health;
 pub mod kubelet;
 pub mod node_status;

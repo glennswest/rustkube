@@ -1,6 +1,6 @@
 //! Controller manager — runs all controllers concurrently.
 
-use crate::{cronjob, daemonset, deployment, job, migration, namespace, node, replicaset, service, statefulset};
+use crate::{cronjob, daemonset, deployment, gateway, hpa, job, migration, namespace, node, replicaset, service, statefulset};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
@@ -161,7 +161,17 @@ impl ControllerManager {
             cronjob::CronJobController::new(api).run().await;
         });
 
-        info!("All controllers started (10 controllers)");
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            hpa::HpaController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            gateway::GatewayController::new(api).run().await;
+        });
+
+        info!("All controllers started (12 controllers)");
 
         // Wait for any controller to exit (shouldn't happen)
         while let Some(result) = tasks.join_next().await {

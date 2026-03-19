@@ -80,6 +80,31 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "preferredVersion": {"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "autoscaling",
+            "versions": [{"groupVersion": "autoscaling/v2", "version": "v2"}],
+            "preferredVersion": {"groupVersion": "autoscaling/v2", "version": "v2"}
+        }),
+        json!({
+            "name": "networking.k8s.io",
+            "versions": [{"groupVersion": "networking.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "networking.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "admissionregistration.k8s.io",
+            "versions": [{"groupVersion": "admissionregistration.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "admissionregistration.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "gateway.networking.k8s.io",
+            "versions": [{"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "apiregistration.k8s.io",
+            "versions": [{"groupVersion": "apiregistration.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "apiregistration.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "rustkube.io",
             "versions": [{"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}],
             "preferredVersion": {"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}
@@ -425,6 +450,164 @@ pub async fn api_apiextensions_v1_resources() -> impl IntoResponse {
                 "singularName": "",
                 "namespaced": false,
                 "kind": "CustomResourceDefinition",
+                "verbs": ["get", "patch", "update"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/autoscaling/v2 — autoscaling resources.
+pub async fn api_autoscaling_v2_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "autoscaling/v2",
+        "resources": [
+            {
+                "name": "horizontalpodautoscalers",
+                "singularName": "horizontalpodautoscaler",
+                "namespaced": true,
+                "kind": "HorizontalPodAutoscaler",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["hpa"]
+            },
+            {
+                "name": "horizontalpodautoscalers/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "HorizontalPodAutoscaler",
+                "verbs": ["get", "patch", "update"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/networking.k8s.io/v1 — networking resources.
+pub async fn api_networking_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "networking.k8s.io/v1",
+        "resources": [
+            {
+                "name": "networkpolicies",
+                "singularName": "networkpolicy",
+                "namespaced": true,
+                "kind": "NetworkPolicy",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["netpol"]
+            },
+            {
+                "name": "ingresses",
+                "singularName": "ingress",
+                "namespaced": true,
+                "kind": "Ingress",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["ing"]
+            },
+            {
+                "name": "ingresses/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Ingress",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "ingressclasses",
+                "singularName": "ingressclass",
+                "namespaced": false,
+                "kind": "IngressClass",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/admissionregistration.k8s.io/v1 — admission webhook resources.
+pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "admissionregistration.k8s.io/v1",
+        "resources": [
+            {
+                "name": "mutatingwebhookconfigurations",
+                "singularName": "mutatingwebhookconfiguration",
+                "namespaced": false,
+                "kind": "MutatingWebhookConfiguration",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "validatingwebhookconfigurations",
+                "singularName": "validatingwebhookconfiguration",
+                "namespaced": false,
+                "kind": "ValidatingWebhookConfiguration",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/gateway.networking.k8s.io/v1 — Gateway API resources.
+pub async fn api_gateway_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "gateway.networking.k8s.io/v1",
+        "resources": [
+            {
+                "name": "gatewayclasses",
+                "singularName": "gatewayclass",
+                "namespaced": false,
+                "kind": "GatewayClass",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "gateways",
+                "singularName": "gateway",
+                "namespaced": true,
+                "kind": "Gateway",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "gateways/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Gateway",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "httproutes",
+                "singularName": "httproute",
+                "namespaced": true,
+                "kind": "HTTPRoute",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "httproutes/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "HTTPRoute",
+                "verbs": ["get", "patch", "update"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/apiregistration.k8s.io/v1 — API aggregation resources.
+pub async fn api_apiregistration_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "apiregistration.k8s.io/v1",
+        "resources": [
+            {
+                "name": "apiservices",
+                "singularName": "apiservice",
+                "namespaced": false,
+                "kind": "APIService",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "apiservices/status",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "APIService",
                 "verbs": ["get", "patch", "update"]
             }
         ]

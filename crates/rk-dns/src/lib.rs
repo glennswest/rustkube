@@ -5,6 +5,7 @@
 //! A, SRV, and PTR records for cluster services.
 
 pub mod authority;
+pub mod forwarder;
 pub mod records;
 pub mod server;
 pub mod syncer;

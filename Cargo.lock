@@ -3005,7 +3005,7 @@ dependencies = [
 
 [[package]]
 name = "rk-apiserver"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3057,7 +3057,7 @@ dependencies = [
 
 [[package]]
 name = "rk-cloud"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "k8s-openapi",
@@ -3073,8 +3073,9 @@ dependencies = [
 
 [[package]]
 name = "rk-cni"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "anyhow",
  "ipnet",
  "nix",
  "rand 0.8.5",
@@ -3083,12 +3084,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "rk-controllers"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3103,7 +3105,7 @@ dependencies = [
 
 [[package]]
 name = "rk-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3128,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "rk-dns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3146,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "rk-kubelet"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3167,7 +3169,7 @@ dependencies = [
 
 [[package]]
 name = "rk-proxy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3184,7 +3186,7 @@ dependencies = [
 
 [[package]]
 name = "rk-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3198,7 +3200,7 @@ dependencies = [
 
 [[package]]
 name = "rk-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "bytes",

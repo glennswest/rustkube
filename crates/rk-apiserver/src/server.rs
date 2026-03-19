@@ -12,7 +12,7 @@ use crate::handlers::AppState;
 use crate::rbac_engine::{self, RbacEngine};
 use crate::storage::ResourceStorage;
 use axum::middleware;
-use axum::routing::get;
+use axum::routing::{get, patch};
 use axum::Router;
 use rk_core::store::KvStore;
 use rk_store::StormforceStore;
@@ -161,6 +161,146 @@ fn build_router(state: AppState, signing_keys: SigningKeys, rbac: Arc<RbacEngine
         .route(
             "/apis/rustkube.io/v1alpha1/{resource}",
             get(resource::list_cluster_resources),
+        )
+        // Status subresource routes — core v1 cluster-scoped
+        .route(
+            "/api/v1/{resource}/{name}/status",
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .merge(patch(resource::patch_cluster_status)),
+        )
+        // Status subresource routes — core v1 namespace-scoped
+        .route(
+            "/api/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
+        // Status subresource routes — apps/v1
+        .route(
+            "/apis/apps/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
+        // Status subresource routes — batch/v1
+        .route(
+            "/apis/batch/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
+        // autoscaling/v2
+        .route(
+            "/apis/autoscaling/v2",
+            get(discovery::api_autoscaling_v2_resources),
+        )
+        .route(
+            "/apis/autoscaling/v2/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/autoscaling/v2/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource),
+        )
+        .route(
+            "/apis/autoscaling/v2/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
+        .route(
+            "/apis/autoscaling/v2/{resource}",
+            get(resource::list_cluster_resources),
+        )
+        // networking.k8s.io/v1
+        .route(
+            "/apis/networking.k8s.io/v1",
+            get(discovery::api_networking_v1_resources),
+        )
+        .route(
+            "/apis/networking.k8s.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/networking.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource),
+        )
+        .route(
+            "/apis/networking.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/networking.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource),
+        )
+        // admissionregistration.k8s.io/v1
+        .route(
+            "/apis/admissionregistration.k8s.io/v1",
+            get(discovery::api_admissionregistration_v1_resources),
+        )
+        .route(
+            "/apis/admissionregistration.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/admissionregistration.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource),
+        )
+        // gateway.networking.k8s.io/v1
+        .route(
+            "/apis/gateway.networking.k8s.io/v1",
+            get(discovery::api_gateway_v1_resources),
+        )
+        .route(
+            "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource),
+        )
+        .route(
+            "/apis/gateway.networking.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/gateway.networking.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource),
+        )
+        // apiregistration.k8s.io/v1
+        .route(
+            "/apis/apiregistration.k8s.io/v1",
+            get(discovery::api_apiregistration_v1_resources),
+        )
+        .route(
+            "/apis/apiregistration.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/apiregistration.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource),
         )
         // apiextensions.k8s.io/v1 — CRD management
         .route(

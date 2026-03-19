@@ -3,6 +3,8 @@
 //! Serves the full K8s REST API via axum. Wire-compatible with kubectl,
 //! helm, and existing K8s client libraries.
 
+pub mod admission;
+pub mod aggregation;
 pub mod auth;
 pub mod config;
 pub mod crd;
