@@ -1,5 +1,59 @@
 # Changelog
 
+## [v0.3.0] — 2026-03-19
+
+### Added
+- **Status subresource endpoints** — GET/PUT/PATCH `/status` for all resource types
+  - Cluster-scoped and namespace-scoped status handlers with merge-patch support
+- **Admission webhooks** — mutating and validating webhook chain
+  - JSON patch (add, remove, replace) application from webhook responses
+  - Rule matching against webhook configurations (apiGroups, resources, operations)
+  - Dynamic webhook loading from storage
+- **CSI volume support** — Container Storage Interface plugin framework
+  - Identity, Node, and Controller service traits
+  - Unix socket CSI client for driver communication
+  - Volume setup/teardown helpers for kubelet integration
+- **NetworkPolicy enforcement** — network policy engine for pod traffic control
+  - CIDR matching, pod/namespace selector matching
+  - Ingress/egress rule evaluation with port filtering
+  - iptables rule generation from NetworkPolicy resources
+- **eBPF service proxy** — BPF-based service dispatch (Linux-only, feature-gated)
+  - Service map with endpoint tracking, protocol-aware routing
+  - BPF map types for O(1) service VIP resolution
+- **eBPF CNI encap/decap** — VXLAN overlay with BPF (Linux-only, feature-gated)
+  - Peer management, bulk peer updates, VNI configuration
+  - Attach to network interfaces for encapsulation/decapsulation
+- **DNS upstream forwarder** — forward non-cluster queries to upstream resolvers
+  - Round-robin server selection, UDP transport, configurable timeout
+- **HPA controller** — Horizontal Pod Autoscaler (15s reconcile interval)
+  - Scales Deployments, ReplicaSets, StatefulSets
+  - CPU utilization metrics, velocity-limited scaling (doubles/halves)
+  - stabilization window for scale-down cooldown
+- **Gateway API controller** — Gateway API v1 support
+  - GatewayClass, Gateway, HTTPRoute reconciliation
+  - Listener status tracking, route-gateway binding
+- **Scheduler preemption** — priority-based pod eviction
+  - Finds preemption candidates when scheduling fails
+  - Minimizes number of victims, respects PDB-like constraints
+  - Resource parsing for CPU (millicores) and memory (bytes)
+- **API aggregation layer** — external API server registration
+  - APIService registry (register, unregister, lookup)
+  - Request proxying to aggregated API servers
+  - Availability tracking from APIService status conditions
+- **Cloud provider framework** — pluggable cloud controller interface
+  - CloudProvider trait (node addresses, zones, load balancers, routes)
+  - NoopCloudProvider for bare-metal/dev environments
+  - CloudControllerManager with reconciliation loops
+- New API groups: `autoscaling/v2`, `networking.k8s.io/v1`,
+  `admissionregistration.k8s.io/v1`, `gateway.networking.k8s.io/v1`,
+  `apiregistration.k8s.io/v1`
+- New list kind mappings for all new resource types
+
+### Changed
+- Controller manager now runs 12 controllers (was 10)
+- ApiError gains `forbidden()`, `unauthorized()` constructors and `Display` impl
+- rk-cni gains tokio and anyhow dependencies for async eBPF module
+
 ## [v0.2.0] — 2026-03-18
 
 ### Added
