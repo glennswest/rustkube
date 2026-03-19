@@ -5,6 +5,7 @@
 
 use crate::error::ApiError;
 use crate::handlers::AppState;
+use crate::selector;
 use crate::storage::ResourceStorage;
 use crate::watch::{self, WatchParams};
 use axum::extract::{Path, RawQuery, State};
@@ -45,7 +46,11 @@ pub async fn list_cluster_resources(
     if params.watch {
         let start_rev = params.resource_version.unwrap_or(0);
         let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(watch::watch_response(rx));
+        return Ok(watch::watch_response(
+            rx,
+            params.label_selector,
+            params.field_selector,
+        ));
     }
 
     let limit = params.limit.unwrap_or(500);
@@ -53,6 +58,8 @@ pub async fn list_cluster_resources(
         .storage
         .list(&prefix, limit, params.continue_token.as_deref())
         .await?;
+
+    let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let kind = resource_to_list_kind(&resource);
     let mut list = json!({
@@ -83,7 +90,11 @@ pub async fn list_namespaced_resources(
     if params.watch {
         let start_rev = params.resource_version.unwrap_or(0);
         let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(watch::watch_response(rx));
+        return Ok(watch::watch_response(
+            rx,
+            params.label_selector,
+            params.field_selector,
+        ));
     }
 
     let limit = params.limit.unwrap_or(500);
@@ -91,6 +102,8 @@ pub async fn list_namespaced_resources(
         .storage
         .list(&prefix, limit, params.continue_token.as_deref())
         .await?;
+
+    let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let kind = resource_to_list_kind(&resource);
     let mut list = json!({
@@ -121,7 +134,11 @@ pub async fn list_all_namespaces_resources(
     if params.watch {
         let start_rev = params.resource_version.unwrap_or(0);
         let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(watch::watch_response(rx));
+        return Ok(watch::watch_response(
+            rx,
+            params.label_selector,
+            params.field_selector,
+        ));
     }
 
     let limit = params.limit.unwrap_or(500);
@@ -129,6 +146,8 @@ pub async fn list_all_namespaces_resources(
         .storage
         .list(&prefix, limit, params.continue_token.as_deref())
         .await?;
+
+    let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let kind = resource_to_list_kind(&resource);
     let mut list = json!({
@@ -258,6 +277,11 @@ pub async fn delete_namespaced_resource(
     Ok(Json(status))
 }
 
+/// Public version of ensure_metadata for use by other modules (e.g. CRD handlers).
+pub fn ensure_metadata_pub(obj: &mut Value, name: &str, namespace: Option<&str>) {
+    ensure_metadata(obj, name, namespace);
+}
+
 /// Ensure metadata fields are set.
 fn ensure_metadata(obj: &mut Value, name: &str, namespace: Option<&str>) {
     let meta = obj
@@ -304,7 +328,10 @@ fn resource_to_list_kind(resource: &str) -> String {
         "replicasets" => "ReplicaSet",
         "statefulsets" => "StatefulSet",
         "daemonsets" => "DaemonSet",
+        "jobs" => "Job",
+        "cronjobs" => "CronJob",
         "leases" => "Lease",
+        "customresourcedefinitions" => "CustomResourceDefinition",
         "clusterroles" => "ClusterRole",
         "clusterrolebindings" => "ClusterRoleBinding",
         "roles" => "Role",

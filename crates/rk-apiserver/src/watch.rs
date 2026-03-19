@@ -3,6 +3,7 @@
 //! Implements the K8s watch protocol: chunked JSON stream of WatchEvent
 //! objects, each terminated by a newline.
 
+use crate::selector;
 use axum::body::Body;
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -13,49 +14,64 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 /// Convert a WatchStream into an HTTP response with chunked JSON events.
-pub fn watch_response(rx: mpsc::Receiver<WatchEvent>) -> Response {
-    let stream = ReceiverStream::new(rx).map(|event| {
-        let (event_type, object) = match &event {
-            WatchEvent::Added { value, revision, .. } => {
-                let mut obj: serde_json::Value =
-                    serde_json::from_slice(value).unwrap_or(json!({}));
-                inject_resource_version(&mut obj, *revision);
-                ("ADDED", obj)
-            }
-            WatchEvent::Modified { value, revision, .. } => {
-                let mut obj: serde_json::Value =
-                    serde_json::from_slice(value).unwrap_or(json!({}));
-                inject_resource_version(&mut obj, *revision);
-                ("MODIFIED", obj)
-            }
-            WatchEvent::Deleted { revision, key, .. } => {
-                // For deletes, we may not have the full object
-                let obj = json!({
-                    "metadata": {
-                        "resourceVersion": revision.to_string(),
-                        "name": key.rsplit('/').next().unwrap_or("")
+/// Optionally filters events by label and field selectors.
+pub fn watch_response(
+    rx: mpsc::Receiver<WatchEvent>,
+    label_selector: Option<String>,
+    field_selector: Option<String>,
+) -> Response {
+    let stream = ReceiverStream::new(rx).filter_map(move |event| {
+        let label_sel = label_selector.clone();
+        let field_sel = field_selector.clone();
+        async move {
+            let (event_type, object) = match &event {
+                WatchEvent::Added { value, revision, .. } => {
+                    let mut obj: serde_json::Value =
+                        serde_json::from_slice(value).unwrap_or(json!({}));
+                    inject_resource_version(&mut obj, *revision);
+                    if !selector::matches_selectors(&obj, &label_sel, &field_sel) {
+                        return None;
                     }
-                });
-                ("DELETED", obj)
-            }
-            WatchEvent::Bookmark { revision } => {
-                let obj = json!({
-                    "metadata": {
-                        "resourceVersion": revision.to_string()
+                    ("ADDED", obj)
+                }
+                WatchEvent::Modified { value, revision, .. } => {
+                    let mut obj: serde_json::Value =
+                        serde_json::from_slice(value).unwrap_or(json!({}));
+                    inject_resource_version(&mut obj, *revision);
+                    if !selector::matches_selectors(&obj, &label_sel, &field_sel) {
+                        return None;
                     }
-                });
-                ("BOOKMARK", obj)
-            }
-        };
+                    ("MODIFIED", obj)
+                }
+                WatchEvent::Deleted { revision, key, .. } => {
+                    // Deleted events pass through — no labels to check
+                    let obj = json!({
+                        "metadata": {
+                            "resourceVersion": revision.to_string(),
+                            "name": key.rsplit('/').next().unwrap_or("")
+                        }
+                    });
+                    ("DELETED", obj)
+                }
+                WatchEvent::Bookmark { revision } => {
+                    let obj = json!({
+                        "metadata": {
+                            "resourceVersion": revision.to_string()
+                        }
+                    });
+                    ("BOOKMARK", obj)
+                }
+            };
 
-        let watch_event = json!({
-            "type": event_type,
-            "object": object
-        });
+            let watch_event = json!({
+                "type": event_type,
+                "object": object
+            });
 
-        let mut line = serde_json::to_string(&watch_event).unwrap_or_default();
-        line.push('\n');
-        Ok::<_, std::convert::Infallible>(line)
+            let mut line = serde_json::to_string(&watch_event).unwrap_or_default();
+            line.push('\n');
+            Some(Ok::<_, std::convert::Infallible>(line))
+        }
     });
 
     Response::builder()
