@@ -1,6 +1,6 @@
 //! Controller manager — runs all controllers concurrently.
 
-use crate::{deployment, migration, namespace, node, replicaset, service};
+use crate::{cronjob, daemonset, deployment, job, migration, namespace, node, replicaset, service, statefulset};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
@@ -141,7 +141,27 @@ impl ControllerManager {
             migration::MigrationController::new(api).run().await;
         });
 
-        info!("All controllers started");
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            statefulset::StatefulSetController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            daemonset::DaemonSetController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            job::JobController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            cronjob::CronJobController::new(api).run().await;
+        });
+
+        info!("All controllers started (10 controllers)");
 
         // Wait for any controller to exit (shouldn't happen)
         while let Some(result) = tasks.join_next().await {

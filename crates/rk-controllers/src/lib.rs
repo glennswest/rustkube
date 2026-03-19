@@ -4,12 +4,16 @@
 //! Each controller watches resources via the API server and creates/updates/deletes
 //! dependent resources to match the desired spec.
 
+pub mod cronjob;
+pub mod daemonset;
 pub mod deployment;
+pub mod job;
 pub mod migration;
-pub mod replicaset;
-pub mod service;
 pub mod namespace;
 pub mod node;
+pub mod replicaset;
 pub mod runner;
+pub mod service;
+pub mod statefulset;
 
 pub use runner::ControllerManager;
