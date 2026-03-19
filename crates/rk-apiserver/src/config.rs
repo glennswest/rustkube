@@ -17,6 +17,10 @@ pub struct ApiServerConfig {
     pub service_cidr: String,
     /// Cluster DNS domain.
     pub cluster_domain: String,
+    /// Path to JWT signing key for ServiceAccount tokens.
+    pub service_account_key: Option<PathBuf>,
+    /// Allow anonymous authentication (default true for dev).
+    pub anonymous_auth: bool,
 }
 
 impl Default for ApiServerConfig {
@@ -29,6 +33,8 @@ impl Default for ApiServerConfig {
             data_dir: PathBuf::from("/var/lib/rustkube"),
             service_cidr: "10.96.0.0/12".into(),
             cluster_domain: "cluster.local".into(),
+            service_account_key: None,
+            anonymous_auth: true,
         }
     }
 }

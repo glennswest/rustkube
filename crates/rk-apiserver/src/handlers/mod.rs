@@ -5,6 +5,7 @@
 
 pub mod resource;
 
+use crate::crd::CrdRegistry;
 use crate::storage::ResourceStorage;
 use std::sync::Arc;
 
@@ -12,4 +13,5 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
     pub storage: Arc<ResourceStorage>,
+    pub crd_registry: Arc<CrdRegistry>,
 }
