@@ -3,6 +3,8 @@
 //! Implements /api, /apis, /api/v1, /version, /healthz, /livez, /readyz
 //! so kubectl can discover available resources and server capabilities.
 
+use crate::handlers::AppState;
+use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::json;
@@ -49,33 +51,49 @@ pub async fn api_versions() -> impl IntoResponse {
     }))
 }
 
-/// GET /apis — list API groups.
-pub async fn api_groups() -> impl IntoResponse {
+/// GET /apis — list API groups (includes dynamic CRD groups).
+pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoResponse {
+    let mut groups = vec![
+        json!({
+            "name": "apps",
+            "versions": [{"groupVersion": "apps/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "apps/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "batch",
+            "versions": [{"groupVersion": "batch/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "batch/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "rbac.authorization.k8s.io",
+            "versions": [{"groupVersion": "rbac.authorization.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "rbac.authorization.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "coordination.k8s.io",
+            "versions": [{"groupVersion": "coordination.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "coordination.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "apiextensions.k8s.io",
+            "versions": [{"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
+            "name": "rustkube.io",
+            "versions": [{"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}],
+            "preferredVersion": {"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}
+        }),
+    ];
+
+    // Add dynamically registered CRD groups
+    let crd_groups = state.crd_registry.api_groups().await;
+    groups.extend(crd_groups);
+
     Json(json!({
         "kind": "APIGroupList",
         "apiVersion": "v1",
-        "groups": [
-            {
-                "name": "apps",
-                "versions": [{"groupVersion": "apps/v1", "version": "v1"}],
-                "preferredVersion": {"groupVersion": "apps/v1", "version": "v1"}
-            },
-            {
-                "name": "rbac.authorization.k8s.io",
-                "versions": [{"groupVersion": "rbac.authorization.k8s.io/v1", "version": "v1"}],
-                "preferredVersion": {"groupVersion": "rbac.authorization.k8s.io/v1", "version": "v1"}
-            },
-            {
-                "name": "coordination.k8s.io",
-                "versions": [{"groupVersion": "coordination.k8s.io/v1", "version": "v1"}],
-                "preferredVersion": {"groupVersion": "coordination.k8s.io/v1", "version": "v1"}
-            },
-            {
-                "name": "rustkube.io",
-                "versions": [{"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}],
-                "preferredVersion": {"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}
-            }
-        ]
+        "groups": groups
     }))
 }
 
@@ -251,12 +269,65 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
                 "shortNames": ["sts"]
             },
             {
+                "name": "statefulsets/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "StatefulSet",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
                 "name": "daemonsets",
                 "singularName": "daemonset",
                 "namespaced": true,
                 "kind": "DaemonSet",
                 "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["ds"]
+            },
+            {
+                "name": "daemonsets/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "DaemonSet",
+                "verbs": ["get", "patch", "update"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/batch/v1 — list batch/v1 resources.
+pub async fn api_batch_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "batch/v1",
+        "resources": [
+            {
+                "name": "jobs",
+                "singularName": "job",
+                "namespaced": true,
+                "kind": "Job",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "jobs/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Job",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "cronjobs",
+                "singularName": "cronjob",
+                "namespaced": true,
+                "kind": "CronJob",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["cj"]
+            },
+            {
+                "name": "cronjobs/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "CronJob",
+                "verbs": ["get", "patch", "update"]
             }
         ]
     }))
@@ -330,6 +401,31 @@ pub async fn api_rbac_v1_resources() -> impl IntoResponse {
                 "namespaced": true,
                 "kind": "RoleBinding",
                 "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/apiextensions.k8s.io/v1 — CRD management resources.
+pub async fn api_apiextensions_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "apiextensions.k8s.io/v1",
+        "resources": [
+            {
+                "name": "customresourcedefinitions",
+                "singularName": "customresourcedefinition",
+                "namespaced": false,
+                "kind": "CustomResourceDefinition",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["crd", "crds"]
+            },
+            {
+                "name": "customresourcedefinitions/status",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "CustomResourceDefinition",
+                "verbs": ["get", "patch", "update"]
             }
         ]
     }))
