@@ -14,7 +14,7 @@ use crate::storage::ResourceStorage;
 use axum::middleware;
 use axum::routing::{get, patch};
 use axum::Router;
-use rk_core::store::KvStore;
+use apimachinery::store::KvStore;
 use rk_store::{EtcdStore, EtcdTls};
 use serde_json::json;
 use std::sync::Arc;

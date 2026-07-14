@@ -14,9 +14,9 @@ use etcd_client::{
     Certificate, Client, Compare, CompareOp, ConnectOptions, GetOptions, Identity, TlsOptions, Txn,
     TxnOp, WatchOptions,
 };
-use rk_core::store::{KvStore, LeaseId, ListResult, WatchStream};
-use rk_core::watch::WatchEvent;
-use rk_core::{Error, Result};
+use apimachinery::store::{KvStore, LeaseId, ListResult, WatchStream};
+use apimachinery::watch::WatchEvent;
+use apimachinery::{Error, Result};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;

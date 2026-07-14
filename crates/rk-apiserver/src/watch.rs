@@ -8,7 +8,7 @@ use axum::body::Body;
 use axum::http::StatusCode;
 use axum::response::Response;
 use futures::StreamExt;
-use rk_core::watch::WatchEvent;
+use apimachinery::watch::WatchEvent;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;

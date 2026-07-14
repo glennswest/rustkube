@@ -122,34 +122,34 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<rk_core::Error> for ApiError {
-    fn from(e: rk_core::Error) -> Self {
+impl From<apimachinery::Error> for ApiError {
+    fn from(e: apimachinery::Error) -> Self {
         match e {
-            rk_core::Error::NotFound(msg) => Self {
+            apimachinery::Error::NotFound(msg) => Self {
                 status: StatusCode::NOT_FOUND,
                 reason: "NotFound".into(),
                 message: msg,
             },
-            rk_core::Error::AlreadyExists(msg) => Self {
+            apimachinery::Error::AlreadyExists(msg) => Self {
                 status: StatusCode::CONFLICT,
                 reason: "AlreadyExists".into(),
                 message: msg,
             },
-            rk_core::Error::Conflict => Self::conflict("resource version mismatch"),
-            rk_core::Error::Gone(rev) => {
+            apimachinery::Error::Conflict => Self::conflict("resource version mismatch"),
+            apimachinery::Error::Gone(rev) => {
                 Self::gone(&format!("resource version {rev} has been compacted"))
             }
-            rk_core::Error::Unauthorized(msg) => Self {
+            apimachinery::Error::Unauthorized(msg) => Self {
                 status: StatusCode::UNAUTHORIZED,
                 reason: "Unauthorized".into(),
                 message: msg,
             },
-            rk_core::Error::Forbidden(msg) => Self {
+            apimachinery::Error::Forbidden(msg) => Self {
                 status: StatusCode::FORBIDDEN,
                 reason: "Forbidden".into(),
                 message: msg,
             },
-            rk_core::Error::Invalid(msg) => Self::invalid(&msg),
+            apimachinery::Error::Invalid(msg) => Self::invalid(&msg),
             _ => Self::internal(&e.to_string()),
         }
     }

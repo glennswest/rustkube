@@ -4,7 +4,7 @@
 //! resourceVersion tracking, key construction, and metadata injection.
 
 use crate::error::ApiError;
-use rk_core::store::KvStore;
+use apimachinery::store::KvStore;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -147,7 +147,7 @@ impl ResourceStorage {
         &self,
         prefix: &str,
         start_revision: u64,
-    ) -> Result<rk_core::store::WatchStream, ApiError> {
+    ) -> Result<apimachinery::store::WatchStream, ApiError> {
         self.store
             .watch(prefix, start_revision)
             .await

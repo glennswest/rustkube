@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rk-core = { workspace = true }
+apimachinery = { workspace = true }
 rk-store = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }

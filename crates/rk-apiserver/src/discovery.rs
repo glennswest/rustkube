@@ -14,7 +14,7 @@ pub async fn version() -> impl IntoResponse {
     Json(json!({
         "major": "1",
         "minor": "32",
-        "gitVersion": format!("v1.32.0-rustkube+{}", rk_core::VERSION),
+        "gitVersion": format!("v1.32.0-rustkube+{}", apimachinery::VERSION),
         "gitCommit": "",
         "gitTreeState": "clean",
         "buildDate": "2026-03-17T00:00:00Z",

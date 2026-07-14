@@ -171,8 +171,8 @@ impl NodeReporter {
                 "kernelVersion": "",
                 "osImage": format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
                 "containerRuntimeVersion": "containerd://unknown",
-                "kubeletVersion": format!("v1.32.0-rustkube+{}", rk_core::VERSION),
-                "kubeProxyVersion": format!("v1.32.0-rustkube+{}", rk_core::VERSION),
+                "kubeletVersion": format!("v1.32.0-rustkube+{}", apimachinery::VERSION),
+                "kubeProxyVersion": format!("v1.32.0-rustkube+{}", apimachinery::VERSION),
                 "operatingSystem": std::env::consts::OS,
                 "architecture": std::env::consts::ARCH
             },

@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rk-core = { workspace = true }
+apimachinery = { workspace = true }
 etcd-client = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

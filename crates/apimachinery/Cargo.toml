@@ -1,5 +1,5 @@
 [package]
-name = "rk-core"
+name = "apimachinery"
 description = "Shared types, traits, and error handling for RustKube"
 version.workspace = true
 edition.workspace = true

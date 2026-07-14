@@ -1,4 +1,4 @@
-//! rk-core: Shared types, traits, and error handling for RustKube.
+//! apimachinery: Shared types, traits, and error handling (K8s apimachinery-equivalent).
 //!
 //! Re-exports k8s-openapi types and defines internal abstractions
 //! for the distributed store, watch events, RBAC, and certificates.

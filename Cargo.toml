@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/rk-core",
+    "crates/apimachinery",
     "crates/rk-store",
     "crates/rk-apiserver",
     "crates/rk-scheduler",
@@ -22,7 +22,7 @@ repository = "https://github.com/glennswest/rustkube"
 
 [workspace.dependencies]
 # Internal crates
-rk-core = { path = "crates/rk-core" }
+apimachinery = { path = "crates/apimachinery" }
 rk-store = { path = "crates/rk-store" }
 rk-apiserver = { path = "crates/rk-apiserver" }
 rk-scheduler = { path = "crates/rk-scheduler" }
@@ -37,10 +37,8 @@ rk-cloud = { path = "crates/rk-cloud" }
 # "tls" pulls in tonic's rustls-based TLS (no OpenSSL), matching the rustls-only policy.
 etcd-client = { version = "0.14", features = ["tls"] }
 
-# Kubernetes types — pinned to K8s 1.32 (matches kube 0.99)
+# Kubernetes types — pinned to K8s 1.32
 k8s-openapi = { version = "0.24", features = ["v1_32"] }
-kube = { version = "0.99", default-features = false, features = ["client", "runtime", "rustls-tls"] }
-kube-runtime = { version = "0.99", default-features = false }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
