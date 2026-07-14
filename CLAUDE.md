@@ -4,12 +4,16 @@
 
 RustKube is a complete, K8s API-compatible container orchestrator in Rust. Wire-compatible with kubectl, helm, and existing YAML manifests. Target scale: 100–1000+ nodes.
 
-**Key architectural decision:** RustKube uses **stormforce** crates (from `../stormforce`) as its infrastructure backbone:
-- `stormforce-kv` → etcd-compatible MVCC KV store (watch, lease, Raft consensus)
-- `stormforce-raft` → Consensus layer
-- `stormforce-vault` → Secrets management and PKI/CA
-- `stormforce-registry` → OCI container registry
-- `stormforce-security` → TLS, SASL, ACLs
+**Key architectural decision:** RustKube uses the **kube architecture** — the API
+server talks to an *external* datastore over the etcd v3 gRPC wire protocol, exactly
+like upstream `kube-apiserver` → etcd. The datastore is **fastetcd** (`../fastetcd`),
+a Rust, wire-compatible etcd v3 replacement.
+
+- `rk-store::EtcdStore` → `KvStore` impl over the `etcd-client` crate (talks to fastetcd)
+- Endpoints are supplied via `--etcd-servers` (required); optional mutual TLS via
+  `--etcd-cacert` / `--etcd-cert` / `--etcd-key`
+- **No embedded store and no stormforce dependency** — the earlier `stormforce-kv`
+  embedded store was removed in favor of external fastetcd.
 
 ## Build & Test
 
@@ -25,7 +29,7 @@ cargo clippy          # lint
 ```
 crates/
   rk-core/          Shared types (k8s-openapi re-exports), errors, traits, RBAC, cert utils
-  rk-store/         KV store adapter — wraps stormforce-kv for K8s key schema
+  rk-store/         Datastore client — etcd v3 gRPC (etcd-client) to external fastetcd
   rk-apiserver/     K8s REST API (axum), auth, admission, watch cache, API groups
   rk-scheduler/     Pod scheduling (filter, score, bind)
   rk-controllers/   Built-in controllers (Deployment, ReplicaSet, Service, Namespace, etc.)
@@ -49,7 +53,7 @@ Cargo.toml → workspace.package.version
 - rustls 0.23 (no OpenSSL — static musl binaries)
 - tonic 0.12, prost 0.13 (CRI gRPC)
 - hickory-dns 0.25 (cluster DNS)
-- stormforce-kv 0.9 (etcd replacement)
+- etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
 ## Current Version: `v0.3.0`
 

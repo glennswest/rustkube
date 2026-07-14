@@ -1,0 +1,23 @@
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://kubernetes.io/docs/
+After=network-online.target kube-apiserver.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# APISERVER_URL resolves --apiserver via clap env binding.
+EnvironmentFile=-/etc/kubernetes/kube-controller-manager
+ExecStart=/usr/bin/kube-controller-manager $KUBE_CONTROLLER_MANAGER_ARGS
+Restart=always
+RestartSec=2s
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

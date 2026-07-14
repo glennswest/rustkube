@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "rustkube-apiserver", about = "RustKube API Server")]
+#[command(name = "kube-apiserver", about = "Kubernetes API server (Rust, external fastetcd store)")]
 struct Cli {
     /// Bind address
     #[arg(long, default_value = "0.0.0.0")]
@@ -14,8 +14,25 @@ struct Cli {
     #[arg(long, default_value_t = 6443)]
     secure_port: u16,
 
-    /// Data directory for embedded store
-    #[arg(long, default_value = "/var/lib/rustkube")]
+    /// External etcd/fastetcd endpoints (comma-separated or repeated),
+    /// e.g. https://127.0.0.1:2379
+    #[arg(long = "etcd-servers", value_delimiter = ',', env = "ETCD_SERVERS", required = true)]
+    etcd_servers: Vec<String>,
+
+    /// CA certificate (PEM) to verify the etcd/fastetcd server
+    #[arg(long, env = "ETCD_CACERT")]
+    etcd_cacert: Option<PathBuf>,
+
+    /// Client certificate (PEM) for mutual TLS to etcd/fastetcd
+    #[arg(long, env = "ETCD_CERT")]
+    etcd_cert: Option<PathBuf>,
+
+    /// Client private key (PEM) for mutual TLS to etcd/fastetcd
+    #[arg(long, env = "ETCD_KEY")]
+    etcd_key: Option<PathBuf>,
+
+    /// Data directory (TLS material, misc runtime state)
+    #[arg(long, default_value = "/var/lib/kubernetes")]
     data_dir: PathBuf,
 
     /// Service CIDR
@@ -40,6 +57,10 @@ async fn main() -> anyhow::Result<()> {
     let config = ApiServerConfig {
         bind_addr: cli.bind_addr,
         secure_port: cli.secure_port,
+        etcd_servers: cli.etcd_servers,
+        etcd_cacert: cli.etcd_cacert,
+        etcd_cert: cli.etcd_cert,
+        etcd_key: cli.etcd_key,
         data_dir: cli.data_dir,
         service_cidr: cli.service_cidr,
         cluster_domain: cli.cluster_domain,

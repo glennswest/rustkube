@@ -15,7 +15,7 @@ use axum::middleware;
 use axum::routing::{get, patch};
 use axum::Router;
 use rk_core::store::KvStore;
-use rk_store::StormforceStore;
+use rk_store::{EtcdStore, EtcdTls};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -357,8 +357,28 @@ fn build_router(state: AppState, signing_keys: SigningKeys, rbac: Arc<RbacEngine
 
 /// Start the API server.
 pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
-    // Open embedded store
-    let store = StormforceStore::open(&config.data_dir)?;
+    // Connect to the external etcd/fastetcd datastore (kube architecture).
+    if config.etcd_servers.is_empty() {
+        anyhow::bail!(
+            "no --etcd-servers configured: RustKube requires an external etcd/fastetcd datastore"
+        );
+    }
+    let etcd_tls = if config.etcd_cacert.is_some()
+        || config.etcd_cert.is_some()
+        || config.etcd_key.is_some()
+    {
+        Some(EtcdTls {
+            ca: config.etcd_cacert.clone(),
+            cert: config.etcd_cert.clone(),
+            key: config.etcd_key.clone(),
+        })
+    } else {
+        None
+    };
+    tracing::info!("connecting to datastore: {:?}", config.etcd_servers);
+    let store = EtcdStore::connect(&config.etcd_servers, etcd_tls)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to connect to etcd/fastetcd {:?}: {e}", config.etcd_servers))?;
     let kv: Arc<dyn KvStore> = Arc::new(store);
     let storage = Arc::new(ResourceStorage::new(kv));
 

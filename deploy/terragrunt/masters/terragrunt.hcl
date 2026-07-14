@@ -1,0 +1,80 @@
+# Unit: rustkube control plane — master1/master2/master3.g8.lo
+#
+# OpenShift-style compact control plane: 3 masters, each running BOTH a
+# fastetcd member (3-node Raft) AND the Kubernetes control plane
+# (kube-apiserver + kube-controller-manager + kube-scheduler). Masters are
+# also schedulable (a 3-node cluster runs control plane + app loads) once the
+# node components (kubelet/kube-proxy) land — tracked as a follow-up.
+#
+# Uses the shared, versioned proxmox-fedora-vm module (pinned ?ref). Disks →
+# test-lvm-thin, cloud-init snippets → terraform-snippets (token ACL scope).
+
+include "root" {
+  path = find_in_parent_folders("root.hcl")
+}
+
+terraform {
+  source = "git::ssh://git@github.com/glennswest/terraform-modules.git//modules/proxmox-fedora-vm?ref=v0.3.0"
+}
+
+locals {
+  # Released fastetcd RPM (pinned). Each master runs a member of the 3-node
+  # Raft cluster. TLS off (plaintext) for first bring-up.
+  fastetcd_version = "v0.8.1"
+  fastetcd_rpm_url = "https://github.com/glennswest/fastetcd/releases/download/v0.8.1/fastetcd-0.8.1-1.x86_64.rpm"
+  cluster_token    = "kube-etcd"
+  ssh_key          = trimspace(file(pathexpand("~/.ssh/id_rsa.pub")))
+
+  # rustkube source built on each master (no published control-plane RPM yet —
+  # rustkube#1). Installs the exact upstream-named binaries.
+  rustkube_repo = "https://github.com/glennswest/rustkube.git"
+  rustkube_ref  = "main"
+
+  # master nodes: fixed MAC -> reserved IP (outside the g8 DHCP pool .100-.200).
+  # vm_ids allocated live via deploy/terragrunt/free-vmid.sh (range 2000-2100).
+  nodes = {
+    master1 = { vm_id = 2000, mac = "BC:24:11:08:00:51", ip = "192.168.8.51" }
+    master2 = { vm_id = 2001, mac = "BC:24:11:08:00:52", ip = "192.168.8.52" }
+    master3 = { vm_id = 2002, mac = "BC:24:11:08:00:53", ip = "192.168.8.53" }
+  }
+
+  # fastetcd static bootstrap peer list: name=http://ip:2380,...
+  initial_cluster = join(",", [for k, v in local.nodes : "${k}=http://${v.ip}:2380"])
+  # kube-apiserver --etcd-servers: every member's client URL.
+  etcd_servers = join(",", [for k, v in local.nodes : "http://${v.ip}:2379"])
+}
+
+inputs = {
+  dns_zone_id        = "9bed60c8-1664-4183-88f9-a1a21b927edc" # g8.lo
+  ci_ssh_public_keys = [local.ssh_key]
+  tags               = ["terraform", "fedora", "rustkube", "master"]
+
+  # Match the terraform-svc token's ACL scope (test-lvm-thin is lvmthin →
+  # disks only; snippets must live on the terraform-snippets dir storage).
+  vm_datastore      = "test-lvm-thin"
+  snippet_datastore = "terraform-snippets"
+
+  vms = {
+    for k, v in local.nodes : k => {
+      vm_id     = v.vm_id
+      mac       = v.mac
+      ip        = v.ip
+      cores     = 4
+      memory    = 4096
+      disk_size = 40
+      user_data = templatefile("${get_terragrunt_dir()}/templates/master-user-data.yaml.tftpl", {
+        hostname         = k
+        fqdn             = "${k}.g8.lo"
+        ci_user          = "fedora"
+        ssh_keys         = [local.ssh_key]
+        node_ip          = v.ip
+        initial_cluster  = local.initial_cluster
+        cluster_token    = local.cluster_token
+        etcd_servers     = local.etcd_servers
+        fastetcd_rpm_url = local.fastetcd_rpm_url
+        rustkube_repo    = local.rustkube_repo
+        rustkube_ref     = local.rustkube_ref
+      })
+    }
+  }
+}

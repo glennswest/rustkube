@@ -1,0 +1,87 @@
+#cloud-config
+hostname: ${hostname}
+fqdn: ${fqdn}
+prefer_fqdn_over_hostname: true
+manage_etc_hosts: true
+
+users:
+  - name: ${ci_user}
+    groups: [wheel, adm, systemd-journal]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+%{ for key in ssh_keys ~}
+      - ${key}
+%{ endfor ~}
+
+ssh_pwauth: false
+disable_root: false
+
+package_update: true
+package_upgrade: false
+packages:
+  - qemu-guest-agent
+  - git
+  - cargo
+  - rust
+  - gcc
+  - openssl-devel
+
+write_files:
+  # fastetcd member config — this master's node in the 3-node Raft cluster.
+  # Read by the RPM's fastetcd.service (EnvironmentFile). etcd-compatible
+  # ETCD_* names; fastetcd reads them natively.
+  - path: /etc/fastetcd/fastetcd.conf
+    permissions: "0644"
+    content: |
+      ETCD_NAME=${hostname}
+      ETCD_DATA_DIR=/var/lib/fastetcd/data
+      ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      ETCD_INITIAL_ADVERTISE_PEER_URLS=http://${node_ip}:2380
+      ETCD_ADVERTISE_CLIENT_URLS=http://${node_ip}:2379
+      ETCD_INITIAL_CLUSTER=${initial_cluster}
+      ETCD_INITIAL_CLUSTER_TOKEN=${cluster_token}
+      ETCD_INITIAL_CLUSTER_STATE=new
+
+  # kube-apiserver → all 3 fastetcd members (HA). Resolves --etcd-servers via
+  # clap's env binding.
+  - path: /etc/kubernetes/kube-apiserver
+    permissions: "0644"
+    content: |
+      ETCD_SERVERS=${etcd_servers}
+      KUBE_APISERVER_ARGS=
+  - path: /etc/kubernetes/kube-controller-manager
+    permissions: "0644"
+    content: |
+      APISERVER_URL=http://127.0.0.1:6443
+  - path: /etc/kubernetes/kube-scheduler
+    permissions: "0644"
+    content: |
+      APISERVER_URL=http://127.0.0.1:6443
+
+runcmd:
+  - [ systemctl, enable, --now, qemu-guest-agent ]
+  - [ mkdir, -p, /var/lib/kubernetes ]
+
+  # 1) fastetcd member — install the pinned RPM; all 3 masters install together
+  #    and form the Raft cluster (Type=simple units come up in parallel).
+  - [ dnf, install, -y, "${fastetcd_rpm_url}" ]
+
+  # 2) Kubernetes control plane — build from source (no published RPM yet,
+  #    rustkube#1) and install the EXACT upstream-named binaries + services.
+  - git clone --depth 1 --branch ${rustkube_ref} ${rustkube_repo} /opt/rustkube-src
+  - bash -lc 'cd /opt/rustkube-src && cargo build --release -p rk-apiserver --bins'
+  - install -m0755 /opt/rustkube-src/target/release/kube-apiserver           /usr/bin/kube-apiserver
+  - install -m0755 /opt/rustkube-src/target/release/kube-controller-manager  /usr/bin/kube-controller-manager
+  - install -m0755 /opt/rustkube-src/target/release/kube-scheduler           /usr/bin/kube-scheduler
+  - install -m0644 /opt/rustkube-src/deploy/systemd/kube-apiserver.service           /etc/systemd/system/kube-apiserver.service
+  - install -m0644 /opt/rustkube-src/deploy/systemd/kube-controller-manager.service  /etc/systemd/system/kube-controller-manager.service
+  - install -m0644 /opt/rustkube-src/deploy/systemd/kube-scheduler.service           /etc/systemd/system/kube-scheduler.service
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, kube-apiserver.service ]
+  - [ systemctl, enable, --now, kube-controller-manager.service ]
+  - [ systemctl, enable, --now, kube-scheduler.service ]
+
+final_message: "${fqdn} master (fastetcd + control plane) cloud-init complete in $UPTIME seconds"

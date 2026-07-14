@@ -35,3 +35,9 @@ fuzz/artifacts/
 
 # Benchmark output
 target/criterion/
+
+# Terragrunt / Terraform working caches
+.terragrunt-cache/
+**/.terragrunt-cache/
+.terraform/
+**/.terraform/

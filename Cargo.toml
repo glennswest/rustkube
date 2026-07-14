@@ -33,13 +33,9 @@ rk-dns = { path = "crates/rk-dns" }
 rk-cni = { path = "crates/rk-cni" }
 rk-cloud = { path = "crates/rk-cloud" }
 
-# Stormforce — etcd-compatible KV, consensus, PKI, security, registry
-stormforce-kv = { path = "../stormforce/crates/stormforce-kv" }
-stormforce-raft = { path = "../stormforce/crates/stormforce-raft" }
-stormforce-vault = { path = "../stormforce/crates/stormforce-vault" }
-stormforce-registry = { path = "../stormforce/crates/stormforce-registry" }
-stormforce-security = { path = "../stormforce/crates/stormforce-security" }
-stormforce-meta = { path = "../stormforce/crates/stormforce-meta" }
+# External datastore — fastetcd (etcd v3 wire-compatible) via the etcd-client crate.
+# "tls" pulls in tonic's rustls-based TLS (no OpenSSL), matching the rustls-only policy.
+etcd-client = { version = "0.14", features = ["tls"] }
 
 # Kubernetes types — pinned to K8s 1.32 (matches kube 0.99)
 k8s-openapi = { version = "0.24", features = ["v1_32"] }

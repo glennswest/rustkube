@@ -11,7 +11,16 @@ pub struct ApiServerConfig {
     pub tls_cert: Option<PathBuf>,
     /// Path to TLS private key PEM.
     pub tls_key: Option<PathBuf>,
-    /// Data directory for the embedded store.
+    /// External etcd/fastetcd endpoints (e.g. `https://127.0.0.1:2379`).
+    /// Required — RustKube uses an external datastore (kube architecture).
+    pub etcd_servers: Vec<String>,
+    /// CA certificate (PEM) to verify the etcd/fastetcd server.
+    pub etcd_cacert: Option<PathBuf>,
+    /// Client certificate (PEM) for mutual TLS to etcd/fastetcd.
+    pub etcd_cert: Option<PathBuf>,
+    /// Client private key (PEM) for mutual TLS to etcd/fastetcd.
+    pub etcd_key: Option<PathBuf>,
+    /// Data directory (TLS material, misc runtime state).
     pub data_dir: PathBuf,
     /// Cluster CIDR for service IPs.
     pub service_cidr: String,
@@ -30,7 +39,11 @@ impl Default for ApiServerConfig {
             secure_port: 6443,
             tls_cert: None,
             tls_key: None,
-            data_dir: PathBuf::from("/var/lib/rustkube"),
+            etcd_servers: Vec::new(),
+            etcd_cacert: None,
+            etcd_cert: None,
+            etcd_key: None,
+            data_dir: PathBuf::from("/var/lib/kubernetes"),
             service_cidr: "10.96.0.0/12".into(),
             cluster_domain: "cluster.local".into(),
             service_account_key: None,

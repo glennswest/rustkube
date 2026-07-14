@@ -7,10 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-# Stormforce — PKI/certs and security
-stormforce-vault = { workspace = true }
-stormforce-security = { workspace = true }
-
 # Kubernetes types
 k8s-openapi = { workspace = true }
 

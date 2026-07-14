@@ -1,0 +1,3 @@
+# /etc/kubernetes/kube-scheduler — EnvironmentFile for the service.
+APISERVER_URL=http://127.0.0.1:6443
+KUBE_SCHEDULER_ARGS=

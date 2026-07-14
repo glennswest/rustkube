@@ -1,6 +1,6 @@
 [package]
 name = "rk-store"
-description = "Distributed KV store for RustKube — wraps stormforce-kv"
+description = "External datastore client for RustKube — etcd v3 wire protocol (fastetcd)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,8 +8,7 @@ license.workspace = true
 
 [dependencies]
 rk-core = { workspace = true }
-stormforce-kv = { workspace = true }
-stormforce-raft = { workspace = true }
+etcd-client = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 serde = { workspace = true }
@@ -18,8 +17,3 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
-parking_lot = { workspace = true }
-dashmap = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }

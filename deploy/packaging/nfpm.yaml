@@ -1,0 +1,47 @@
+# nfpm config — builds BOTH .rpm and .deb for the Kubernetes control plane (Rust).
+#   nfpm package -f deploy/packaging/nfpm.yaml -p rpm -t dist/
+#   nfpm package -f deploy/packaging/nfpm.yaml -p deb -t dist/
+# Binaries carry EXACT upstream names so the package is a drop-in control
+# plane. Point BIN_DIR at the release build dir (default ./target/release).
+name: "kubernetes-rs"
+arch: "${PKG_ARCH}"        # amd64 / arm64 — set in env at build time
+platform: "linux"
+version: "${PKG_VERSION}"  # e.g. 0.3.0
+section: "admin"
+priority: "optional"
+maintainer: "Glenn West <glennswest@neuralcloudcomputing.com>"
+description: |
+  Kubernetes control plane, reimplemented in Rust. Drop-in upstream process
+  and service names (kube-apiserver, kube-controller-manager, kube-scheduler).
+  Uses an external fastetcd (etcd v3 wire protocol) as the datastore.
+vendor: "glennswest"
+homepage: "https://github.com/glennswest/rustkube"
+license: "Apache-2.0"
+
+contents:
+  - src: "${BIN_DIR}/kube-apiserver"
+    dst: "/usr/bin/kube-apiserver"
+  - src: "${BIN_DIR}/kube-controller-manager"
+    dst: "/usr/bin/kube-controller-manager"
+  - src: "${BIN_DIR}/kube-scheduler"
+    dst: "/usr/bin/kube-scheduler"
+
+  - src: "./deploy/systemd/kube-apiserver.service"
+    dst: "/usr/lib/systemd/system/kube-apiserver.service"
+  - src: "./deploy/systemd/kube-controller-manager.service"
+    dst: "/usr/lib/systemd/system/kube-controller-manager.service"
+  - src: "./deploy/systemd/kube-scheduler.service"
+    dst: "/usr/lib/systemd/system/kube-scheduler.service"
+
+  - src: "./deploy/systemd/kube-apiserver.example"
+    dst: "/etc/kubernetes/kube-apiserver"
+    type: "config|noreplace"
+  - src: "./deploy/systemd/kube-controller-manager.example"
+    dst: "/etc/kubernetes/kube-controller-manager"
+    type: "config|noreplace"
+  - src: "./deploy/systemd/kube-scheduler.example"
+    dst: "/etc/kubernetes/kube-scheduler"
+    type: "config|noreplace"
+
+scripts:
+  postinstall: "./deploy/packaging/postinstall.sh"

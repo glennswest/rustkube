@@ -1,0 +1,13 @@
+# /etc/kubernetes/kube-apiserver — EnvironmentFile for kube-apiserver.service.
+# The datastore is an external fastetcd (etcd v3 wire protocol).
+
+# Dedicated fastetcd endpoint(s). Resolves --etcd-servers via clap env.
+ETCD_SERVERS=http://127.0.0.1:2379
+
+# Extra flags (bind address, ports, service CIDR, TLS, ...).
+KUBE_APISERVER_ARGS=
+
+# Mutual TLS to a hardened fastetcd (uncomment all three to enable):
+#ETCD_CACERT=/etc/kubernetes/pki/etcd/ca.pem
+#ETCD_CERT=/etc/kubernetes/pki/etcd/client.pem
+#ETCD_KEY=/etc/kubernetes/pki/etcd/client-key.pem

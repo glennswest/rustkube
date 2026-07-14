@@ -1,0 +1,29 @@
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://kubernetes.io/docs/
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# ETCD_SERVERS resolves --etcd-servers via clap env binding (etcd-native name).
+EnvironmentFile=-/etc/kubernetes/kube-apiserver
+ExecStart=/usr/bin/kube-apiserver $KUBE_APISERVER_ARGS
+Restart=always
+RestartSec=2s
+LimitNOFILE=65536
+
+# Binds :6443 as a non-root user.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Hardening — all cluster state lives in external fastetcd, no local store.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kubernetes
+
+[Install]
+WantedBy=multi-user.target
