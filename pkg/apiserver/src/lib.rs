@@ -16,6 +16,7 @@ pub mod selector;
 pub mod server;
 pub mod storage;
 pub mod watch;
+pub mod watch_cache;
 
 pub use config::ApiServerConfig;
 pub use server::run;

@@ -4,6 +4,7 @@
 //! resourceVersion tracking, key construction, and metadata injection.
 
 use crate::error::ApiError;
+use crate::watch_cache::WatchCache;
 use apimachinery::store::KvStore;
 use serde_json::Value;
 use std::sync::Arc;
@@ -14,11 +15,13 @@ const REGISTRY_PREFIX: &str = "/registry";
 /// Generic resource storage — handles any K8s resource type.
 pub struct ResourceStorage {
     store: Arc<dyn KvStore>,
+    watch_cache: Arc<WatchCache>,
 }
 
 impl ResourceStorage {
     pub fn new(store: Arc<dyn KvStore>) -> Self {
-        Self { store }
+        let watch_cache = Arc::new(WatchCache::new(store.clone()));
+        Self { store, watch_cache }
     }
 
     /// Build the store key for a cluster-scoped resource.
@@ -142,13 +145,14 @@ impl ResourceStorage {
             .map_err(ApiError::from)
     }
 
-    /// Watch resources by prefix.
+    /// Watch resources by prefix, served through the shared watch cache (one
+    /// upstream store watch per prefix, fanned out in-memory).
     pub async fn watch(
         &self,
         prefix: &str,
         start_revision: u64,
     ) -> Result<apimachinery::store::WatchStream, ApiError> {
-        self.store
+        self.watch_cache
             .watch(prefix, start_revision)
             .await
             .map_err(ApiError::from)
