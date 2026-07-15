@@ -19,4 +19,4 @@ pub mod runner;
 pub mod service;
 pub mod statefulset;
 
-pub use runner::ControllerManager;
+pub use runner::{ClientConfig, ControllerManager};
