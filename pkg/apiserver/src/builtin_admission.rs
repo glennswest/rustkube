@@ -35,6 +35,7 @@ pub async fn admit_create(
     if resource == "pods" {
         service_account_default(obj);
         default_toleration_seconds(obj);
+        priority_from_class(storage, obj).await;
         // PodSecurity — validate against the namespace's enforce level.
         if let Some(ns_obj) = &ns_obj {
             let level = ns_obj["metadata"]["labels"]
@@ -168,6 +169,30 @@ fn default_toleration_seconds(obj: &mut Value) {
                 "effect": "NoExecute",
                 "tolerationSeconds": 300
             }));
+        }
+    }
+}
+
+/// Priority admission — resolve a Pod's `spec.priorityClassName` to
+/// `spec.priority` from the named PriorityClass (scheduling.k8s.io/v1), so the
+/// scheduler's PrioritySort can order it. Leaves priority unset if the class is
+/// missing (best-effort, matching how the scheduler defaults priority to 0).
+async fn priority_from_class(storage: &ResourceStorage, obj: &mut Value) {
+    if !obj["spec"]["priority"].is_null() {
+        return; // already set
+    }
+    let Some(class) = obj["spec"]["priorityClassName"].as_str() else {
+        return;
+    };
+    if class.is_empty() {
+        return;
+    }
+    let key = ResourceStorage::cluster_key("priorityclasses", class);
+    if let Ok(pc) = storage.get(&key).await {
+        if let Some(val) = pc["value"].as_i64() {
+            if let Some(spec) = obj.get_mut("spec").and_then(|s| s.as_object_mut()) {
+                spec.insert("priority".into(), json!(val));
+            }
         }
     }
 }

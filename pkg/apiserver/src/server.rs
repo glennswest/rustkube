@@ -124,6 +124,17 @@ fn build_router(state: AppState, signing_keys: SigningKeys, rbac: Arc<RbacEngine
             "/apis/coordination.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources),
         )
+        // scheduling.k8s.io v1 — PriorityClass (cluster-scoped)
+        .route(
+            "/apis/scheduling.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources).post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/scheduling.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource),
+        )
         // RBAC v1
         .route(
             "/apis/rbac.authorization.k8s.io/v1/{resource}",
