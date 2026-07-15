@@ -19,7 +19,7 @@ if [ "$MODE" = "plaintext" ]; then
   echo "=== fastetcd 3-node health ==="
   for ip in $M1 $M2 $M3; do
     echo -n "  $ip:2379 → "
-    ssh -o ConnectTimeout=8 fedora@$ip "sudo fastetcd-ctl --endpoints=http://127.0.0.1:2379 endpoint health 2>/dev/null || echo unreachable" 2>/dev/null | tail -1
+    ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 fedora@$ip "sudo fastetcd-ctl --endpoints=http://127.0.0.1:2379 endpoint health 2>/dev/null || echo unreachable" 2>/dev/null | tail -1
   done
   echo "=== kube-apiserver on master1 ==="
   wait_for "http://$M1:6443/healthz" 90 && echo "  healthz: $(curl -s http://$M1:6443/healthz)" || { echo "  apiserver not up (cloud-init may still be building)"; exit 1; }
@@ -28,9 +28,9 @@ if [ "$MODE" = "plaintext" ]; then
   curl -s -XPOST http://$M1:6443/api/v1/namespaces -H 'Content-Type: application/json' \
     -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"cluster-smoke"}}' >/dev/null
   echo "  GET via master2 (different apiserver, shared fastetcd): $(curl -s http://$M2:6443/api/v1/namespaces/cluster-smoke | python3 -c 'import sys,json;print(json.load(sys.stdin)["metadata"]["name"])' 2>/dev/null)"
-  echo "  key in fastetcd: $(ssh -o ConnectTimeout=8 fedora@$M1 "sudo fastetcd-ctl --endpoints=http://127.0.0.1:2379 get --prefix /registry/namespaces/cluster-smoke" 2>/dev/null | grep -a /registry | head -1)"
+  echo "  key in fastetcd: $(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 fedora@$M1 "sudo fastetcd-ctl --endpoints=http://127.0.0.1:2379 get --prefix /registry/namespaces/cluster-smoke" 2>/dev/null | grep -a /registry | head -1)"
   echo "=== control-plane services ==="
-  ssh -o ConnectTimeout=8 fedora@$M1 "systemctl is-active kube-apiserver kube-controller-manager kube-scheduler fastetcd 2>/dev/null" 2>/dev/null | paste -sd' ' -
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 fedora@$M1 "systemctl is-active kube-apiserver kube-controller-manager kube-scheduler fastetcd 2>/dev/null" 2>/dev/null | paste -sd' ' -
 
 elif [ "$MODE" = "tls" ]; then
   echo "=== generate a CA + admin client cert (system:masters) locally ==="
@@ -42,8 +42,8 @@ elif [ "$MODE" = "tls" ]; then
   openssl x509 -req -in "$T/admin.csr" -CA "$T/ca.pem" -CAkey "$T/ca.key" -CAcreateserial -days 365 \
     -out "$T/admin.pem" -extfile <(printf "extendedKeyUsage=clientAuth") 2>/dev/null
   echo "=== push CA to master1 + enable --tls --client-ca-file, restart apiserver ==="
-  scp -o ConnectTimeout=8 "$T/ca.pem" fedora@$M1:/tmp/client-ca.pem >/dev/null 2>&1
-  ssh -o ConnectTimeout=8 fedora@$M1 '
+  scp -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 "$T/ca.pem" fedora@$M1:/tmp/client-ca.pem >/dev/null 2>&1
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 fedora@$M1 '
     sudo install -D -m0644 /tmp/client-ca.pem /etc/kubernetes/pki/client-ca.pem
     echo "KUBE_APISERVER_ARGS=--tls --client-ca-file /etc/kubernetes/pki/client-ca.pem" | sudo tee -a /etc/kubernetes/kube-apiserver >/dev/null
     sudo systemctl restart kube-apiserver' 2>/dev/null
