@@ -15,7 +15,7 @@ use axum::middleware;
 use axum::routing::{get, patch};
 use axum::Router;
 use apimachinery::store::KvStore;
-use rk_store::{EtcdStore, EtcdTls};
+use storage::{EtcdStore, EtcdTls};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::net::TcpListener;

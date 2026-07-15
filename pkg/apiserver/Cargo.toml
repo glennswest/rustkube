@@ -1,5 +1,5 @@
 [package]
-name = "rk-apiserver"
+name = "apiserver"
 description = "Kubernetes-compatible API server for RustKube"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 apimachinery = { workspace = true }
-rk-store = { workspace = true }
+storage = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }
 tower = { workspace = true }
@@ -44,21 +44,3 @@ x509-parser = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tracing-subscriber = { workspace = true }
-
-[[bin]]
-name = "kube-apiserver"
-path = "src/bin/kube-apiserver.rs"
-
-[[bin]]
-name = "kube-controller-manager"
-path = "src/bin/kube-controller-manager.rs"
-
-[[bin]]
-name = "kube-scheduler"
-path = "src/bin/kube-scheduler.rs"
-
-[dependencies.rk-controllers]
-path = "../rk-controllers"
-
-[dependencies.rk-scheduler]
-path = "../rk-scheduler"

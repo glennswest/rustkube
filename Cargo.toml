@@ -1,12 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/apimachinery",
-    "crates/rk-store",
-    "crates/rk-apiserver",
-    "crates/rk-scheduler",
-    "crates/rk-controllers",
-    "crates/rk-cloud",
+    "pkg/apimachinery",
+    "pkg/storage",
+    "pkg/apiserver",
+    "pkg/scheduler",
+    "pkg/controller-manager",
+    "pkg/cloud",
+    "cmd/kube-apiserver",
+    "cmd/kube-controller-manager",
+    "cmd/kube-scheduler",
 ]
 
 [workspace.package]
@@ -18,12 +21,12 @@ repository = "https://github.com/glennswest/rustkube"
 
 [workspace.dependencies]
 # Internal crates
-apimachinery = { path = "crates/apimachinery" }
-rk-store = { path = "crates/rk-store" }
-rk-apiserver = { path = "crates/rk-apiserver" }
-rk-scheduler = { path = "crates/rk-scheduler" }
-rk-controllers = { path = "crates/rk-controllers" }
-rk-cloud = { path = "crates/rk-cloud" }
+apimachinery = { path = "pkg/apimachinery" }
+storage = { path = "pkg/storage" }
+apiserver = { path = "pkg/apiserver" }
+scheduler = { path = "pkg/scheduler" }
+controller-manager = { path = "pkg/controller-manager" }
+cloud = { path = "pkg/cloud" }
 
 # External datastore — fastetcd (etcd v3 wire-compatible) via the etcd-client crate.
 # "tls" pulls in tonic's rustls-based TLS (no OpenSSL), matching the rustls-only policy.

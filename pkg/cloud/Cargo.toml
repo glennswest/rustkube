@@ -1,5 +1,5 @@
 [package]
-name = "rk-cloud"
+name = "cloud"
 description = "Cloud controller manager framework for RustKube"
 version.workspace = true
 edition.workspace = true

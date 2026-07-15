@@ -2,7 +2,7 @@
 //! (filter/score plugin framework). Drop-in upstream process name.
 
 use clap::Parser;
-use rk_scheduler::Scheduler;
+use scheduler::Scheduler;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]

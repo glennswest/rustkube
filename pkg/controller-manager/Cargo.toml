@@ -1,6 +1,6 @@
 [package]
-name = "rk-scheduler"
-description = "Pod scheduling framework for RustKube"
+name = "controller-manager"
+description = "Built-in controllers for RustKube"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,4 +14,5 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 reqwest = { workspace = true }

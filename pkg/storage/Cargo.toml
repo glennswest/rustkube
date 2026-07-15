@@ -1,5 +1,5 @@
 [package]
-name = "rk-store"
+name = "storage"
 description = "External datastore client for RustKube — etcd v3 wire protocol (fastetcd)"
 version.workspace = true
 edition.workspace = true

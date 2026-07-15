@@ -1,5 +1,5 @@
 use clap::Parser;
-use rk_apiserver::ApiServerConfig;
+use apiserver::ApiServerConfig;
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
@@ -67,5 +67,5 @@ async fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    rk_apiserver::run(config).await
+    apiserver::run(config).await
 }

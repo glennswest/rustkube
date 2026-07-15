@@ -9,7 +9,7 @@ server talks to an *external* datastore over the etcd v3 gRPC wire protocol, exa
 like upstream `kube-apiserver` → etcd. The datastore is **fastetcd** (`../fastetcd`),
 a Rust, wire-compatible etcd v3 replacement.
 
-- `rk-store::EtcdStore` → `KvStore` impl over the `etcd-client` crate (talks to fastetcd)
+- `storage::EtcdStore` → `KvStore` impl over the `etcd-client` crate (talks to fastetcd)
 - Endpoints are supplied via `--etcd-servers` (required); optional mutual TLS via
   `--etcd-cacert` / `--etcd-cert` / `--etcd-key`
 - **No embedded store and no stormforce dependency** — the earlier `stormforce-kv`
@@ -26,19 +26,25 @@ cargo clippy          # lint
 
 ## Workspace Structure
 
+Upstream-shaped: thin `cmd/<component>` binaries over `pkg/<lib>` libraries.
+This repo is the control plane only.
+
 ```
-crates/
-  rk-core/          Shared types (k8s-openapi re-exports), errors, traits, RBAC, cert utils
-  rk-store/         Datastore client — etcd v3 gRPC (etcd-client) to external fastetcd
-  rk-apiserver/     K8s REST API (axum), auth, admission, watch cache, API groups
-  rk-scheduler/     Pod scheduling (filter, score, bind)
-  rk-controllers/   Built-in controllers (Deployment, ReplicaSet, Service, Namespace, etc.)
-  rk-kubelet/       Node agent (CRI gRPC client, pod lifecycle, health probes)
-  rk-proxy/         Service proxy (iptables Phase 1, eBPF Phase 2)
-  rk-dns/           Cluster DNS (hickory-dns, watches Services/Endpoints)
-  rk-cni/           CNI plugins (bridge, host-local, VXLAN)
-  rk-cloud/         Cloud controller manager framework
+cmd/
+  kube-apiserver/            binary (main.rs) → apiserver
+  kube-controller-manager/   binary → controller-manager
+  kube-scheduler/            binary → scheduler
+pkg/
+  apimachinery/     Shared types (k8s-openapi re-exports), errors, traits, RBAC, cert utils
+  storage/          Datastore client — etcd v3 gRPC (etcd-client) to external fastetcd
+  apiserver/        K8s REST API (axum), auth, admission, watch cache, API groups (lib)
+  scheduler/        Pod scheduling (filter, score, bind)
+  controller-manager/ Built-in controllers (Deployment, ReplicaSet, Service, Namespace, etc.)
+  cloud/            Cloud controller manager framework
 ```
+
+Node level (kubelet, kube-proxy, cni) → separate repo `rustkube-node`.
+DNS is external (microdns). Datastore is external (fastetcd).
 
 ## Version Locations
 

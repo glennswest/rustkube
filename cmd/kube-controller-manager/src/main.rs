@@ -3,7 +3,7 @@
 //! HPA, ...) against the API server. Drop-in upstream process name.
 
 use clap::Parser;
-use rk_controllers::ControllerManager;
+use controller_manager::ControllerManager;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]

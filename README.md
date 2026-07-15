@@ -10,18 +10,24 @@ RustKube is a full Kubernetes replacement built from the ground up in Rust for p
 
 ## Architecture
 
-| Crate | Purpose |
-|-------|---------|
-| `rk-core` | Shared types (re-exports k8s-openapi), error handling, traits |
-| `rk-store` | Datastore client — speaks etcd v3 gRPC to an external fastetcd |
-| `rk-apiserver` | K8s REST API server (axum), auth, admission, watch cache |
-| `rk-scheduler` | Pod scheduling framework (filter, score, bind) |
-| `rk-controllers` | Built-in controllers (Deployment, ReplicaSet, Service, etc.) |
-| `rk-kubelet` | Node agent, CRI client, pod lifecycle, health probes |
-| `rk-proxy` | Service proxy (iptables fallback, eBPF primary) |
-| `rk-dns` | Cluster DNS (hickory-dns, watches Services/Endpoints) |
-| `rk-cni` | CNI plugins (bridge, host-local, VXLAN overlay) |
-| `rk-cloud` | Cloud controller manager framework |
+Upstream-shaped layout: thin `cmd/<component>` binaries over `pkg/<lib>`
+libraries. This repo is the **control plane** — the node level lives in
+[rustkube-node](https://github.com/glennswest/rustkube-node), the datastore in
+[fastetcd](https://github.com/glennswest/fastetcd), and DNS in
+[microdns](https://github.com/glennswest/microdns).
+
+```
+cmd/                              pkg/
+  kube-apiserver/           →       apiserver/          K8s REST API (axum), auth, admission, watch cache
+  kube-controller-manager/  →       controller-manager/ built-in controllers (Deployment, ReplicaSet, Service, …)
+  kube-scheduler/           →       scheduler/          pod scheduling (filter, score, bind)
+                                    apimachinery/       shared types (re-exports k8s-openapi), errors, traits
+                                    storage/            datastore client — etcd v3 gRPC to external fastetcd
+                                    cloud/              cloud controller manager framework
+```
+
+Binaries carry exact upstream names (`kube-apiserver`, `kube-controller-manager`,
+`kube-scheduler`) — a drop-in control plane.
 
 ## Key Design Decisions
 

@@ -72,7 +72,7 @@ runcmd:
   # 2) Kubernetes control plane — build from source (no published RPM yet,
   #    rustkube#1) and install the EXACT upstream-named binaries + services.
   - git clone --depth 1 --branch ${rustkube_ref} ${rustkube_repo} /opt/rustkube-src
-  - bash -lc 'cd /opt/rustkube-src && cargo build --release -p rk-apiserver --bins'
+  - bash -lc 'cd /opt/rustkube-src && cargo build --release --bins'
   - install -m0755 /opt/rustkube-src/target/release/kube-apiserver           /usr/bin/kube-apiserver
   - install -m0755 /opt/rustkube-src/target/release/kube-controller-manager  /usr/bin/kube-controller-manager
   - install -m0755 /opt/rustkube-src/target/release/kube-scheduler           /usr/bin/kube-scheduler

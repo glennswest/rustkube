@@ -1,0 +1,19 @@
+[package]
+name = "kube-scheduler"
+description = "Kubernetes scheduler (Rust) — command entrypoint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kube-scheduler"
+path = "src/main.rs"
+
+[dependencies]
+scheduler = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
