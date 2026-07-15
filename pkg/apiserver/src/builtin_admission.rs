@@ -22,20 +22,35 @@ pub async fn admit_create(
 ) -> Result<(), ApiError> {
     // NamespaceLifecycle — namespaced resources (other than Namespaces) require
     // an existing, non-terminating namespace.
-    if let Some(ns) = namespace {
+    let ns_obj = if let Some(ns) = namespace {
         if resource != "namespaces" {
-            namespace_lifecycle(storage, ns).await?;
+            Some(namespace_lifecycle(storage, ns).await?)
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
     if resource == "pods" {
         service_account_default(obj);
         default_toleration_seconds(obj);
+        // PodSecurity — validate against the namespace's enforce level.
+        if let Some(ns_obj) = &ns_obj {
+            let level = ns_obj["metadata"]["labels"]
+                ["pod-security.kubernetes.io/enforce"]
+                .as_str()
+                .unwrap_or("");
+            pod_security(level, obj)?;
+        }
     }
     Ok(())
 }
 
-async fn namespace_lifecycle(storage: &ResourceStorage, ns: &str) -> Result<(), ApiError> {
+async fn namespace_lifecycle(
+    storage: &ResourceStorage,
+    ns: &str,
+) -> Result<serde_json::Value, ApiError> {
     let key = ResourceStorage::cluster_key("namespaces", ns);
     match storage.get(&key).await {
         Ok(nsobj) => {
@@ -44,12 +59,76 @@ async fn namespace_lifecycle(storage: &ResourceStorage, ns: &str) -> Result<(), 
                     "unable to create new content in namespace {ns} because it is being terminated"
                 )));
             }
-            Ok(())
+            Ok(nsobj)
         }
-        Err(_) => Err(ApiError::forbidden(&format!(
-            "namespace {ns} not found"
-        ))),
+        Err(_) => Err(ApiError::forbidden(&format!("namespace {ns} not found"))),
     }
+}
+
+/// PodSecurity admission — a subset of the baseline/restricted checks, keyed on
+/// the namespace's `pod-security.kubernetes.io/enforce` level.
+fn pod_security(level: &str, obj: &Value) -> Result<(), ApiError> {
+    if level.is_empty() || level == "privileged" {
+        return Ok(());
+    }
+    let spec = &obj["spec"];
+
+    // baseline + restricted: no host namespaces, no hostPath volumes.
+    for key in ["hostNetwork", "hostPID", "hostIPC"] {
+        if spec[key].as_bool() == Some(true) {
+            return Err(ApiError::forbidden(&format!(
+                "pod security \"{level}\": {key} is not allowed"
+            )));
+        }
+    }
+    if let Some(vols) = spec["volumes"].as_array() {
+        if vols.iter().any(|v| !v["hostPath"].is_null()) {
+            return Err(ApiError::forbidden(&format!(
+                "pod security \"{level}\": hostPath volumes are not allowed"
+            )));
+        }
+    }
+
+    let empty = vec![];
+    let containers = spec["containers"].as_array().unwrap_or(&empty);
+    let init = spec["initContainers"].as_array().unwrap_or(&empty);
+    for c in containers.iter().chain(init.iter()) {
+        let sc = &c["securityContext"];
+        if sc["privileged"].as_bool() == Some(true) {
+            return Err(ApiError::forbidden(&format!(
+                "pod security \"{level}\": privileged containers are not allowed"
+            )));
+        }
+        if level == "restricted" {
+            if sc["allowPrivilegeEscalation"].as_bool() != Some(false) {
+                return Err(ApiError::forbidden(
+                    "pod security \"restricted\": allowPrivilegeEscalation must be false",
+                ));
+            }
+            let drops_all = sc["capabilities"]["drop"]
+                .as_array()
+                .map(|d| d.iter().any(|x| x.as_str() == Some("ALL")))
+                .unwrap_or(false);
+            if !drops_all {
+                return Err(ApiError::forbidden(
+                    "pod security \"restricted\": containers must drop ALL capabilities",
+                ));
+            }
+        }
+    }
+
+    if level == "restricted" {
+        let pod_nonroot = spec["securityContext"]["runAsNonRoot"].as_bool() == Some(true);
+        for c in containers.iter().chain(init.iter()) {
+            let c_nonroot = c["securityContext"]["runAsNonRoot"].as_bool() == Some(true);
+            if !pod_nonroot && !c_nonroot {
+                return Err(ApiError::forbidden(
+                    "pod security \"restricted\": runAsNonRoot must be true",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn service_account_default(obj: &mut Value) {
