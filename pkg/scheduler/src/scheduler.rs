@@ -60,6 +60,8 @@ impl Scheduler {
     /// Run the scheduler loop forever.
     pub async fn run(&self) -> anyhow::Result<()> {
         info!("Scheduler started");
+        // Prometheus /metrics + /healthz (scraped by ironprom), upstream :10259.
+        crate::metrics_server::spawn(10259);
         let mut interval = time::interval(Duration::from_secs(1));
 
         loop {

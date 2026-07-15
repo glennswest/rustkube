@@ -12,6 +12,7 @@ pub mod gc;
 pub mod hpa;
 pub mod job;
 pub mod leaderelection;
+pub mod metrics_server;
 pub mod migration;
 pub mod namespace;
 pub mod node;

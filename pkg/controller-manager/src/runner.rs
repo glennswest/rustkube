@@ -251,8 +251,12 @@ impl ControllerManager {
     /// controllers run only while this instance holds the lease; on losing it,
     /// they stop and the manager stands by to re-acquire.
     pub async fn run(&self) -> anyhow::Result<()> {
+        // Prometheus /metrics + /healthz (scraped by ironprom), upstream :10257.
+        crate::metrics_server::spawn(10257);
+
         if !self.leader_elect {
             info!("Starting controller manager (leader election disabled)");
+            crate::metrics_server::set_leader(true);
             let mut tasks = self.spawn_all();
             while let Some(result) = tasks.join_next().await {
                 if let Err(e) = result {
@@ -272,11 +276,13 @@ impl ControllerManager {
         loop {
             elector.acquire().await;
             info!("Became leader; starting controllers");
+            crate::metrics_server::set_leader(true);
             let mut tasks = self.spawn_all();
             loop {
                 tokio::time::sleep(elector.retry_period()).await;
                 if !elector.try_acquire_or_renew().await {
                     warn!("Lost leadership; stopping controllers");
+                    crate::metrics_server::set_leader(false);
                     tasks.abort_all();
                     while tasks.join_next().await.is_some() {}
                     break;

@@ -585,7 +585,10 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "apimachinery",
+ "axum 0.8.8",
  "chrono",
+ "metrics",
+ "metrics-exporter-prometheus",
  "reqwest",
  "serde",
  "serde_json",
@@ -2292,7 +2295,10 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "apimachinery",
+ "axum 0.8.8",
  "chrono",
+ "metrics",
+ "metrics-exporter-prometheus",
  "reqwest",
  "serde",
  "serde_json",
