@@ -179,6 +179,8 @@ pub async fn create_cluster_resource(
 
     ensure_metadata(&mut body, &name, None);
 
+    crate::builtin_admission::admit_create(&state.storage, &resource, None, &mut body).await?;
+
     let key = ResourceStorage::cluster_key(&resource, &name);
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
@@ -196,6 +198,10 @@ pub async fn create_namespaced_resource(
         .to_string();
 
     ensure_metadata(&mut body, &name, Some(&namespace));
+
+    // Built-in admission (NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds).
+    crate::builtin_admission::admit_create(&state.storage, &resource, Some(&namespace), &mut body)
+        .await?;
 
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
     let obj = state.storage.create(&key, body).await?;

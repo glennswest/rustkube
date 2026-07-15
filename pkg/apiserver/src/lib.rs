@@ -5,6 +5,7 @@
 
 pub mod admission;
 pub mod aggregation;
+pub mod builtin_admission;
 pub mod auth;
 pub mod config;
 pub mod crd;
