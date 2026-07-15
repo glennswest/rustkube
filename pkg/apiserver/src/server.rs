@@ -408,10 +408,40 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let app = build_router(state, signing_keys, rbac);
 
     let addr = format!("{}:{}", config.bind_addr, config.secure_port);
-    info!("RustKube API server listening on {addr}");
+
+    // Resolve TLS material: explicit cert/key files, else an auto self-signed
+    // cert (dev), else plain HTTP.
+    let tls_pem: Option<(Vec<u8>, Vec<u8>)> =
+        if let (Some(cert), Some(key)) = (&config.tls_cert, &config.tls_key) {
+            Some((std::fs::read(cert)?, std::fs::read(key)?))
+        } else if config.tls_auto {
+            let sans = vec![
+                "kubernetes".to_string(),
+                "kubernetes.default".to_string(),
+                "kubernetes.default.svc".to_string(),
+                "kubernetes.default.svc.cluster.local".to_string(),
+                "localhost".to_string(),
+            ];
+            let sc = apimachinery::certs::generate_server_cert("kube-apiserver", &sans)?;
+            Some((sc.cert_pem.into_bytes(), sc.key_pem.into_bytes()))
+        } else {
+            None
+        };
 
     let listener = TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    match tls_pem {
+        Some((cert, key)) => {
+            // Install the ring crypto provider once (rustls 0.23 requires one).
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            info!("kube-apiserver serving HTTPS on {addr}");
+            let cfg = crate::tls::server_config(&cert, &key)?;
+            crate::tls::serve(listener, app, cfg).await?;
+        }
+        None => {
+            info!("kube-apiserver serving HTTP on {addr} (TLS not configured)");
+            axum::serve(listener, app).await?;
+        }
+    }
 
     Ok(())
 }

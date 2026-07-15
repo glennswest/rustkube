@@ -31,6 +31,18 @@ struct Cli {
     #[arg(long, env = "ETCD_KEY")]
     etcd_key: Option<PathBuf>,
 
+    /// Serve HTTPS with an auto-generated self-signed cert (dev/bootstrap)
+    #[arg(long)]
+    tls: bool,
+
+    /// TLS server certificate (PEM); enables HTTPS
+    #[arg(long = "tls-cert-file")]
+    tls_cert: Option<PathBuf>,
+
+    /// TLS server private key (PEM)
+    #[arg(long = "tls-private-key-file")]
+    tls_key: Option<PathBuf>,
+
     /// Data directory (TLS material, misc runtime state)
     #[arg(long, default_value = "/var/lib/kubernetes")]
     data_dir: PathBuf,
@@ -61,6 +73,9 @@ async fn main() -> anyhow::Result<()> {
         etcd_cacert: cli.etcd_cacert,
         etcd_cert: cli.etcd_cert,
         etcd_key: cli.etcd_key,
+        tls_cert: cli.tls_cert,
+        tls_key: cli.tls_key,
+        tls_auto: cli.tls,
         data_dir: cli.data_dir,
         service_cidr: cli.service_cidr,
         cluster_domain: cli.cluster_domain,
