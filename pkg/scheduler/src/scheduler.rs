@@ -85,38 +85,38 @@ impl Scheduler {
         let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
         let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
 
+        // Collect all unscheduled, non-terminal pods across namespaces.
+        let mut pending: Vec<(String, Value)> = Vec::new();
         for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
+            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default").to_string();
             let pod_list: Value = self
                 .api
                 .list(&format!("/api/v1/namespaces/{ns_name}/pods"))
                 .await?;
-            let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-
-            for pod in &pods {
-                let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
-                let node_name = pod["spec"]["nodeName"].as_str().unwrap_or("");
-
-                // Skip already-scheduled pods
-                if !node_name.is_empty() {
-                    continue;
+            for pod in pod_list["items"].as_array().cloned().unwrap_or_default() {
+                if !pod["spec"]["nodeName"].as_str().unwrap_or("").is_empty() {
+                    continue; // already scheduled
                 }
-
-                // Skip terminated pods
                 let phase = pod["status"]["phase"].as_str().unwrap_or("Pending");
                 if phase == "Succeeded" || phase == "Failed" {
-                    continue;
+                    continue; // terminal
                 }
+                pending.push((ns_name.clone(), pod));
+            }
+        }
 
-                // Schedule this pod
-                match self.schedule_pod(ns_name, pod, &nodes).await {
-                    Ok(chosen_node) => {
-                        info!("Scheduled pod {ns_name}/{pod_name} -> {chosen_node}");
-                    }
-                    Err(e) => {
-                        debug!("Failed to schedule pod {ns_name}/{pod_name}: {e}");
-                    }
-                }
+        // PrioritySort: highest priority first, ties broken by creationTimestamp.
+        pending.sort_by(|a, b| {
+            pod_priority(&b.1)
+                .cmp(&pod_priority(&a.1))
+                .then_with(|| creation_ts(&a.1).cmp(&creation_ts(&b.1)))
+        });
+
+        for (ns_name, pod) in &pending {
+            let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
+            match self.schedule_pod(ns_name, pod, &nodes).await {
+                Ok(chosen_node) => info!("Scheduled pod {ns_name}/{pod_name} -> {chosen_node}"),
+                Err(e) => debug!("Failed to schedule pod {ns_name}/{pod_name}: {e}"),
             }
         }
 
@@ -184,5 +184,49 @@ impl Scheduler {
             .await?;
 
         Ok(chosen_name.to_string())
+    }
+}
+
+/// Pod scheduling priority (`spec.priority`, resolved from PriorityClass by
+/// admission upstream); default 0. Higher schedules first.
+pub fn pod_priority(pod: &serde_json::Value) -> i64 {
+    pod["spec"]["priority"].as_i64().unwrap_or(0)
+}
+
+fn creation_ts(pod: &serde_json::Value) -> String {
+    pod["metadata"]["creationTimestamp"]
+        .as_str()
+        .unwrap_or("")
+        .to_string()
+}
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn priority_sort_orders_high_first_then_by_creation() {
+        let mk = |name: &str, prio: Option<i64>, ts: &str| {
+            let mut spec = json!({});
+            if let Some(p) = prio {
+                spec["priority"] = json!(p);
+            }
+            ("default".to_string(),
+             json!({"metadata":{"name":name,"creationTimestamp":ts},"spec":spec}))
+        };
+        let mut v = vec![
+            mk("low", Some(0), "2026-01-01T00:00:02Z"),
+            mk("high", Some(1000), "2026-01-01T00:00:03Z"),
+            mk("old-default", None, "2026-01-01T00:00:00Z"),
+            mk("new-default", None, "2026-01-01T00:00:01Z"),
+        ];
+        v.sort_by(|a, b| {
+            pod_priority(&b.1)
+                .cmp(&pod_priority(&a.1))
+                .then_with(|| creation_ts(&a.1).cmp(&creation_ts(&b.1)))
+        });
+        let order: Vec<&str> = v.iter().map(|(_, p)| p["metadata"]["name"].as_str().unwrap()).collect();
+        assert_eq!(order, ["high", "old-default", "new-default", "low"]);
     }
 }
