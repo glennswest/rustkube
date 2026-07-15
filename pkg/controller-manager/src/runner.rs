@@ -238,7 +238,12 @@ impl ControllerManager {
             gateway::GatewayController::new(api).run().await;
         });
 
-        info!("All controllers started (12 controllers)");
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::gc::GarbageCollector::new(api).run().await;
+        });
+
+        info!("All controllers started (13 controllers)");
         tasks
     }
 
