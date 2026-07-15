@@ -466,8 +466,13 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         Some((cert, key)) => {
             // Install the ring crypto provider once (rustls 0.23 requires one).
             let _ = rustls::crypto::ring::default_provider().install_default();
-            info!("kube-apiserver serving HTTPS on {addr}");
-            let cfg = crate::tls::server_config(&cert, &key)?;
+            let client_ca = config.client_ca.as_ref().map(std::fs::read).transpose()?;
+            if client_ca.is_some() {
+                info!("kube-apiserver serving HTTPS on {addr} (x509 client-cert auth enabled)");
+            } else {
+                info!("kube-apiserver serving HTTPS on {addr}");
+            }
+            let cfg = crate::tls::server_config(&cert, &key, client_ca.as_deref())?;
             crate::tls::serve(listener, app, cfg).await?;
         }
         None => {

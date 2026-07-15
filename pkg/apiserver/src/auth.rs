@@ -18,6 +18,31 @@ pub struct UserInfo {
     pub groups: Vec<String>,
 }
 
+/// Identity extracted from a client TLS certificate: CN → username,
+/// each O (organization) → a group. Matches upstream x509 authentication.
+#[derive(Debug, Clone)]
+pub struct X509Identity {
+    pub username: String,
+    pub groups: Vec<String>,
+}
+
+/// Parse a DER client certificate into an `X509Identity` (CN + organizations).
+pub fn x509_identity_from_der(der: &[u8]) -> Option<X509Identity> {
+    use x509_parser::prelude::*;
+    let (_, cert) = X509Certificate::from_der(der).ok()?;
+    let subject = cert.subject();
+    let username = subject
+        .iter_common_name()
+        .next()
+        .and_then(|a| a.as_str().ok())?
+        .to_string();
+    let groups = subject
+        .iter_organization()
+        .filter_map(|a| a.as_str().ok().map(|s| s.to_string()))
+        .collect();
+    Some(X509Identity { username, groups })
+}
+
 /// JWT claims for ServiceAccount and user tokens.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -68,7 +93,13 @@ impl SigningKeys {
 ///
 /// Checks for Bearer token in Authorization header. Falls back to anonymous.
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, StatusCode> {
-    let user_info = if let Some(auth_header) = request.headers().get("authorization") {
+    // 1. x509 client-cert identity (injected by the TLS layer) takes precedence.
+    let user_info = if let Some(Some(id)) = request.extensions().get::<Option<X509Identity>>() {
+        UserInfo {
+            username: id.username.clone(),
+            groups: id.groups.clone(),
+        }
+    } else if let Some(auth_header) = request.headers().get("authorization") {
         if let Ok(header_str) = auth_header.to_str() {
             if let Some(token) = header_str.strip_prefix("Bearer ") {
                 // Try to extract signing keys from extensions

@@ -14,6 +14,8 @@ pub struct ApiServerConfig {
     /// Serve HTTPS with an auto-generated self-signed cert when no cert is
     /// configured (dev/bootstrap). Ignored if `tls_cert`/`tls_key` are set.
     pub tls_auto: bool,
+    /// CA bundle (PEM) to verify client certificates for x509 authentication.
+    pub client_ca: Option<PathBuf>,
     /// External etcd/fastetcd endpoints (e.g. `https://127.0.0.1:2379`).
     /// Required — RustKube uses an external datastore (kube architecture).
     pub etcd_servers: Vec<String>,
@@ -43,6 +45,7 @@ impl Default for ApiServerConfig {
             tls_cert: None,
             tls_key: None,
             tls_auto: false,
+            client_ca: None,
             etcd_servers: Vec::new(),
             etcd_cacert: None,
             etcd_cert: None,
