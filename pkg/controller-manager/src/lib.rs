@@ -10,6 +10,7 @@ pub mod deployment;
 pub mod gateway;
 pub mod hpa;
 pub mod job;
+pub mod leaderelection;
 pub mod migration;
 pub mod namespace;
 pub mod node;

@@ -3,7 +3,7 @@
 use crate::{cronjob, daemonset, deployment, gateway, hpa, job, migration, namespace, node, replicaset, service, statefulset};
 use std::sync::Arc;
 use tokio::task::JoinSet;
-use tracing::info;
+use tracing::{info, warn};
 
 /// HTTP client configuration for talking to the API server.
 #[derive(Clone)]
@@ -96,19 +96,30 @@ impl ApiClient {
 /// Controller manager — runs all controllers.
 pub struct ControllerManager {
     api: Arc<ApiClient>,
+    leader_elect: bool,
+    identity: String,
 }
 
 impl ControllerManager {
     pub fn new(api_server_url: &str) -> Self {
+        let host = std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("NODE_NAME"))
+            .unwrap_or_else(|_| "kube-controller-manager".to_string());
         Self {
             api: Arc::new(ApiClient::new(api_server_url)),
+            leader_elect: true,
+            identity: format!("{host}_{}", std::process::id()),
         }
     }
 
-    /// Start all controllers. Blocks forever.
-    pub async fn run(&self) -> anyhow::Result<()> {
-        info!("Starting controller manager");
+    /// Enable/disable leader election (upstream default: enabled).
+    pub fn with_leader_election(mut self, enabled: bool) -> Self {
+        self.leader_elect = enabled;
+        self
+    }
 
+    /// Spawn all controllers into a JoinSet.
+    fn spawn_all(&self) -> JoinSet<()> {
         let mut tasks = JoinSet::new();
 
         let api = self.api.clone();
@@ -172,14 +183,44 @@ impl ControllerManager {
         });
 
         info!("All controllers started (12 controllers)");
+        tasks
+    }
 
-        // Wait for any controller to exit (shouldn't happen)
-        while let Some(result) = tasks.join_next().await {
-            if let Err(e) = result {
-                tracing::error!("Controller exited with error: {e}");
+    /// Run the controller manager. With leader election enabled (default),
+    /// controllers run only while this instance holds the lease; on losing it,
+    /// they stop and the manager stands by to re-acquire.
+    pub async fn run(&self) -> anyhow::Result<()> {
+        if !self.leader_elect {
+            info!("Starting controller manager (leader election disabled)");
+            let mut tasks = self.spawn_all();
+            while let Some(result) = tasks.join_next().await {
+                if let Err(e) = result {
+                    tracing::error!("Controller exited with error: {e}");
+                }
             }
+            return Ok(());
         }
 
-        Ok(())
+        let elector = crate::leaderelection::LeaderElector::new(
+            self.api.clone(),
+            "kube-controller-manager",
+            "kube-system",
+            &self.identity,
+        );
+        info!("Leader election enabled (identity={})", self.identity);
+        loop {
+            elector.acquire().await;
+            info!("Became leader; starting controllers");
+            let mut tasks = self.spawn_all();
+            loop {
+                tokio::time::sleep(elector.retry_period()).await;
+                if !elector.try_acquire_or_renew().await {
+                    warn!("Lost leadership; stopping controllers");
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    break;
+                }
+            }
+        }
     }
 }

@@ -86,22 +86,20 @@ impl ResourceStorage {
 
     /// Create a resource (fails if it already exists).
     pub async fn create(&self, key: &str, mut obj: Value) -> Result<Value, ApiError> {
-        // Check for existing
-        if self.store.get(key).await.map_err(ApiError::from)?.is_some() {
-            let name = obj["metadata"]["name"]
-                .as_str()
-                .unwrap_or("unknown");
-            let kind = obj["kind"].as_str().unwrap_or("resource");
-            return Err(ApiError::already_exists(kind, name));
-        }
-
         let bytes =
             serde_json::to_vec(&obj).map_err(|e| ApiError::internal(&e.to_string()))?;
-        let rev = self
-            .store
-            .put(key, &bytes, None)
-            .await
-            .map_err(ApiError::from)?;
+        // Atomic create-if-not-exists: CAS against revision 0 (the store treats
+        // an absent key as revision 0) fails with Conflict if the key exists, so
+        // two concurrent creates can't both win.
+        let rev = match self.store.put(key, &bytes, Some(0)).await {
+            Ok(rev) => rev,
+            Err(apimachinery::Error::Conflict) => {
+                let name = obj["metadata"]["name"].as_str().unwrap_or("unknown");
+                let kind = obj["kind"].as_str().unwrap_or("resource");
+                return Err(ApiError::already_exists(kind, name));
+            }
+            Err(e) => return Err(ApiError::from(e)),
+        };
 
         // Set resourceVersion in the returned object
         if let Some(meta) = obj.get_mut("metadata").and_then(|m| m.as_object_mut()) {

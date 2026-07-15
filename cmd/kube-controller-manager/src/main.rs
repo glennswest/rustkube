@@ -12,6 +12,10 @@ struct Cli {
     /// API server URL to reconcile against.
     #[arg(long, env = "APISERVER_URL", default_value = "http://127.0.0.1:6443")]
     apiserver: String,
+
+    /// Elect a leader before running controllers (only one instance is active).
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    leader_elect: bool,
 }
 
 #[tokio::main]
@@ -25,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     tracing::info!("kube-controller-manager starting — apiserver={}", cli.apiserver);
 
-    let cm = ControllerManager::new(&cli.apiserver);
+    let cm = ControllerManager::new(&cli.apiserver).with_leader_election(cli.leader_elect);
     if let Err(e) = cm.run().await {
         anyhow::bail!("controller-manager failed: {e}");
     }
