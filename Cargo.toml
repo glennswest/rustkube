@@ -6,10 +6,6 @@ members = [
     "crates/rk-apiserver",
     "crates/rk-scheduler",
     "crates/rk-controllers",
-    "crates/rk-kubelet",
-    "crates/rk-proxy",
-    "crates/rk-dns",
-    "crates/rk-cni",
     "crates/rk-cloud",
 ]
 
@@ -27,10 +23,6 @@ rk-store = { path = "crates/rk-store" }
 rk-apiserver = { path = "crates/rk-apiserver" }
 rk-scheduler = { path = "crates/rk-scheduler" }
 rk-controllers = { path = "crates/rk-controllers" }
-rk-kubelet = { path = "crates/rk-kubelet" }
-rk-proxy = { path = "crates/rk-proxy" }
-rk-dns = { path = "crates/rk-dns" }
-rk-cni = { path = "crates/rk-cni" }
 rk-cloud = { path = "crates/rk-cloud" }
 
 # External datastore — fastetcd (etcd v3 wire-compatible) via the etcd-client crate.
