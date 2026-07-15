@@ -12,7 +12,7 @@ use crate::handlers::AppState;
 use crate::rbac_engine::{self, RbacEngine};
 use crate::storage::ResourceStorage;
 use axum::middleware;
-use axum::routing::{get, patch};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use apimachinery::store::KvStore;
 use storage::{EtcdStore, EtcdTls};
@@ -69,6 +69,11 @@ fn build_router(state: AppState, signing_keys: SigningKeys, rbac: Arc<RbacEngine
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
                 .delete(resource::delete_namespaced_resource),
+        )
+        // ServiceAccount TokenRequest (mint a bound SA token)
+        .route(
+            "/api/v1/namespaces/{namespace}/serviceaccounts/{name}/token",
+            post(crate::handlers::token::create_serviceaccount_token),
         )
         // Apps v1 — namespace-scoped resources
         .route(

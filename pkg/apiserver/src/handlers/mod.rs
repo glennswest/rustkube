@@ -4,6 +4,7 @@
 //! plus specific route builders for core/v1 and apps/v1 resources.
 
 pub mod resource;
+pub mod token;
 
 use crate::crd::CrdRegistry;
 use crate::storage::ResourceStorage;
