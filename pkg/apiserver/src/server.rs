@@ -410,7 +410,24 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         storage,
         crd_registry,
     };
-    let app = build_router(state, signing_keys, rbac);
+    // Prometheus metrics recorder + /metrics endpoint (scraped by ironprom).
+    let prom = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .map_err(|e| anyhow::anyhow!("prometheus recorder: {e}"))?;
+    metrics::gauge!("apiserver_build_info", "version" => apimachinery::VERSION).set(1.0);
+
+    let app = build_router(state, signing_keys, rbac)
+        .route(
+            "/metrics",
+            axum::routing::get({
+                let h = prom.clone();
+                move || {
+                    let h = h.clone();
+                    async move { h.render() }
+                }
+            }),
+        )
+        .layer(middleware::from_fn(metrics_middleware));
 
     let addr = format!("{}:{}", config.bind_addr, config.secure_port);
 
@@ -597,4 +614,14 @@ async fn bootstrap_rbac(storage: &ResourceStorage) {
             anon_admin_binding,
         )
         .await;
+}
+
+/// Count every request as `apiserver_request_total{method=...}`.
+async fn metrics_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = req.method().as_str().to_string();
+    metrics::counter!("apiserver_request_total", "method" => method).increment(1);
+    next.run(req).await
 }
