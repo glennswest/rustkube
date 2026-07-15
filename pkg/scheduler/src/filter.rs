@@ -34,7 +34,17 @@ pub fn run_filters(pod: &Value, node: &Value) -> FilterResult {
         return FilterResult::Fail(reason);
     }
 
-    // Filter 5: Resource fit
+    // Filter 5: Required nodeAffinity (enforces e.g. kubernetes.io/arch for multi-arch)
+    if let FilterResult::Fail(reason) = node_affinity_filter(pod, node) {
+        return FilterResult::Fail(reason);
+    }
+
+    // Filter 6: nodeName binding
+    if let FilterResult::Fail(reason) = node_name_filter(pod, node) {
+        return FilterResult::Fail(reason);
+    }
+
+    // Filter 7: Resource fit
     if let FilterResult::Fail(reason) = resource_fit_filter(pod, node) {
         return FilterResult::Fail(reason);
     }
@@ -325,5 +335,132 @@ mod tests {
             node_selector_filter(&pod, &non_matching),
             FilterResult::Fail(_)
         ));
+    }
+}
+
+/// Enforce `requiredDuringSchedulingIgnoredDuringExecution` nodeAffinity: the
+/// node must match at least one nodeSelectorTerm (OR across terms; AND across a
+/// term's matchExpressions). This is what enforces `kubernetes.io/arch` for
+/// multi-arch scheduling once admission injects the arch nodeAffinity.
+fn node_affinity_filter(pod: &Value, node: &Value) -> FilterResult {
+    let terms = pod["spec"]["affinity"]["nodeAffinity"]
+        ["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
+        .as_array();
+    let terms = match terms {
+        Some(t) if !t.is_empty() => t,
+        _ => return FilterResult::Pass, // no required affinity
+    };
+    let labels = node["metadata"]["labels"].as_object();
+    let node_name = node["metadata"]["name"].as_str().unwrap_or("");
+    for term in terms {
+        if node_selector_term_matches(term, labels, node_name) {
+            return FilterResult::Pass;
+        }
+    }
+    FilterResult::Fail("node does not match required nodeAffinity".into())
+}
+
+fn node_selector_term_matches(
+    term: &Value,
+    labels: Option<&serde_json::Map<String, Value>>,
+    node_name: &str,
+) -> bool {
+    if let Some(exprs) = term["matchExpressions"].as_array() {
+        for e in exprs {
+            let key = e["key"].as_str().unwrap_or("");
+            let node_val = labels.and_then(|l| l.get(key));
+            if !match_expression(e, node_val) {
+                return false;
+            }
+        }
+    }
+    // matchFields — only metadata.name is meaningful.
+    if let Some(fields) = term["matchFields"].as_array() {
+        for f in fields {
+            if f["key"].as_str() != Some("metadata.name") {
+                continue;
+            }
+            let op = f["operator"].as_str().unwrap_or("");
+            let values: Vec<&str> = f["values"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            let ok = match op {
+                "In" => values.contains(&node_name),
+                "NotIn" => !values.contains(&node_name),
+                _ => true,
+            };
+            if !ok {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn match_expression(expr: &Value, node_val: Option<&Value>) -> bool {
+    let op = expr["operator"].as_str().unwrap_or("");
+    let values: Vec<&str> = expr["values"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let val = node_val.and_then(|v| v.as_str());
+    match op {
+        "In" => val.map(|v| values.contains(&v)).unwrap_or(false),
+        "NotIn" => val.map(|v| !values.contains(&v)).unwrap_or(true),
+        "Exists" => node_val.is_some(),
+        "DoesNotExist" => node_val.is_none(),
+        "Gt" => val
+            .and_then(|v| v.parse::<i64>().ok())
+            .zip(values.first().and_then(|s| s.parse::<i64>().ok()))
+            .map(|(a, b)| a > b)
+            .unwrap_or(false),
+        "Lt" => val
+            .and_then(|v| v.parse::<i64>().ok())
+            .zip(values.first().and_then(|s| s.parse::<i64>().ok()))
+            .map(|(a, b)| a < b)
+            .unwrap_or(false),
+        _ => true,
+    }
+}
+
+/// If the pod is already bound to a node (`spec.nodeName`), only that node fits.
+fn node_name_filter(pod: &Value, node: &Value) -> FilterResult {
+    let want = pod["spec"]["nodeName"].as_str().unwrap_or("");
+    if want.is_empty() {
+        return FilterResult::Pass;
+    }
+    if node["metadata"]["name"].as_str() == Some(want) {
+        FilterResult::Pass
+    } else {
+        FilterResult::Fail(format!("pod is bound to node {want}"))
+    }
+}
+
+#[cfg(test)]
+mod affinity_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn node(arch: &str) -> Value {
+        json!({"metadata":{"name":"n1","labels":{"kubernetes.io/arch":arch}},
+               "status":{"conditions":[{"type":"Ready","status":"True"}]},
+               "spec":{}})
+    }
+    fn arch_pod(arches: &[&str]) -> Value {
+        json!({"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":
+            {"nodeSelectorTerms":[{"matchExpressions":[
+                {"key":"kubernetes.io/arch","operator":"In","values":arches}]}]}}}}})
+    }
+
+    #[test]
+    fn arch_affinity_filters() {
+        // amd64-only pod fits amd64 node, not arm64 node.
+        assert!(matches!(node_affinity_filter(&arch_pod(&["amd64"]), &node("amd64")), FilterResult::Pass));
+        assert!(matches!(node_affinity_filter(&arch_pod(&["amd64"]), &node("arm64")), FilterResult::Fail(_)));
+        // multi-arch pod fits either.
+        assert!(matches!(node_affinity_filter(&arch_pod(&["amd64","arm64"]), &node("arm64")), FilterResult::Pass));
+        // no affinity → passes.
+        assert!(matches!(node_affinity_filter(&json!({"spec":{}}), &node("arm64")), FilterResult::Pass));
     }
 }
