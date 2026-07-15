@@ -25,10 +25,11 @@ locals {
   cluster_token    = "kube-etcd"
   ssh_key          = trimspace(file(pathexpand("~/.ssh/id_rsa.pub")))
 
-  # rustkube source built on each master (no published control-plane RPM yet —
-  # rustkube#1). Installs the exact upstream-named binaries.
-  rustkube_repo = "https://github.com/glennswest/rustkube.git"
-  rustkube_ref  = "main"
+  # Released rustkube control-plane RPM (pinned). The kubernetes-rs package
+  # installs the exact upstream-named binaries + systemd units. No build on the
+  # node — released artifacts only.
+  rustkube_version = "v0.4.0"
+  rustkube_rpm_url  = "https://github.com/glennswest/rustkube/releases/download/v0.4.0/kubernetes-rs-0.4.0-1.x86_64.rpm"
 
   # master nodes: fixed MAC -> reserved IP (outside the g8 DHCP pool .100-.200).
   # vm_ids allocated live via deploy/terragrunt/free-vmid.sh (range 2000-2100).
@@ -72,8 +73,7 @@ inputs = {
         cluster_token    = local.cluster_token
         etcd_servers     = local.etcd_servers
         fastetcd_rpm_url = local.fastetcd_rpm_url
-        rustkube_repo    = local.rustkube_repo
-        rustkube_ref     = local.rustkube_ref
+        rustkube_rpm_url = local.rustkube_rpm_url
       })
     }
   }

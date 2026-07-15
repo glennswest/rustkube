@@ -22,11 +22,6 @@ package_update: true
 package_upgrade: false
 packages:
   - qemu-guest-agent
-  - git
-  - cargo
-  - rust
-  - gcc
-  - openssl-devel
 
 write_files:
   # fastetcd member config — this master's node in the 3-node Raft cluster.
@@ -69,17 +64,11 @@ runcmd:
   #    and form the Raft cluster (Type=simple units come up in parallel).
   - [ dnf, install, -y, "${fastetcd_rpm_url}" ]
 
-  # 2) Kubernetes control plane — build from source (no published RPM yet,
-  #    rustkube#1) and install the EXACT upstream-named binaries + services.
-  - git clone --depth 1 --branch ${rustkube_ref} ${rustkube_repo} /opt/rustkube-src
-  - bash -lc 'cd /opt/rustkube-src && cargo build --release --bins'
-  - install -m0755 /opt/rustkube-src/target/release/kube-apiserver           /usr/bin/kube-apiserver
-  - install -m0755 /opt/rustkube-src/target/release/kube-controller-manager  /usr/bin/kube-controller-manager
-  - install -m0755 /opt/rustkube-src/target/release/kube-scheduler           /usr/bin/kube-scheduler
-  - install -m0644 /opt/rustkube-src/deploy/systemd/kube-apiserver.service           /etc/systemd/system/kube-apiserver.service
-  - install -m0644 /opt/rustkube-src/deploy/systemd/kube-controller-manager.service  /etc/systemd/system/kube-controller-manager.service
-  - install -m0644 /opt/rustkube-src/deploy/systemd/kube-scheduler.service           /etc/systemd/system/kube-scheduler.service
-  - [ systemctl, daemon-reload ]
+  # 2) Kubernetes control plane — install the pinned released RPM (no build on
+  #    the node). Its postinstall lays down the upstream-named binaries + units
+  #    and creates the data dirs; we enable the services after fastetcd so
+  #    --etcd-servers is reachable (units retry until quorum forms anyway).
+  - [ dnf, install, -y, "${rustkube_rpm_url}" ]
   - [ systemctl, enable, --now, kube-apiserver.service ]
   - [ systemctl, enable, --now, kube-controller-manager.service ]
   - [ systemctl, enable, --now, kube-scheduler.service ]
