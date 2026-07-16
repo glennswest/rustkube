@@ -11,6 +11,10 @@ struct Cli {
     /// API server URL to schedule against.
     #[arg(long, env = "APISERVER_URL", default_value = "http://127.0.0.1:6443")]
     apiserver: String,
+
+    /// Elect a leader before scheduling (so 3 masters don't double-bind).
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    leader_elect: bool,
 }
 
 #[tokio::main]
@@ -24,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     tracing::info!("kube-scheduler starting — apiserver={}", cli.apiserver);
 
-    let sched = Scheduler::new(&cli.apiserver);
+    let sched = Scheduler::new(&cli.apiserver).with_leader_election(cli.leader_elect);
     if let Err(e) = sched.run().await {
         anyhow::bail!("scheduler failed: {e}");
     }

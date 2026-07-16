@@ -8,7 +8,7 @@ use crate::score;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::time::{self, Duration};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// HTTP client for API server communication (same as controller manager).
 #[derive(Clone)]
@@ -43,27 +43,100 @@ impl ApiClient {
             .json()
             .await
     }
+
+    /// Raw GET returning the response (so callers can distinguish 404).
+    pub async fn get(&self, path: &str) -> reqwest::Result<reqwest::Response> {
+        self.client
+            .get(format!("{}{}", self.base_url, path))
+            .send()
+            .await
+    }
+
+    /// POST (create) returning the decoded body.
+    pub async fn create(&self, path: &str, body: &Value) -> reqwest::Result<Value> {
+        self.client
+            .post(format!("{}{}", self.base_url, path))
+            .json(body)
+            .send()
+            .await?
+            .json()
+            .await
+    }
+}
+
+/// Best-effort node/pod identity for the leader-election Lease holder.
+fn default_identity() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|s| s.trim().to_string())
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "kube-scheduler".to_string())
 }
 
 /// The scheduler — assigns unscheduled pods to nodes.
 pub struct Scheduler {
     api: Arc<ApiClient>,
+    leader_elect: bool,
+    identity: String,
 }
 
 impl Scheduler {
     pub fn new(api_server_url: &str) -> Self {
         Self {
             api: Arc::new(ApiClient::new(api_server_url)),
+            leader_elect: true,
+            identity: default_identity(),
         }
     }
 
-    /// Run the scheduler loop forever.
+    /// Enable/disable leader election (default on, upstream behavior).
+    pub fn with_leader_election(mut self, enabled: bool) -> Self {
+        self.leader_elect = enabled;
+        self
+    }
+
+    /// Run the scheduler. With leader election, only the elected leader schedules
+    /// — so 3 masters can each run a kube-scheduler without double-binding.
     pub async fn run(&self) -> anyhow::Result<()> {
-        info!("Scheduler started");
         // Prometheus /metrics + /healthz (scraped by ironprom), upstream :10259.
         crate::metrics_server::spawn(10259);
-        let mut interval = time::interval(Duration::from_secs(1));
 
+        if !self.leader_elect {
+            info!("Scheduler started (leader election disabled)");
+            return self.scheduling_loop().await;
+        }
+
+        let elector = crate::leaderelection::LeaderElector::new(
+            self.api.clone(),
+            "kube-scheduler",
+            "kube-system",
+            &self.identity,
+        );
+        info!(
+            "Scheduler leader election enabled (identity={})",
+            self.identity
+        );
+        loop {
+            elector.acquire().await;
+            info!("Became leader; scheduling pods");
+            let mut interval = time::interval(Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                // Renew before each pass; step down immediately if we lost it.
+                if !elector.try_acquire_or_renew().await {
+                    warn!("Lost leadership; pausing scheduling");
+                    break;
+                }
+                if let Err(e) = self.schedule_pending_pods().await {
+                    error!("Scheduler error: {e}");
+                }
+            }
+        }
+    }
+
+    /// The bare scheduling loop (no leader election).
+    async fn scheduling_loop(&self) -> anyhow::Result<()> {
+        let mut interval = time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
             if let Err(e) = self.schedule_pending_pods().await {
