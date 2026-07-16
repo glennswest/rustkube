@@ -1,5 +1,14 @@
 # rustkube infrastructure — Terragrunt
 
+> **⚠️ Current deployment is the 3-master `masters/` unit — see the full guide at
+> [`docs/terragrunt-deploy.md`](../../docs/terragrunt-deploy.md).** The
+> `fastetcd/` + `rustkube/` single-node layout described below is the earlier
+> design and is superseded (each master now runs a fastetcd raft member + the
+> control plane). The prerequisites and provider/token wiring below still apply.
+
+---
+
+
 Provisions a **dedicated** rustkube stack on the g8 Proxmox using the shared,
 versioned module at [`github.com/glennswest/terraform-modules`](https://github.com/glennswest/terraform-modules)
 (`modules/proxmox-fedora-vm`, pinned `?ref=`). Same convention as
