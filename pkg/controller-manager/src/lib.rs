@@ -5,6 +5,7 @@
 //! dependent resources to match the desired spec.
 
 pub mod cronjob;
+pub mod csr;
 pub mod daemonset;
 pub mod deployment;
 pub mod gateway;

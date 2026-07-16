@@ -141,6 +141,8 @@ pub struct ControllerManager {
     api: Arc<ApiClient>,
     leader_elect: bool,
     identity: String,
+    /// Cluster CA (cert PEM, key PEM) for signing approved CSRs.
+    signing_ca: Option<(String, String)>,
 }
 
 impl ControllerManager {
@@ -156,6 +158,7 @@ impl ControllerManager {
             api: Arc::new(ApiClient::new(api_server_url)),
             leader_elect: true,
             identity: Self::make_identity(),
+            signing_ca: None,
         }
     }
 
@@ -165,12 +168,20 @@ impl ControllerManager {
             api: Arc::new(ApiClient::configured(api_server_url, cfg)?),
             leader_elect: true,
             identity: Self::make_identity(),
+            signing_ca: None,
         })
     }
 
     /// Enable/disable leader election (upstream default: enabled).
     pub fn with_leader_election(mut self, enabled: bool) -> Self {
         self.leader_elect = enabled;
+        self
+    }
+
+    /// Provide the cluster CA (cert PEM, key PEM) so the CSR controller can sign
+    /// approved requests. Without it, CSRs are approved but not signed.
+    pub fn with_signing_ca(mut self, cert_pem: String, key_pem: String) -> Self {
+        self.signing_ca = Some((cert_pem, key_pem));
         self
     }
 
@@ -243,7 +254,13 @@ impl ControllerManager {
             crate::gc::GarbageCollector::new(api).run().await;
         });
 
-        info!("All controllers started (13 controllers)");
+        let api = self.api.clone();
+        let ca = self.signing_ca.clone();
+        tasks.spawn(async move {
+            crate::csr::CsrController::new(api, ca).run().await;
+        });
+
+        info!("All controllers started (14 controllers)");
         tasks
     }
 

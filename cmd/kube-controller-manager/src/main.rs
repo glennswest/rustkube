@@ -41,6 +41,14 @@ struct Cli {
     /// Skip API server certificate verification (dev only).
     #[arg(long = "insecure-skip-tls-verify")]
     insecure: bool,
+
+    /// Cluster CA certificate (PEM) used to sign approved CSRs.
+    #[arg(long = "cluster-signing-cert-file")]
+    signing_cert: Option<std::path::PathBuf>,
+
+    /// Cluster CA private key (PEM) used to sign approved CSRs.
+    #[arg(long = "cluster-signing-key-file")]
+    signing_key: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -54,6 +62,15 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     tracing::info!("kube-controller-manager starting — apiserver={}", cli.apiserver);
 
+    // Load the cluster signing CA (cert + key) for the CSR controller, if given.
+    let signing_ca = match (&cli.signing_cert, &cli.signing_key) {
+        (Some(c), Some(k)) => Some((
+            std::fs::read_to_string(c)?,
+            std::fs::read_to_string(k)?,
+        )),
+        _ => None,
+    };
+
     // Use a TLS/auth client when the server is HTTPS or any auth flag is set.
     let needs_config = cli.apiserver.starts_with("https://")
         || cli.token.is_some()
@@ -62,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         || cli.client_cert.is_some()
         || cli.insecure;
 
-    let cm = if needs_config {
+    let mut cm = if needs_config {
         let token = match (cli.token, &cli.token_file) {
             (Some(t), _) => Some(t),
             (None, Some(f)) => Some(std::fs::read_to_string(f)?.trim().to_string()),
@@ -80,6 +97,10 @@ async fn main() -> anyhow::Result<()> {
         ControllerManager::new(&cli.apiserver)
     }
     .with_leader_election(cli.leader_elect);
+
+    if let Some((cert, key)) = signing_ca {
+        cm = cm.with_signing_ca(cert, key);
+    }
 
     if let Err(e) = cm.run().await {
         anyhow::bail!("controller-manager failed: {e}");

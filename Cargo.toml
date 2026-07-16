@@ -52,7 +52,7 @@ hyper-util = { version = "0.1", features = ["full"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "tls12"] }
 tokio-rustls = { version = "0.26" }
 rustls-pemfile = { version = "2" }
-rcgen = { version = "0.13" }
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 x509-parser = { version = "0.16" }
 
 # gRPC (CRI/CSI client)
