@@ -56,6 +56,10 @@ gen_client() {
 gen_client admin              admin                            system:masters
 gen_client controller-manager system:kube-controller-manager
 gen_client scheduler          system:kube-scheduler
+# Node-join bootstrap cert: a new kubelet uses this (x509, group
+# system:bootstrappers) to create its CSR, which the controller-manager
+# auto-approves and signs. Distributed to nodes by the node-side deploy.
+gen_client bootstrap          kubelet-bootstrap                system:bootstrappers
 
 # --- per-master apiserver serving certs (SANs) ---
 for m in "${!MASTERS[@]}"; do

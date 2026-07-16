@@ -45,6 +45,10 @@ write_files:
     permissions: "0644"
     content: |
       ${indent(6, ca_crt)}
+  - path: /etc/kubernetes/pki/ca.key
+    permissions: "0600"
+    content: |
+      ${indent(6, ca_key)}
   - path: /etc/kubernetes/pki/sa.key
     permissions: "0600"
     content: |
@@ -96,7 +100,7 @@ write_files:
     permissions: "0644"
     content: |
       APISERVER_URL=https://127.0.0.1:6443
-      KUBE_CONTROLLER_MANAGER_ARGS=--certificate-authority /etc/kubernetes/pki/ca.crt --client-certificate /etc/kubernetes/pki/controller-manager.crt --client-key /etc/kubernetes/pki/controller-manager.key
+      KUBE_CONTROLLER_MANAGER_ARGS=--certificate-authority /etc/kubernetes/pki/ca.crt --client-certificate /etc/kubernetes/pki/controller-manager.crt --client-key /etc/kubernetes/pki/controller-manager.key --cluster-signing-cert-file /etc/kubernetes/pki/ca.crt --cluster-signing-key-file /etc/kubernetes/pki/ca.key
   - path: /etc/kubernetes/kube-scheduler
     permissions: "0644"
     content: |
