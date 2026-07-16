@@ -563,6 +563,37 @@ async fn bootstrap_rbac(storage: &ResourceStorage, anonymous_auth: bool) {
         )
         .await;
 
+    // ClusterRoleBindings for the control-plane components (they authenticate
+    // via their client certs as these users). Bound to cluster-admin for now;
+    // can be tightened to the upstream system:kube-* roles later.
+    for user in ["system:kube-controller-manager", "system:kube-scheduler"] {
+        let binding = json!({
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "ClusterRoleBinding",
+            "metadata": {
+                "name": user,
+                "uid": uuid::Uuid::new_v4().to_string(),
+                "creationTimestamp": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            },
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "ClusterRole",
+                "name": "cluster-admin"
+            },
+            "subjects": [{
+                "kind": "User",
+                "name": user,
+                "apiGroup": "rbac.authorization.k8s.io"
+            }]
+        });
+        let _ = storage
+            .create(
+                &ResourceStorage::cluster_key("clusterrolebindings", user),
+                binding,
+            )
+            .await;
+    }
+
     // ClusterRole: system:discovery — GET on discovery endpoints
     let discovery_role = json!({
         "apiVersion": "rbac.authorization.k8s.io/v1",
