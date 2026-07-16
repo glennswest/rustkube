@@ -75,6 +75,11 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "preferredVersion": {"groupVersion": "coordination.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "certificates.k8s.io",
+            "versions": [{"groupVersion": "certificates.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "certificates.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "apiextensions.k8s.io",
             "versions": [{"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}
@@ -370,6 +375,38 @@ pub async fn api_coordination_v1_resources() -> impl IntoResponse {
                 "namespaced": true,
                 "kind": "Lease",
                 "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/certificates.k8s.io/v1 — CertificateSigningRequest resources.
+pub async fn api_certificates_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "certificates.k8s.io/v1",
+        "resources": [
+            {
+                "name": "certificatesigningrequests",
+                "singularName": "certificatesigningrequest",
+                "namespaced": false,
+                "kind": "CertificateSigningRequest",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["csr"]
+            },
+            {
+                "name": "certificatesigningrequests/approval",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "CertificateSigningRequest",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "certificatesigningrequests/status",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "CertificateSigningRequest",
+                "verbs": ["get", "patch", "update"]
             }
         ]
     }))

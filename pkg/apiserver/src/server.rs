@@ -152,6 +152,30 @@ fn build_router(
                 .put(resource::update_cluster_resource)
                 .delete(resource::delete_cluster_resource),
         )
+        // certificates.k8s.io/v1 — CertificateSigningRequests (cluster-scoped)
+        // with approval/status subresources, for node-join CSR bootstrapping.
+        .route(
+            "/apis/certificates.k8s.io/v1",
+            get(discovery::api_certificates_v1_resources),
+        )
+        .route(
+            "/apis/certificates.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources).post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/certificates.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource),
+        )
+        .route(
+            "/apis/certificates.k8s.io/v1/{resource}/{name}/approval",
+            get(resource::get_cluster_status).put(resource::update_cluster_status),
+        )
+        .route(
+            "/apis/certificates.k8s.io/v1/{resource}/{name}/status",
+            get(resource::get_cluster_status).put(resource::update_cluster_status),
+        )
         .route(
             "/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
