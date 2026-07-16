@@ -24,6 +24,34 @@ use tokio::sync::mpsc;
 
 /// Page size used to seed the snapshot from the store.
 const SEED_PAGE: usize = 1000;
+/// How often the freshness task re-checks the snapshot against the store. Bounds
+/// how long a LIST can be stale if the upstream watch silently stalls.
+const FRESHNESS_SECS: u64 = 5;
+/// A prefix silent this long is re-checked against the store (stall vs quiet).
+const STALL_SECS: u64 = 30;
+
+/// Read the full prefix from the store into a key→object map, returning it with
+/// the revision it reflects. Pages through the whole prefix.
+async fn seed_snapshot(
+    store: &Arc<dyn KvStore>,
+    prefix: &str,
+) -> Result<(BTreeMap<String, Vec<u8>>, u64)> {
+    let mut snapshot = BTreeMap::new();
+    let mut continue_token: Option<String> = None;
+    let mut rev = 0u64;
+    loop {
+        let page = store.list(prefix, SEED_PAGE, continue_token.as_deref()).await?;
+        rev = page.revision;
+        for (key, bytes, _rev) in page.items {
+            snapshot.insert(key, bytes);
+        }
+        match page.continue_token {
+            Some(t) => continue_token = Some(t),
+            None => break,
+        }
+    }
+    Ok((snapshot, rev))
+}
 
 /// Recent events retained per prefix for replay to newly-attaching watchers.
 const RING_CAPACITY: usize = 1024;
@@ -50,6 +78,9 @@ struct PrefixCache {
     snapshot: Mutex<BTreeMap<String, Vec<u8>>>,
     /// Revision the snapshot currently reflects.
     snapshot_rev: AtomicU64,
+    /// Last time the pump made progress (an event) or the freshness task
+    /// re-seeded. Used to distinguish a *quiet* prefix from a *stalled* watch.
+    last_progress: Mutex<std::time::Instant>,
 }
 
 /// One shared watch cache over a `KvStore`, keyed by resource prefix.
@@ -84,20 +115,7 @@ impl WatchCache {
         // Seed a full key→object snapshot from the store (paging through the
         // whole prefix). The pump then keeps it current, so LISTs never hit the
         // store again for this prefix. `start_rev` is the seed's revision.
-        let mut snapshot = BTreeMap::new();
-        let mut continue_token: Option<String> = None;
-        let mut start_rev = 0u64;
-        loop {
-            let page = self.store.list(prefix, SEED_PAGE, continue_token.as_deref()).await?;
-            start_rev = page.revision;
-            for (key, bytes, _rev) in page.items {
-                snapshot.insert(key, bytes);
-            }
-            match page.continue_token {
-                Some(t) => continue_token = Some(t),
-                None => break,
-            }
-        }
+        let (snapshot, start_rev) = seed_snapshot(&self.store, prefix).await?;
 
         let (tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
         let cache = Arc::new(PrefixCache {
@@ -107,6 +125,7 @@ impl WatchCache {
             pump_start_rev: start_rev,
             snapshot: Mutex::new(snapshot),
             snapshot_rev: AtomicU64::new(start_rev),
+            last_progress: Mutex::new(std::time::Instant::now()),
         });
 
         // Single upstream watch for this prefix.
@@ -132,6 +151,7 @@ impl WatchCache {
                     }
                 }
                 pump.snapshot_rev.store(ev.revision(), Ordering::SeqCst);
+                *pump.last_progress.lock().unwrap() = std::time::Instant::now();
                 {
                     let mut ring = pump.ring.lock().unwrap();
                     if ring.len() == RING_CAPACITY {
@@ -146,6 +166,54 @@ impl WatchCache {
             // Upstream watch ended — drop the prefix so the next watcher re-opens.
             caches.remove(&prefix_owned);
         });
+
+        // Freshness task: if the upstream watch *silently stalls* (connection
+        // alive but no events), the pump above never notices and the snapshot
+        // freezes → stale LISTs (rustkube#18). Periodically compare the snapshot
+        // revision to the store's current revision for this prefix; if behind,
+        // re-seed. Bounds staleness to FRESHNESS_SECS and self-heals a stall.
+        {
+            let fresh = cache.clone();
+            let store = self.store.clone();
+            let caches = self.caches.clone();
+            let prefix_fresh = prefix.to_string();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(FRESHNESS_SECS));
+                tick.tick().await; // consume the immediate first tick
+                let stall = std::time::Duration::from_secs(STALL_SECS);
+                loop {
+                    tick.tick().await;
+                    // Stop once this prefix's pump has been torn down.
+                    if !caches.contains_key(&prefix_fresh) {
+                        break;
+                    }
+                    // Only suspect a stall if the pump has made NO progress for a
+                    // while — a healthy watch delivers events (a busy prefix) or
+                    // the cluster is simply idle. This avoids re-seeding quiet
+                    // prefixes just because other prefixes advanced the store's
+                    // global revision.
+                    if fresh.last_progress.lock().unwrap().elapsed() < stall {
+                        continue;
+                    }
+                    let cur_rev = match store.list(&prefix_fresh, 1, None).await {
+                        Ok(p) => p.revision,
+                        Err(_) => continue,
+                    };
+                    if fresh.snapshot_rev.load(Ordering::SeqCst) < cur_rev {
+                        if let Ok((snap, rev)) = seed_snapshot(&store, &prefix_fresh).await {
+                            *fresh.snapshot.lock().unwrap() = snap;
+                            fresh.snapshot_rev.store(rev, Ordering::SeqCst);
+                            // Count the re-seed as progress so a persistently
+                            // quiet prefix re-seeds at most once per STALL window.
+                            *fresh.last_progress.lock().unwrap() = std::time::Instant::now();
+                            tracing::warn!(
+                                "watch-cache: re-seeded prefix={prefix_fresh} to rev={rev} (watch stalled or long-quiet)"
+                            );
+                        }
+                    }
+                }
+            });
+        }
 
         self.caches.insert(prefix.to_string(), cache.clone());
         tracing::info!(
