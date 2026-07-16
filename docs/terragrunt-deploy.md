@@ -44,6 +44,44 @@ terragrunt apply
 All 3 masters boot together, install the fastetcd + kubernetes-rs RPMs, form the
 raft cluster, and start the TLS control plane.
 
+### How the cloud-init works
+
+Terragrunt renders `templates/master-user-data.yaml.tftpl` per master and uploads
+it to the Proxmox `terraform-snippets` datastore as
+`<master>-user-data.yaml`; the VM's `user_data` points at that snippet, so
+cloud-init runs it on first boot. Flow:
+
+- **Terragrunt → template variables** (`terragrunt.hcl`, `inputs.vms[*].user_data`):
+  hostname/IP, the fastetcd `initial_cluster` + `etcd_servers` lists, the pinned
+  `fastetcd_rpm_url` / `rustkube_rpm_url`, and every PKI file read via
+  `file("${local.pki}/…")` (CA, SA key, per-master serving cert/key, component +
+  admin client certs). PEM blobs are indented into the YAML with `indent(6, …)`.
+
+- **`write_files`** lays down:
+  - `/etc/fastetcd/fastetcd.conf` — `ETCD_*` env (name, data dir, listen/advertise
+    URLs, `ETCD_INITIAL_CLUSTER`, token, `ETCD_INITIAL_CLUSTER_STATE=new`).
+  - `/etc/kubernetes/pki/*` — ca.crt, ca.key, sa.key, apiserver.crt/key,
+    controller-manager.crt/key, scheduler.crt/key, admin.crt/key (keys `0600`).
+  - `/etc/kubernetes/kube-apiserver` — `ETCD_SERVERS` + `KUBE_APISERVER_ARGS`
+    (`--tls-cert-file … --client-ca-file … --service-account-key-file …
+    --anonymous-auth=false`).
+  - `/etc/kubernetes/kube-controller-manager` and `…/kube-scheduler` —
+    `APISERVER_URL=https://127.0.0.1:6443` + client-cert args (and, for the CM,
+    `--cluster-signing-cert-file`/`--cluster-signing-key-file` for CSR signing).
+  These paths match the systemd units' `EnvironmentFile=` and `$KUBE_*_ARGS`.
+
+- **`runcmd`** (order matters):
+  1. `dnf install -y ${fastetcd_rpm_url}` — all 3 install together and form the
+     raft cluster (the RPM's postinstall does `enable --now fastetcd`).
+  2. `dnf install -y ${rustkube_rpm_url}` — lays down the upstream-named binaries
+     + units (postinstall does daemon-reload, not enable).
+  3. `systemctl enable --now kube-apiserver kube-controller-manager kube-scheduler`
+     — started after fastetcd so `--etcd-servers` is reachable (units retry until
+     quorum forms).
+
+To see it on a node: `sudo cat /var/log/cloud-init-output.log`, and
+`cloud-init status` (`done` when finished).
+
 ## 3. Verify
 
 ```bash
