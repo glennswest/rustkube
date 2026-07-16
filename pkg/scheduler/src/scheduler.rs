@@ -10,6 +10,21 @@ use std::sync::Arc;
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
+/// TLS/auth settings for talking to an HTTPS apiserver (mutual TLS or token).
+#[derive(Default)]
+pub struct ClientConfig {
+    /// CA bundle (PEM) to verify the server.
+    pub ca_pem: Option<Vec<u8>>,
+    /// Client certificate (PEM) for mutual TLS.
+    pub client_cert_pem: Option<Vec<u8>>,
+    /// Client private key (PEM) for mutual TLS.
+    pub client_key_pem: Option<Vec<u8>>,
+    /// Bearer token.
+    pub token: Option<String>,
+    /// Skip server certificate verification.
+    pub insecure: bool,
+}
+
 /// HTTP client for API server communication (same as controller manager).
 #[derive(Clone)]
 pub struct ApiClient {
@@ -23,6 +38,34 @@ impl ApiClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Build a client with TLS + auth (for HTTPS apiservers / drop-in use).
+    pub fn configured(base_url: &str, cfg: ClientConfig) -> anyhow::Result<Self> {
+        let mut b = reqwest::Client::builder();
+        if cfg.insecure {
+            b = b.danger_accept_invalid_certs(true);
+        }
+        if let Some(ca) = &cfg.ca_pem {
+            b = b.add_root_certificate(reqwest::Certificate::from_pem(ca)?);
+        }
+        if let (Some(cert), Some(key)) = (&cfg.client_cert_pem, &cfg.client_key_pem) {
+            let mut pem = cert.clone();
+            pem.push(b'\n');
+            pem.extend_from_slice(key);
+            b = b.identity(reqwest::Identity::from_pem(&pem)?);
+        }
+        if let Some(token) = &cfg.token {
+            let mut headers = reqwest::header::HeaderMap::new();
+            let mut val = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
+            val.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, val);
+            b = b.default_headers(headers);
+        }
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            client: b.build()?,
+        })
     }
 
     pub async fn list(&self, path: &str) -> reqwest::Result<Value> {
@@ -87,6 +130,15 @@ impl Scheduler {
             leader_elect: true,
             identity: default_identity(),
         }
+    }
+
+    /// Connect with TLS + auth (HTTPS apiserver / mutual TLS or token).
+    pub fn connect(api_server_url: &str, cfg: ClientConfig) -> anyhow::Result<Self> {
+        Ok(Self {
+            api: Arc::new(ApiClient::configured(api_server_url, cfg)?),
+            leader_elect: true,
+            identity: default_identity(),
+        })
     }
 
     /// Enable/disable leader election (default on, upstream behavior).
