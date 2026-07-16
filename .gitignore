@@ -41,3 +41,4 @@ target/criterion/
 **/.terragrunt-cache/
 .terraform/
 **/.terraform/
+deploy/terragrunt/masters/pki/
