@@ -22,7 +22,12 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 /// Build the complete K8s API router.
-fn build_router(state: AppState, signing_keys: SigningKeys, rbac: Arc<RbacEngine>) -> Router {
+fn build_router(
+    state: AppState,
+    signing_keys: SigningKeys,
+    rbac: Arc<RbacEngine>,
+    anonymous_auth: bool,
+) -> Router {
     Router::new()
         // Discovery & health
         .route("/version", get(discovery::version))
@@ -365,6 +370,8 @@ fn build_router(state: AppState, signing_keys: SigningKeys, rbac: Arc<RbacEngine
             async move {
                 let mut req: axum::extract::Request = req;
                 req.extensions_mut().insert(keys);
+                req.extensions_mut()
+                    .insert(auth::AnonymousAuth(anonymous_auth));
                 auth::auth_middleware(req, next).await
             }
         }))
@@ -405,7 +412,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     bootstrap_namespace(&storage, "kube-node-lease").await;
 
     // Bootstrap RBAC resources
-    bootstrap_rbac(&storage).await;
+    bootstrap_rbac(&storage, config.anonymous_auth).await;
 
     // Initialize CRD registry and load existing CRDs
     let crd_registry = Arc::new(CrdRegistry::new());
@@ -427,7 +434,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("prometheus recorder: {e}"))?;
     metrics::gauge!("apiserver_build_info", "version" => apimachinery::VERSION).set(1.0);
 
-    let app = build_router(state, signing_keys, rbac)
+    let app = build_router(state, signing_keys, rbac, config.anonymous_auth)
         .route(
             "/metrics",
             axum::routing::get({
@@ -506,7 +513,7 @@ async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
 }
 
 /// Bootstrap RBAC resources for initial cluster access.
-async fn bootstrap_rbac(storage: &ResourceStorage) {
+async fn bootstrap_rbac(storage: &ResourceStorage, anonymous_auth: bool) {
     // ClusterRole: cluster-admin — all verbs, all resources, all groups
     let cluster_admin_role = json!({
         "apiVersion": "rbac.authorization.k8s.io/v1",
@@ -604,32 +611,36 @@ async fn bootstrap_rbac(storage: &ResourceStorage) {
         )
         .await;
 
-    // Dev mode: anonymous gets cluster-admin (so kubectl works without certs)
-    let anon_admin_binding = json!({
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "ClusterRoleBinding",
-        "metadata": {
-            "name": "system:anonymous-admin",
-            "uid": uuid::Uuid::new_v4().to_string(),
-            "creationTimestamp": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
-        },
-        "roleRef": {
-            "apiGroup": "rbac.authorization.k8s.io",
-            "kind": "ClusterRole",
-            "name": "cluster-admin"
-        },
-        "subjects": [{
-            "kind": "User",
-            "name": "system:anonymous",
-            "apiGroup": "rbac.authorization.k8s.io"
-        }]
-    });
-    let _ = storage
-        .create(
-            &ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-admin"),
-            anon_admin_binding,
-        )
-        .await;
+    // Dev mode only: anonymous gets cluster-admin (so kubectl works without
+    // certs). Skipped when --anonymous-auth=false, so a secured cluster never
+    // grants the anonymous user any standing access.
+    if anonymous_auth {
+        let anon_admin_binding = json!({
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "ClusterRoleBinding",
+            "metadata": {
+                "name": "system:anonymous-admin",
+                "uid": uuid::Uuid::new_v4().to_string(),
+                "creationTimestamp": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            },
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "ClusterRole",
+                "name": "cluster-admin"
+            },
+            "subjects": [{
+                "kind": "User",
+                "name": "system:anonymous",
+                "apiGroup": "rbac.authorization.k8s.io"
+            }]
+        });
+        let _ = storage
+            .create(
+                &ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-admin"),
+                anon_admin_binding,
+            )
+            .await;
+    }
 }
 
 /// Count every request as `apiserver_request_total{method=...}`.

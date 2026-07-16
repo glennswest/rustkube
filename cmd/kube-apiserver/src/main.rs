@@ -47,6 +47,15 @@ struct Cli {
     #[arg(long = "client-ca-file")]
     client_ca: Option<PathBuf>,
 
+    /// Allow anonymous requests. Set false to require authentication (401 for
+    /// unauthenticated requests) and skip the dev anonymous-admin binding.
+    #[arg(long = "anonymous-auth", default_value_t = true, action = clap::ArgAction::Set)]
+    anonymous_auth: bool,
+
+    /// Service-account token signing key (PEM) for issuing/validating SA tokens.
+    #[arg(long = "service-account-key-file")]
+    service_account_key: Option<PathBuf>,
+
     /// Data directory (TLS material, misc runtime state)
     #[arg(long, default_value = "/var/lib/kubernetes")]
     data_dir: PathBuf,
@@ -81,6 +90,8 @@ async fn main() -> anyhow::Result<()> {
         tls_key: cli.tls_key,
         tls_auto: cli.tls,
         client_ca: cli.client_ca,
+        anonymous_auth: cli.anonymous_auth,
+        service_account_key: cli.service_account_key,
         data_dir: cli.data_dir,
         service_cidr: cli.service_cidr,
         cluster_domain: cli.cluster_domain,

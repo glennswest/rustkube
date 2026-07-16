@@ -93,42 +93,60 @@ impl SigningKeys {
 ///
 /// Checks for Bearer token in Authorization header. Falls back to anonymous.
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, StatusCode> {
+    // Resolve an *authenticated* identity, or None if no valid credentials.
     // 1. x509 client-cert identity (injected by the TLS layer) takes precedence.
-    let user_info = if let Some(Some(id)) = request.extensions().get::<Option<X509Identity>>() {
-        UserInfo {
-            username: id.username.clone(),
-            groups: id.groups.clone(),
-        }
-    } else if let Some(auth_header) = request.headers().get("authorization") {
-        if let Ok(header_str) = auth_header.to_str() {
-            if let Some(token) = header_str.strip_prefix("Bearer ") {
-                // Try to extract signing keys from extensions
-                if let Some(keys) = request.extensions().get::<SigningKeys>() {
-                    if let Some(token_data) = keys.validate_token(token) {
-                        UserInfo {
-                            username: token_data.claims.sub,
-                            groups: token_data.claims.groups,
-                        }
-                    } else {
-                        // Invalid token — still allow as anonymous for dev mode
-                        anonymous_user()
-                    }
-                } else {
-                    anonymous_user()
-                }
-            } else {
-                anonymous_user()
-            }
+    let authenticated: Option<UserInfo> =
+        if let Some(Some(id)) = request.extensions().get::<Option<X509Identity>>() {
+            Some(UserInfo {
+                username: id.username.clone(),
+                groups: id.groups.clone(),
+            })
+        } else if let Some(auth_header) = request.headers().get("authorization") {
+            // 2. Bearer token, validated against the SA/JWT signing keys.
+            auth_header
+                .to_str()
+                .ok()
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .and_then(|token| {
+                    request
+                        .extensions()
+                        .get::<SigningKeys>()
+                        .and_then(|keys| keys.validate_token(token))
+                })
+                .map(|td| UserInfo {
+                    username: td.claims.sub,
+                    groups: td.claims.groups,
+                })
         } else {
-            anonymous_user()
+            None
+        };
+
+    // 3. No valid credentials: fall back to system:anonymous only if anonymous
+    //    auth is enabled; otherwise reject (401), matching upstream.
+    let user_info = match authenticated {
+        Some(u) => u,
+        None => {
+            let anon_allowed = request
+                .extensions()
+                .get::<AnonymousAuth>()
+                .map(|a| a.0)
+                .unwrap_or(true);
+            if anon_allowed {
+                anonymous_user()
+            } else {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
         }
-    } else {
-        anonymous_user()
     };
 
     request.extensions_mut().insert(user_info);
     Ok(next.run(request).await)
 }
+
+/// Whether unauthenticated requests fall back to `system:anonymous`. Injected by
+/// the apiserver from `--anonymous-auth`; absent → allowed (dev default).
+#[derive(Clone, Copy)]
+pub struct AnonymousAuth(pub bool);
 
 fn anonymous_user() -> UserInfo {
     UserInfo {
