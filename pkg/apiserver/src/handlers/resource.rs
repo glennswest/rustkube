@@ -406,14 +406,20 @@ pub fn ensure_metadata_pub(obj: &mut Value, name: &str, namespace: Option<&str>)
     ensure_metadata(obj, name, namespace);
 }
 
-/// Ensure metadata fields are set.
+/// Ensure metadata fields are set. Defensive: a body or `metadata` that isn't a
+/// JSON object must never panic the apiserver (a client request could send any
+/// shape) — see rustkube#9.
 fn ensure_metadata(obj: &mut Value, name: &str, namespace: Option<&str>) {
-    let meta = obj
-        .as_object_mut()
-        .unwrap()
-        .entry("metadata")
-        .or_insert_with(|| json!({}));
-    let meta = meta.as_object_mut().unwrap();
+    let Some(root) = obj.as_object_mut() else {
+        return;
+    };
+    let meta_val = root.entry("metadata").or_insert_with(|| json!({}));
+    if !meta_val.is_object() {
+        *meta_val = json!({});
+    }
+    let Some(meta) = meta_val.as_object_mut() else {
+        return;
+    };
 
     meta.entry("name").or_insert_with(|| Value::String(name.to_string()));
 
@@ -474,4 +480,51 @@ fn resource_to_list_kind(resource: &str) -> String {
         other => other,
     };
     format!("{singular}List")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // rustkube#9: a client request with an unexpected shape must never panic.
+    #[test]
+    fn ensure_metadata_never_panics_on_bad_shapes() {
+        // Top-level body not an object (array / scalar / null).
+        for mut v in [json!([1, 2, 3]), json!("nope"), json!(42), json!(null)] {
+            ensure_metadata(&mut v, "x", Some("default")); // must not panic
+        }
+        // metadata present but not an object → coerced, then populated.
+        let mut v = json!({"metadata": "not-an-object", "status": {"phase": "Failed"}});
+        ensure_metadata(&mut v, "pod1", Some("default"));
+        assert_eq!(v["metadata"]["name"], "pod1");
+        assert_eq!(v["metadata"]["namespace"], "default");
+
+        // metadata as an array → coerced to object.
+        let mut v = json!({"metadata": []});
+        ensure_metadata(&mut v, "pod2", None);
+        assert!(v["metadata"].is_object());
+        assert_eq!(v["metadata"]["name"], "pod2");
+    }
+
+    // A kubelet-shaped pod-status PUT (the exact write that took the cluster
+    // down) must be handled without panicking.
+    #[test]
+    fn kubelet_pod_status_put_shape_is_safe() {
+        let mut pod = json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": "test", "namespace": "default"},
+            "spec": {"nodeName": "rknode1"},
+            "status": {
+                "phase": "Failed",
+                "conditions": [{"type": "Ready", "status": "False"}],
+                "containerStatuses": [{
+                    "name": "c", "ready": false, "restartCount": 0,
+                    "state": {"terminated": {"exitCode": 1, "reason": "Error"}}
+                }]
+            }
+        });
+        ensure_metadata(&mut pod, "test", Some("default")); // must not panic
+        assert_eq!(pod["status"]["phase"], "Failed");
+    }
 }

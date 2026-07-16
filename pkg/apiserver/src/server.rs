@@ -469,7 +469,10 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
                 }
             }),
         )
-        .layer(middleware::from_fn(metrics_middleware));
+        .layer(middleware::from_fn(metrics_middleware))
+        // Outermost: no single request may panic the process. Any panic in a
+        // handler/middleware is caught and turned into a 500 (rustkube#9).
+        .layer(tower_http::catch_panic::CatchPanicLayer::new());
 
     let addr = format!("{}:{}", config.bind_addr, config.secure_port);
 
