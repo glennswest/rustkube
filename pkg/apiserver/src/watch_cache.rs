@@ -15,11 +15,15 @@ use apimachinery::store::{KvStore, WatchStream};
 use apimachinery::watch::WatchEvent;
 use apimachinery::Result;
 use dashmap::DashMap;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+use std::ops::Bound;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+
+/// Page size used to seed the snapshot from the store.
+const SEED_PAGE: usize = 1000;
 
 /// Recent events retained per prefix for replay to newly-attaching watchers.
 const RING_CAPACITY: usize = 1024;
@@ -41,6 +45,11 @@ struct PrefixCache {
     /// Store revision the pump started after — events with `revision >
     /// pump_start_rev` are captured; anything at/below is not reconstructable.
     pump_start_rev: u64,
+    /// Materialized key→object snapshot (seeded from the store, kept current by
+    /// the pump) so LIST/relist storms are served from memory, not the store.
+    snapshot: Mutex<BTreeMap<String, Vec<u8>>>,
+    /// Revision the snapshot currently reflects.
+    snapshot_rev: AtomicU64,
 }
 
 /// One shared watch cache over a `KvStore`, keyed by resource prefix.
@@ -72,14 +81,23 @@ impl WatchCache {
             return Ok(c.clone());
         }
 
-        // Snapshot the current store revision so the pump only captures newer
-        // events instead of replaying the whole prefix history into the ring.
-        let start_rev = self
-            .store
-            .list(prefix, 1, None)
-            .await
-            .map(|r| r.revision)
-            .unwrap_or(0);
+        // Seed a full key→object snapshot from the store (paging through the
+        // whole prefix). The pump then keeps it current, so LISTs never hit the
+        // store again for this prefix. `start_rev` is the seed's revision.
+        let mut snapshot = BTreeMap::new();
+        let mut continue_token: Option<String> = None;
+        let mut start_rev = 0u64;
+        loop {
+            let page = self.store.list(prefix, SEED_PAGE, continue_token.as_deref()).await?;
+            start_rev = page.revision;
+            for (key, bytes, _rev) in page.items {
+                snapshot.insert(key, bytes);
+            }
+            match page.continue_token {
+                Some(t) => continue_token = Some(t),
+                None => break,
+            }
+        }
 
         let (tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
         let cache = Arc::new(PrefixCache {
@@ -87,6 +105,8 @@ impl WatchCache {
             ring: Mutex::new(VecDeque::with_capacity(RING_CAPACITY)),
             next_seq: AtomicU64::new(1),
             pump_start_rev: start_rev,
+            snapshot: Mutex::new(snapshot),
+            snapshot_rev: AtomicU64::new(start_rev),
         });
 
         // Single upstream watch for this prefix.
@@ -97,6 +117,21 @@ impl WatchCache {
         tokio::spawn(async move {
             while let Some(ev) = stream.recv().await {
                 let seq = pump.next_seq.fetch_add(1, Ordering::SeqCst);
+                // Keep the materialized snapshot current.
+                {
+                    let mut snap = pump.snapshot.lock().unwrap();
+                    match &ev {
+                        WatchEvent::Added { key, value, .. }
+                        | WatchEvent::Modified { key, value, .. } => {
+                            snap.insert(key.clone(), value.clone());
+                        }
+                        WatchEvent::Deleted { key, .. } => {
+                            snap.remove(key);
+                        }
+                        WatchEvent::Bookmark { .. } => {}
+                    }
+                }
+                pump.snapshot_rev.store(ev.revision(), Ordering::SeqCst);
                 {
                     let mut ring = pump.ring.lock().unwrap();
                     if ring.len() == RING_CAPACITY {
@@ -117,6 +152,42 @@ impl WatchCache {
             "watch-cache: opened upstream watch for prefix={prefix} from rev={start_rev}"
         );
         Ok(cache)
+    }
+
+    /// LIST `prefix` from the in-memory snapshot (seeded once from the store,
+    /// then kept current by the pump), paginated by key. Continue tokens are the
+    /// last returned key, so all pages are served consistently from the cache —
+    /// a relist storm hits the store only once (the seed), not once per client.
+    /// Returns `(items, continue_token, revision)`.
+    pub async fn list(
+        &self,
+        prefix: &str,
+        limit: usize,
+        continue_token: Option<&str>,
+    ) -> Result<(Vec<Vec<u8>>, Option<String>, u64)> {
+        let cache = self.ensure(prefix).await?;
+        let snap = cache.snapshot.lock().unwrap();
+        let rev = cache.snapshot_rev.load(Ordering::SeqCst);
+
+        // Resume strictly after the previous page's last key.
+        let lower = match continue_token {
+            Some(k) => Bound::Excluded(k.to_string()),
+            None => Bound::Unbounded,
+        };
+        let mut items = Vec::new();
+        let mut last_key: Option<String> = None;
+        let mut next: Option<String> = None;
+        for (key, value) in snap.range((lower, Bound::Unbounded)) {
+            if limit != 0 && items.len() == limit {
+                // A further item exists → resume the next page after the last
+                // key we actually returned (Excluded bound above).
+                next = last_key.clone();
+                break;
+            }
+            items.push(value.clone());
+            last_key = Some(key.clone());
+        }
+        Ok((items, next, rev))
     }
 
     /// Watch `prefix` for events after `start_rev`, served from the shared cache

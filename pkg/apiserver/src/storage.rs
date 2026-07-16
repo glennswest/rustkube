@@ -68,20 +68,22 @@ impl ResourceStorage {
         limit: usize,
         continue_token: Option<&str>,
     ) -> Result<(Vec<Value>, Option<String>, u64), ApiError> {
-        let result = self
-            .store
+        // Served from the shared watch cache's in-memory snapshot (seeded once
+        // from the store), so relist storms don't fan out to fastetcd.
+        let (raw, continue_token, revision) = self
+            .watch_cache
             .list(prefix, limit, continue_token)
             .await
             .map_err(ApiError::from)?;
 
-        let mut items = Vec::with_capacity(result.items.len());
-        for (_key, bytes, _rev) in &result.items {
+        let mut items = Vec::with_capacity(raw.len());
+        for bytes in &raw {
             let obj: Value = serde_json::from_slice(bytes)
                 .map_err(|e| ApiError::internal(&e.to_string()))?;
             items.push(obj);
         }
 
-        Ok((items, result.continue_token, result.revision))
+        Ok((items, continue_token, revision))
     }
 
     /// Create a resource (fails if it already exists).
