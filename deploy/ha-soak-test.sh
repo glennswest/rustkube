@@ -47,21 +47,22 @@ echo "  cross-check replicated: master2=$(ns_count $M2) master3=$(ns_count $M3)"
 
 if [ "${1:-}" = "scale-only" ]; then echo "done (scale-only)"; exit 0; fi
 
-echo "=== Phase 2: HA — destroy master1, verify cluster survives on master2/3 ==="
-( cd "$MASTERS_DIR" && terragrunt destroy -auto-approve -no-color -input=false \
-    -target='proxmox_virtual_environment_vm.vm["master1"]' 2>&1 | grep -E "Destroy complete|Error" | tail -1 )
-sleep 5
+echo "=== Phase 2a: HA — stop master1, verify cluster survives on master2/3 ==="
+TOKEN="${PROXMOX_API_TOKEN:?set PROXMOX_API_TOKEN}"
+curl -sk -XPOST "https://pve.g8.lo:8006/api2/json/nodes/pve/qemu/2000/status/stop" \
+  -H "Authorization: PVEAPIToken=$TOKEN" -o /dev/null
+sleep 12
 echo "  master2 healthz: $(curl "${C[@]}" https://$M2:6443/healthz)  namespaces: $(ns_count $M2)"
 echo "  master3 healthz: $(curl "${C[@]}" https://$M3:6443/healthz)  namespaces: $(ns_count $M3)"
-echo "  (data must be intact — fastetcd quorum held with 2/3)"
+echo "  (data must be intact — fastetcd quorum holds with 2/3)"
 
-echo "=== Phase 2b: recreate master1, let it rejoin + sync ==="
-( cd "$MASTERS_DIR" && terragrunt apply -auto-approve -no-color -input=false 2>&1 | grep -E "Apply complete|Error" | tail -1 )
-echo "  waiting for master1 to come back + sync..."
-for _ in $(seq 1 60); do
-  h=$(curl "${C[@]}" https://$M1:6443/healthz 2>/dev/null)
-  [ "$h" = "ok" ] && break; sleep 8
-done
-echo "  master1 healthz: $(curl "${C[@]}" https://$M1:6443/healthz)  namespaces: $(ns_count $M1)"
-echo "=== consistency across all 3 (should match) ==="
+echo "=== Phase 2b: safe replace master1 (member remove/add + -replace, state=existing) ==="
+# NOTE: the naive 'destroy -target + full apply' cascades to recreate ALL masters
+# and wipes fastetcd (see docs/terragrunt-deploy.md). Use the safe runbook:
+( cd "$MASTERS_DIR" && "$HERE/replace-master.sh" master1 )
+
+echo "=== Phase 2c: verify rejoin + consistency (all 3 apiservers should match) ==="
+for _ in $(seq 1 40); do curl "${C[@]}" https://$M1:6443/healthz 2>/dev/null | grep -q ok && break; sleep 8; done
 echo "  m1=$(ns_count $M1)  m2=$(ns_count $M2)  m3=$(ns_count $M3)"
+echo "  (mismatch here = a real bug — the test's job. Known: fastetcd#8 rejoin-resync,"
+echo "   rustkube#18 watch-cache staleness.)"

@@ -77,6 +77,7 @@ inputs = {
         initial_cluster  = local.initial_cluster
         cluster_token    = local.cluster_token
         etcd_servers     = local.etcd_servers
+        cluster_state    = (get_env("RK_REPLACE_MASTER", "") == k) ? "existing" : "new"
         fastetcd_rpm_url = local.fastetcd_rpm_url
         rustkube_rpm_url = local.rustkube_rpm_url
         # PKI material, injected via cloud-init write_files.

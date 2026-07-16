@@ -143,6 +143,25 @@ done
 Then bump `rustkube_rpm_url` in `terragrunt.hcl` so future provisions match.
 This keeps fastetcd (and all cluster data) untouched.
 
+### Replace ONE master (safe — keeps the cluster + data)
+
+**Never** `-target destroy` one VM then a full `apply` — that cascades into
+recreating all three and wipes fastetcd (see gotcha #2). Use the runbook, which
+does the etcd member dance (the manual equivalent of OpenShift's
+cluster-etcd-operator) + a scoped `-replace`:
+
+```bash
+cd deploy/terragrunt/masters
+../replace-master.sh master1        # remove old member → add new (learner) →
+                                    # -replace only that VM (state=existing) → rejoin
+```
+
+It targets the raft **leader** for member ops (fastetcd doesn't forward them —
+fastetcd#7), recreates only the one VM, and the node boots
+`ETCD_INITIAL_CLUSTER_STATE=existing` (via the `RK_REPLACE_MASTER` env → the
+template's `cluster_state`) so it rejoins instead of bootstrapping anew.
+Requires `etcdctl` + `jq` on PATH and `PROXMOX_API_TOKEN` set.
+
 ### Full redeploy (destroys all data)
 
 ```bash
@@ -208,5 +227,13 @@ clean rebuild.
 ./deploy/ha-soak-test.sh              # + kill a master, verify survival, recreate, verify
 ```
 
-Phase 1 (scale) and Phase 2a (master loss → cluster survives with data intact)
-pass. Phase 2b (recreate) currently exposes gotcha #2 above.
+Phases: **1 (scale)** and **2a (master loss → cluster survives, data intact)**
+pass. **2b (safe replace via `replace-master.sh`)** recreates only the one VM
+(no cascade) and the node rejoins — but the resync currently surfaces two real
+bugs the test is designed to catch:
+- **fastetcd#8** — a rejoined member doesn't resync its MVCC store (stuck at an
+  old revision though raft caught up).
+- **rustkube#18** — the apiserver watch-cache can serve a stale LIST when its
+  upstream fastetcd watch stalls.
+
+The soak test running end-to-end and flagging these is the point; both are filed.
