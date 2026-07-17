@@ -347,17 +347,13 @@ fn build_router(
                 .put(resource::update_cluster_resource)
                 .delete(resource::delete_cluster_resource),
         )
-        // apiextensions.k8s.io/v1 — CRD management
-        .route(
-            "/apis/apiextensions.k8s.io/v1/{resource}",
-            get(crd::crd_list_cluster).post(crd::crd_create_cluster),
-        )
-        .route(
-            "/apis/apiextensions.k8s.io/v1/{resource}/{name}",
-            get(crd::crd_get_cluster)
-                .put(crd::crd_update_cluster)
-                .delete(crd::crd_delete_cluster),
-        )
+        // apiextensions.k8s.io/v1 CRD management (customresourcedefinitions) is
+        // served by the generic /apis/{group}/{version}/{resource} catch-all
+        // below — the 3-arg handlers extract group=apiextensions.k8s.io,
+        // version=v1, resource=customresourcedefinitions correctly, and
+        // validate_crd allow-lists it. (A dedicated 1-arg route here caused a
+        // Path-arity 500 that blocked all CRDs / Cilium — rustkube#21.)
+        //
         // CRD catch-all routes for dynamic custom resources
         .route(
             "/apis/{group}/{version}/{resource}",
