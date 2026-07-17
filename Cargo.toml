@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.5"
+version = "0.7.6"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
@@ -92,6 +92,7 @@ async-trait = { version = "0.1" }
 dashmap = { version = "6" }
 parking_lot = { version = "0.12" }
 url = { version = "2" }
+form_urlencoded = { version = "1" }
 regex = { version = "1" }
 clap = { version = "4", features = ["derive", "env"] }
 
