@@ -129,6 +129,26 @@ fn build_router(
             "/apis/coordination.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources),
         )
+        // discovery.k8s.io v1 — EndpointSlices (namespaced). Needed by Cilium /
+        // kube-proxy-replacement, which use slices as the modern default (#22).
+        .route(
+            "/apis/discovery.k8s.io/v1",
+            get(discovery::api_discovery_v1_resources),
+        )
+        .route(
+            "/apis/discovery.k8s.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/discovery.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource),
+        )
+        .route(
+            "/apis/discovery.k8s.io/v1/{resource}",
+            get(resource::list_all_namespaces_resources),
+        )
         // scheduling.k8s.io v1 — PriorityClass (cluster-scoped)
         .route(
             "/apis/scheduling.k8s.io/v1/{resource}",

@@ -80,6 +80,11 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "preferredVersion": {"groupVersion": "certificates.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "discovery.k8s.io",
+            "versions": [{"groupVersion": "discovery.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "discovery.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "apiextensions.k8s.io",
             "versions": [{"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}
@@ -374,6 +379,23 @@ pub async fn api_coordination_v1_resources() -> impl IntoResponse {
                 "singularName": "lease",
                 "namespaced": true,
                 "kind": "Lease",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/discovery.k8s.io/v1 — EndpointSlice resources.
+pub async fn api_discovery_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "discovery.k8s.io/v1",
+        "resources": [
+            {
+                "name": "endpointslices",
+                "singularName": "endpointslice",
+                "namespaced": true,
+                "kind": "EndpointSlice",
                 "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
             }
         ]

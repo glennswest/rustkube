@@ -185,6 +185,57 @@ impl ServiceController {
             }
         }
 
+        // Mirror the same backends into an EndpointSlice (discovery.k8s.io/v1) —
+        // Cilium / kube-proxy-replacement use slices as the modern default (#22).
+        // One IPv4 slice per service, labeled with the service name so consumers
+        // find it. (Dual-stack would need a slice per addressType — follow-up.)
+        let slice_endpoints: Vec<Value> = addresses
+            .iter()
+            .map(|a| {
+                json!({
+                    "addresses": [a["ip"].as_str().unwrap_or("")],
+                    "conditions": { "ready": true },
+                    "nodeName": a["nodeName"].clone(),
+                    "targetRef": a["targetRef"].clone()
+                })
+            })
+            .collect();
+        let slice = json!({
+            "apiVersion": "discovery.k8s.io/v1",
+            "kind": "EndpointSlice",
+            "metadata": {
+                "name": svc_name,
+                "namespace": namespace,
+                "labels": { "kubernetes.io/service-name": svc_name },
+                "ownerReferences": [{
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "name": svc_name,
+                    "uid": svc_uid,
+                    "controller": true,
+                    "blockOwnerDeletion": true
+                }]
+            },
+            "addressType": "IPv4",
+            "endpoints": slice_endpoints,
+            "ports": ports
+        });
+        let slice_path =
+            format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices/{svc_name}");
+        match self.api.get(&slice_path).await {
+            Ok(r) if r.status().is_success() => {
+                self.api.update(&slice_path, &slice).await?;
+            }
+            _ => {
+                self.api
+                    .create(
+                        &format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices"),
+                        &slice,
+                    )
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 }
