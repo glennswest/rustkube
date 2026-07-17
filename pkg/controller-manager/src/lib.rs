@@ -4,6 +4,7 @@
 //! Each controller watches resources via the API server and creates/updates/deletes
 //! dependent resources to match the desired spec.
 
+pub mod backoff;
 pub mod cronjob;
 pub mod csr;
 pub mod daemonset;

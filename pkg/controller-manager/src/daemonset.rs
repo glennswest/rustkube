@@ -4,20 +4,29 @@
 //! {ds-name}-{5-char-hash-of-node-name} and placed directly
 //! (bypasses scheduler by setting spec.nodeName).
 
+use crate::backoff::CreateBackoff;
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 pub struct DaemonSetController {
     api: Arc<ApiClient>,
+    /// Per-(DaemonSet uid + node) recreation backoff after failed pods, so a
+    /// node whose pod keeps failing is retried with widening spacing instead of
+    /// a per-reconcile pod storm on that node.
+    backoff: CreateBackoff,
 }
 
 impl DaemonSetController {
     pub fn new(api: Arc<ApiClient>) -> Self {
-        Self { api }
+        Self {
+            api,
+            backoff: CreateBackoff::new(),
+        }
     }
 
     pub async fn run(&self) {
@@ -97,8 +106,8 @@ impl DaemonSetController {
             .ok_or_else(|| anyhow::anyhow!("daemonset missing name"))?;
         let ds_uid = ds["metadata"]["uid"].as_str().unwrap_or("");
 
-        // Find pods owned by this DaemonSet
-        let owned_pods: Vec<&Value> = all_pods
+        // All pods owned by this DaemonSet.
+        let owned: Vec<&Value> = all_pods
             .iter()
             .filter(|pod| {
                 pod["metadata"]["ownerReferences"]
@@ -106,45 +115,96 @@ impl DaemonSetController {
                     .map(|refs| refs.iter().any(|r| r["uid"].as_str() == Some(ds_uid)))
                     .unwrap_or(false)
             })
-            .filter(|pod| {
-                let phase = pod["status"]["phase"].as_str().unwrap_or("Pending");
-                phase != "Succeeded" && phase != "Failed"
-            })
             .collect();
 
-        // Build set of nodes that already have a pod
-        let nodes_with_pods: HashSet<String> = owned_pods
-            .iter()
-            .filter_map(|pod| {
-                pod["spec"]["nodeName"]
-                    .as_str()
-                    .map(|s| s.to_string())
-            })
-            .collect();
+        // Partition into active (counts as "node has a pod") and terminal. A pod
+        // already being deleted is going away — neither active nor a GC target.
+        let mut active: Vec<&Value> = Vec::new();
+        let mut terminal: Vec<&Value> = Vec::new();
+        for pod in &owned {
+            let phase = pod["status"]["phase"].as_str().unwrap_or("Pending");
+            let deleting = !pod["metadata"]["deletionTimestamp"].is_null();
+            if phase == "Succeeded" || phase == "Failed" {
+                if !deleting {
+                    terminal.push(pod);
+                }
+            } else if !deleting {
+                active.push(pod);
+            }
+        }
 
-        // Create pods on nodes that need one
-        for node_name in ready_nodes {
-            if !nodes_with_pods.contains(node_name) {
-                let pod = build_daemonset_pod(namespace, ds_name, ds_uid, node_name, ds)?;
+        // GC terminal pods so they don't accumulate (same #27 storm class: a
+        // Failed pod left a node looking empty, so every reconcile minted another
+        // pod there). Keep the newest terminal pod per node for post-mortem,
+        // delete the rest; a Failed pod on a node arms that node's backoff.
+        let now = Instant::now();
+        let mut newest_terminal_seen: HashSet<String> = HashSet::new();
+        // Newest first so the first terminal pod per node is the one we retain.
+        terminal.sort_by(|a, b| {
+            let ta = a["metadata"]["creationTimestamp"].as_str().unwrap_or("");
+            let tb = b["metadata"]["creationTimestamp"].as_str().unwrap_or("");
+            tb.cmp(ta)
+        });
+        for pod in &terminal {
+            let node = pod["spec"]["nodeName"].as_str().unwrap_or("").to_string();
+            let failed = pod["status"]["phase"].as_str() == Some("Failed");
+            if failed {
+                self.backoff.record_failure(&format!("{ds_uid}/{node}"), now);
+            }
+            if newest_terminal_seen.insert(node.clone()) {
+                continue; // retain the newest terminal pod on this node
+            }
+            let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
+            if !pod_name.is_empty() {
                 match self
                     .api
-                    .create(&format!("/api/v1/namespaces/{namespace}/pods"), &pod)
+                    .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
                     .await
                 {
-                    Ok(_) => {
-                        let pod_name = pod["metadata"]["name"].as_str().unwrap_or("?");
-                        info!("Created DaemonSet pod {namespace}/{pod_name} on node {node_name}");
-                    }
-                    Err(e) => {
-                        warn!("Failed to create DaemonSet pod on {node_name}: {e}");
-                    }
+                    Ok(_) => info!("GC terminal DaemonSet pod {namespace}/{pod_name}"),
+                    Err(e) => debug!("Failed to GC DaemonSet pod {pod_name}: {e}"),
                 }
             }
         }
 
-        // Delete pods on nodes that no longer exist
+        // Nodes that already have an ACTIVE pod.
+        let nodes_with_pods: HashSet<String> = active
+            .iter()
+            .filter_map(|pod| pod["spec"]["nodeName"].as_str().map(|s| s.to_string()))
+            .collect();
+
+        // Create pods on nodes that need one (subject to per-node backoff).
+        for node_name in ready_nodes {
+            if nodes_with_pods.contains(node_name) {
+                continue;
+            }
+            if !self.backoff.allowed(&format!("{ds_uid}/{node_name}"), now) {
+                debug!(
+                    "DaemonSet {namespace}/{ds_name}: backing off pod creation on \
+                     node {node_name} after repeated failures"
+                );
+                continue;
+            }
+            let pod = build_daemonset_pod(namespace, ds_name, ds_uid, node_name, ds)?;
+            match self
+                .api
+                .create(&format!("/api/v1/namespaces/{namespace}/pods"), &pod)
+                .await
+            {
+                Ok(_) => {
+                    let pod_name = pod["metadata"]["name"].as_str().unwrap_or("?");
+                    info!("Created DaemonSet pod {namespace}/{pod_name} on node {node_name}");
+                }
+                Err(e) => {
+                    warn!("Failed to create DaemonSet pod on {node_name}: {e}");
+                }
+            }
+        }
+
+        // Delete active pods on nodes that no longer exist (terminal pods on
+        // gone nodes are already handled by GC above).
         let ready_set: HashSet<&str> = ready_nodes.iter().map(|s| s.as_str()).collect();
-        for pod in &owned_pods {
+        for pod in &active {
             let node_name = pod["spec"]["nodeName"].as_str().unwrap_or("");
             if !node_name.is_empty() && !ready_set.contains(node_name) {
                 let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
@@ -169,8 +229,16 @@ impl DaemonSetController {
 
         // Update DaemonSet status
         let desired = ready_nodes.len();
-        let current_scheduled = owned_pods.len();
-        let ready_count = owned_pods.iter().filter(|p| is_pod_ready(p)).count();
+        let current_scheduled = active.len();
+        let ready_count = active.iter().filter(|p| is_pod_ready(p)).count();
+
+        // A node running a Ready pod has recovered — clear its backoff so future
+        // failures start from the base delay again.
+        for pod in active.iter().filter(|p| is_pod_ready(p)) {
+            if let Some(node) = pod["spec"]["nodeName"].as_str() {
+                self.backoff.clear(&format!("{ds_uid}/{node}"));
+            }
+        }
 
         let mut updated = ds.clone();
         updated["status"] = json!({
