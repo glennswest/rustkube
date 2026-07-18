@@ -461,12 +461,81 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // Bootstrap RBAC resources
     bootstrap_rbac(&storage, config.anonymous_auth).await;
 
+    // default/kubernetes Service + Endpoints, so in-cluster client-go can reach
+    // the apiserver via KUBERNETES_SERVICE_HOST (#30). Re-run periodically so a
+    // restarted/replaced replica re-registers itself.
+    {
+        let cluster_ip = first_service_ip(&config.service_cidr)
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| "10.96.0.1".to_string());
+        let advertise = config.advertise_address.clone().or_else(|| {
+            // Fall back to the bind address when it names a concrete interface.
+            match config.bind_addr.as_str() {
+                "0.0.0.0" | "::" | "" => None,
+                addr => Some(addr.to_string()),
+            }
+        });
+        if advertise.is_none() {
+            tracing::warn!(
+                "no --advertise-address (and --bind-addr is a wildcard): this apiserver \
+                 will not register itself in the default/kubernetes Endpoints"
+            );
+        }
+        let storage_ep = storage.clone();
+        let port = config.secure_port;
+        reconcile_kubernetes_service(&storage_ep, &cluster_ip, advertise.as_deref(), port).await;
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            tick.tick().await; // consume the immediate tick
+            loop {
+                tick.tick().await;
+                reconcile_kubernetes_service(
+                    &storage_ep,
+                    &cluster_ip,
+                    advertise.as_deref(),
+                    port,
+                )
+                .await;
+            }
+        });
+    }
+
     // Initialize CRD registry and load existing CRDs
     let crd_registry = Arc::new(CrdRegistry::new());
     crd::load_existing_crds(&storage, &crd_registry).await;
 
-    // Initialize auth signing keys
-    let signing_keys = SigningKeys::generate();
+    // ServiceAccount token signing keys. A real cluster supplies the RSA
+    // keypair (--service-account-signing-key-file / --service-account-key-file)
+    // so every replica signs and verifies with the same key — tokens then work
+    // across apiservers and survive restarts (#11). Without it we fall back to
+    // an ephemeral per-process HMAC key, which only works single-replica.
+    let signing_keys = match (
+        &config.service_account_signing_key,
+        &config.service_account_key,
+    ) {
+        (Some(priv_path), Some(pub_path)) => {
+            let priv_pem = std::fs::read(priv_path).map_err(|e| {
+                anyhow::anyhow!("reading --service-account-signing-key-file {priv_path:?}: {e}")
+            })?;
+            let pub_pem = std::fs::read(pub_path).map_err(|e| {
+                anyhow::anyhow!("reading --service-account-key-file {pub_path:?}: {e}")
+            })?;
+            let keys = SigningKeys::from_rsa_pem(&priv_pem, &pub_pem)
+                .map_err(|e| anyhow::anyhow!("loading ServiceAccount RSA keypair: {e}"))?;
+            tracing::info!(
+                "ServiceAccount tokens: RS256 using {priv_path:?} (verify: {pub_path:?})"
+            );
+            keys
+        }
+        _ => {
+            tracing::warn!(
+                "no ServiceAccount keypair configured (--service-account-signing-key-file \
+                 and --service-account-key-file); using an EPHEMERAL key — tokens will not \
+                 survive restart and will be rejected by other apiserver replicas"
+            );
+            SigningKeys::generate()
+        }
+    };
 
     // Initialize RBAC engine
     let rbac = Arc::new(RbacEngine::new(storage.clone()));
@@ -560,6 +629,119 @@ async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
         }
     });
     let _ = storage.create(&key, ns).await;
+}
+
+/// First usable address of a service CIDR (`10.96.0.0/12` → `10.96.0.1`), which
+/// upstream assigns to the `default/kubernetes` Service.
+fn first_service_ip(cidr: &str) -> Option<std::net::Ipv4Addr> {
+    let (addr, _prefix) = cidr.split_once('/')?;
+    let base: std::net::Ipv4Addr = addr.parse().ok()?;
+    Some(std::net::Ipv4Addr::from(u32::from(base).checked_add(1)?))
+}
+
+/// Ensure the `default/kubernetes` Service exists and that this apiserver is
+/// registered among its Endpoints/EndpointSlice (#30).
+///
+/// In-cluster client-go builds `https://$KUBERNETES_SERVICE_HOST:$PORT` — which
+/// only resolves if this Service exists and its endpoints point at the live
+/// apiservers. Each replica registers its own advertise address, so the set
+/// converges to all running apiservers. Runs periodically so a restarted or
+/// replaced apiserver re-registers itself.
+async fn reconcile_kubernetes_service(
+    storage: &ResourceStorage,
+    cluster_ip: &str,
+    advertise: Option<&str>,
+    secure_port: u16,
+) {
+    // The Service itself: no selector, endpoints are managed here (as upstream).
+    let svc_key = ResourceStorage::namespaced_key("services", "default", "kubernetes");
+    if storage.get(&svc_key).await.is_err() {
+        let svc = json!({
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": "kubernetes",
+                "namespace": "default",
+                "uid": uuid::Uuid::new_v4().to_string(),
+                "creationTimestamp": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                "labels": { "component": "apiserver", "provider": "kubernetes" }
+            },
+            "spec": {
+                "clusterIP": cluster_ip,
+                "clusterIPs": [cluster_ip],
+                "type": "ClusterIP",
+                "sessionAffinity": "None",
+                "ipFamilies": ["IPv4"],
+                "ports": [{
+                    "name": "https",
+                    "protocol": "TCP",
+                    "port": 443,
+                    "targetPort": secure_port
+                }]
+            },
+            "status": { "loadBalancer": {} }
+        });
+        let _ = storage.create(&svc_key, svc).await;
+    }
+
+    // Endpoints: add our advertise address if it isn't already listed.
+    let Some(advertise) = advertise else {
+        return;
+    };
+    let ep_key = ResourceStorage::namespaced_key("endpoints", "default", "kubernetes");
+    let ports = json!([{ "name": "https", "port": secure_port, "protocol": "TCP" }]);
+
+    let mut addresses: Vec<serde_json::Value> = match storage.get(&ep_key).await {
+        Ok(ep) => ep["subsets"][0]["addresses"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    if addresses
+        .iter()
+        .any(|a| a["ip"].as_str() == Some(advertise))
+    {
+        return; // already registered
+    }
+    addresses.push(json!({ "ip": advertise }));
+    addresses.sort_by(|a, b| a["ip"].as_str().unwrap_or("").cmp(b["ip"].as_str().unwrap_or("")));
+
+    let endpoints = json!({
+        "apiVersion": "v1",
+        "kind": "Endpoints",
+        "metadata": { "name": "kubernetes", "namespace": "default" },
+        "subsets": [{ "addresses": addresses.clone(), "ports": ports.clone() }]
+    });
+    if storage.get(&ep_key).await.is_ok() {
+        let _ = storage.update(&ep_key, endpoints, None).await;
+    } else {
+        let _ = storage.create(&ep_key, endpoints).await;
+    }
+
+    // Mirror into an EndpointSlice — the modern path Cilium/kube-proxy read.
+    let slice_key =
+        ResourceStorage::namespaced_key("endpointslices", "default", "kubernetes");
+    let slice = json!({
+        "apiVersion": "discovery.k8s.io/v1",
+        "kind": "EndpointSlice",
+        "metadata": {
+            "name": "kubernetes",
+            "namespace": "default",
+            "labels": { "kubernetes.io/service-name": "kubernetes" }
+        },
+        "addressType": "IPv4",
+        "endpoints": addresses.iter().map(|a| json!({
+            "addresses": [a["ip"].as_str().unwrap_or("")],
+            "conditions": { "ready": true }
+        })).collect::<Vec<_>>(),
+        "ports": [{ "name": "https", "port": secure_port, "protocol": "TCP" }]
+    });
+    if storage.get(&slice_key).await.is_ok() {
+        let _ = storage.update(&slice_key, slice, None).await;
+    } else {
+        let _ = storage.create(&slice_key, slice).await;
+    }
 }
 
 /// Bootstrap RBAC resources for initial cluster access.
@@ -785,4 +967,25 @@ async fn metrics_middleware(
     let method = req.method().as_str().to_string();
     metrics::counter!("apiserver_request_total", "method" => method).increment(1);
     next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_service_ip;
+
+    #[test]
+    fn service_cidr_yields_dot_one() {
+        // Upstream assigns the first usable address of the service CIDR to the
+        // default/kubernetes Service (#30).
+        assert_eq!(
+            first_service_ip("10.96.0.0/12").map(|i| i.to_string()),
+            Some("10.96.0.1".to_string())
+        );
+        assert_eq!(
+            first_service_ip("172.20.0.0/16").map(|i| i.to_string()),
+            Some("172.20.0.1".to_string())
+        );
+        assert!(first_service_ip("not-a-cidr").is_none());
+        assert!(first_service_ip("10.96.0.0").is_none());
+    }
 }

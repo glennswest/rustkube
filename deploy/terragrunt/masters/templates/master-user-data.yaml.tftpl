@@ -53,6 +53,10 @@ write_files:
     permissions: "0600"
     content: |
       ${indent(6, sa_key)}
+  - path: /etc/kubernetes/pki/sa.pub
+    permissions: "0644"
+    content: |
+      ${indent(6, sa_pub)}
   - path: /etc/kubernetes/pki/apiserver.crt
     permissions: "0644"
     content: |
@@ -92,7 +96,7 @@ write_files:
     permissions: "0644"
     content: |
       ETCD_SERVERS=${etcd_servers}
-      KUBE_APISERVER_ARGS=--tls-cert-file /etc/kubernetes/pki/apiserver.crt --tls-private-key-file /etc/kubernetes/pki/apiserver.key --client-ca-file /etc/kubernetes/pki/ca.crt --service-account-key-file /etc/kubernetes/pki/sa.key --anonymous-auth=false
+      KUBE_APISERVER_ARGS=--tls-cert-file /etc/kubernetes/pki/apiserver.crt --tls-private-key-file /etc/kubernetes/pki/apiserver.key --client-ca-file /etc/kubernetes/pki/ca.crt --service-account-signing-key-file /etc/kubernetes/pki/sa.key --service-account-key-file /etc/kubernetes/pki/sa.pub --advertise-address ${node_ip} --anonymous-auth=false
 
   # controller-manager & scheduler talk HTTPS to the local apiserver with their
   # client certs (users system:kube-controller-manager / system:kube-scheduler).

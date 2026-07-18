@@ -61,7 +61,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.7.8`
+## Current Version: `v0.7.9`
 
 ## Work Plan
 
@@ -216,6 +216,7 @@ Cargo.toml → workspace.package.version
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.7.9 | 2026-07-18 | SA token auth: stable RS256 signing keypair across replicas (#11, #29) + default `kubernetes` Service/Endpoints (#30) |
 | v0.7.8 | 2026-07-18 | Namespace deletion cascade — graceful Terminating + `/finalize` + controller purges contained resources (#28) |
 | v0.7.7 | 2026-07-17 | Fix ReplicaSet/DaemonSet unbounded pod storm — GC terminal pods + exponential recreate backoff (#27) |
 | v0.7.6 | 2026-07-17 | Fix LIST pagination hang — percent-decode `continue` token + label/field selectors in query parser |

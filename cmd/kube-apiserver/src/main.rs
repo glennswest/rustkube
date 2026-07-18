@@ -52,9 +52,21 @@ struct Cli {
     #[arg(long = "anonymous-auth", default_value_t = true, action = clap::ArgAction::Set)]
     anonymous_auth: bool,
 
-    /// Service-account token signing key (PEM) for issuing/validating SA tokens.
+    /// Public key (PEM) used to VERIFY ServiceAccount tokens. Pair with
+    /// --service-account-signing-key-file; must be identical on every replica.
     #[arg(long = "service-account-key-file")]
     service_account_key: Option<PathBuf>,
+
+    /// Private key (PEM) used to SIGN ServiceAccount tokens (upstream name).
+    /// Without it the apiserver falls back to an ephemeral per-process key and
+    /// tokens will not validate on other replicas or survive a restart.
+    #[arg(long = "service-account-signing-key-file")]
+    service_account_signing_key: Option<PathBuf>,
+
+    /// Address advertised to in-cluster clients; registered as an endpoint of
+    /// the default/kubernetes Service. Defaults to --bind-addr when concrete.
+    #[arg(long = "advertise-address")]
+    advertise_address: Option<String>,
 
     /// Data directory (TLS material, misc runtime state)
     #[arg(long, default_value = "/var/lib/kubernetes")]
@@ -92,6 +104,8 @@ async fn main() -> anyhow::Result<()> {
         client_ca: cli.client_ca,
         anonymous_auth: cli.anonymous_auth,
         service_account_key: cli.service_account_key,
+        service_account_signing_key: cli.service_account_signing_key,
+        advertise_address: cli.advertise_address,
         data_dir: cli.data_dir,
         service_cidr: cli.service_cidr,
         cluster_domain: cli.cluster_domain,

@@ -8,7 +8,9 @@ use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, TokenData, Validation};
+use jsonwebtoken::{
+    decode, encode, Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation,
+};
 use serde::{Deserialize, Serialize};
 
 /// Authenticated user identity, stored as a request extension.
@@ -57,16 +59,40 @@ pub struct Claims {
 pub struct SigningKeys {
     pub encoding: EncodingKey,
     pub decoding: DecodingKey,
+    /// Algorithm the keys were built for — RS256 for a real ServiceAccount
+    /// keypair, HS256 for the ephemeral dev key.
+    algorithm: Algorithm,
 }
 
 impl SigningKeys {
-    /// Generate a new HMAC-SHA256 signing key.
+    /// Generate an ephemeral HMAC-SHA256 signing key (dev only).
+    ///
+    /// Tokens signed with this die on restart and are rejected by every other
+    /// apiserver replica — use `from_rsa_pem` in any real cluster (#11).
     pub fn generate() -> Self {
         let secret = uuid::Uuid::new_v4().to_string();
         Self {
             encoding: EncodingKey::from_secret(secret.as_bytes()),
             decoding: DecodingKey::from_secret(secret.as_bytes()),
+            algorithm: Algorithm::HS256,
         }
+    }
+
+    /// Load the ServiceAccount RS256 keypair: a PKCS#1/PKCS#8 private key PEM
+    /// for signing and an SPKI public key PEM for verification.
+    ///
+    /// Because every replica loads the same on-disk keypair, a token minted by
+    /// one apiserver validates on all of them, and tokens survive restarts —
+    /// which is what in-cluster client-go workloads (Cilium) require (#11).
+    pub fn from_rsa_pem(
+        private_pem: &[u8],
+        public_pem: &[u8],
+    ) -> Result<Self, jsonwebtoken::errors::Error> {
+        Ok(Self {
+            encoding: EncodingKey::from_rsa_pem(private_pem)?,
+            decoding: DecodingKey::from_rsa_pem(public_pem)?,
+            algorithm: Algorithm::RS256,
+        })
     }
 
     /// Create a JWT token for a user.
@@ -78,12 +104,12 @@ impl SigningKeys {
             iat: now,
             exp: now + 86400, // 24 hours
         };
-        encode(&Header::default(), &claims, &self.encoding).ok()
+        encode(&Header::new(self.algorithm), &claims, &self.encoding).ok()
     }
 
     /// Validate a JWT token and extract claims.
     pub fn validate_token(&self, token: &str) -> Option<TokenData<Claims>> {
-        let mut validation = Validation::default();
+        let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
         decode::<Claims>(token, &self.decoding, &validation).ok()
     }

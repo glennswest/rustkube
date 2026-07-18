@@ -84,6 +84,7 @@ inputs = {
         ca_crt        = file("${local.pki}/ca.crt")
         ca_key        = file("${local.pki}/ca.key")
         sa_key        = file("${local.pki}/sa.key")
+        sa_pub        = file("${local.pki}/sa.pub")
         apiserver_crt = file("${local.pki}/apiserver-${k}.crt")
         apiserver_key = file("${local.pki}/apiserver-${k}.key")
         cm_crt        = file("${local.pki}/controller-manager.crt")

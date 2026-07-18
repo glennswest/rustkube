@@ -31,10 +31,18 @@ pub struct ApiServerConfig {
     pub service_cidr: String,
     /// Cluster DNS domain.
     pub cluster_domain: String,
-    /// Path to JWT signing key for ServiceAccount tokens.
+    /// Public key (SPKI PEM) used to *verify* ServiceAccount tokens.
     pub service_account_key: Option<PathBuf>,
+    /// Private key (PKCS#1/PKCS#8 PEM) used to *sign* ServiceAccount tokens.
+    /// Must be the counterpart of `service_account_key`, and identical on every
+    /// replica so tokens validate cluster-wide (#11).
+    pub service_account_signing_key: Option<PathBuf>,
     /// Allow anonymous authentication (default true for dev).
     pub anonymous_auth: bool,
+    /// Address this apiserver advertises to in-cluster clients. Registered as an
+    /// endpoint of the `default/kubernetes` Service (#30). Falls back to
+    /// `bind_addr` when it is a concrete address.
+    pub advertise_address: Option<String>,
 }
 
 impl Default for ApiServerConfig {
@@ -54,7 +62,9 @@ impl Default for ApiServerConfig {
             service_cidr: "10.96.0.0/12".into(),
             cluster_domain: "cluster.local".into(),
             service_account_key: None,
+            service_account_signing_key: None,
             anonymous_auth: true,
+            advertise_address: None,
         }
     }
 }
