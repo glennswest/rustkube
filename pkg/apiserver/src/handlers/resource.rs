@@ -409,6 +409,90 @@ pub async fn update_cluster_status(
 }
 
 /// PATCH status for a cluster-scoped resource.
+/// Apply a Kubernetes PATCH body to `target`, dispatching on the request
+/// Content-Type (#23):
+///
+/// - `application/json-patch+json` — RFC 6902 operation list
+/// - `application/merge-patch+json` — RFC 7386 merge
+/// - `application/strategic-merge-patch+json` — treated as a merge; true
+///   strategic merge needs per-field schema metadata we don't carry yet, which
+///   only differs for lists with merge keys
+/// - `application/apply-patch+yaml` — server-side apply, applied as a merge of
+///   the submitted intent (no field-ownership tracking yet)
+///
+/// An unrecognized/absent Content-Type is treated as a merge patch, matching
+/// what most clients expect.
+pub fn apply_patch_body(
+    target: &mut Value,
+    content_type: &str,
+    body: &[u8],
+) -> Result<(), ApiError> {
+    let ct = content_type.split(';').next().unwrap_or("").trim();
+    match ct {
+        "application/json-patch+json" => {
+            let patch: json_patch::Patch = serde_json::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
+            json_patch::patch(target, &patch)
+                .map_err(|e| ApiError::invalid(&format!("JSON Patch could not be applied: {e}")))?;
+        }
+        "application/apply-patch+yaml" => {
+            let patch: Value = serde_yaml::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
+            json_patch::merge(target, &patch);
+        }
+        _ => {
+            let patch: Value = serde_json::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid merge patch: {e}")))?;
+            json_patch::merge(target, &patch);
+        }
+    }
+    Ok(())
+}
+
+/// Read-modify-write a stored object through `apply_patch_body`, preserving the
+/// object's identity (name/namespace can't be patched away).
+async fn patch_stored_object(
+    state: &AppState,
+    key: &str,
+    headers: &axum::http::HeaderMap,
+    body: &[u8],
+) -> Result<Value, ApiError> {
+    let mut existing = state.storage.get(key).await?;
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    apply_patch_body(&mut existing, content_type, body)?;
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    state.storage.update(key, existing, prev_rev).await
+}
+
+/// PATCH a cluster-scoped resource (whole object).
+pub async fn patch_cluster_resource(
+    State(state): State<AppState>,
+    Path((resource, name)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let obj = patch_stored_object(&state, &key, &headers, &body).await?;
+    Ok(Json(obj))
+}
+
+/// PATCH a namespace-scoped resource (whole object).
+pub async fn patch_namespaced_resource(
+    State(state): State<AppState>,
+    Path((namespace, resource, name)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let obj = patch_stored_object(&state, &key, &headers, &body).await?;
+    Ok(Json(obj))
+}
+
 pub async fn patch_cluster_status(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
@@ -580,6 +664,50 @@ mod tests {
 
     // rustkube#9: a client request with an unexpected shape must never panic.
     #[test]
+    #[test]
+    fn merge_patch_updates_and_deletes_fields() {
+        // RFC 7386: null removes a key, objects merge recursively.
+        let mut obj = json!({"spec":{"replicas":1,"paused":true},"status":{"phase":"A"}});
+        apply_patch_body(
+            &mut obj,
+            "application/merge-patch+json",
+            br#"{"spec":{"replicas":3,"paused":null}}"#,
+        )
+        .unwrap();
+        assert_eq!(obj["spec"]["replicas"], 3);
+        assert!(obj["spec"].get("paused").is_none(), "null must delete the key");
+        assert_eq!(obj["status"]["phase"], "A", "untouched fields survive");
+    }
+
+    #[test]
+    fn json_patch_rfc6902_applies_ops() {
+        let mut obj = json!({"spec":{"replicas":1}});
+        apply_patch_body(
+            &mut obj,
+            "application/json-patch+json",
+            br#"[{"op":"replace","path":"/spec/replicas","value":5}]"#,
+        )
+        .unwrap();
+        assert_eq!(obj["spec"]["replicas"], 5);
+    }
+
+    #[test]
+    fn content_type_params_and_default_are_handled() {
+        // charset parameter must not break dispatch; absent CT defaults to merge.
+        let mut obj = json!({"a":1});
+        apply_patch_body(&mut obj, "application/merge-patch+json; charset=utf-8", br#"{"a":2}"#).unwrap();
+        assert_eq!(obj["a"], 2);
+        apply_patch_body(&mut obj, "", br#"{"a":3}"#).unwrap();
+        assert_eq!(obj["a"], 3);
+    }
+
+    #[test]
+    fn malformed_patch_is_an_error_not_a_panic() {
+        let mut obj = json!({"a":1});
+        assert!(apply_patch_body(&mut obj, "application/merge-patch+json", b"not json").is_err());
+        assert!(apply_patch_body(&mut obj, "application/json-patch+json", b"{}").is_err());
+    }
+
     fn ensure_metadata_never_panics_on_bad_shapes() {
         // Top-level body not an object (array / scalar / null).
         for mut v in [json!([1, 2, 3]), json!("nope"), json!(42), json!(null)] {

@@ -278,6 +278,62 @@ pub async fn crd_update_ns(
     Ok(Json(obj))
 }
 
+/// PATCH a namespaced CRD instance (merge-patch / JSON Patch / apply) — #23.
+pub async fn crd_patch_ns(
+    State(state): State<AppState>,
+    Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let obj = patch_cr(&state, &key, &headers, &body).await?;
+    Ok(Json(obj))
+}
+
+/// GET the /status subresource of a namespaced CR.
+pub async fn crd_get_status_ns(
+    State(state): State<AppState>,
+    Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let obj = state.storage.get(&key).await?;
+    Ok(Json(obj))
+}
+
+/// PUT the /status subresource of a namespaced CR (status only).
+pub async fn crd_update_status_ns(
+    State(state): State<AppState>,
+    Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let mut existing = state.storage.get(&key).await?;
+    if let Some(status) = body.get("status") {
+        existing["status"] = status.clone();
+    }
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    Ok(Json(obj))
+}
+
+/// PATCH the /status subresource of a namespaced CR.
+pub async fn crd_patch_status_ns(
+    State(state): State<AppState>,
+    Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let obj = patch_cr_status(&state, &key, &headers, &body).await?;
+    Ok(Json(obj))
+}
+
 /// DELETE a namespaced CRD instance.
 pub async fn crd_delete_ns(
     State(state): State<AppState>,
@@ -293,6 +349,105 @@ pub async fn crd_delete_ns(
         "status": "Success",
         "details": { "name": name, "namespace": namespace, "kind": resource }
     })))
+}
+
+/// Read-modify-write a CR through the shared patch dispatcher.
+async fn patch_cr(
+    state: &AppState,
+    key: &str,
+    headers: &axum::http::HeaderMap,
+    body: &[u8],
+) -> Result<Value, ApiError> {
+    let mut existing = state.storage.get(key).await?;
+    let ct = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    crate::handlers::resource::apply_patch_body(&mut existing, ct, body)?;
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    state.storage.update(key, existing, prev_rev).await
+}
+
+/// Patch only the `status` stanza of a CR, leaving spec/metadata untouched —
+/// what `patch_status` in kube-rs/client-go expects from the subresource.
+async fn patch_cr_status(
+    state: &AppState,
+    key: &str,
+    headers: &axum::http::HeaderMap,
+    body: &[u8],
+) -> Result<Value, ApiError> {
+    let mut existing = state.storage.get(key).await?;
+    let ct = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    // Apply to a copy, then take only its status back — so a patch body that
+    // touches other fields can't sneak spec changes through /status.
+    let mut scratch = existing.clone();
+    crate::handlers::resource::apply_patch_body(&mut scratch, ct, body)?;
+    existing["status"] = scratch["status"].clone();
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    state.storage.update(key, existing, prev_rev).await
+}
+
+/// PATCH a cluster-scoped CRD instance.
+pub async fn crd_patch_cluster(
+    State(state): State<AppState>,
+    Path((group, version, resource, name)): Path<(String, String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let obj = patch_cr(&state, &key, &headers, &body).await?;
+    Ok(Json(obj))
+}
+
+/// GET the /status subresource of a cluster-scoped CR.
+pub async fn crd_get_status_cluster(
+    State(state): State<AppState>,
+    Path((group, version, resource, name)): Path<(String, String, String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let obj = state.storage.get(&key).await?;
+    Ok(Json(obj))
+}
+
+/// PUT the /status subresource of a cluster-scoped CR.
+pub async fn crd_update_status_cluster(
+    State(state): State<AppState>,
+    Path((group, version, resource, name)): Path<(String, String, String, String)>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let mut existing = state.storage.get(&key).await?;
+    if let Some(status) = body.get("status") {
+        existing["status"] = status.clone();
+    }
+    let prev_rev = existing["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    Ok(Json(obj))
+}
+
+/// PATCH the /status subresource of a cluster-scoped CR.
+pub async fn crd_patch_status_cluster(
+    State(state): State<AppState>,
+    Path((group, version, resource, name)): Path<(String, String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let key = ResourceStorage::cluster_key(&resource, &name);
+    let obj = patch_cr_status(&state, &key, &headers, &body).await?;
+    Ok(Json(obj))
 }
 
 /// LIST cluster-scoped CRD instances.

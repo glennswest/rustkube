@@ -61,7 +61,8 @@ fn build_router(
             "/api/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         // Namespace /finalize subresource (graceful deletion, #28). Must be
         // registered before the generic namespaced routes; the static `finalize`
@@ -80,7 +81,8 @@ fn build_router(
             "/api/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         // ServiceAccount TokenRequest (mint a bound SA token)
         .route(
@@ -97,7 +99,8 @@ fn build_router(
             "/apis/apps/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         // Apps v1 — cluster-scoped list (e.g., kubectl get deployments --all-namespaces)
         .route(
@@ -114,7 +117,8 @@ fn build_router(
             "/apis/batch/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         .route(
             "/apis/batch/v1/{resource}",
@@ -130,7 +134,8 @@ fn build_router(
             "/apis/coordination.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         .route(
             "/apis/coordination.k8s.io/v1/{resource}",
@@ -150,7 +155,8 @@ fn build_router(
             "/apis/discovery.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         .route(
             "/apis/discovery.k8s.io/v1/{resource}",
@@ -165,7 +171,8 @@ fn build_router(
             "/apis/scheduling.k8s.io/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         // RBAC v1
         .route(
@@ -177,7 +184,8 @@ fn build_router(
             "/apis/rbac.authorization.k8s.io/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         // certificates.k8s.io/v1 — CertificateSigningRequests (cluster-scoped)
         // with approval/status subresources, for node-join CSR bootstrapping.
@@ -193,7 +201,8 @@ fn build_router(
             "/apis/certificates.k8s.io/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         .route(
             "/apis/certificates.k8s.io/v1/{resource}/{name}/approval",
@@ -212,7 +221,8 @@ fn build_router(
             "/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         // RustKube v1alpha1 (PodMigration)
         .route(
@@ -228,7 +238,8 @@ fn build_router(
             "/apis/rustkube.io/v1alpha1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         .route(
             "/apis/rustkube.io/v1alpha1/{resource}",
@@ -276,7 +287,8 @@ fn build_router(
             "/apis/autoscaling/v2/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         .route(
             "/apis/autoscaling/v2/namespaces/{namespace}/{resource}/{name}/status",
@@ -302,7 +314,8 @@ fn build_router(
             "/apis/networking.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         .route(
             "/apis/networking.k8s.io/v1/{resource}",
@@ -313,7 +326,8 @@ fn build_router(
             "/apis/networking.k8s.io/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         // admissionregistration.k8s.io/v1
         .route(
@@ -329,7 +343,8 @@ fn build_router(
             "/apis/admissionregistration.k8s.io/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         // gateway.networking.k8s.io/v1
         .route(
@@ -345,7 +360,8 @@ fn build_router(
             "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
             get(resource::get_namespaced_resource)
                 .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource),
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
         )
         .route(
             "/apis/gateway.networking.k8s.io/v1/{resource}",
@@ -356,7 +372,8 @@ fn build_router(
             "/apis/gateway.networking.k8s.io/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         // apiregistration.k8s.io/v1
         .route(
@@ -372,7 +389,8 @@ fn build_router(
             "/apis/apiregistration.k8s.io/v1/{resource}/{name}",
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
-                .delete(resource::delete_cluster_resource),
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
         )
         // apiextensions.k8s.io/v1 CRD management (customresourcedefinitions) is
         // served by the generic /apis/{group}/{version}/{resource} catch-all
@@ -390,7 +408,15 @@ fn build_router(
             "/apis/{group}/{version}/{resource}/{name}",
             get(crd::crd_get_cluster)
                 .put(crd::crd_update_cluster)
-                .delete(crd::crd_delete_cluster),
+                .delete(crd::crd_delete_cluster)
+                .patch(crd::crd_patch_cluster),
+        )
+        // CR /status subresource (CRDs declaring subresources.status) — #23
+        .route(
+            "/apis/{group}/{version}/{resource}/{name}/status",
+            get(crd::crd_get_status_cluster)
+                .put(crd::crd_update_status_cluster)
+                .patch(crd::crd_patch_status_cluster),
         )
         .route(
             "/apis/{group}/{version}/namespaces/{namespace}/{resource}",
@@ -400,7 +426,14 @@ fn build_router(
             "/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}",
             get(crd::crd_get_ns)
                 .put(crd::crd_update_ns)
-                .delete(crd::crd_delete_ns),
+                .delete(crd::crd_delete_ns)
+                .patch(crd::crd_patch_ns),
+        )
+        .route(
+            "/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}/status",
+            get(crd::crd_get_status_ns)
+                .put(crd::crd_update_status_ns)
+                .patch(crd::crd_patch_status_ns),
         )
         // Dynamic CRD discovery
         .route("/apis/{group}/{version}", get(crd::crd_api_resources))
