@@ -85,6 +85,11 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "preferredVersion": {"groupVersion": "discovery.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "storage.k8s.io",
+            "versions": [{"groupVersion": "storage.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "storage.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "apiextensions.k8s.io",
             "versions": [{"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}
@@ -397,6 +402,65 @@ pub async fn api_discovery_v1_resources() -> impl IntoResponse {
                 "namespaced": true,
                 "kind": "EndpointSlice",
                 "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/storage.k8s.io/v1 — CSI ecosystem resources (#24).
+///
+/// These are plain stored resources: the CSI sidecars (provisioner, attacher,
+/// resizer, capacity publisher) create and watch them, and the scheduler reads
+/// CSIStorageCapacity. No server-side controller logic is required.
+pub async fn api_storage_v1_resources() -> impl IntoResponse {
+    let verbs = json!(["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]);
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "storage.k8s.io/v1",
+        "resources": [
+            {
+                "name": "storageclasses",
+                "singularName": "storageclass",
+                "namespaced": false,
+                "kind": "StorageClass",
+                "shortNames": ["sc"],
+                "verbs": verbs
+            },
+            {
+                "name": "csidrivers",
+                "singularName": "csidriver",
+                "namespaced": false,
+                "kind": "CSIDriver",
+                "verbs": verbs
+            },
+            {
+                "name": "csinodes",
+                "singularName": "csinode",
+                "namespaced": false,
+                "kind": "CSINode",
+                "verbs": verbs
+            },
+            {
+                "name": "volumeattachments",
+                "singularName": "volumeattachment",
+                "namespaced": false,
+                "kind": "VolumeAttachment",
+                "verbs": verbs
+            },
+            {
+                "name": "volumeattachments/status",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "VolumeAttachment",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "csistoragecapacities",
+                "singularName": "csistoragecapacity",
+                "namespaced": true,
+                "kind": "CSIStorageCapacity",
+                "verbs": verbs
             }
         ]
     }))

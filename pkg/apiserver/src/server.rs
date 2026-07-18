@@ -162,6 +162,41 @@ fn build_router(
             "/apis/discovery.k8s.io/v1/{resource}",
             get(resource::list_all_namespaces_resources),
         )
+        // storage.k8s.io v1 — CSI ecosystem (#24): StorageClass, CSIDriver,
+        // CSINode, VolumeAttachment (cluster-scoped) + CSIStorageCapacity
+        // (namespaced). Plain stored resources driven by the CSI sidecars.
+        .route(
+            "/apis/storage.k8s.io/v1",
+            get(discovery::api_storage_v1_resources),
+        )
+        .route(
+            "/apis/storage.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources).post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/storage.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
+        )
+        .route(
+            "/apis/storage.k8s.io/v1/{resource}/{name}/status",
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .merge(patch(resource::patch_cluster_status)),
+        )
+        .route(
+            "/apis/storage.k8s.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/storage.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
+        )
         // scheduling.k8s.io v1 — PriorityClass (cluster-scoped)
         .route(
             "/apis/scheduling.k8s.io/v1/{resource}",

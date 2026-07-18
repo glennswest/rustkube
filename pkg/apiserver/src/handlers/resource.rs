@@ -653,6 +653,15 @@ fn resource_to_list_kind(resource: &str) -> String {
         "httproutes" => "HTTPRoute",
         "apiservices" => "APIService",
         "podmigrations" => "PodMigration",
+        // storage.k8s.io/v1 — CSI ecosystem (#24)
+        "storageclasses" => "StorageClass",
+        "csidrivers" => "CSIDriver",
+        "csinodes" => "CSINode",
+        "volumeattachments" => "VolumeAttachment",
+        "csistoragecapacities" => "CSIStorageCapacity",
+        "endpointslices" => "EndpointSlice",
+        "certificatesigningrequests" => "CertificateSigningRequest",
+        "priorityclasses" => "PriorityClass",
         other => other,
     };
     format!("{singular}List")
@@ -746,5 +755,25 @@ mod tests {
         });
         ensure_metadata(&mut pod, "test", Some("default")); // must not panic
         assert_eq!(pod["status"]["phase"], "Failed");
+    }
+}
+
+#[cfg(test)]
+mod list_kind_tests {
+    use super::resource_to_list_kind;
+
+    #[test]
+    fn csi_and_group_resources_map_to_proper_kinds() {
+        // storage.k8s.io/v1 (#24) and other non-core groups must not fall
+        // through to the raw plural, which would emit e.g. "storageclassesList".
+        assert_eq!(resource_to_list_kind("storageclasses"), "StorageClassList");
+        assert_eq!(resource_to_list_kind("csidrivers"), "CSIDriverList");
+        assert_eq!(resource_to_list_kind("csinodes"), "CSINodeList");
+        assert_eq!(resource_to_list_kind("volumeattachments"), "VolumeAttachmentList");
+        assert_eq!(
+            resource_to_list_kind("csistoragecapacities"),
+            "CSIStorageCapacityList"
+        );
+        assert_eq!(resource_to_list_kind("endpointslices"), "EndpointSliceList");
     }
 }
