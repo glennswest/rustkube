@@ -12,7 +12,7 @@ use crate::handlers::AppState;
 use crate::rbac_engine::{self, RbacEngine};
 use crate::storage::ResourceStorage;
 use axum::middleware;
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::Router;
 use apimachinery::store::KvStore;
 use storage::{EtcdStore, EtcdTls};
@@ -62,6 +62,13 @@ fn build_router(
             get(resource::get_cluster_resource)
                 .put(resource::update_cluster_resource)
                 .delete(resource::delete_cluster_resource),
+        )
+        // Namespace /finalize subresource (graceful deletion, #28). Must be
+        // registered before the generic namespaced routes; the static `finalize`
+        // segment takes precedence over `{resource}`.
+        .route(
+            "/api/v1/namespaces/{name}/finalize",
+            put(resource::finalize_namespace),
         )
         // Core v1 — namespace-scoped resources
         .route(

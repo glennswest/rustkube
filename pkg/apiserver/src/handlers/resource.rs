@@ -244,8 +244,59 @@ pub async fn delete_cluster_resource(
     Path((resource, name)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    // Get the object first so we can return it
-    let _obj = state.storage.get(&key).await?;
+    // Get the object first so we can return it (and inspect it for namespaces).
+    let obj = state.storage.get(&key).await?;
+
+    // Namespaces terminate gracefully (#28): instead of a hard delete, mark the
+    // namespace Terminating with a deletionTimestamp and a `kubernetes`
+    // finalizer. The namespace controller then purges every contained resource
+    // and clears the finalizer via /finalize, at which point the object is
+    // actually removed. Admission already blocks new content in Terminating
+    // namespaces (builtin_admission), so this closes the loop.
+    if resource == "namespaces" {
+        let finalizers_empty = obj["spec"]["finalizers"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(true);
+        let already_terminating = obj["metadata"]["deletionTimestamp"].as_str().is_some();
+        if already_terminating && finalizers_empty {
+            // Finalization already complete — actually remove it.
+            state.storage.delete(&key, None).await?;
+            return Ok(Json(obj));
+        }
+
+        let mut ns = obj.clone();
+        if !ns["metadata"].is_object() {
+            ns["metadata"] = json!({});
+        }
+        ns["metadata"]["deletionTimestamp"] = Value::String(
+            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        );
+        if !ns["status"].is_object() {
+            ns["status"] = json!({});
+        }
+        ns["status"]["phase"] = Value::String("Terminating".into());
+        // Ensure the `kubernetes` finalizer is present so the object survives
+        // until the controller finishes purging content.
+        let mut finalizers = ns["spec"]["finalizers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if !finalizers.iter().any(|f| f.as_str() == Some("kubernetes")) {
+            finalizers.push(Value::String("kubernetes".into()));
+        }
+        if !ns["spec"].is_object() {
+            ns["spec"] = json!({});
+        }
+        ns["spec"]["finalizers"] = Value::Array(finalizers);
+
+        let prev_rev = ns["metadata"]["resourceVersion"]
+            .as_str()
+            .and_then(|r| r.parse::<u64>().ok());
+        let updated = state.storage.update(&key, ns, prev_rev).await?;
+        return Ok(Json(updated));
+    }
+
     state.storage.delete(&key, None).await?;
 
     let status = json!({
@@ -259,6 +310,47 @@ pub async fn delete_cluster_resource(
         }
     });
     Ok(Json(status))
+}
+
+/// PUT /api/v1/namespaces/{name}/finalize — apply the submitted finalizer list.
+/// When the finalizers become empty and the namespace is terminating, the object
+/// is actually removed from storage (the namespace controller calls this after
+/// purging all contained resources). Mirrors the upstream `/finalize`
+/// subresource. (#28)
+pub async fn finalize_namespace(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = ResourceStorage::cluster_key("namespaces", &name);
+    let mut obj = state.storage.get(&key).await?;
+
+    // Apply the caller's finalizer list verbatim.
+    let submitted = body["spec"]["finalizers"].clone();
+    if !obj["spec"].is_object() {
+        obj["spec"] = json!({});
+    }
+    obj["spec"]["finalizers"] = if submitted.is_array() {
+        submitted
+    } else {
+        json!([])
+    };
+
+    let empty = obj["spec"]["finalizers"]
+        .as_array()
+        .map(|a| a.is_empty())
+        .unwrap_or(true);
+    let terminating = obj["metadata"]["deletionTimestamp"].as_str().is_some();
+    if empty && terminating {
+        state.storage.delete(&key, None).await?;
+        return Ok(Json(obj));
+    }
+
+    let prev_rev = obj["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|r| r.parse::<u64>().ok());
+    let updated = state.storage.update(&key, obj, prev_rev).await?;
+    Ok(Json(updated))
 }
 
 /// DELETE a namespace-scoped resource.
