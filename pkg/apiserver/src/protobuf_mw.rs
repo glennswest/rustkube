@@ -30,11 +30,40 @@ fn header_str<'a>(headers: &'a header::HeaderMap, name: header::HeaderName) -> &
     headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("")
 }
 
+/// Derive `(apiVersion, kind)` from a request path, so a protobuf body with an
+/// empty envelope TypeMeta can still be decoded (#34). Returns empty strings for
+/// paths that don't name a resource.
+///
+///   /api/v1/.../{resource}[/{name}[/{sub}]]            -> ("v1", Kind(resource))
+///   /apis/{group}/{version}/.../{resource}[/{name}...] -> ("group/version", Kind)
+fn path_gvk(path: &str) -> (String, String) {
+    let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let (api_version, rest): (String, &[&str]) = match segs.as_slice() {
+        ["api", ver, tail @ ..] => (ver.to_string(), tail),
+        ["apis", group, ver, tail @ ..] => (format!("{group}/{ver}"), tail),
+        _ => return (String::new(), String::new()),
+    };
+    // The resource plural is the segment after an optional `namespaces/{ns}`
+    // prefix; a trailing `/{name}` or `/{name}/{subresource}` doesn't change it.
+    let resource = match rest {
+        ["namespaces", _ns, res, ..] => Some(*res),
+        [res, ..] if *res != "namespaces" => Some(*res),
+        _ => None,
+    };
+    match resource {
+        Some(r) => (api_version, crate::handlers::resource::resource_to_kind(r)),
+        None => (api_version, String::new()),
+    }
+}
+
 pub async fn transcode(req: Request, next: Next) -> Response {
     let (mut parts, body) = req.into_parts();
 
     let req_is_pb = protobuf::wants_protobuf(header_str(&parts.headers, header::CONTENT_TYPE));
     let accept_pb = header_str(&parts.headers, header::ACCEPT).contains(protobuf::CONTENT_TYPE);
+    // GVK implied by the endpoint, used when the client's protobuf envelope has
+    // no TypeMeta (typed client-go clients often leave it blank — #34).
+    let (hint_av, hint_kind) = path_gvk(parts.uri.path());
 
     // --- request: protobuf body -> JSON body -------------------------------
     let req = if req_is_pb {
@@ -42,7 +71,7 @@ pub async fn transcode(req: Request, next: Next) -> Response {
             Ok(b) => b,
             Err(_) => return status_response(StatusCode::BAD_REQUEST, "failed to read request body"),
         };
-        match protobuf::decode_to_json(&bytes) {
+        match protobuf::decode_to_json(&bytes, &hint_av, &hint_kind) {
             Ok(value) => {
                 let json = serde_json::to_vec(&value).unwrap_or_default();
                 parts.headers.insert(
@@ -119,4 +148,33 @@ fn status_response(code: StatusCode, message: &str) -> Response {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(bytes))
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_gvk;
+
+    #[test]
+    fn path_gvk_derivation() {
+        // Core, namespaced, subresource, and grouped/CRD paths.
+        assert_eq!(path_gvk("/api/v1/namespaces/default/configmaps"), ("v1".into(), "ConfigMap".into()));
+        assert_eq!(
+            path_gvk("/apis/apiextensions.k8s.io/v1/customresourcedefinitions"),
+            ("apiextensions.k8s.io/v1".into(), "CustomResourceDefinition".into())
+        );
+        assert_eq!(
+            path_gvk("/api/v1/namespaces/default/pods/p1"),
+            ("v1".into(), "Pod".into())
+        );
+        assert_eq!(
+            path_gvk("/apis/apps/v1/namespaces/default/deployments/d/status"),
+            ("apps/v1".into(), "Deployment".into())
+        );
+        assert_eq!(
+            path_gvk("/apis/coordination.k8s.io/v1/namespaces/kube-system/leases/lock"),
+            ("coordination.k8s.io/v1".into(), "Lease".into())
+        );
+        // Non-resource paths yield no GVK.
+        assert_eq!(path_gvk("/healthz"), ("".into(), "".into()));
+    }
 }

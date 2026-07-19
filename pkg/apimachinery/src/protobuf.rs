@@ -114,17 +114,34 @@ pub fn supports(api_version: &str, kind: &str) -> bool {
 }
 
 /// Decode a k8s protobuf body into the JSON object it represents.
-pub fn decode_to_json(body: &[u8]) -> Result<Value, String> {
+///
+/// `hint_api_version`/`hint_kind` come from the request URL (the endpoint's GVK)
+/// and are used when the protobuf envelope's TypeMeta is empty — which is the
+/// common case for typed client-go clients (e.g. the apiextensions clientset
+/// creating a CRD leaves TypeMeta blank and expects the server to know the type
+/// from the path). Pass empty strings when there is no hint.
+pub fn decode_to_json(
+    body: &[u8],
+    hint_api_version: &str,
+    hint_kind: &str,
+) -> Result<Value, String> {
     if !is_protobuf(body) {
         return Err("body is not k8s protobuf (missing magic)".into());
     }
     let unknown = Unknown::decode(&body[4..]).map_err(|e| format!("bad Unknown envelope: {e}"))?;
     let tm = unknown.type_meta.unwrap_or_default();
-    let api_version = tm.api_version.unwrap_or_default();
-    let kind = tm.kind.unwrap_or_default();
+    let mut api_version = tm.api_version.unwrap_or_default();
+    let mut kind = tm.kind.unwrap_or_default();
+    // Fall back to the endpoint's GVK when the envelope doesn't carry one.
+    if api_version.is_empty() {
+        api_version = hint_api_version.to_string();
+    }
+    if kind.is_empty() {
+        kind = hint_kind.to_string();
+    }
 
     let msg_name = message_name(&api_version, &kind)
-        .ok_or_else(|| format!("no protobuf schema for {api_version} {kind}"))?;
+        .ok_or_else(|| format!("no protobuf schema for {api_version:?} {kind:?}"))?;
     let desc = POOL
         .get_message_by_name(&msg_name)
         .ok_or_else(|| format!("descriptor missing: {msg_name}"))?;
@@ -701,7 +718,7 @@ mod tests {
         });
         let wire = encode_from_json(&lease, "coordination.k8s.io/v1", "Lease").unwrap();
         assert!(is_protobuf(&wire), "encoded body must carry the k8s magic");
-        let back = decode_to_json(&wire).unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
 
         assert_eq!(back["apiVersion"], "coordination.k8s.io/v1");
         assert_eq!(back["kind"], "Lease");
@@ -739,7 +756,7 @@ mod tests {
             }
         });
         let wire = encode_from_json(&pod, "v1", "Pod").unwrap();
-        let back = decode_to_json(&wire).unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
         assert_eq!(back["kind"], "Pod");
         assert_eq!(back["metadata"]["labels"]["app"], "cilium");
         let c = &back["spec"]["containers"][0];
@@ -765,7 +782,7 @@ mod tests {
             }
         });
         let wire = encode_from_json(&svc, "v1", "Service").unwrap();
-        let back = decode_to_json(&wire).unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
         assert_eq!(back["spec"]["ports"][0]["targetPort"], 8080);
         assert_eq!(back["spec"]["ports"][1]["targetPort"], "https");
     }
@@ -805,7 +822,7 @@ mod tests {
         });
         let wire = encode_from_json(&crd, "apiextensions.k8s.io/v1", "CustomResourceDefinition")
             .unwrap();
-        let back = decode_to_json(&wire).unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
         assert_eq!(back["kind"], "CustomResourceDefinition");
         assert_eq!(back["spec"]["group"], "cilium.io");
         let schema = &back["spec"]["versions"][0]["schema"]["openAPIV3Schema"];
@@ -817,6 +834,34 @@ mod tests {
         );
         // items: single-schema union survives.
         assert_eq!(schema["properties"]["tags"]["items"]["type"], "string");
+    }
+
+    #[test]
+    fn blank_envelope_typemeta_falls_back_to_hint() {
+        // #34: cilium's apiextensions client sends the CRD with an EMPTY
+        // envelope TypeMeta and expects the server to resolve the type from the
+        // endpoint. Simulate by encoding then blanking the envelope's TypeMeta.
+        let crd = json!({
+            "apiVersion": "apiextensions.k8s.io/v1",
+            "kind": "CustomResourceDefinition",
+            "metadata": { "name": "x.cilium.io" },
+            "spec": { "group": "cilium.io" }
+        });
+        // Build a wire body with the object encoded but no TypeMeta in Unknown.
+        let msg_name = message_name("apiextensions.k8s.io/v1", "CustomResourceDefinition").unwrap();
+        let desc = POOL.get_message_by_name(&msg_name).unwrap();
+        let raw = json_to_message(&crd, &desc).unwrap().encode_to_vec();
+        let unknown = Unknown { type_meta: None, raw: Some(raw), content_encoding: None, content_type: None };
+        let mut wire = MAGIC.to_vec();
+        unknown.encode(&mut wire).unwrap();
+
+        // No hint → fails (blank type), reproducing the bug.
+        assert!(decode_to_json(&wire, "", "").is_err());
+        // With the endpoint hint → decodes and stamps the GVK from the hint.
+        let back = decode_to_json(&wire, "apiextensions.k8s.io/v1", "CustomResourceDefinition").unwrap();
+        assert_eq!(back["apiVersion"], "apiextensions.k8s.io/v1");
+        assert_eq!(back["kind"], "CustomResourceDefinition");
+        assert_eq!(back["spec"]["group"], "cilium.io");
     }
 
     #[test]
@@ -845,7 +890,7 @@ mod tests {
             "spec": { "holderIdentity": "h" }
         });
         let wire = encode_from_json(&lease, "coordination.k8s.io/v1", "Lease").unwrap();
-        let back = decode_to_json(&wire).unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
         assert_eq!(back["metadata"]["name"], "x");
         assert_eq!(back["spec"]["holderIdentity"], "h");
     }
