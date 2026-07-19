@@ -94,6 +94,14 @@ fn message_name(api_version: &str, kind: &str) -> Option<String> {
         ("storage.k8s.io", "v1") => "k8s.io.api.storage.v1",
         ("rbac.authorization.k8s.io", "v1") => "k8s.io.api.rbac.v1",
         ("networking.k8s.io", "v1") => "k8s.io.api.networking.v1",
+        ("policy", "v1") => "k8s.io.api.policy.v1",
+        ("autoscaling", "v2") => "k8s.io.api.autoscaling.v2",
+        ("scheduling.k8s.io", "v1") => "k8s.io.api.scheduling.v1",
+        ("admissionregistration.k8s.io", "v1") => "k8s.io.api.admissionregistration.v1",
+        ("certificates.k8s.io", "v1") => "k8s.io.api.certificates.v1",
+        ("apiextensions.k8s.io", "v1") => {
+            "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1"
+        }
         _ => return None,
     };
     let name = format!("{pkg}.{kind}");
@@ -175,6 +183,17 @@ const QUANTITY: &str = "k8s.io.apimachinery.pkg.api.resource.Quantity";
 const INT_OR_STRING: &str = "k8s.io.apimachinery.pkg.util.intstr.IntOrString";
 const RAW_EXTENSION: &str = "k8s.io.apimachinery.pkg.runtime.RawExtension";
 
+// apiextensions CRD-schema types with custom JSON marshaling (#34). Without
+// these, a CRD's openAPIV3Schema round-trips into the wrong JSON shape.
+const AEXT: &str = "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1";
+const AEXT_JSON: &str = "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1.JSON";
+const AEXT_PROPS_OR_BOOL: &str =
+    "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1.JSONSchemaPropsOrBool";
+const AEXT_PROPS_OR_ARRAY: &str =
+    "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1.JSONSchemaPropsOrArray";
+const AEXT_PROPS_OR_STRING_ARRAY: &str =
+    "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1.JSONSchemaPropsOrStringArray";
+
 /// Read an i64/i32 field by name, defaulting to 0.
 fn int_field(msg: &DynamicMessage, name: &str) -> i64 {
     msg.descriptor()
@@ -246,6 +265,36 @@ fn raw_extension_to_json(msg: &DynamicMessage) -> Value {
 
 // --- generic DynamicMessage → JSON -------------------------------------------
 
+/// Read a nested message field by name and convert it to JSON, if present.
+fn msg_field_to_json(msg: &DynamicMessage, name: &str) -> Option<Value> {
+    let f = msg.descriptor().get_field_by_name(name)?;
+    if !msg.has_field(&f) {
+        return None;
+    }
+    match msg.get_field(&f).into_owned() {
+        PbValue::Message(m) => Some(message_to_json(&m)),
+        _ => None,
+    }
+}
+
+fn bool_field(msg: &DynamicMessage, name: &str) -> bool {
+    msg.descriptor()
+        .get_field_by_name(name)
+        .map(|f| matches!(msg.get_field(&f).into_owned(), PbValue::Bool(true)))
+        .unwrap_or(false)
+}
+
+/// Convert a repeated field to a JSON array, mapping each element.
+fn list_field_to_json(msg: &DynamicMessage, name: &str) -> Vec<Value> {
+    msg.descriptor()
+        .get_field_by_name(name)
+        .and_then(|f| match msg.get_field(&f).into_owned() {
+            PbValue::List(items) => Some(items.iter().map(pb_scalar_or_msg_to_json).collect()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 fn message_to_json(msg: &DynamicMessage) -> Value {
     match msg.descriptor().full_name() {
         TIME => return time_to_json(msg, false),
@@ -253,6 +302,29 @@ fn message_to_json(msg: &DynamicMessage) -> Value {
         QUANTITY => return quantity_to_json(msg),
         INT_OR_STRING => return int_or_string_to_json(msg),
         RAW_EXTENSION => return raw_extension_to_json(msg),
+        // JSON: raw bytes hold an embedded JSON value.
+        AEXT_JSON => return raw_extension_to_json(msg),
+        // Union types: marshal as the schema object when present, else the
+        // scalar/array alternative (matches k8s custom (un)marshaling).
+        AEXT_PROPS_OR_BOOL => {
+            return msg_field_to_json(msg, "schema").unwrap_or(Value::Bool(bool_field(msg, "allows")));
+        }
+        AEXT_PROPS_OR_ARRAY => {
+            let arr = list_field_to_json(msg, "jSONSchemas");
+            return if !arr.is_empty() {
+                Value::Array(arr)
+            } else {
+                msg_field_to_json(msg, "schema").unwrap_or(Value::Null)
+            };
+        }
+        AEXT_PROPS_OR_STRING_ARRAY => {
+            let arr = list_field_to_json(msg, "property");
+            return if !arr.is_empty() {
+                Value::Array(arr)
+            } else {
+                msg_field_to_json(msg, "schema").unwrap_or(Value::Null)
+            };
+        }
         _ => {}
     }
 
@@ -339,7 +411,10 @@ fn json_to_message(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMess
         MICRO_TIME => return json_to_time(json, desc, true),
         QUANTITY => return json_to_quantity(json, desc),
         INT_OR_STRING => return json_to_int_or_string(json, desc),
-        RAW_EXTENSION => return json_to_raw_extension(json, desc),
+        RAW_EXTENSION | AEXT_JSON => return json_to_raw_extension(json, desc),
+        AEXT_PROPS_OR_BOOL => return json_to_props_or_bool(json, desc),
+        AEXT_PROPS_OR_ARRAY => return json_to_props_or_array(json, desc),
+        AEXT_PROPS_OR_STRING_ARRAY => return json_to_props_or_string_array(json, desc),
         _ => {}
     }
 
@@ -517,6 +592,70 @@ fn json_to_raw_extension(
     Ok(msg)
 }
 
+/// Build a nested message field from JSON via the field's descriptor.
+fn set_msg_field(
+    msg: &mut DynamicMessage,
+    name: &str,
+    value: &Value,
+) -> Result<(), String> {
+    if let Some(f) = msg.descriptor().get_field_by_name(name) {
+        if let prost_reflect::Kind::Message(md) = f.kind() {
+            let nested = json_to_message(value, &md)?;
+            msg.set_field(&f, PbValue::Message(nested));
+        }
+    }
+    Ok(())
+}
+
+/// JSON bool → allows; JSON object → schema (CRD additionalProperties etc.).
+fn json_to_props_or_bool(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMessage, String> {
+    let mut msg = DynamicMessage::new(desc.clone());
+    match json {
+        Value::Bool(b) => set_named_field(&mut msg, "allows", PbValue::Bool(*b)),
+        other => set_msg_field(&mut msg, "schema", other)?,
+    }
+    Ok(msg)
+}
+
+/// JSON array → jSONSchemas; JSON object → schema (CRD `items`).
+fn json_to_props_or_array(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMessage, String> {
+    let mut msg = DynamicMessage::new(desc.clone());
+    match json {
+        Value::Array(items) => {
+            if let Some(f) = msg.descriptor().get_field_by_name("jSONSchemas") {
+                let mut list = Vec::with_capacity(items.len());
+                for it in items {
+                    list.push(json_to_pb_value(&f, it)?);
+                }
+                msg.set_field(&f, PbValue::List(list));
+            }
+        }
+        other => set_msg_field(&mut msg, "schema", other)?,
+    }
+    Ok(msg)
+}
+
+/// JSON string array → property; JSON object → schema (CRD `dependencies`).
+fn json_to_props_or_string_array(
+    json: &Value,
+    desc: &MessageDescriptor,
+) -> Result<DynamicMessage, String> {
+    let mut msg = DynamicMessage::new(desc.clone());
+    match json {
+        Value::Array(items) => {
+            if let Some(f) = msg.descriptor().get_field_by_name("property") {
+                let list = items
+                    .iter()
+                    .map(|v| PbValue::String(v.as_str().unwrap_or("").to_string()))
+                    .collect();
+                msg.set_field(&f, PbValue::List(list));
+            }
+        }
+        other => set_msg_field(&mut msg, "schema", other)?,
+    }
+    Ok(msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,6 +768,70 @@ mod tests {
         let back = decode_to_json(&wire).unwrap();
         assert_eq!(back["spec"]["ports"][0]["targetPort"], 8080);
         assert_eq!(back["spec"]["ports"][1]["targetPort"], "https");
+    }
+
+    #[test]
+    fn crd_round_trips_including_schema_union_types() {
+        // #34: cilium-operator creates CRDs via protobuf. The openAPIV3Schema
+        // exercises the tricky union types — additionalProperties (bool),
+        // items (single schema), and a JSON default.
+        let crd = json!({
+            "apiVersion": "apiextensions.k8s.io/v1",
+            "kind": "CustomResourceDefinition",
+            "metadata": { "name": "ciliumnetworkpolicies.cilium.io" },
+            "spec": {
+                "group": "cilium.io",
+                "scope": "Namespaced",
+                "names": { "plural": "ciliumnetworkpolicies", "kind": "CiliumNetworkPolicy" },
+                "versions": [{
+                    "name": "v2",
+                    "served": true,
+                    "storage": true,
+                    "schema": { "openAPIV3Schema": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "properties": {
+                            "spec": {
+                                "type": "object",
+                                "properties": {
+                                    "endpointSelector": { "type": "object", "additionalProperties": false }
+                                }
+                            },
+                            "tags": { "type": "array", "items": { "type": "string" } }
+                        }
+                    }}
+                }]
+            }
+        });
+        let wire = encode_from_json(&crd, "apiextensions.k8s.io/v1", "CustomResourceDefinition")
+            .unwrap();
+        let back = decode_to_json(&wire).unwrap();
+        assert_eq!(back["kind"], "CustomResourceDefinition");
+        assert_eq!(back["spec"]["group"], "cilium.io");
+        let schema = &back["spec"]["versions"][0]["schema"]["openAPIV3Schema"];
+        // additionalProperties: bool union survives both true and false.
+        assert_eq!(schema["additionalProperties"], true);
+        assert_eq!(
+            schema["properties"]["spec"]["properties"]["endpointSelector"]["additionalProperties"],
+            false
+        );
+        // items: single-schema union survives.
+        assert_eq!(schema["properties"]["tags"]["items"]["type"], "string");
+    }
+
+    #[test]
+    fn all_declared_groups_resolve() {
+        for (av, kind) in [
+            ("apiextensions.k8s.io/v1", "CustomResourceDefinition"),
+            ("policy/v1", "PodDisruptionBudget"),
+            ("autoscaling/v2", "HorizontalPodAutoscaler"),
+            ("scheduling.k8s.io/v1", "PriorityClass"),
+            ("admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration"),
+            ("certificates.k8s.io/v1", "CertificateSigningRequest"),
+            ("networking.k8s.io/v1", "NetworkPolicy"),
+        ] {
+            assert!(supports(av, kind), "protobuf must support {av} {kind}");
+        }
     }
 
     #[test]
