@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.13"
+version = "0.7.14"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
@@ -60,6 +60,8 @@ tonic = { version = "0.12", features = ["tls"] }
 tonic-build = { version = "0.12" }
 prost = { version = "0.13" }
 prost-types = { version = "0.13" }
+prost-reflect = { version = "0.14" }
+once_cell = { version = "1" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

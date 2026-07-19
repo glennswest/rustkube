@@ -634,6 +634,10 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
                 }
             }),
         )
+        // Protobuf content negotiation: decode application/vnd.kubernetes.protobuf
+        // requests to JSON and re-encode JSON responses when the client asked
+        // for protobuf (client-go's default for built-in types) — #32.
+        .layer(middleware::from_fn(crate::protobuf_mw::transcode))
         .layer(middleware::from_fn(metrics_middleware))
         // Outermost: no single request may panic the process. Any panic in a
         // handler/middleware is caught and turned into a 500 (rustkube#9).

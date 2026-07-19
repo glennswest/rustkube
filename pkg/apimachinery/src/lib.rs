@@ -9,6 +9,7 @@ pub mod watch;
 pub mod meta;
 pub mod rbac;
 pub mod certs;
+pub mod protobuf;
 
 pub use error::{Error, Result};
 

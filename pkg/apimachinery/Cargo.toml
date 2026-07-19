@@ -10,6 +10,13 @@ license.workspace = true
 # Kubernetes types
 k8s-openapi = { workspace = true }
 
+# Protobuf codec for the k8s wire format (analog of k8s.io/apimachinery's
+# runtime/serializer/protobuf + the k8s.io/api generated marshalers). Dynamic
+# decode/encode via a descriptor pool built from vendored .proto files.
+prost = { workspace = true }
+prost-reflect = { workspace = true }
+once_cell = { workspace = true }
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

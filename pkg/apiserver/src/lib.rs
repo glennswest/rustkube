@@ -12,6 +12,7 @@ pub mod crd;
 pub mod discovery;
 pub mod error;
 pub mod handlers;
+pub mod protobuf_mw;
 pub mod rbac_engine;
 pub mod selector;
 pub mod server;
