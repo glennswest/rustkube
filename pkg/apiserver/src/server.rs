@@ -532,7 +532,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     bootstrap_namespace(&storage, "kube-node-lease").await;
 
     // Bootstrap RBAC resources
-    bootstrap_rbac(&storage, config.anonymous_auth).await;
+    bootstrap_rbac(&storage, config.anonymous_auth, config.dev_anonymous_admin).await;
 
     // default/kubernetes Service + Endpoints, so in-cluster client-go can reach
     // the apiserver via KUBERNETES_SERVICE_HOST (#30). Re-run periodically so a
@@ -679,7 +679,20 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             crate::tls::serve(listener, app, cfg).await?;
         }
         None => {
-            info!("kube-apiserver serving HTTP on {addr} (TLS not configured)");
+            // Never drop TLS silently (#16). Serving the API — bearer tokens,
+            // client certs, all traffic — in cleartext must be an explicit
+            // choice, not the fallback when certs are missing/misconfigured.
+            if !config.insecure {
+                anyhow::bail!(
+                    "refusing to serve plain HTTP: no TLS configured (need --tls-cert-file \
+                     + --tls-private-key-file, or --tls for a self-signed cert). Pass \
+                     --insecure to serve cleartext anyway (dev/bring-up only)."
+                );
+            }
+            tracing::warn!(
+                "SECURITY: serving plain HTTP on {addr} (--insecure) — credentials travel \
+                 in cleartext; do not use in production"
+            );
             axum::serve(listener, app).await?;
         }
     }
@@ -822,7 +835,11 @@ async fn reconcile_kubernetes_service(
 }
 
 /// Bootstrap RBAC resources for initial cluster access.
-async fn bootstrap_rbac(storage: &ResourceStorage, anonymous_auth: bool) {
+async fn bootstrap_rbac(
+    storage: &ResourceStorage,
+    anonymous_auth: bool,
+    dev_anonymous_admin: bool,
+) {
     // ClusterRole: cluster-admin — all verbs, all resources, all groups
     let cluster_admin_role = json!({
         "apiVersion": "rbac.authorization.k8s.io/v1",
@@ -1004,10 +1021,11 @@ async fn bootstrap_rbac(storage: &ResourceStorage, anonymous_auth: bool) {
         )
         .await;
 
-    // Dev mode only: anonymous gets cluster-admin (so kubectl works without
-    // certs). Skipped when --anonymous-auth=false, so a secured cluster never
-    // grants the anonymous user any standing access.
-    if anonymous_auth {
+    // Dev only, explicit opt-in: anonymous gets cluster-admin (so kubectl works
+    // without certs). Gated on --dev-anonymous-admin, NOT on --anonymous-auth
+    // (#16) — so the common `--anonymous-auth=true` case grants anonymous only
+    // discovery/health, and a secured cluster never grants standing access.
+    if anonymous_auth && dev_anonymous_admin {
         let anon_admin_binding = json!({
             "apiVersion": "rbac.authorization.k8s.io/v1",
             "kind": "ClusterRoleBinding",

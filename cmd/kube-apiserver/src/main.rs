@@ -48,9 +48,22 @@ struct Cli {
     client_ca: Option<PathBuf>,
 
     /// Allow anonymous requests. Set false to require authentication (401 for
-    /// unauthenticated requests) and skip the dev anonymous-admin binding.
+    /// unauthenticated requests). Even when true, anonymous is bound only to
+    /// discovery/health unless --dev-anonymous-admin is also set.
     #[arg(long = "anonymous-auth", default_value_t = true, action = clap::ArgAction::Set)]
     anonymous_auth: bool,
+
+    /// DEV ONLY: bind anonymous requests to cluster-admin so kubectl works
+    /// without credentials. Off by default — a secured cluster must never grant
+    /// anonymous standing access.
+    #[arg(long = "dev-anonymous-admin", default_value_t = false, action = clap::ArgAction::Set)]
+    dev_anonymous_admin: bool,
+
+    /// Permit serving plain HTTP when no TLS cert/key (and no --tls) is given.
+    /// Off by default: the server refuses to start on plain HTTP rather than
+    /// silently dropping TLS. Required for plaintext dev/bring-up.
+    #[arg(long = "insecure", default_value_t = false, action = clap::ArgAction::Set)]
+    insecure: bool,
 
     /// Public key (PEM) used to VERIFY ServiceAccount tokens. Pair with
     /// --service-account-signing-key-file; must be identical on every replica.
@@ -103,6 +116,8 @@ async fn main() -> anyhow::Result<()> {
         tls_auto: cli.tls,
         client_ca: cli.client_ca,
         anonymous_auth: cli.anonymous_auth,
+        dev_anonymous_admin: cli.dev_anonymous_admin,
+        insecure: cli.insecure,
         service_account_key: cli.service_account_key,
         service_account_signing_key: cli.service_account_signing_key,
         advertise_address: cli.advertise_address,

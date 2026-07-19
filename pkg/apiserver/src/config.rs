@@ -37,8 +37,18 @@ pub struct ApiServerConfig {
     /// Must be the counterpart of `service_account_key`, and identical on every
     /// replica so tokens validate cluster-wide (#11).
     pub service_account_signing_key: Option<PathBuf>,
-    /// Allow anonymous authentication (default true for dev).
+    /// Allow anonymous authentication (default true for dev). Even when true,
+    /// anonymous is only bound to discovery/health unless `dev_anonymous_admin`
+    /// is also set (#16).
     pub anonymous_auth: bool,
+    /// Bind anonymous requests to cluster-admin (the dev "kubectl without certs"
+    /// convenience). Off by default — a secured cluster never grants anonymous
+    /// standing access (#16).
+    pub dev_anonymous_admin: bool,
+    /// Permit serving plain HTTP when no TLS material is configured. Off by
+    /// default: the server refuses to start on plain HTTP unless this is set,
+    /// so TLS is never dropped silently (#16).
+    pub insecure: bool,
     /// Address this apiserver advertises to in-cluster clients. Registered as an
     /// endpoint of the `default/kubernetes` Service (#30). Falls back to
     /// `bind_addr` when it is a concrete address.
@@ -64,6 +74,8 @@ impl Default for ApiServerConfig {
             service_account_key: None,
             service_account_signing_key: None,
             anonymous_auth: true,
+            dev_anonymous_admin: false,
+            insecure: false,
             advertise_address: None,
         }
     }
