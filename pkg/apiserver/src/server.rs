@@ -706,6 +706,14 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             } else {
                 info!("kube-apiserver serving HTTPS on {addr}");
             }
+            // Cert-lifecycle monitoring (#20): expose expiry as a metric and warn
+            // as certs approach it, so a long-lived static PKI can't silently
+            // lapse. The serving cert and the client-auth CA are the ones whose
+            // expiry takes the apiserver (or client auth) down.
+            report_cert_expiry("serving", &cert);
+            if let Some(ca) = &client_ca {
+                report_cert_expiry("client-ca", ca);
+            }
             let cfg = crate::tls::server_config(&cert, &key, client_ca.as_deref())?;
             crate::tls::serve(listener, app, cfg).await?;
         }
@@ -729,6 +737,32 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Days before expiry at which a certificate is considered near-expiry.
+const CERT_EXPIRY_WARN_DAYS: i64 = 30;
+
+/// Publish a cert's expiry as `apiserver_certificate_expiration_seconds{name}`
+/// (a unix timestamp — alerting rules compute `value - time()`) and log a
+/// warning if it expires within `CERT_EXPIRY_WARN_DAYS` (#20).
+fn report_cert_expiry(name: &'static str, cert_pem: &[u8]) {
+    let Some(not_after) = apimachinery::certs::cert_not_after_unix(cert_pem) else {
+        tracing::warn!("could not parse {name} certificate to determine expiry");
+        return;
+    };
+    metrics::gauge!("apiserver_certificate_expiration_seconds", "name" => name)
+        .set(not_after as f64);
+
+    let now = chrono::Utc::now().timestamp();
+    let days_left = (not_after - now) / 86_400;
+    if days_left <= CERT_EXPIRY_WARN_DAYS {
+        tracing::warn!(
+            "certificate '{name}' expires in {days_left} day(s) — rotate it (control-plane \
+             cert rotation is #20)"
+        );
+    } else {
+        info!("certificate '{name}' valid for {days_left} more day(s)");
+    }
 }
 
 /// Create a namespace if it doesn't already exist.

@@ -5,6 +5,16 @@
 
 use crate::Result;
 
+/// Unix-timestamp expiry (`notAfter`) of the first certificate in a PEM bundle,
+/// for cert-lifecycle monitoring (#20). Returns `None` if the PEM can't be
+/// parsed.
+pub fn cert_not_after_unix(pem_bytes: &[u8]) -> Option<i64> {
+    use x509_parser::prelude::*;
+    let (_, pem) = parse_x509_pem(pem_bytes).ok()?;
+    let (_, cert) = parse_x509_certificate(&pem.contents).ok()?;
+    Some(cert.validity().not_after.timestamp())
+}
+
 /// A certificate and its private key (PEM-encoded).
 pub struct CertificateAuthority {
     pub cert_pem: String,
@@ -52,4 +62,22 @@ pub fn generate_ca(cn: &str) -> Result<CertificateAuthority> {
         cert_pem: ca.pem(),
         key_pem: key_pair.serialize_pem(),
     })
+}
+
+#[cfg(test)]
+mod expiry_tests {
+    use super::*;
+
+    #[test]
+    fn parses_not_after_of_generated_cert() {
+        // A freshly generated cert expires in the future.
+        let ca = generate_ca("test-ca").unwrap();
+        let ts = cert_not_after_unix(ca.cert_pem.as_bytes()).expect("parse notAfter");
+        assert!(ts > chrono::Utc::now().timestamp(), "expiry must be in the future");
+    }
+
+    #[test]
+    fn bad_pem_is_none() {
+        assert!(cert_not_after_unix(b"not a pem").is_none());
+    }
 }
