@@ -3,6 +3,7 @@
 # Create (or refresh) a NAMED single-node rustkube test cluster.
 #
 #   ./new-tcluster.sh <name> [ip]        e.g. ./new-tcluster.sh tcluster1 192.168.8.61
+#   ./new-tcluster.sh <name> --with-node  also run the kubelet, so pods can RUN
 #   ./new-tcluster.sh <name> --destroy
 #
 # Each cluster is one VM running a 1-member fastetcd plus the whole control
@@ -20,7 +21,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TCROOT="$HERE/terragrunt/tclusters"
 NAME="${1:-}"
-ARG2="${2:-}"
+ARG2=""
+WITH_NODE=0
+for a in "${@:2}"; do
+  case "$a" in
+    --with-node) WITH_NODE=1 ;;
+    *)           ARG2="$a" ;;
+  esac
+done
 
 [ -n "$NAME" ] || { echo "usage: $0 <name> [ip|--destroy]" >&2; exit 1; }
 [[ "$NAME" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || {
@@ -111,6 +119,16 @@ EOF
 )
 echo "PKI ready ($DIR/pki, CN=$NAME-ca)"
 
+# --- node agent (optional): long-lived token signed by this cluster's SA key ---
+RUSTKUBE_NODE_RPM="https://github.com/glennswest/rustkube-node/releases/download/v0.1.0/rustkube-node-0.1.0-1.fc43.x86_64.rpm"
+if [ "$WITH_NODE" = "1" ]; then
+  if [ ! -s "$DIR/pki/node-token" ]; then
+    bash "$HERE/gen-node-token.sh" "$DIR/pki/sa.key" "$NAME" > "$DIR/pki/node-token"
+    chmod 600 "$DIR/pki/node-token"
+  fi
+  echo "node token ready (sub=system:node:$NAME)"
+fi
+
 # --- the terragrunt unit -----------------------------------------------------
 # Identity only; all shared logic lives in ../templates/tcluster-user-data.yaml.tftpl
 # and the pinned RPM URLs below (keep in sync with the masters unit).
@@ -143,6 +161,10 @@ locals {
 
   rustkube_rpm_url = "$RUSTKUBE_RPM"
   fastetcd_rpm_url = "$FASTETCD_RPM"
+
+  # Node agent: when true the VM also runs the kubelet, so pods actually run.
+  with_node             = $([ "$WITH_NODE" = "1" ] && echo true || echo false)
+  rustkube_node_rpm_url = "$RUSTKUBE_NODE_RPM"
 }
 
 inputs = {
@@ -170,6 +192,9 @@ inputs = {
         cluster_token    = local.cluster_token
         fastetcd_rpm_url = local.fastetcd_rpm_url
         rustkube_rpm_url = local.rustkube_rpm_url
+        with_node             = local.with_node
+        rustkube_node_rpm_url = local.rustkube_node_rpm_url
+        node_token            = local.with_node ? trimspace(file("\${local.pki}/node-token")) : ""
         ca_crt        = file("\${local.pki}/ca.crt")
         ca_key        = file("\${local.pki}/ca.key")
         sa_key        = file("\${local.pki}/sa.key")

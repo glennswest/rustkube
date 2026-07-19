@@ -94,6 +94,26 @@ write_files:
     content: |
       ${indent(6, admin_key)}
 
+%{ if with_node ~}
+  # --- kubelet (rustkube-node) ---
+  # Authenticates to the local apiserver with a long-lived RS256 token signed by
+  # this cluster's SA key (deploy/gen-node-token.sh): sub=system:node:<name>,
+  # groups=[system:nodes], which the bootstrap RBAC already binds. TokenRequest
+  # tokens expire in 24h and would strand the kubelet.
+  - path: /etc/kubernetes/kubelet-token
+    permissions: "0600"
+    content: |
+      ${node_token}
+  - path: /etc/kubernetes/kubelet
+    permissions: "0644"
+    content: |
+      APISERVER_URL=https://127.0.0.1:6443
+      NODE_NAME=${hostname}
+      APISERVER_CA=/etc/kubernetes/pki/ca.crt
+      KUBELET_TOKEN_FILE=/etc/kubernetes/kubelet-token
+      KUBELET_ARGS=--runtime native --no-cni
+%{ endif ~}
+
   # kube-apiserver: HTTPS + x509 client CA + stable SA signing keypair;
   # anonymous disabled (RBAC enforced), matching the production masters.
   - path: /etc/kubernetes/kube-apiserver
@@ -121,5 +141,12 @@ runcmd:
   - [ systemctl, enable, --now, kube-apiserver.service ]
   - [ systemctl, enable, --now, kube-controller-manager.service ]
   - [ systemctl, enable, --now, kube-scheduler.service ]
+%{ if with_node ~}
+  # Node agent last: it registers the Node and starts pods, so the apiserver
+  # must be serving first. --no-cni means pods use host networking (no CNI on a
+  # single test node).
+  - [ dnf, install, -y, "${rustkube_node_rpm_url}" ]
+  - [ systemctl, enable, --now, kubelet.service ]
+%{ endif ~}
 
 final_message: "${fqdn} single-node rustkube test cluster ready in $UPTIME seconds"
