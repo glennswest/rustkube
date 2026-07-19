@@ -12,11 +12,15 @@ use tracing::{debug, error, info, warn};
 
 pub struct DeploymentController {
     api: Arc<ApiClient>,
+    recorder: crate::events::EventRecorder,
 }
 
 impl DeploymentController {
     pub fn new(api: Arc<ApiClient>) -> Self {
-        Self { api }
+        Self {
+            recorder: crate::events::EventRecorder::new(api.clone(), "deployment-controller"),
+            api,
+        }
     }
 
     pub async fn run(&self) {
@@ -189,6 +193,14 @@ impl DeploymentController {
                 )
                 .await?;
             info!("Created ReplicaSet {namespace}/{rs_name} with {desired_replicas} replicas");
+            self.recorder
+                .event(
+                    deploy,
+                    "Normal",
+                    "ScalingReplicaSet",
+                    &format!("Scaled up replica set {rs_name} to {desired_replicas}"),
+                )
+                .await;
 
             // Scale down old ReplicaSets
             for old_rs in &owned_rs {

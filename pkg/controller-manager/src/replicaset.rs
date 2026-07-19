@@ -16,11 +16,13 @@ pub struct ReplicaSetController {
     api: Arc<ApiClient>,
     /// Per-ReplicaSet (keyed by uid) recreation backoff after failed pods.
     backoff: CreateBackoff,
+    recorder: crate::events::EventRecorder,
 }
 
 impl ReplicaSetController {
     pub fn new(api: Arc<ApiClient>) -> Self {
         Self {
+            recorder: crate::events::EventRecorder::new(api.clone(), "replicaset-controller"),
             api,
             backoff: CreateBackoff::new(),
         }
@@ -172,11 +174,28 @@ impl ReplicaSetController {
                         .await
                     {
                         Ok(_) => {
-                            let pod_name = pod["metadata"]["name"].as_str().unwrap_or("?");
+                            let pod_name =
+                                pod["metadata"]["name"].as_str().unwrap_or("?").to_string();
                             info!("Created pod {namespace}/{pod_name} for ReplicaSet {rs_name}");
+                            self.recorder
+                                .event(
+                                    rs,
+                                    "Normal",
+                                    "SuccessfulCreate",
+                                    &format!("Created pod: {pod_name}"),
+                                )
+                                .await;
                         }
                         Err(e) => {
                             warn!("Failed to create pod for {rs_name}: {e}");
+                            self.recorder
+                                .event(
+                                    rs,
+                                    "Warning",
+                                    "FailedCreate",
+                                    &format!("Error creating pod: {e}"),
+                                )
+                                .await;
                         }
                     }
                 }
@@ -202,6 +221,14 @@ impl ReplicaSetController {
                     {
                         Ok(_) => {
                             info!("Deleted pod {namespace}/{pod_name} (scale down {rs_name})");
+                            self.recorder
+                                .event(
+                                    rs,
+                                    "Normal",
+                                    "SuccessfulDelete",
+                                    &format!("Deleted pod: {pod_name}"),
+                                )
+                                .await;
                         }
                         Err(e) => {
                             warn!("Failed to delete pod {pod_name}: {e}");

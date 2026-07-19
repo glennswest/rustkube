@@ -61,7 +61,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.7.14`
+## Current Version: `v0.7.15`
 
 ## Work Plan
 
@@ -216,6 +216,7 @@ Cargo.toml → workspace.package.version
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.7.15 | 2026-07-19 | Emit core/v1 Events (SuccessfulCreate/Delete, ScalingReplicaSet) + event TTL GC (#15); richer apiserver metrics — latency histogram, verb/resource/code, inflight (#13) |
 | v0.7.14 | 2026-07-19 | client-go protobuf wire codec (application/vnd.kubernetes.protobuf), both directions — unblocks cilium-operator & all client-go controllers (#32) |
 | v0.7.13 | 2026-07-19 | OpenAPI v3 paths declare GVK + fieldValidation so `kubectl apply` stops falling back to protobuf v2 (#31) |
 | v0.7.12 | 2026-07-19 | Watch tombstones carry TypeMeta (fixes client-go informers); serve /openapi/v2+v3 so `kubectl apply` validates |

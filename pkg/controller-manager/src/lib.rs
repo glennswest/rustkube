@@ -9,6 +9,7 @@ pub mod cronjob;
 pub mod csr;
 pub mod daemonset;
 pub mod deployment;
+pub mod events;
 pub mod gateway;
 pub mod gc;
 pub mod hpa;

@@ -16,6 +16,9 @@ use tracing::{info, warn};
 /// Reconcile interval.
 const GC_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Events older than this are reaped (upstream default ~1h).
+const EVENT_TTL: chrono::Duration = chrono::Duration::hours(1);
+
 /// Kinds whose UIDs can be owners (cluster-wide list paths).
 const OWNER_LIST_PATHS: &[&str] = &[
     "/apis/apps/v1/deployments",
@@ -112,6 +115,44 @@ impl GarbageCollector {
                     Err(e) => warn!("gc: failed to delete {del}: {e}"),
                 }
             }
+        }
+
+        // 3. Expire old Events (#15). Now that controllers emit Events, they must
+        //    be reaped or they accumulate forever — upstream drops them after ~1h.
+        self.expire_events().await;
+    }
+
+    /// Delete Events whose lastTimestamp is older than `EVENT_TTL`.
+    async fn expire_events(&self) {
+        let list = match self.api.list("/api/v1/events").await {
+            Ok(l) => l,
+            Err(_) => return,
+        };
+        let Some(items) = list["items"].as_array() else {
+            return;
+        };
+        let now = chrono::Utc::now();
+        for ev in items {
+            let ts = ev["lastTimestamp"]
+                .as_str()
+                .or_else(|| ev["eventTime"].as_str())
+                .or_else(|| ev["metadata"]["creationTimestamp"].as_str());
+            let stale = ts
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|t| now.signed_duration_since(t.with_timezone(&chrono::Utc)) > EVENT_TTL)
+                .unwrap_or(false);
+            if !stale {
+                continue;
+            }
+            let ns = ev["metadata"]["namespace"].as_str().unwrap_or("default");
+            let name = ev["metadata"]["name"].as_str().unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+            let _ = self
+                .api
+                .delete(&format!("/api/v1/namespaces/{ns}/events/{name}"))
+                .await;
         }
     }
 }

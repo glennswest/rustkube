@@ -1036,14 +1036,75 @@ async fn bootstrap_rbac(storage: &ResourceStorage, anonymous_auth: bool) {
     }
 }
 
-/// Count every request as `apiserver_request_total{method=...}`.
+/// Derive the `resource` label from a request path, mirroring the labels
+/// upstream kube-apiserver attaches (`pods`, `namespaces`, `leases`, …). Keeps
+/// cardinality bounded: object names and namespaces are collapsed away, so the
+/// label set is the finite list of resource types, not one series per object.
+fn resource_label(path: &str) -> &'static str {
+    // Known resources appear right after `.../v1/` or `.../{namespace}/`.
+    const RESOURCES: &[&str] = &[
+        "namespaces", "nodes", "pods", "services", "endpoints", "endpointslices",
+        "configmaps", "secrets", "serviceaccounts", "events", "persistentvolumes",
+        "persistentvolumeclaims", "deployments", "replicasets", "statefulsets",
+        "daemonsets", "jobs", "cronjobs", "leases", "customresourcedefinitions",
+        "clusterroles", "clusterrolebindings", "roles", "rolebindings",
+        "horizontalpodautoscalers", "storageclasses", "csidrivers", "csinodes",
+        "volumeattachments", "csistoragecapacities", "certificatesigningrequests",
+        "poddisruptionbudgets", "priorityclasses",
+    ];
+    for seg in path.split('/') {
+        if let Some(r) = RESOURCES.iter().find(|r| **r == seg) {
+            return r;
+        }
+    }
+    if path.starts_with("/openapi") {
+        "openapi"
+    } else if path == "/api" || path.starts_with("/apis") || path == "/version" {
+        "discovery"
+    } else if path.starts_with("/healthz") || path.starts_with("/livez") || path.starts_with("/readyz") {
+        "health"
+    } else {
+        "other"
+    }
+}
+
+/// Records the metrics real dashboards/alerts need (#13): request rate by
+/// verb/resource/code, request latency histogram, and in-flight requests —
+/// bringing the apiserver exporter to the bar the CM/scheduler exporters set.
 async fn metrics_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let method = req.method().as_str().to_string();
-    metrics::counter!("apiserver_request_total", "method" => method).increment(1);
-    next.run(req).await
+    let resource = resource_label(req.uri().path());
+
+    metrics::gauge!("apiserver_current_inflight_requests").increment(1.0);
+    let started = std::time::Instant::now();
+
+    let response = next.run(req).await;
+
+    let elapsed = started.elapsed().as_secs_f64();
+    let code = response.status().as_u16().to_string();
+    metrics::gauge!("apiserver_current_inflight_requests").decrement(1.0);
+
+    // Backwards-compatible total (kept for existing scrapes) plus the richer,
+    // fully-labeled total and the latency histogram.
+    metrics::counter!("apiserver_request_total", "method" => method.clone()).increment(1);
+    metrics::counter!(
+        "apiserver_request_total_by_labels",
+        "verb" => method.clone(),
+        "resource" => resource,
+        "code" => code,
+    )
+    .increment(1);
+    metrics::histogram!(
+        "apiserver_request_duration_seconds",
+        "verb" => method,
+        "resource" => resource,
+    )
+    .record(elapsed);
+
+    response
 }
 
 #[cfg(test)]
