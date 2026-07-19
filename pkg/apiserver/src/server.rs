@@ -35,6 +35,11 @@ fn build_router(
         .route("/livez", get(discovery::livez))
         .route("/readyz", get(discovery::readyz))
         .route("/api", get(discovery::api_versions))
+        // OpenAPI — kubectl apply downloads these to validate manifests;
+        // a 404 aborts the apply before any write (#25 follow-up).
+        .route("/openapi/v2", get(discovery::openapi_v2))
+        .route("/openapi/v3", get(discovery::openapi_v3))
+        .route("/openapi/v3/{*path}", get(discovery::openapi_v3_group))
         .route("/apis", get(discovery::api_groups_dynamic))
         .route("/api/v1", get(discovery::api_v1_resources))
         .route("/apis/apps/v1", get(discovery::api_apps_v1_resources))

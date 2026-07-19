@@ -19,10 +19,14 @@ pub fn watch_response(
     rx: mpsc::Receiver<WatchEvent>,
     label_selector: Option<String>,
     field_selector: Option<String>,
+    api_version: String,
+    kind: String,
 ) -> Response {
     let stream = ReceiverStream::new(rx).filter_map(move |event| {
         let label_sel = label_selector.clone();
         let field_sel = field_selector.clone();
+        let api_version = api_version.clone();
+        let kind = kind.clone();
         async move {
             let (event_type, object) = match &event {
                 WatchEvent::Added { value, revision, .. } => {
@@ -44,17 +48,31 @@ pub fn watch_response(
                     ("MODIFIED", obj)
                 }
                 WatchEvent::Deleted { revision, key, .. } => {
-                    // Deleted events pass through — no labels to check
+                    // The store doesn't carry the prior value on delete, so we
+                    // synthesize the tombstone. It MUST carry apiVersion/kind:
+                    // client-go refuses to decode a watch event whose object has
+                    // no Kind ("unable to decode watch event: Object 'Kind' is
+                    // missing"), which kills the whole informer stream.
+                    let (namespace, name) = split_key(key);
+                    let mut meta = json!({
+                        "name": name,
+                        "resourceVersion": revision.to_string()
+                    });
+                    if let Some(ns) = namespace {
+                        meta["namespace"] = json!(ns);
+                    }
                     let obj = json!({
-                        "metadata": {
-                            "resourceVersion": revision.to_string(),
-                            "name": key.rsplit('/').next().unwrap_or("")
-                        }
+                        "apiVersion": api_version,
+                        "kind": kind,
+                        "metadata": meta
                     });
                     ("DELETED", obj)
                 }
                 WatchEvent::Bookmark { revision } => {
+                    // Bookmarks carry the watched type too, for the same reason.
                     let obj = json!({
+                        "apiVersion": api_version,
+                        "kind": kind,
                         "metadata": {
                             "resourceVersion": revision.to_string()
                         }
@@ -62,6 +80,14 @@ pub fn watch_response(
                     ("BOOKMARK", obj)
                 }
             };
+
+            // ADDED/MODIFIED come straight from storage and normally carry their
+            // own TypeMeta, but backfill it if an object was stored without one.
+            let mut object = object;
+            if object.get("kind").and_then(|k| k.as_str()).is_none() {
+                object["apiVersion"] = json!(api_version);
+                object["kind"] = json!(kind);
+            }
 
             let watch_event = json!({
                 "type": event_type,
@@ -80,6 +106,23 @@ pub fn watch_response(
         .header("transfer-encoding", "chunked")
         .body(Body::from_stream(stream))
         .unwrap()
+}
+
+/// Split a registry key into `(namespace, name)`.
+///
+/// Keys look like `/registry/<resource>/<namespace>/<name>` for namespaced
+/// resources and `/registry/<resource>/<name>` for cluster-scoped ones.
+fn split_key(key: &str) -> (Option<String>, String) {
+    let parts: Vec<&str> = key.trim_start_matches('/').split('/').collect();
+    // ["registry", resource, ...rest]
+    match parts.len() {
+        n if n >= 4 => (
+            Some(parts[2].to_string()),
+            parts[n - 1].to_string(),
+        ),
+        n if n >= 1 => (None, parts[n - 1].to_string()),
+        _ => (None, String::new()),
+    }
 }
 
 fn inject_resource_version(obj: &mut serde_json::Value, revision: u64) {

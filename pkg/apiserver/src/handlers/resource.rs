@@ -50,6 +50,8 @@ pub async fn list_cluster_resources(
             rx,
             params.label_selector,
             params.field_selector,
+            resource_to_api_version(&resource).to_string(),
+            resource_to_kind(&resource),
         ));
     }
 
@@ -94,6 +96,8 @@ pub async fn list_namespaced_resources(
             rx,
             params.label_selector,
             params.field_selector,
+            resource_to_api_version(&resource).to_string(),
+            resource_to_kind(&resource),
         ));
     }
 
@@ -138,6 +142,8 @@ pub async fn list_all_namespaces_resources(
             rx,
             params.label_selector,
             params.field_selector,
+            resource_to_api_version(&resource).to_string(),
+            resource_to_kind(&resource),
         ));
     }
 
@@ -665,6 +671,44 @@ fn resource_to_list_kind(resource: &str) -> String {
         other => other,
     };
     format!("{singular}List")
+}
+
+/// The `apiVersion` a built-in resource plural belongs to. Watch tombstones and
+/// bookmarks must carry TypeMeta or client-go can't decode them, and the generic
+/// handlers only see the plural — not the group from the route.
+pub fn resource_to_api_version(resource: &str) -> &'static str {
+    match resource {
+        "deployments" | "replicasets" | "statefulsets" | "daemonsets" | "controllerrevisions" => {
+            "apps/v1"
+        }
+        "jobs" | "cronjobs" => "batch/v1",
+        "leases" => "coordination.k8s.io/v1",
+        "endpointslices" => "discovery.k8s.io/v1",
+        "storageclasses" | "csidrivers" | "csinodes" | "volumeattachments"
+        | "csistoragecapacities" => "storage.k8s.io/v1",
+        "clusterroles" | "clusterrolebindings" | "roles" | "rolebindings" => {
+            "rbac.authorization.k8s.io/v1"
+        }
+        "certificatesigningrequests" => "certificates.k8s.io/v1",
+        "customresourcedefinitions" => "apiextensions.k8s.io/v1",
+        "horizontalpodautoscalers" => "autoscaling/v2",
+        "networkpolicies" | "ingresses" | "ingressclasses" => "networking.k8s.io/v1",
+        "priorityclasses" => "scheduling.k8s.io/v1",
+        "mutatingwebhookconfigurations" | "validatingwebhookconfigurations" => {
+            "admissionregistration.k8s.io/v1"
+        }
+        "gatewayclasses" | "gateways" | "httproutes" => "gateway.networking.k8s.io/v1",
+        "apiservices" => "apiregistration.k8s.io/v1",
+        "podmigrations" => "rustkube.io/v1alpha1",
+        // Core group.
+        _ => "v1",
+    }
+}
+
+/// Singular kind for a resource plural (drops the `List` suffix).
+pub fn resource_to_kind(resource: &str) -> String {
+    let list = resource_to_list_kind(resource);
+    list.strip_suffix("List").unwrap_or(&list).to_string()
 }
 
 #[cfg(test)]

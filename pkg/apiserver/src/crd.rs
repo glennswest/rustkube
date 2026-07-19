@@ -213,7 +213,9 @@ pub async fn crd_list_ns(
     if params.watch {
         let start_rev = params.resource_version.unwrap_or(0);
         let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(crate::watch::watch_response(rx, params.label_selector, params.field_selector));
+        return Ok(crate::watch::watch_response(rx, params.label_selector, params.field_selector,
+            format!("{group}/{version}"),
+            crate::handlers::resource::resource_to_kind(&resource)));
     }
 
     let limit = params.limit.unwrap_or(500);
@@ -463,7 +465,9 @@ pub async fn crd_list_cluster(
     if params.watch {
         let start_rev = params.resource_version.unwrap_or(0);
         let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(crate::watch::watch_response(rx, params.label_selector, params.field_selector));
+        return Ok(crate::watch::watch_response(rx, params.label_selector, params.field_selector,
+            format!("{group}/{version}"),
+            crate::handlers::resource::resource_to_kind(&resource)));
     }
 
     let limit = params.limit.unwrap_or(500);

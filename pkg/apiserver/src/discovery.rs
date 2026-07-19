@@ -407,6 +407,57 @@ pub async fn api_discovery_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /openapi/v2 — Swagger 2.0 document.
+///
+/// `kubectl apply` downloads this to validate manifests client-side; a 404
+/// aborts the apply with "failed to download openapi" before any write happens.
+/// We serve a valid document with no per-type definitions: kubectl finds no
+/// schema for the GVK and proceeds without client-side validation (the server
+/// is still the authority), instead of failing outright.
+pub async fn openapi_v2() -> impl IntoResponse {
+    Json(json!({
+        "swagger": "2.0",
+        "info": {
+            "title": "Kubernetes",
+            "version": format!("v1.32.0-rustkube+{}", apimachinery::VERSION)
+        },
+        "paths": {},
+        "definitions": {}
+    }))
+}
+
+/// GET /openapi/v3 — the OpenAPI v3 group-version index kubectl fetches first.
+pub async fn openapi_v3() -> impl IntoResponse {
+    // Each entry points at a per-group-version document below.
+    let gv = |p: &str| json!({ "serverRelativeURL": format!("/openapi/v3/{p}") });
+    Json(json!({
+        "paths": {
+            "api/v1": gv("api/v1"),
+            "apis/apps/v1": gv("apis/apps/v1"),
+            "apis/batch/v1": gv("apis/batch/v1"),
+            "apis/discovery.k8s.io/v1": gv("apis/discovery.k8s.io/v1"),
+            "apis/storage.k8s.io/v1": gv("apis/storage.k8s.io/v1"),
+            "apis/rbac.authorization.k8s.io/v1": gv("apis/rbac.authorization.k8s.io/v1"),
+            "apis/coordination.k8s.io/v1": gv("apis/coordination.k8s.io/v1"),
+            "apis/certificates.k8s.io/v1": gv("apis/certificates.k8s.io/v1"),
+            "apis/apiextensions.k8s.io/v1": gv("apis/apiextensions.k8s.io/v1")
+        }
+    }))
+}
+
+/// GET /openapi/v3/{*path} — per-group-version OpenAPI v3 document.
+pub async fn openapi_v3_group() -> impl IntoResponse {
+    Json(json!({
+        "openapi": "3.0.0",
+        "info": {
+            "title": "Kubernetes",
+            "version": format!("v1.32.0-rustkube+{}", apimachinery::VERSION)
+        },
+        "paths": {},
+        "components": { "schemas": {} }
+    }))
+}
+
 /// GET /apis/storage.k8s.io/v1 — CSI ecosystem resources (#24).
 ///
 /// These are plain stored resources: the CSI sidecars (provisioner, attacher,
