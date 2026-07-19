@@ -202,6 +202,37 @@ fn build_router(
                 .delete(resource::delete_namespaced_resource)
                 .patch(resource::patch_namespaced_resource),
         )
+        // policy/v1 — PodDisruptionBudget (#7) + the pod Eviction subresource.
+        .route(
+            "/apis/policy/v1",
+            get(discovery::api_policy_v1_resources),
+        )
+        .route(
+            "/apis/policy/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/policy/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
+        )
+        .route(
+            "/apis/policy/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
+        .route(
+            "/apis/policy/v1/{resource}",
+            get(resource::list_all_namespaces_resources),
+        )
+        // Eviction subresource on core pods — PDB-gated (#7).
+        .route(
+            "/api/v1/namespaces/{namespace}/pods/{name}/eviction",
+            post(crate::eviction::create_eviction),
+        )
         // scheduling.k8s.io v1 — PriorityClass (cluster-scoped)
         .route(
             "/apis/scheduling.k8s.io/v1/{resource}",

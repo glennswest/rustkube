@@ -11,6 +11,7 @@ pub mod config;
 pub mod crd;
 pub mod discovery;
 pub mod error;
+pub mod eviction;
 pub mod handlers;
 pub mod protobuf_mw;
 pub mod rbac_engine;

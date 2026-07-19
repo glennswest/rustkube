@@ -90,6 +90,11 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "preferredVersion": {"groupVersion": "storage.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "policy",
+            "versions": [{"groupVersion": "policy/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "policy/v1", "version": "v1"}
+        }),
+        json!({
             "name": "apiextensions.k8s.io",
             "versions": [{"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "apiextensions.k8s.io/v1", "version": "v1"}
@@ -585,6 +590,44 @@ fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'static str,
         )],
         _ => Vec::new(),
     }
+}
+
+/// GET /apis/policy/v1 — PodDisruptionBudget + the pod Eviction subresource (#7).
+pub async fn api_policy_v1_resources() -> impl IntoResponse {
+    let verbs = json!(["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]);
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "policy/v1",
+        "resources": [
+            {
+                "name": "poddisruptionbudgets",
+                "singularName": "poddisruptionbudget",
+                "namespaced": true,
+                "kind": "PodDisruptionBudget",
+                "shortNames": ["pdb"],
+                "verbs": verbs
+            },
+            {
+                "name": "poddisruptionbudgets/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "PodDisruptionBudget",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                // Eviction is posted to core pods/{name}/eviction, but the kind
+                // lives in policy/v1 and clients discover it here.
+                "name": "pods/eviction",
+                "singularName": "",
+                "namespaced": true,
+                "group": "policy",
+                "version": "v1",
+                "kind": "Eviction",
+                "verbs": ["create"]
+            }
+        ]
+    }))
 }
 
 /// GET /apis/storage.k8s.io/v1 — CSI ecosystem resources (#24).

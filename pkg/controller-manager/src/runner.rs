@@ -1,6 +1,6 @@
 //! Controller manager — runs all controllers concurrently.
 
-use crate::{cronjob, daemonset, deployment, gateway, hpa, job, migration, namespace, node, replicaset, service, statefulset};
+use crate::{cronjob, daemonset, deployment, gateway, hpa, job, migration, namespace, node, pdb, replicaset, service, statefulset};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
@@ -242,6 +242,11 @@ impl ControllerManager {
         let api = self.api.clone();
         tasks.spawn(async move {
             hpa::HpaController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            pdb::PdbController::new(api).run().await;
         });
 
         let api = self.api.clone();

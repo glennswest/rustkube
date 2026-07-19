@@ -18,6 +18,7 @@ pub mod leaderelection;
 pub mod metrics_server;
 pub mod migration;
 pub mod namespace;
+pub mod pdb;
 pub mod node;
 pub mod replicaset;
 pub mod runner;
