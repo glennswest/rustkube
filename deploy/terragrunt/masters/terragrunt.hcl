@@ -20,8 +20,8 @@ terraform {
 locals {
   # Released fastetcd RPM (pinned). Each master runs a member of the 3-node
   # Raft cluster. TLS off (plaintext) for first bring-up.
-  fastetcd_version = "v0.8.2"
-  fastetcd_rpm_url = "https://github.com/glennswest/fastetcd/releases/download/v0.8.2/fastetcd-0.8.2-1.x86_64.rpm"
+  fastetcd_version = "v1.0.0"
+  fastetcd_rpm_url = "https://github.com/glennswest/fastetcd/releases/download/v1.0.0/fastetcd-1.0.0-1.x86_64.rpm"
   cluster_token    = "kube-etcd"
   ssh_key          = trimspace(file(pathexpand("~/.ssh/id_rsa.pub")))
 
