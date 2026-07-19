@@ -446,16 +446,145 @@ pub async fn openapi_v3() -> impl IntoResponse {
 }
 
 /// GET /openapi/v3/{*path} — per-group-version OpenAPI v3 document.
-pub async fn openapi_v3_group() -> impl IntoResponse {
+pub async fn openapi_v3_group(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    // `path` is the group-version as it appears in the index: "api/v1" for the
+    // core group, "apis/<group>/<version>" otherwise.
+    let (group, version, prefix) = match parse_openapi_path(&path) {
+        Some(t) => t,
+        None => {
+            return Json(json!({
+                "openapi": "3.0.0",
+                "info": { "title": "Kubernetes",
+                          "version": format!("v1.32.0-rustkube+{}", apimachinery::VERSION) },
+                "paths": {},
+                "components": { "schemas": {} }
+            }))
+        }
+    };
+
+    let mut paths = serde_json::Map::new();
+    for (plural, kind, namespaced) in resources_for(&group, &version) {
+        let gvk = json!({ "group": group, "version": version, "kind": kind });
+
+        // Collection path (POST creates) and item path (PUT/PATCH update). Both
+        // advertise `fieldValidation`, which is the whole point: kubectl looks
+        // the GVK up here and, finding the parameter, uses SERVER-side field
+        // validation. Without it, it falls back to the legacy protobuf-encoded
+        // /openapi/v2 document and `kubectl apply` fails outright (#31).
+        let (collection, item) = if namespaced {
+            (
+                format!("{prefix}/namespaces/{{namespace}}/{plural}"),
+                format!("{prefix}/namespaces/{{namespace}}/{plural}/{{name}}"),
+            )
+        } else {
+            (
+                format!("{prefix}/{plural}"),
+                format!("{prefix}/{plural}/{{name}}"),
+            )
+        };
+
+        paths.insert(collection, json!({ "post": operation(&gvk) }));
+        paths.insert(
+            item,
+            json!({ "put": operation(&gvk), "patch": operation(&gvk) }),
+        );
+    }
+
     Json(json!({
         "openapi": "3.0.0",
         "info": {
             "title": "Kubernetes",
             "version": format!("v1.32.0-rustkube+{}", apimachinery::VERSION)
         },
-        "paths": {},
+        "paths": paths,
         "components": { "schemas": {} }
     }))
+}
+
+/// One OpenAPI operation carrying its GVK and the `fieldValidation` parameter.
+fn operation(gvk: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "x-kubernetes-group-version-kind": gvk,
+        "parameters": [{
+            "name": "fieldValidation",
+            "in": "query",
+            "description": "Ignore, Warn or Strict handling of unknown/duplicate fields",
+            "schema": { "type": "string", "uniqueItems": true }
+        }],
+        "responses": { "200": { "description": "OK" } }
+    })
+}
+
+/// Split an OpenAPI v3 index path into `(group, version, url_prefix)`.
+/// `api/v1` → `("", "v1", "/api/v1")`; `apis/apps/v1` → `("apps", "v1", "/apis/apps/v1")`.
+fn parse_openapi_path(path: &str) -> Option<(String, String, String)> {
+    let p = path.trim_matches('/');
+    let parts: Vec<&str> = p.split('/').collect();
+    match parts.as_slice() {
+        ["api", version] => Some((String::new(), version.to_string(), format!("/api/{version}"))),
+        ["apis", group, version] => Some((
+            group.to_string(),
+            version.to_string(),
+            format!("/apis/{group}/{version}"),
+        )),
+        _ => None,
+    }
+}
+
+/// `(plural, kind, namespaced)` for a served group-version.
+///
+/// Only what `kubectl apply` needs to resolve a GVK to a path — the schemas
+/// themselves stay empty, so validation happens server-side rather than against
+/// a client-side copy of the type.
+fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'static str, bool)> {
+    match (group, version) {
+        ("", "v1") => vec![
+            ("namespaces", "Namespace", false),
+            ("nodes", "Node", false),
+            ("persistentvolumes", "PersistentVolume", false),
+            ("pods", "Pod", true),
+            ("services", "Service", true),
+            ("endpoints", "Endpoints", true),
+            ("configmaps", "ConfigMap", true),
+            ("secrets", "Secret", true),
+            ("serviceaccounts", "ServiceAccount", true),
+            ("events", "Event", true),
+            ("persistentvolumeclaims", "PersistentVolumeClaim", true),
+        ],
+        ("apps", "v1") => vec![
+            ("deployments", "Deployment", true),
+            ("replicasets", "ReplicaSet", true),
+            ("statefulsets", "StatefulSet", true),
+            ("daemonsets", "DaemonSet", true),
+        ],
+        ("batch", "v1") => vec![("jobs", "Job", true), ("cronjobs", "CronJob", true)],
+        ("discovery.k8s.io", "v1") => vec![("endpointslices", "EndpointSlice", true)],
+        ("coordination.k8s.io", "v1") => vec![("leases", "Lease", true)],
+        ("storage.k8s.io", "v1") => vec![
+            ("storageclasses", "StorageClass", false),
+            ("csidrivers", "CSIDriver", false),
+            ("csinodes", "CSINode", false),
+            ("volumeattachments", "VolumeAttachment", false),
+            ("csistoragecapacities", "CSIStorageCapacity", true),
+        ],
+        ("rbac.authorization.k8s.io", "v1") => vec![
+            ("clusterroles", "ClusterRole", false),
+            ("clusterrolebindings", "ClusterRoleBinding", false),
+            ("roles", "Role", true),
+            ("rolebindings", "RoleBinding", true),
+        ],
+        ("certificates.k8s.io", "v1") => {
+            vec![("certificatesigningrequests", "CertificateSigningRequest", false)]
+        }
+        ("apiextensions.k8s.io", "v1") => vec![(
+            "customresourcedefinitions",
+            "CustomResourceDefinition",
+            false,
+        )],
+        _ => Vec::new(),
+    }
 }
 
 /// GET /apis/storage.k8s.io/v1 — CSI ecosystem resources (#24).
@@ -786,4 +915,49 @@ pub async fn api_apiregistration_v1_resources() -> impl IntoResponse {
             }
         ]
     }))
+}
+
+#[cfg(test)]
+mod openapi_tests {
+    use super::*;
+
+    #[test]
+    fn parses_core_and_group_paths() {
+        assert_eq!(
+            parse_openapi_path("api/v1"),
+            Some((String::new(), "v1".into(), "/api/v1".into()))
+        );
+        assert_eq!(
+            parse_openapi_path("apis/apps/v1"),
+            Some(("apps".into(), "v1".into(), "/apis/apps/v1".into()))
+        );
+        // Leading/trailing slashes are tolerated; nonsense is not.
+        assert!(parse_openapi_path("/api/v1/").is_some());
+        assert!(parse_openapi_path("openapi/v3").is_none());
+        assert!(parse_openapi_path("").is_none());
+    }
+
+    #[test]
+    fn operations_carry_gvk_and_field_validation() {
+        // kubectl resolves a GVK to a path via x-kubernetes-group-version-kind,
+        // then checks for the fieldValidation parameter. Missing either sends it
+        // back to the legacy protobuf /openapi/v2 document (#31).
+        let gvk = json!({"group": "", "version": "v1", "kind": "Namespace"});
+        let op = operation(&gvk);
+        assert_eq!(op["x-kubernetes-group-version-kind"], gvk);
+        let params = op["parameters"].as_array().unwrap();
+        assert!(params.iter().any(|p| p["name"] == "fieldValidation"
+            && p["in"] == "query"));
+    }
+
+    #[test]
+    fn core_group_covers_namespaced_and_cluster_scoped() {
+        let core = resources_for("", "v1");
+        assert!(core.contains(&("namespaces", "Namespace", false)));
+        assert!(core.contains(&("configmaps", "ConfigMap", true)));
+        // Groups we serve resolve; ones we don't stay empty rather than lying.
+        assert!(!resources_for("apps", "v1").is_empty());
+        assert!(!resources_for("storage.k8s.io", "v1").is_empty());
+        assert!(resources_for("nope.example.com", "v1").is_empty());
+    }
 }
