@@ -52,9 +52,15 @@ impl ResourceStorage {
     /// Get a single resource by key.
     pub async fn get(&self, key: &str) -> Result<Value, ApiError> {
         match self.store.get(key).await.map_err(ApiError::from)? {
-            Some((bytes, _rev)) => {
-                let obj: Value = serde_json::from_slice(&bytes)
+            Some((bytes, rev)) => {
+                let mut obj: Value = serde_json::from_slice(&bytes)
                     .map_err(|e| ApiError::internal(&e.to_string()))?;
+                // resourceVersion is the store's mod_revision, NOT whatever was
+                // baked into the JSON on the last write (#33). Returning a stale
+                // baked-in value breaks optimistic concurrency: the client PUTs
+                // it back, the store CASes it against the real mod_revision, and
+                // the mismatch 409s — which loops leader election forever.
+                inject_resource_version(&mut obj, rev);
                 Ok(obj)
             }
             None => Err(ApiError::not_found("resource", key)),
@@ -88,6 +94,10 @@ impl ResourceStorage {
 
     /// Create a resource (fails if it already exists).
     pub async fn create(&self, key: &str, mut obj: Value) -> Result<Value, ApiError> {
+        // Never persist resourceVersion in the stored bytes — it is derived from
+        // the store's mod_revision on read (#33). Baking it in makes later reads
+        // return a stale RV.
+        strip_resource_version(&mut obj);
         let bytes =
             serde_json::to_vec(&obj).map_err(|e| ApiError::internal(&e.to_string()))?;
         // Atomic create-if-not-exists: CAS against revision 0 (the store treats
@@ -103,13 +113,7 @@ impl ResourceStorage {
             Err(e) => return Err(ApiError::from(e)),
         };
 
-        // Set resourceVersion in the returned object
-        if let Some(meta) = obj.get_mut("metadata").and_then(|m| m.as_object_mut()) {
-            meta.insert(
-                "resourceVersion".into(),
-                Value::String(rev.to_string()),
-            );
-        }
+        inject_resource_version(&mut obj, rev);
         Ok(obj)
     }
 
@@ -120,6 +124,10 @@ impl ResourceStorage {
         mut obj: Value,
         prev_revision: Option<u64>,
     ) -> Result<Value, ApiError> {
+        // Strip the client-supplied resourceVersion from the stored bytes: it is
+        // used for the CAS (prev_revision) but must not be baked into storage, or
+        // the next read returns a stale RV and optimistic concurrency breaks (#33).
+        strip_resource_version(&mut obj);
         let bytes =
             serde_json::to_vec(&obj).map_err(|e| ApiError::internal(&e.to_string()))?;
         let rev = self
@@ -128,12 +136,7 @@ impl ResourceStorage {
             .await
             .map_err(ApiError::from)?;
 
-        if let Some(meta) = obj.get_mut("metadata").and_then(|m| m.as_object_mut()) {
-            meta.insert(
-                "resourceVersion".into(),
-                Value::String(rev.to_string()),
-            );
-        }
+        inject_resource_version(&mut obj, rev);
         Ok(obj)
     }
 
@@ -156,5 +159,54 @@ impl ResourceStorage {
             .watch(prefix, start_revision)
             .await
             .map_err(ApiError::from)
+    }
+}
+
+/// Set `metadata.resourceVersion` to the store revision the object reflects.
+fn inject_resource_version(obj: &mut Value, rev: u64) {
+    if !obj.get("metadata").map(Value::is_object).unwrap_or(false) {
+        obj["metadata"] = serde_json::json!({});
+    }
+    obj["metadata"]["resourceVersion"] = Value::String(rev.to_string());
+}
+
+/// Remove `metadata.resourceVersion` so it is never persisted in the stored
+/// bytes (it is always derived from the store's mod_revision on read).
+fn strip_resource_version(obj: &mut Value) {
+    if let Some(meta) = obj.get_mut("metadata").and_then(|m| m.as_object_mut()) {
+        meta.remove("resourceVersion");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inject_overwrites_stale_resource_version() {
+        // A read must report the store revision, not a stale baked-in RV (#33).
+        let mut obj = serde_json::json!({
+            "metadata": { "name": "x", "resourceVersion": "100" }
+        });
+        inject_resource_version(&mut obj, 237_900);
+        assert_eq!(obj["metadata"]["resourceVersion"], "237900");
+    }
+
+    #[test]
+    fn strip_removes_resource_version_for_storage() {
+        let mut obj = serde_json::json!({
+            "metadata": { "name": "x", "resourceVersion": "237871", "uid": "u" }
+        });
+        strip_resource_version(&mut obj);
+        assert!(obj["metadata"].get("resourceVersion").is_none());
+        // Other metadata is preserved.
+        assert_eq!(obj["metadata"]["uid"], "u");
+    }
+
+    #[test]
+    fn inject_tolerates_missing_metadata() {
+        let mut obj = serde_json::json!({ "kind": "Lease" });
+        inject_resource_version(&mut obj, 5);
+        assert_eq!(obj["metadata"]["resourceVersion"], "5");
     }
 }
