@@ -638,6 +638,13 @@ pub fn apply_patch_body(
                 .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
             json_patch::merge(target, &patch);
         }
+        "application/strategic-merge-patch+json" => {
+            // Merge keyed lists (conditions by type, containers by name, …) by
+            // their patchMergeKey instead of replacing them wholesale (#47).
+            let patch: Value = serde_json::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid strategic merge patch: {e}")))?;
+            strategic_merge(target, &patch);
+        }
         _ => {
             let patch: Value = serde_json::from_slice(body)
                 .map_err(|e| ApiError::invalid(&format!("invalid merge patch: {e}")))?;
@@ -790,15 +797,17 @@ pub async fn patch_namespaced_resource(
 pub async fn patch_cluster_status(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
-    Json(body): Json<Value>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
     let mut existing = state.storage.get(&key).await?;
 
-    // Merge the patch into the status field
-    if let Some(status_patch) = body.get("status") {
-        merge_json(&mut existing["status"], status_patch);
-    }
+    let ct = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    apply_status_patch(&mut existing, ct, &body)?;
 
     let prev_rev = existing["metadata"]["resourceVersion"]
         .as_str()
@@ -841,14 +850,17 @@ pub async fn update_namespaced_status(
 pub async fn patch_namespaced_status(
     State(state): State<AppState>,
     Path((namespace, resource, name)): Path<(String, String, String)>,
-    Json(body): Json<Value>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
     let mut existing = state.storage.get(&key).await?;
 
-    if let Some(status_patch) = body.get("status") {
-        merge_json(&mut existing["status"], status_patch);
-    }
+    let ct = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    apply_status_patch(&mut existing, ct, &body)?;
 
     let prev_rev = existing["metadata"]["resourceVersion"]
         .as_str()
@@ -869,6 +881,102 @@ fn merge_json(dst: &mut Value, src: &Value) {
             *dst = src.clone();
         }
     }
+}
+
+/// Well-known Kubernetes list `patchMergeKey`s by field name — the subset needed
+/// for strategic-merge patches. A list field not listed here is replaced whole
+/// (RFC-7386 semantics). `status.conditions` keyed by `type` is the critical one:
+/// without it, a patch adding NetworkUnavailable would drop Ready et al. (#47).
+fn strategic_merge_key(field: &str) -> Option<&'static str> {
+    Some(match field {
+        "conditions" => "type",
+        "containers" | "initContainers" | "ephemeralContainers" | "volumes"
+        | "volumeMounts" | "imagePullSecrets" | "env" | "envFrom" => "name",
+        "ports" => "containerPort",
+        "ownerReferences" => "uid",
+        "hostAliases" => "ip",
+        "topologySpreadConstraints" => "topologyKey",
+        _ => return None,
+    })
+}
+
+/// Strategic-merge-patch (schema-lite): recursively merge objects; merge list
+/// fields that have a known `patchMergeKey` by upserting entries by that key
+/// (preserving unmatched existing entries); overwrite scalars and unkeyed lists;
+/// a `null` value deletes the key.
+pub(crate) fn strategic_merge(target: &mut Value, patch: &Value) {
+    let Value::Object(p) = patch else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = json!({});
+    }
+    let t = target.as_object_mut().unwrap();
+    for (k, pv) in p {
+        if pv.is_null() {
+            t.remove(k);
+            continue;
+        }
+        let mk = strategic_merge_key(k);
+        match t.get_mut(k) {
+            Some(tv) if mk.is_some() && tv.is_array() && pv.is_array() => {
+                strategic_merge_list(
+                    tv.as_array_mut().unwrap(),
+                    pv.as_array().unwrap(),
+                    mk.unwrap(),
+                );
+            }
+            Some(tv) if tv.is_object() && pv.is_object() => strategic_merge(tv, pv),
+            _ => {
+                t.insert(k.clone(), pv.clone());
+            }
+        }
+    }
+}
+
+/// Upsert each `patch` item into `target` by `key`: an item whose key matches an
+/// existing entry is strategic-merged into it; a new key is appended.
+fn strategic_merge_list(target: &mut Vec<Value>, patch: &[Value], key: &str) {
+    for pitem in patch {
+        let pkey = pitem.get(key);
+        match pkey.and_then(|pk| target.iter_mut().find(|t| t.get(key) == Some(pk))) {
+            Some(existing) => strategic_merge(existing, pitem),
+            None => target.push(pitem.clone()),
+        }
+    }
+}
+
+/// Apply a status subresource patch to `existing`, honoring the patch
+/// Content-Type: strategic-merge (merge keyed lists like conditions), merge-patch
+/// (RFC-7386, arrays replaced), or JSON patch.
+fn apply_status_patch(existing: &mut Value, content_type: &str, body: &[u8]) -> Result<(), ApiError> {
+    match content_type.split(';').next().unwrap_or("").trim() {
+        "application/json-patch+json" => {
+            let mut ops: Value = serde_json::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
+            normalize_json_patch(existing, &mut ops);
+            let patch: json_patch::Patch = serde_json::from_value(ops)
+                .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
+            json_patch::patch(existing, &patch)
+                .map_err(|e| ApiError::invalid(&format!("JSON Patch could not be applied: {e}")))?;
+        }
+        "application/strategic-merge-patch+json" => {
+            let patch: Value = serde_json::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid patch: {e}")))?;
+            if let Some(sp) = patch.get("status") {
+                strategic_merge(&mut existing["status"], sp);
+            }
+        }
+        _ => {
+            let patch: Value = serde_json::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid patch: {e}")))?;
+            if let Some(sp) = patch.get("status") {
+                merge_json(&mut existing["status"], sp);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Public version of ensure_metadata for use by other modules (e.g. CRD handlers).
@@ -1020,6 +1128,31 @@ mod tests {
         assert_eq!(obj["spec"]["replicas"], 3);
         assert!(obj["spec"].get("paused").is_none(), "null must delete the key");
         assert_eq!(obj["status"]["phase"], "A", "untouched fields survive");
+    }
+
+    #[test]
+    fn strategic_merge_conditions_by_type() {
+        // #47: a strategic-merge patch adding NetworkUnavailable must UPSERT by
+        // `type`, preserving the existing conditions (not replace the whole list).
+        let mut status = json!({"conditions": [
+            {"type": "Ready", "status": "True"},
+            {"type": "MemoryPressure", "status": "False"},
+        ]});
+        let patch = json!({"conditions": [
+            {"type": "NetworkUnavailable", "status": "False", "reason": "CiliumIsUp"},
+            {"type": "Ready", "status": "True", "reason": "KubeletReady"},
+        ]});
+        strategic_merge(&mut status, &patch);
+        let conds = status["conditions"].as_array().unwrap();
+        let by_type: std::collections::HashMap<_, _> = conds
+            .iter()
+            .map(|c| (c["type"].as_str().unwrap(), c))
+            .collect();
+        assert_eq!(by_type.len(), 3, "Ready, MemoryPressure preserved + NetworkUnavailable added");
+        assert_eq!(by_type["MemoryPressure"]["status"], "False");
+        assert_eq!(by_type["NetworkUnavailable"]["reason"], "CiliumIsUp");
+        // existing Ready entry merged in place (reason added), not duplicated.
+        assert_eq!(by_type["Ready"]["reason"], "KubeletReady");
     }
 
     #[test]
