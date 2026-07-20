@@ -19,8 +19,6 @@ locals {
   ssh_key       = trimspace(file(pathexpand("~/.ssh/id_rsa.pub")))
   pki           = "${get_terragrunt_dir()}/pki"
 
-  rustkube_rpm_url = "https://github.com/glennswest/rustkube/releases/download/v0.7.12/kubernetes-rs-0.7.12-1.x86_64.rpm"
-  fastetcd_rpm_url = "https://github.com/glennswest/fastetcd/releases/download/v0.8.2/fastetcd-0.8.2-1.x86_64.rpm"
 }
 
 inputs = {
@@ -46,8 +44,6 @@ inputs = {
         ssh_keys         = [local.ssh_key]
         node_ip          = local.ip
         cluster_token    = local.cluster_token
-        fastetcd_rpm_url = local.fastetcd_rpm_url
-        rustkube_rpm_url = local.rustkube_rpm_url
         ca_crt        = file("${local.pki}/ca.crt")
         ca_key        = file("${local.pki}/ca.key")
         sa_key        = file("${local.pki}/sa.key")

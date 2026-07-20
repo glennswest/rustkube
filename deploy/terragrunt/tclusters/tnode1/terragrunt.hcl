@@ -19,12 +19,9 @@ locals {
   ssh_key       = trimspace(file(pathexpand("~/.ssh/id_rsa.pub")))
   pki           = "${get_terragrunt_dir()}/pki"
 
-  rustkube_rpm_url = "https://github.com/glennswest/rustkube/releases/download/v0.7.12/kubernetes-rs-0.7.12-1.x86_64.rpm"
-  fastetcd_rpm_url = "https://github.com/glennswest/fastetcd/releases/download/v0.8.2/fastetcd-0.8.2-1.x86_64.rpm"
 
   # Node agent: when true the VM also runs the kubelet, so pods actually run.
   with_node             = true
-  rustkube_node_rpm_url = "https://github.com/glennswest/rustkube-node/releases/download/v0.1.0/rustkube-node-0.1.0-1.fc43.x86_64.rpm"
 }
 
 inputs = {
@@ -50,10 +47,7 @@ inputs = {
         ssh_keys         = [local.ssh_key]
         node_ip          = local.ip
         cluster_token    = local.cluster_token
-        fastetcd_rpm_url = local.fastetcd_rpm_url
-        rustkube_rpm_url = local.rustkube_rpm_url
         with_node             = local.with_node
-        rustkube_node_rpm_url = local.rustkube_node_rpm_url
         node_token            = local.with_node ? trimspace(file("${local.pki}/node-token")) : ""
         ca_crt        = file("${local.pki}/ca.crt")
         ca_key        = file("${local.pki}/ca.key")

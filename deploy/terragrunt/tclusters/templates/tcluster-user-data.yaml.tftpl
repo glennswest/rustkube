@@ -30,6 +30,22 @@ packages:
   - qemu-guest-agent
 
 write_files:
+  # install-latest-rpm <owner/repo> — dnf-install the newest x86_64 RPM from a
+  # repo's latest GitHub release. No version pins: nodes always pull the newest
+  # build, so user_data never changes on a version bump (a changed user_data
+  # forces a VM replace).
+  - path: /usr/local/bin/install-latest-rpm
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      repo="$1"
+      url=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
+            | grep -o "https://[^\"]*\.x86_64\.rpm" | head -1)
+      [ -n "$url" ] || { echo "no x86_64 rpm in latest release of $repo" >&2; exit 1; }
+      echo "install-latest-rpm: $repo -> $url"
+      dnf install -y "$url"
+
   # fastetcd — a single-member Raft cluster (it is its own only peer).
   - path: /etc/fastetcd/fastetcd.conf
     permissions: "0644"
@@ -136,8 +152,8 @@ write_files:
 runcmd:
   - [ systemctl, enable, --now, qemu-guest-agent ]
   - [ mkdir, -p, /var/lib/kubernetes ]
-  - [ dnf, install, -y, "${fastetcd_rpm_url}" ]
-  - [ dnf, install, -y, "${rustkube_rpm_url}" ]
+  - [ /usr/local/bin/install-latest-rpm, glennswest/fastetcd ]
+  - [ /usr/local/bin/install-latest-rpm, glennswest/rustkube ]
   - [ systemctl, enable, --now, kube-apiserver.service ]
   - [ systemctl, enable, --now, kube-controller-manager.service ]
   - [ systemctl, enable, --now, kube-scheduler.service ]
@@ -145,7 +161,7 @@ runcmd:
   # Node agent last: it registers the Node and starts pods, so the apiserver
   # must be serving first. --no-cni means pods use host networking (no CNI on a
   # single test node).
-  - [ dnf, install, -y, "${rustkube_node_rpm_url}" ]
+  - [ /usr/local/bin/install-latest-rpm, glennswest/rustkube-node ]
   - [ systemctl, enable, --now, kubelet.service ]
 %{ endif ~}
 

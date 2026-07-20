@@ -24,6 +24,22 @@ packages:
   - qemu-guest-agent
 
 write_files:
+  # install-latest-rpm <owner/repo> — dnf-install the newest x86_64 RPM from a
+  # repo's latest GitHub release. No version pins: the build pipeline publishes a
+  # release per commit and nodes always pull the newest, so user_data never
+  # changes on a version bump (a changed user_data forces a VM replace).
+  - path: /usr/local/bin/install-latest-rpm
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      repo="$1"
+      url=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
+            | grep -o "https://[^\"]*\.x86_64\.rpm" | head -1)
+      [ -n "$url" ] || { echo "no x86_64 rpm in latest release of $repo" >&2; exit 1; }
+      echo "install-latest-rpm: $repo -> $url"
+      dnf install -y "$url"
+
   # fastetcd member config — this master's node in the 3-node Raft cluster.
   # Read by the RPM's fastetcd.service (EnvironmentFile). etcd-compatible
   # ETCD_* names; fastetcd reads them natively.
@@ -115,15 +131,15 @@ runcmd:
   - [ systemctl, enable, --now, qemu-guest-agent ]
   - [ mkdir, -p, /var/lib/kubernetes ]
 
-  # 1) fastetcd member — install the pinned RPM; all 3 masters install together
-  #    and form the Raft cluster (Type=simple units come up in parallel).
-  - [ dnf, install, -y, "${fastetcd_rpm_url}" ]
+  # 1) fastetcd member — install the latest release; all 3 masters install
+  #    together and form the Raft cluster (Type=simple units come up in parallel).
+  - [ /usr/local/bin/install-latest-rpm, glennswest/fastetcd ]
 
-  # 2) Kubernetes control plane — install the pinned released RPM (no build on
-  #    the node). Its postinstall lays down the upstream-named binaries + units
-  #    and creates the data dirs; we enable the services after fastetcd so
+  # 2) Kubernetes control plane — install the latest release (no build on the
+  #    node). Its postinstall lays down the upstream-named binaries + units and
+  #    creates the data dirs; we enable the services after fastetcd so
   #    --etcd-servers is reachable (units retry until quorum forms anyway).
-  - [ dnf, install, -y, "${rustkube_rpm_url}" ]
+  - [ /usr/local/bin/install-latest-rpm, glennswest/rustkube ]
   - [ systemctl, enable, --now, kube-apiserver.service ]
   - [ systemctl, enable, --now, kube-controller-manager.service ]
   - [ systemctl, enable, --now, kube-scheduler.service ]
