@@ -25,7 +25,9 @@ impl DaemonSetController {
     pub fn new(api: Arc<ApiClient>) -> Self {
         Self {
             api,
-            backoff: CreateBackoff::new(),
+            // Match the k8s DaemonSetController's failedPodsBackoff window: 1s
+            // doubling to a 15min cap, keyed per (DaemonSet uid, node).
+            backoff: CreateBackoff::with_params(Duration::from_secs(1), Duration::from_secs(900)),
         }
     }
 
@@ -133,26 +135,18 @@ impl DaemonSetController {
             }
         }
 
-        // GC terminal pods so they don't accumulate (same #27 storm class: a
-        // Failed pod left a node looking empty, so every reconcile minted another
-        // pod there). Keep the newest terminal pod per node for post-mortem,
-        // delete the rest; a Failed pod on a node arms that node's backoff.
+        // Delete + recreate, matching the k8s DaemonSetController: a Failed pod
+        // is DELETED (not retained) so the node stops looking occupied, then the
+        // create pass below mints a fresh replacement — gated by failedPodsBackoff
+        // so a crash-looping pod isn't recreated in a tight loop (the #27 storm
+        // class). A Succeeded pod (unusual for a DaemonSet) is just cleared out.
+        // Deleting pods are already excluded from `terminal`, so each Failed pod
+        // arms this node's backoff exactly once.
         let now = Instant::now();
-        let mut newest_terminal_seen: HashSet<String> = HashSet::new();
-        // Newest first so the first terminal pod per node is the one we retain.
-        terminal.sort_by(|a, b| {
-            let ta = a["metadata"]["creationTimestamp"].as_str().unwrap_or("");
-            let tb = b["metadata"]["creationTimestamp"].as_str().unwrap_or("");
-            tb.cmp(ta)
-        });
         for pod in &terminal {
             let node = pod["spec"]["nodeName"].as_str().unwrap_or("").to_string();
-            let failed = pod["status"]["phase"].as_str() == Some("Failed");
-            if failed {
+            if pod["status"]["phase"].as_str() == Some("Failed") {
                 self.backoff.record_failure(&format!("{ds_uid}/{node}"), now);
-            }
-            if newest_terminal_seen.insert(node.clone()) {
-                continue; // retain the newest terminal pod on this node
             }
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
             if !pod_name.is_empty() {
@@ -161,8 +155,11 @@ impl DaemonSetController {
                     .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
                     .await
                 {
-                    Ok(_) => info!("GC terminal DaemonSet pod {namespace}/{pod_name}"),
-                    Err(e) => debug!("Failed to GC DaemonSet pod {pod_name}: {e}"),
+                    Ok(_) => info!(
+                        "Deleted terminal DaemonSet pod {namespace}/{pod_name} (node {node}); \
+                         will recreate"
+                    ),
+                    Err(e) => debug!("Failed to delete terminal DaemonSet pod {pod_name}: {e}"),
                 }
             }
         }
@@ -269,8 +266,12 @@ fn build_daemonset_pod(
     ds: &Value,
 ) -> anyhow::Result<Value> {
     let template = &ds["spec"]["template"];
-    let node_hash = &hash_node_name(node_name);
-    let pod_name = format!("{ds_name}-{node_hash}");
+    // Random suffix (k8s generateName style, e.g. `cilium-fd98f`) rather than a
+    // deterministic per-node name: a lingering/terminating pod must never
+    // collide (409) with its replacement — that collision was the self-healing
+    // deadlock in #38. Node placement is tracked by spec.nodeName, not the name.
+    let suffix = &uuid::Uuid::new_v4().to_string()[..5];
+    let pod_name = format!("{ds_name}-{suffix}");
 
     let mut labels = template["metadata"]["labels"].clone();
     if labels.is_null() {
@@ -318,15 +319,6 @@ fn build_daemonset_pod(
     });
 
     Ok(pod)
-}
-
-fn hash_node_name(name: &str) -> String {
-    // Simple 5-char hash of node name for pod naming
-    let mut hash: u64 = 5381;
-    for b in name.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(b as u64);
-    }
-    format!("{:05x}", hash & 0xFFFFF)
 }
 
 fn is_node_ready(node: &Value) -> bool {
