@@ -61,7 +61,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.7.26`
+## Current Version: `v0.7.27`
 
 ## Work Plan
 
@@ -216,6 +216,7 @@ Cargo.toml → workspace.package.version
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.7.27 | 2026-07-20 | protobuf mw: only transcode POST/PUT/PATCH bodies — DELETE carries DeleteOptions (no schema), was 415-ing helm/cilium uninstall |
 | v0.7.26 | 2026-07-20 | JSON Patch: test-null against absent path holds (evanphx/k8s leniency) — unblocks cilium-operator node-taint CAS |
 | v0.7.25 | 2026-07-20 | Watch BOOKMARK support: WatchList sendInitialEvents→initial-events-end bookmark + allowWatchBookmarks heartbeat — client-go informers sync, unblocks Cilium agent (#39) |
 | v0.7.24 | 2026-07-19 | DaemonSet self-healing: delete+recreate Failed pods with random names (k8s generateName style) + failedPodsBackoff (1s→15min) — unblocks Cilium agent DS (#38) |

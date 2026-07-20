@@ -17,7 +17,7 @@
 use apimachinery::protobuf;
 use axum::body::{Body, Bytes};
 use axum::extract::Request;
-use axum::http::{header, StatusCode};
+use axum::http::{self, header, StatusCode};
 use axum::response::Response;
 use axum::middleware::Next;
 use serde_json::{json, Value};
@@ -59,7 +59,17 @@ fn path_gvk(path: &str) -> (String, String) {
 pub async fn transcode(req: Request, next: Next) -> Response {
     let (mut parts, body) = req.into_parts();
 
-    let req_is_pb = protobuf::wants_protobuf(header_str(&parts.headers, header::CONTENT_TYPE));
+    // Only create/update/patch bodies carry a protobuf-encoded *resource*. A
+    // DELETE body is a meta/v1 DeleteOptions and GET has none — client-go and
+    // helm send those as protobuf too, our handlers ignore them, and we have no
+    // DeleteOptions schema, so trying to transcode them 415s and breaks helm
+    // (cilium uninstall). Restrict request-body transcoding to POST/PUT/PATCH.
+    let carries_resource_body = matches!(
+        parts.method,
+        http::Method::POST | http::Method::PUT | http::Method::PATCH
+    );
+    let req_is_pb = carries_resource_body
+        && protobuf::wants_protobuf(header_str(&parts.headers, header::CONTENT_TYPE));
     let accept_pb = header_str(&parts.headers, header::ACCEPT).contains(protobuf::CONTENT_TYPE);
     // GVK implied by the endpoint, used when the client's protobuf envelope has
     // no TypeMeta (typed client-go clients often leave it blank — #34).
