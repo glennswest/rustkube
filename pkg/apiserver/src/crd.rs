@@ -277,6 +277,7 @@ pub async fn crd_list_ns(
     validate_crd(&state, &group, &version, &resource).await?;
     let params = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or(""));
     let metadata_only = crate::handlers::resource::accept_partial_metadata(&headers);
+    let (item_kind, list_kind) = crd_kinds(&state, &group, &version, &resource).await;
     let prefix = ResourceStorage::namespace_prefix(&resource, &namespace);
 
     if params.watch {
@@ -285,7 +286,7 @@ pub async fn crd_list_ns(
             &prefix,
             &params,
             format!("{group}/{version}"),
-            crate::handlers::resource::resource_to_kind(&resource),
+            item_kind,
             metadata_only,
         )
         .await;
@@ -300,7 +301,7 @@ pub async fn crd_list_ns(
 
     let mut list = json!({
         "apiVersion": format!("{group}/{version}"),
-        "kind": format!("{}List", resource),
+        "kind": list_kind,
         "metadata": { "resourceVersion": revision.to_string() },
         "items": items
     });
@@ -535,6 +536,7 @@ pub async fn crd_list_cluster(
     validate_crd(&state, &group, &version, &resource).await?;
     let params = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or(""));
     let metadata_only = crate::handlers::resource::accept_partial_metadata(&headers);
+    let (item_kind, list_kind) = crd_kinds(&state, &group, &version, &resource).await;
     let prefix = ResourceStorage::cluster_prefix(&resource);
 
     if params.watch {
@@ -543,7 +545,7 @@ pub async fn crd_list_cluster(
             &prefix,
             &params,
             format!("{group}/{version}"),
-            crate::handlers::resource::resource_to_kind(&resource),
+            item_kind,
             metadata_only,
         )
         .await;
@@ -558,7 +560,7 @@ pub async fn crd_list_cluster(
 
     let mut list = json!({
         "apiVersion": format!("{group}/{version}"),
-        "kind": format!("{}List", resource),
+        "kind": list_kind,
         "metadata": { "resourceVersion": revision.to_string() },
         "items": items
     });
@@ -646,6 +648,20 @@ pub async fn crd_delete_cluster(
 }
 
 /// Validate that the resource exists in the CRD registry or is a built-in CRD resource.
+/// The `(kind, listKind)` for a CRD resource — the CRD's declared
+/// `spec.names.kind` (e.g. `CiliumNetworkPolicy`), NOT the plural. Using the
+/// plural (`ciliumnetworkpoliciesList`) makes client-go reject the response with
+/// "no kind registered", so a CR informer (the Cilium agent's) never syncs.
+async fn crd_kinds(state: &AppState, group: &str, version: &str, resource: &str) -> (String, String) {
+    if let Some(def) = state.crd_registry.lookup(group, version, resource).await {
+        return (def.kind.clone(), format!("{}List", def.kind));
+    }
+    // apiextensions customresourcedefinitions and any unlisted fallback.
+    let kind = crate::handlers::resource::resource_to_kind(resource);
+    let list = format!("{kind}List");
+    (kind, list)
+}
+
 async fn validate_crd(
     state: &AppState,
     group: &str,
