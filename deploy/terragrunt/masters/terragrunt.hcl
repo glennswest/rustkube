@@ -6,9 +6,9 @@
 #     the node components (kubelet + kube-proxy) — schedulable master-nodes.
 #   * worker1/2/3 (.54/.55/.56) run only the node components and join master1's
 #     apiserver.
-# Runtime is CRI-O (the OpenShift runtime); Cilium (CNI) + cluster YAML are a
-# separate step — this is the foundation test bed, so fresh nodes register
-# NotReady until CNI lands.
+# Runtime is CRI-O (the OpenShift runtime); Cilium (CNI) is deployed cluster-wide
+# once from the primary master (master1) by bootstrap-cilium, which is what takes
+# nodes to Ready.
 #
 # Uses the shared, versioned proxmox-fedora-vm module (pinned ?ref). Disks →
 # test-lvm-thin, cloud-init snippets → terraform-snippets (token ACL scope).
@@ -93,6 +93,8 @@ inputs = {
           cluster_token    = local.cluster_token
           etcd_servers     = local.etcd_servers
           cluster_state    = (get_env("RK_REPLACE_MASTER", "") == k) ? "existing" : "new"
+          # master1 is the primary: it deploys Cilium (CNI) cluster-wide once.
+          primary = (k == "master1")
           # PKI material, injected via cloud-init write_files.
           ca_crt        = file("${local.pki}/ca.crt")
           ca_key        = file("${local.pki}/ca.key")

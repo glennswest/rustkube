@@ -160,6 +160,52 @@ write_files:
       NODE_NAME=${hostname}
       KUBE_PROXY_ARGS=
 
+  # admin kubeconfig (cert-based) for cluster bootstrap tooling on the master.
+  - path: /etc/kubernetes/admin.kubeconfig
+    permissions: "0600"
+    content: |
+      apiVersion: v1
+      kind: Config
+      current-context: g8
+      clusters:
+        - name: g8
+          cluster:
+            server: https://127.0.0.1:6443
+            certificate-authority: /etc/kubernetes/pki/ca.crt
+      users:
+        - name: admin
+          user:
+            client-certificate: /etc/kubernetes/pki/admin.crt
+            client-key: /etc/kubernetes/pki/admin.key
+      contexts:
+        - name: g8
+          context: { cluster: g8, user: admin }
+
+  # bootstrap-cilium — deploy Cilium (CNI) once, from the primary master. The
+  # kubelet uses CRI-O, and CRI-O invokes CNI from /etc/cni/net.d; Cilium's agent
+  # DaemonSet writes 05-cilium.conflist and installs its plugin, which is what
+  # takes nodes from NotReady to Ready. No pins: the cilium CLI installs the
+  # cluster-latest Cilium. IPAM=kubernetes uses the per-node podCIDRs the kubelet
+  # sets from --pod-cidr; kube-proxy stays (no replacement). Re-runnable.
+  - path: /usr/local/bin/bootstrap-cilium
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.kubeconfig
+      CERT="--cert /etc/kubernetes/pki/admin.crt --key /etc/kubernetes/pki/admin.key"
+      # cilium CLI (latest stable) — talks to the apiserver via client-go.
+      if ! command -v cilium >/dev/null 2>&1; then
+        ver=$(curl -fsSL https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+        curl -fsSL "https://github.com/cilium/cilium-cli/releases/download/$${ver}/cilium-linux-amd64.tar.gz" \
+          | tar -xz -C /usr/local/bin cilium
+      fi
+      # wait for the local apiserver to serve before installing.
+      for i in $(seq 1 60); do
+        curl -sk $${CERT} https://127.0.0.1:6443/healthz | grep -q ok && break || sleep 5
+      done
+      cilium install --set ipam.mode=kubernetes --set kubeProxyReplacement=false
+
 runcmd:
   - [ systemctl, enable, --now, qemu-guest-agent ]
   - [ mkdir, -p, /var/lib/kubernetes ]
@@ -186,5 +232,13 @@ runcmd:
   - [ /usr/local/bin/install-latest-rpm, glennswest/rustkube-node ]
   - [ systemctl, enable, --now, kubelet.service ]
   - [ systemctl, enable, --now, kube-proxy.service ]
+
+%{ if primary ~}
+  # 4) Cilium (CNI) — deployed once, cluster-wide, from the primary master. This
+  #    is what makes the nodes go Ready. Backgrounded so a slow/again-retrying
+  #    install never blocks cloud-init; re-run /usr/local/bin/bootstrap-cilium by
+  #    hand if it needs another pass.
+  - [ bash, -c, "/usr/local/bin/bootstrap-cilium >/var/log/bootstrap-cilium.log 2>&1 &" ]
+%{ endif ~}
 
 final_message: "${fqdn} master-node (fastetcd + control plane + kubelet) cloud-init complete in $UPTIME seconds"
