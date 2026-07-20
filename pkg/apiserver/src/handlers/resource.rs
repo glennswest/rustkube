@@ -681,6 +681,7 @@ pub(crate) async fn patch_stored_object(
     name: &str,
     namespace: Option<&str>,
     headers: &axum::http::HeaderMap,
+    query: &str,
     body: &[u8],
 ) -> Result<Value, ApiError> {
     let content_type = headers
@@ -689,8 +690,29 @@ pub(crate) async fn patch_stored_object(
         .unwrap_or("");
     let is_apply = content_type.split(';').next().unwrap_or("").trim()
         == "application/apply-patch+yaml";
+    let (field_manager, force) = apply_params(query);
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     match state.storage.get(key).await {
+        Ok(existing) if is_apply => {
+            // Server-side apply: merge the intent, track field ownership in
+            // managedFields, and reject a foreign-owned change unless forced.
+            let applied: Value = serde_yaml::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
+            let merged =
+                crate::apply::server_side_apply(existing, &applied, &field_manager, &now, force)
+                    .map_err(|c| {
+                        ApiError::conflict(&format!(
+                            "Apply failed with 1 conflict: field \"{}\" is managed by \"{}\" \
+                             (set fieldManager force to override)",
+                            c.field, c.manager
+                        ))
+                    })?;
+            let prev_rev = merged["metadata"]["resourceVersion"]
+                .as_str()
+                .and_then(|rv| rv.parse::<u64>().ok());
+            state.storage.update(key, merged, prev_rev).await
+        }
         Ok(mut existing) => {
             apply_patch_body(&mut existing, content_type, body)?;
             let prev_rev = existing["metadata"]["resourceVersion"]
@@ -699,11 +721,14 @@ pub(crate) async fn patch_stored_object(
             state.storage.update(key, existing, prev_rev).await
         }
         // Server-side apply is an upsert (KEP-555): applying to a missing object
-        // CREATES it — the apply body is the fully-specified desired object.
-        // (Merge/JSON/strategic patches still 404 a missing object.)
+        // CREATES it with the requester as the field manager. (Merge/JSON/
+        // strategic patches still 404 a missing object.)
         Err(e) if is_apply && e.status == StatusCode::NOT_FOUND => {
-            let mut obj: Value = serde_yaml::from_slice(body)
+            let applied: Value = serde_yaml::from_slice(body)
                 .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
+            // No existing owners on a create, so this never conflicts.
+            let mut obj = crate::apply::server_side_apply(json!({}), &applied, &field_manager, &now, true)
+                .expect("create apply cannot conflict");
             ensure_metadata(&mut obj, name, namespace);
             if let Some(ns) = namespace {
                 crate::builtin_admission::admit_create(&state.storage, resource, Some(ns), &mut obj)
@@ -715,15 +740,34 @@ pub(crate) async fn patch_stored_object(
     }
 }
 
+/// Parse `fieldManager` and `force` from the request query for server-side apply.
+fn apply_params(query: &str) -> (String, bool) {
+    let mut manager = String::new();
+    let mut force = false;
+    for (k, v) in form_urlencoded::parse(query.as_bytes()) {
+        match k.as_ref() {
+            "fieldManager" => manager = v.into_owned(),
+            "force" => force = v == "true" || v == "1",
+            _ => {}
+        }
+    }
+    if manager.is_empty() {
+        manager = "apply".to_string();
+    }
+    (manager, force)
+}
+
 /// PATCH a cluster-scoped resource (whole object).
 pub async fn patch_cluster_resource(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
     headers: axum::http::HeaderMap,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = patch_stored_object(&state, &key, &resource, &name, None, &headers, &body).await?;
+    let q = query.as_deref().unwrap_or("");
+    let obj = patch_stored_object(&state, &key, &resource, &name, None, &headers, q, &body).await?;
     Ok(Json(obj))
 }
 
@@ -732,11 +776,13 @@ pub async fn patch_namespaced_resource(
     State(state): State<AppState>,
     Path((namespace, resource, name)): Path<(String, String, String)>,
     headers: axum::http::HeaderMap,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+    let q = query.as_deref().unwrap_or("");
     let obj =
-        patch_stored_object(&state, &key, &resource, &name, Some(&namespace), &headers, &body)
+        patch_stored_object(&state, &key, &resource, &name, Some(&namespace), &headers, q, &body)
             .await?;
     Ok(Json(obj))
 }

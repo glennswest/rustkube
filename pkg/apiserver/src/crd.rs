@@ -359,13 +359,15 @@ pub async fn crd_patch_ns(
     State(state): State<AppState>,
     Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
     headers: axum::http::HeaderMap,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    // Shared path so server-side apply upserts a missing CR (#45).
+    // Shared path so server-side apply upserts a missing CR + tracks managedFields (#45).
     let obj = crate::handlers::resource::patch_stored_object(
-        &state, &key, &resource, &name, Some(&namespace), &headers, &body,
+        &state, &key, &resource, &name, Some(&namespace), &headers,
+        query.as_deref().unwrap_or(""), &body,
     )
     .await?;
     Ok(Json(obj))
@@ -461,13 +463,14 @@ pub async fn crd_patch_cluster(
     State(state): State<AppState>,
     Path((group, version, resource, name)): Path<(String, String, String, String)>,
     headers: axum::http::HeaderMap,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::cluster_key(&resource, &name);
-    // Shared path so server-side apply upserts a missing CR (#45).
+    // Shared path so server-side apply upserts a missing CR + tracks managedFields (#45).
     let obj = crate::handlers::resource::patch_stored_object(
-        &state, &key, &resource, &name, None, &headers, &body,
+        &state, &key, &resource, &name, None, &headers, query.as_deref().unwrap_or(""), &body,
     )
     .await?;
     Ok(Json(obj))
