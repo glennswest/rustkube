@@ -47,18 +47,18 @@ impl DaemonSetController {
         let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
         let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
 
-        // Get all ready nodes once (shared across namespaces)
+        // Get ALL nodes once (full objects, shared across namespaces). A DaemonSet
+        // runs one pod on every node it's ELIGIBLE for — which includes NotReady
+        // nodes (its pods carry the not-ready toleration). Scheduling/GC keys off
+        // node existence + eligibility, not readiness; readiness only affects the
+        // numberReady count. (Keying off readiness churned pods whenever a node
+        // briefly went NotReady — #44.)
         let node_list: Value = self.api.list("/api/v1/nodes").await?;
         let nodes = node_list["items"].as_array().cloned().unwrap_or_default();
-        let ready_nodes: Vec<String> = nodes
-            .iter()
-            .filter(|n| is_node_ready(n))
-            .filter_map(|n| n["metadata"]["name"].as_str().map(|s| s.to_string()))
-            .collect();
 
         for ns in &namespaces {
             let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name, &ready_nodes).await {
+            if let Err(e) = self.reconcile_namespace(ns_name, &nodes).await {
                 debug!("DaemonSet reconcile in {ns_name}: {e}");
             }
         }
@@ -68,7 +68,7 @@ impl DaemonSetController {
     async fn reconcile_namespace(
         &self,
         namespace: &str,
-        ready_nodes: &[String],
+        nodes: &[Value],
     ) -> anyhow::Result<()> {
         let ds_list: Value = self
             .api
@@ -86,7 +86,7 @@ impl DaemonSetController {
 
         for ds in &daemonsets {
             if let Err(e) = self
-                .reconcile_daemonset(namespace, ds, &pods, ready_nodes)
+                .reconcile_daemonset(namespace, ds, &pods, nodes)
                 .await
             {
                 let name = ds["metadata"]["name"].as_str().unwrap_or("?");
@@ -101,12 +101,22 @@ impl DaemonSetController {
         namespace: &str,
         ds: &Value,
         all_pods: &[Value],
-        ready_nodes: &[String],
+        nodes: &[Value],
     ) -> anyhow::Result<()> {
         let ds_name = ds["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("daemonset missing name"))?;
         let ds_uid = ds["metadata"]["uid"].as_str().unwrap_or("");
+
+        // Nodes this DaemonSet is eligible for (matches nodeSelector) — regardless
+        // of readiness; its pods tolerate NotReady. Scheduling and GC key off this
+        // set, so a node briefly going NotReady no longer churns its pod (#44).
+        let eligible: Vec<String> = nodes
+            .iter()
+            .filter(|n| node_matches_ds(n, ds))
+            .filter_map(|n| n["metadata"]["name"].as_str().map(|s| s.to_string()))
+            .collect();
+        let eligible_set: HashSet<&str> = eligible.iter().map(|s| s.as_str()).collect();
 
         // All pods owned by this DaemonSet.
         let owned: Vec<&Value> = all_pods
@@ -170,8 +180,9 @@ impl DaemonSetController {
             .filter_map(|pod| pod["spec"]["nodeName"].as_str().map(|s| s.to_string()))
             .collect();
 
-        // Create pods on nodes that need one (subject to per-node backoff).
-        for node_name in ready_nodes {
+        // Create pods on eligible nodes that need one (subject to per-node
+        // backoff). Eligible includes NotReady nodes — DS pods run there too.
+        for node_name in &eligible {
             if nodes_with_pods.contains(node_name) {
                 continue;
             }
@@ -198,12 +209,13 @@ impl DaemonSetController {
             }
         }
 
-        // Delete active pods on nodes that no longer exist (terminal pods on
-        // gone nodes are already handled by GC above).
-        let ready_set: HashSet<&str> = ready_nodes.iter().map(|s| s.as_str()).collect();
+        // Delete active pods only on nodes the DS is no longer eligible for — a
+        // deleted node, or one that no longer matches the nodeSelector. A merely
+        // NotReady node still keeps its pod (that's the whole point of a
+        // DaemonSet), so it is NOT collected here.
         for pod in &active {
             let node_name = pod["spec"]["nodeName"].as_str().unwrap_or("");
-            if !node_name.is_empty() && !ready_set.contains(node_name) {
+            if !node_name.is_empty() && !eligible_set.contains(node_name) {
                 let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
                 if !pod_name.is_empty() {
                     match self
@@ -224,10 +236,21 @@ impl DaemonSetController {
             }
         }
 
-        // Update DaemonSet status
-        let desired = ready_nodes.len();
-        let current_scheduled = active.len();
-        let ready_count = active.iter().filter(|p| is_pod_ready(p)).count();
+        // DaemonSet status, counted from the pods the DS actually owns (#44):
+        //   desired          = eligible nodes
+        //   currentScheduled = owned active pods placed on an eligible node
+        //   ready/available  = those that are Ready
+        //   misscheduled     = owned active pods on a node the DS isn't eligible for
+        let desired = eligible.len();
+        let current_scheduled = active
+            .iter()
+            .filter(|p| pod_on_eligible(p, &eligible_set))
+            .count();
+        let misscheduled = active.len() - current_scheduled;
+        let ready_count = active
+            .iter()
+            .filter(|p| pod_on_eligible(p, &eligible_set) && is_pod_ready(p))
+            .count();
 
         // A node running a Ready pod has recovered — clear its backoff so future
         // failures start from the base delay again.
@@ -241,8 +264,11 @@ impl DaemonSetController {
         updated["status"] = json!({
             "desiredNumberScheduled": desired,
             "currentNumberScheduled": current_scheduled,
+            "updatedNumberScheduled": current_scheduled,
             "numberReady": ready_count,
             "numberAvailable": ready_count,
+            "numberUnavailable": desired.saturating_sub(ready_count),
+            "numberMisscheduled": misscheduled,
             "observedGeneration": ds["metadata"]["generation"].as_u64().unwrap_or(1)
         });
 
@@ -319,6 +345,27 @@ fn build_daemonset_pod(
     });
 
     Ok(pod)
+}
+
+/// Whether an owned pod sits on a node the DaemonSet is still eligible for.
+fn pod_on_eligible(pod: &Value, eligible: &HashSet<&str>) -> bool {
+    pod["spec"]["nodeName"]
+        .as_str()
+        .map(|n| eligible.contains(n))
+        .unwrap_or(false)
+}
+
+/// Whether `node` matches the DaemonSet's pod-template `nodeSelector` (every
+/// key=value present in the node's labels). No selector matches every node.
+fn node_matches_ds(node: &Value, ds: &Value) -> bool {
+    let Some(sel) = ds["spec"]["template"]["spec"]["nodeSelector"].as_object() else {
+        return true;
+    };
+    if sel.is_empty() {
+        return true;
+    }
+    let labels = &node["metadata"]["labels"];
+    sel.iter().all(|(k, v)| labels.get(k) == Some(v))
 }
 
 fn is_node_ready(node: &Value) -> bool {

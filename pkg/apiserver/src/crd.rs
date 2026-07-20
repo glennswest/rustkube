@@ -363,7 +363,11 @@ pub async fn crd_patch_ns(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = patch_cr(&state, &key, &headers, &body).await?;
+    // Shared path so server-side apply upserts a missing CR (#45).
+    let obj = crate::handlers::resource::patch_stored_object(
+        &state, &key, &resource, &name, Some(&namespace), &headers, &body,
+    )
+    .await?;
     Ok(Json(obj))
 }
 
@@ -428,25 +432,6 @@ pub async fn crd_delete_ns(
     Ok(Json(out))
 }
 
-/// Read-modify-write a CR through the shared patch dispatcher.
-async fn patch_cr(
-    state: &AppState,
-    key: &str,
-    headers: &axum::http::HeaderMap,
-    body: &[u8],
-) -> Result<Value, ApiError> {
-    let mut existing = state.storage.get(key).await?;
-    let ct = headers
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    crate::handlers::resource::apply_patch_body(&mut existing, ct, body)?;
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    state.storage.update(key, existing, prev_rev).await
-}
-
 /// Patch only the `status` stanza of a CR, leaving spec/metadata untouched —
 /// what `patch_status` in kube-rs/client-go expects from the subresource.
 async fn patch_cr_status(
@@ -480,7 +465,11 @@ pub async fn crd_patch_cluster(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = patch_cr(&state, &key, &headers, &body).await?;
+    // Shared path so server-side apply upserts a missing CR (#45).
+    let obj = crate::handlers::resource::patch_stored_object(
+        &state, &key, &resource, &name, None, &headers, &body,
+    )
+    .await?;
     Ok(Json(obj))
 }
 

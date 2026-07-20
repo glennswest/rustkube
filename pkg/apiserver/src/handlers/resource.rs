@@ -674,22 +674,45 @@ fn normalize_json_patch(target: &Value, ops: &mut Value) {
 
 /// Read-modify-write a stored object through `apply_patch_body`, preserving the
 /// object's identity (name/namespace can't be patched away).
-async fn patch_stored_object(
+pub(crate) async fn patch_stored_object(
     state: &AppState,
     key: &str,
+    resource: &str,
+    name: &str,
+    namespace: Option<&str>,
     headers: &axum::http::HeaderMap,
     body: &[u8],
 ) -> Result<Value, ApiError> {
-    let mut existing = state.storage.get(key).await?;
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    apply_patch_body(&mut existing, content_type, body)?;
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    state.storage.update(key, existing, prev_rev).await
+    let is_apply = content_type.split(';').next().unwrap_or("").trim()
+        == "application/apply-patch+yaml";
+
+    match state.storage.get(key).await {
+        Ok(mut existing) => {
+            apply_patch_body(&mut existing, content_type, body)?;
+            let prev_rev = existing["metadata"]["resourceVersion"]
+                .as_str()
+                .and_then(|rv| rv.parse::<u64>().ok());
+            state.storage.update(key, existing, prev_rev).await
+        }
+        // Server-side apply is an upsert (KEP-555): applying to a missing object
+        // CREATES it — the apply body is the fully-specified desired object.
+        // (Merge/JSON/strategic patches still 404 a missing object.)
+        Err(e) if is_apply && e.status == StatusCode::NOT_FOUND => {
+            let mut obj: Value = serde_yaml::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
+            ensure_metadata(&mut obj, name, namespace);
+            if let Some(ns) = namespace {
+                crate::builtin_admission::admit_create(&state.storage, resource, Some(ns), &mut obj)
+                    .await?;
+            }
+            state.storage.create(key, obj).await
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// PATCH a cluster-scoped resource (whole object).
@@ -700,7 +723,7 @@ pub async fn patch_cluster_resource(
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = patch_stored_object(&state, &key, &headers, &body).await?;
+    let obj = patch_stored_object(&state, &key, &resource, &name, None, &headers, &body).await?;
     Ok(Json(obj))
 }
 
@@ -712,7 +735,9 @@ pub async fn patch_namespaced_resource(
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = patch_stored_object(&state, &key, &headers, &body).await?;
+    let obj =
+        patch_stored_object(&state, &key, &resource, &name, Some(&namespace), &headers, &body)
+            .await?;
     Ok(Json(obj))
 }
 
