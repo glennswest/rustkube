@@ -54,14 +54,14 @@ Cargo.toml → workspace.package.version
 
 ## Key Dependencies
 
-- k8s-openapi 0.24 (K8s 1.32), kube-rs 0.99
+- k8s-openapi 0.24 (types); reports K8s 1.36 API posture (#37); kube-rs 0.99
 - axum 0.8, tower 0.5, hyper 1.x
 - rustls 0.23 (no OpenSSL — static musl binaries)
 - tonic 0.12, prost 0.13 (CRI gRPC)
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.7.22`
+## Current Version: `v0.7.23`
 
 ## Work Plan
 
@@ -216,6 +216,7 @@ Cargo.toml → workspace.package.version
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.7.23 | 2026-07-19 | Report K8s 1.36 API posture (/version, discovery); 1.33-1.36 served group-versions unchanged, substantive deltas are node-side (#37) |
 | v0.7.22 | 2026-07-19 | CRD establishing: created CRDs get status (acceptedNames + NamesAccepted/Established + storedVersions) so clients stop hanging (#36) |
 | v0.7.21 | 2026-07-19 | CRITICAL: protobuf decode uses endpoint GVK when envelope TypeMeta is blank — typed client-go clients (cilium CRD create) now work (#34) |
 | v0.7.20 | 2026-07-19 | Cert-expiry monitoring: apiserver_certificate_expiration_seconds metric + near-expiry warnings (#20 Phase 1a) |

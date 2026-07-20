@@ -13,8 +13,8 @@ use serde_json::json;
 pub async fn version() -> impl IntoResponse {
     Json(json!({
         "major": "1",
-        "minor": "32",
-        "gitVersion": format!("v1.32.0-rustkube+{}", apimachinery::VERSION),
+        "minor": "36",
+        "gitVersion": format!("v1.36.0-rustkube+{}", apimachinery::VERSION),
         "gitCommit": "",
         "gitTreeState": "clean",
         "buildDate": "2026-03-17T00:00:00Z",
@@ -424,7 +424,7 @@ pub async fn openapi_v2() -> impl IntoResponse {
         "swagger": "2.0",
         "info": {
             "title": "Kubernetes",
-            "version": format!("v1.32.0-rustkube+{}", apimachinery::VERSION)
+            "version": format!("v1.36.0-rustkube+{}", apimachinery::VERSION)
         },
         "paths": {},
         "definitions": {}
@@ -462,7 +462,7 @@ pub async fn openapi_v3_group(
             return Json(json!({
                 "openapi": "3.0.0",
                 "info": { "title": "Kubernetes",
-                          "version": format!("v1.32.0-rustkube+{}", apimachinery::VERSION) },
+                          "version": format!("v1.36.0-rustkube+{}", apimachinery::VERSION) },
                 "paths": {},
                 "components": { "schemas": {} }
             }))
@@ -501,7 +501,7 @@ pub async fn openapi_v3_group(
         "openapi": "3.0.0",
         "info": {
             "title": "Kubernetes",
-            "version": format!("v1.32.0-rustkube+{}", apimachinery::VERSION)
+            "version": format!("v1.36.0-rustkube+{}", apimachinery::VERSION)
         },
         "paths": paths,
         "components": { "schemas": {} }
