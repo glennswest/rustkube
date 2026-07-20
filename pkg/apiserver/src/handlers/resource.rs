@@ -467,7 +467,10 @@ pub fn apply_patch_body(
     let ct = content_type.split(';').next().unwrap_or("").trim();
     match ct {
         "application/json-patch+json" => {
-            let patch: json_patch::Patch = serde_json::from_slice(body)
+            let mut ops: Value = serde_json::from_slice(body)
+                .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
+            normalize_json_patch(target, &mut ops);
+            let patch: json_patch::Patch = serde_json::from_value(ops)
                 .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
             json_patch::patch(target, &patch)
                 .map_err(|e| ApiError::invalid(&format!("JSON Patch could not be applied: {e}")))?;
@@ -484,6 +487,31 @@ pub fn apply_patch_body(
         }
     }
     Ok(())
+}
+
+/// Normalize an RFC-6902 patch to the leniency kube-apiserver (evanphx/json-patch)
+/// has but the strict `json_patch` crate lacks: a `test` whose value is `null`
+/// against an **absent** path holds (absent == null). Controllers CAS-guard an
+/// optional field this way — e.g. cilium-operator adds the
+/// `node.cilium.io/agent-not-ready` taint with
+/// `[{test /spec/taints null},{add /spec/taints [...]}]`. The strict crate errors
+/// on that test with "path is invalid", so drop the tests that hold, leaving any
+/// real (path-present) test for the crate to evaluate.
+fn normalize_json_patch(target: &Value, ops: &mut Value) {
+    let Some(arr) = ops.as_array_mut() else { return };
+    arr.retain(|op| {
+        let is_null_test = op.get("op").and_then(Value::as_str) == Some("test")
+            && op.get("value").map(Value::is_null).unwrap_or(true);
+        if !is_null_test {
+            return true;
+        }
+        // Keep the test only if the path resolves (let the crate check it);
+        // an absent path means `test null` holds, so drop it.
+        match op.get("path").and_then(Value::as_str) {
+            Some(p) => target.pointer(p).is_some(),
+            None => true,
+        }
+    });
 }
 
 /// Read-modify-write a stored object through `apply_patch_body`, preserving the
@@ -763,6 +791,31 @@ mod tests {
         assert_eq!(obj["spec"]["replicas"], 3);
         assert!(obj["spec"].get("paused").is_none(), "null must delete the key");
         assert_eq!(obj["status"]["phase"], "A", "untouched fields survive");
+    }
+
+    #[test]
+    fn json_patch_test_null_on_absent_path_holds() {
+        // cilium-operator's node-taint CAS: `test /spec/taints null` guards
+        // `add /spec/taints [...]`. taints is absent, so the test must hold and
+        // the add must apply (was rejected "path is invalid" — blocked Cilium).
+        let mut node = json!({"spec": {"podCIDR": "10.244.0.0/24"}});
+        apply_patch_body(
+            &mut node,
+            "application/json-patch+json",
+            br#"[{"op":"test","path":"/spec/taints","value":null},
+                 {"op":"add","path":"/spec/taints","value":[{"key":"node.cilium.io/agent-not-ready","effect":"NoSchedule"}]}]"#,
+        )
+        .unwrap();
+        assert_eq!(node["spec"]["taints"][0]["key"], "node.cilium.io/agent-not-ready");
+
+        // A `test null` against a path that IS present-and-non-null must still fail.
+        let mut n2 = json!({"spec": {"taints": [{"key": "x"}]}});
+        assert!(apply_patch_body(
+            &mut n2,
+            "application/json-patch+json",
+            br#"[{"op":"test","path":"/spec/taints","value":null}]"#,
+        )
+        .is_err());
     }
 
     #[test]
