@@ -79,6 +79,23 @@ pub fn wants_protobuf(content_type: &str) -> bool {
 /// Returns `None` for groups whose `.proto` we have not vendored — the caller
 /// then knows to reject with 415 rather than mis-decode.
 fn message_name(api_version: &str, kind: &str) -> Option<String> {
+    // apimachinery meta/v1 envelope types (DeleteOptions, the *Options request
+    // bodies, Status) are sent with apiVersion "v1" or "meta.k8s.io/v1" and live
+    // in the shared meta package, not any API group. Resolve them first.
+    if matches!(
+        kind,
+        "DeleteOptions"
+            | "CreateOptions"
+            | "UpdateOptions"
+            | "PatchOptions"
+            | "GetOptions"
+            | "ListOptions"
+            | "Status"
+    ) {
+        let name = format!("k8s.io.apimachinery.pkg.apis.meta.v1.{kind}");
+        return POOL.get_message_by_name(&name).map(|_| name);
+    }
+
     let (group, version) = match api_version.rsplit_once('/') {
         Some((g, v)) => (g, v),
         None => ("", api_version), // core group is unqualified ("v1")
@@ -690,6 +707,23 @@ mod tests {
         assert!(wants_protobuf("application/vnd.kubernetes.protobuf"));
         assert!(wants_protobuf("application/vnd.kubernetes.protobuf;stream=watch"));
         assert!(!wants_protobuf("application/json"));
+    }
+
+    #[test]
+    fn meta_options_resolve_and_roundtrip() {
+        // DeleteOptions (and the other meta/v1 request envelopes) must resolve to
+        // the apimachinery meta package regardless of the "v1"/"meta.k8s.io/v1"
+        // apiVersion the client uses — helm/client-go send protobuf DeleteOptions.
+        assert!(supports("v1", "DeleteOptions"));
+        assert!(supports("meta.k8s.io/v1", "DeleteOptions"));
+        let opts = json!({
+            "apiVersion": "meta.k8s.io/v1", "kind": "DeleteOptions",
+            "gracePeriodSeconds": 30, "propagationPolicy": "Foreground"
+        });
+        let bytes = encode_from_json(&opts, "v1", "DeleteOptions").unwrap();
+        let back = decode_to_json(&bytes, "v1", "DeleteOptions").unwrap();
+        assert_eq!(back["gracePeriodSeconds"], 30);
+        assert_eq!(back["propagationPolicy"], "Foreground");
     }
 
     #[test]

@@ -59,21 +59,20 @@ fn path_gvk(path: &str) -> (String, String) {
 pub async fn transcode(req: Request, next: Next) -> Response {
     let (mut parts, body) = req.into_parts();
 
-    // Only create/update/patch bodies carry a protobuf-encoded *resource*. A
-    // DELETE body is a meta/v1 DeleteOptions and GET has none — client-go and
-    // helm send those as protobuf too, our handlers ignore them, and we have no
-    // DeleteOptions schema, so trying to transcode them 415s and breaks helm
-    // (cilium uninstall). Restrict request-body transcoding to POST/PUT/PATCH.
-    let carries_resource_body = matches!(
-        parts.method,
-        http::Method::POST | http::Method::PUT | http::Method::PATCH
-    );
-    let req_is_pb = carries_resource_body
-        && protobuf::wants_protobuf(header_str(&parts.headers, header::CONTENT_TYPE));
+    // GET/HEAD carry no body; every other verb may carry a protobuf body — a
+    // resource for POST/PUT/PATCH, a meta/v1 DeleteOptions for DELETE.
+    let has_body = !matches!(parts.method, http::Method::GET | http::Method::HEAD);
+    let req_is_pb =
+        has_body && protobuf::wants_protobuf(header_str(&parts.headers, header::CONTENT_TYPE));
     let accept_pb = header_str(&parts.headers, header::ACCEPT).contains(protobuf::CONTENT_TYPE);
     // GVK implied by the endpoint, used when the client's protobuf envelope has
-    // no TypeMeta (typed client-go clients often leave it blank — #34).
-    let (hint_av, hint_kind) = path_gvk(parts.uri.path());
+    // no TypeMeta (typed client-go clients often leave it blank — #34). A DELETE
+    // body is always a meta/v1 DeleteOptions regardless of the endpoint.
+    let (hint_av, hint_kind) = if parts.method == http::Method::DELETE {
+        ("v1".to_string(), "DeleteOptions".to_string())
+    } else {
+        path_gvk(parts.uri.path())
+    };
 
     // --- request: protobuf body -> JSON body -------------------------------
     let req = if req_is_pb {
@@ -81,23 +80,34 @@ pub async fn transcode(req: Request, next: Next) -> Response {
             Ok(b) => b,
             Err(_) => return status_response(StatusCode::BAD_REQUEST, "failed to read request body"),
         };
-        match protobuf::decode_to_json(&bytes, &hint_av, &hint_kind) {
-            Ok(value) => {
-                let json = serde_json::to_vec(&value).unwrap_or_default();
-                parts.headers.insert(
-                    header::CONTENT_TYPE,
-                    header::HeaderValue::from_static("application/json"),
-                );
-                parts.headers.remove(header::CONTENT_LENGTH);
-                Request::from_parts(parts, Body::from(json))
-            }
-            Err(e) => {
-                // Well-behaved clients that get a 415 with a Status can retry as
-                // JSON; ill-formed protobuf is a client error either way.
-                return status_response(
-                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                    &format!("cannot decode protobuf request: {e}"),
-                );
+        if bytes.is_empty() {
+            // No body to transcode (e.g. DELETE with no DeleteOptions). Hand an
+            // empty JSON body downstream (still transcode the response below).
+            parts.headers.insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/json"),
+            );
+            parts.headers.remove(header::CONTENT_LENGTH);
+            Request::from_parts(parts, Body::empty())
+        } else {
+            match protobuf::decode_to_json(&bytes, &hint_av, &hint_kind) {
+                Ok(value) => {
+                    let json = serde_json::to_vec(&value).unwrap_or_default();
+                    parts.headers.insert(
+                        header::CONTENT_TYPE,
+                        header::HeaderValue::from_static("application/json"),
+                    );
+                    parts.headers.remove(header::CONTENT_LENGTH);
+                    Request::from_parts(parts, Body::from(json))
+                }
+                Err(e) => {
+                    // Well-behaved clients that get a 415 with a Status can retry
+                    // as JSON; ill-formed protobuf is a client error either way.
+                    return status_response(
+                        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                        &format!("cannot decode protobuf request: {e}"),
+                    );
+                }
             }
         }
     } else {

@@ -414,17 +414,18 @@ pub async fn crd_patch_status_ns(
 pub async fn crd_delete_ns(
     State(state): State<AppState>,
     Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    state.storage.delete(&key, None).await?;
-    Ok(Json(json!({
-        "apiVersion": "v1",
-        "kind": "Status",
-        "metadata": {},
-        "status": "Success",
-        "details": { "name": name, "namespace": namespace, "kind": resource }
-    })))
+    let obj = state.storage.get(&key).await?;
+    let opts = crate::handlers::resource::parse_delete_options(&body);
+    let (item_kind, _) = crd_kinds(&state, &group, &version, &resource).await;
+    let out = crate::handlers::resource::perform_delete(
+        &state, &key, obj, &opts, &name, Some(&namespace), &item_kind,
+    )
+    .await?;
+    Ok(Json(out))
 }
 
 /// Read-modify-write a CR through the shared patch dispatcher.
@@ -628,23 +629,24 @@ pub async fn crd_update_cluster(
 pub async fn crd_delete_cluster(
     State(state): State<AppState>,
     Path((group, version, resource, name)): Path<(String, String, String, String)>,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::cluster_key(&resource, &name);
-    state.storage.delete(&key, None).await?;
+    let obj = state.storage.get(&key).await?;
+    let opts = crate::handlers::resource::parse_delete_options(&body);
+    let (item_kind, _) = crd_kinds(&state, &group, &version, &resource).await;
+    let out = crate::handlers::resource::perform_delete(
+        &state, &key, obj, &opts, &name, None, &item_kind,
+    )
+    .await?;
 
-    // If this is a CRD being deleted, unregister it
-    if resource == "customresourcedefinitions" {
+    // If a CRD was actually removed (not left terminating), unregister it.
+    if resource == "customresourcedefinitions" && out["kind"] == "Status" {
         state.crd_registry.unregister(&name).await;
     }
 
-    Ok(Json(json!({
-        "apiVersion": "v1",
-        "kind": "Status",
-        "metadata": {},
-        "status": "Success",
-        "details": { "name": name, "kind": resource }
-    })))
+    Ok(Json(out))
 }
 
 /// Validate that the resource exists in the CRD registry or is a built-in CRD resource.

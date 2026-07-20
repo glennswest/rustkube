@@ -311,14 +311,152 @@ pub async fn update_namespaced_resource(
     Ok(Json(obj))
 }
 
+/// The subset of `meta/v1` DeleteOptions the apiserver acts on.
+#[derive(Default)]
+pub(crate) struct DeleteOptions {
+    grace_period_seconds: Option<i64>,
+    /// Foreground | Background | Orphan (None = the resource default, Background).
+    propagation_policy: Option<String>,
+    precondition_uid: Option<String>,
+    precondition_rv: Option<String>,
+    dry_run: bool,
+}
+
+/// Parse a DeleteOptions request body (JSON — protobuf is transcoded upstream).
+/// An empty/absent body yields defaults (Background, no preconditions).
+pub(crate) fn parse_delete_options(body: &[u8]) -> DeleteOptions {
+    let v: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    DeleteOptions {
+        grace_period_seconds: v.get("gracePeriodSeconds").and_then(Value::as_i64),
+        propagation_policy: v
+            .get("propagationPolicy")
+            .and_then(Value::as_str)
+            .map(String::from),
+        precondition_uid: v
+            .pointer("/preconditions/uid")
+            .and_then(Value::as_str)
+            .map(String::from),
+        precondition_rv: v
+            .pointer("/preconditions/resourceVersion")
+            .and_then(Value::as_str)
+            .map(String::from),
+        // dryRun: ["All"] means don't persist.
+        dry_run: v
+            .get("dryRun")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().any(|x| x.as_str() == Some("All")))
+            .unwrap_or(false),
+    }
+}
+
+/// Return an error if `opts` carries preconditions the object doesn't satisfy
+/// (RFC: a uid/resourceVersion mismatch is a 409 Conflict).
+fn check_preconditions(obj: &Value, opts: &DeleteOptions) -> Result<(), ApiError> {
+    if let Some(uid) = &opts.precondition_uid {
+        if obj["metadata"]["uid"].as_str() != Some(uid.as_str()) {
+            return Err(ApiError::conflict(
+                "the UID in the precondition no longer matches the UID of the object",
+            ));
+        }
+    }
+    if let Some(rv) = &opts.precondition_rv {
+        if obj["metadata"]["resourceVersion"].as_str() != Some(rv.as_str()) {
+            return Err(ApiError::conflict(
+                "the resourceVersion in the precondition no longer matches the object",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_finalizer(finalizers: &mut Vec<Value>, name: &str) {
+    if !finalizers.iter().any(|f| f.as_str() == Some(name)) {
+        finalizers.push(Value::String(name.into()));
+    }
+}
+
+/// A `Status` success object for a completed hard delete.
+fn delete_success(name: &str, namespace: Option<&str>, kind: &str) -> Value {
+    let mut details = json!({ "name": name, "kind": kind });
+    if let Some(ns) = namespace {
+        details["namespace"] = json!(ns);
+    }
+    json!({
+        "apiVersion": "v1", "kind": "Status", "metadata": {},
+        "status": "Success", "details": details
+    })
+}
+
+/// Delete `key` honoring DeleteOptions: preconditions (409 on mismatch), dry-run
+/// (no persist), finalizers and propagationPolicy (Foreground/Orphan add the
+/// corresponding finalizer and set a deletionTimestamp instead of removing — the
+/// GC controller then cascades dependents and clears finalizers), and
+/// gracePeriodSeconds. Returns the Terminating object or a Success `Status`.
+pub(crate) async fn perform_delete(
+    state: &AppState,
+    key: &str,
+    mut obj: Value,
+    opts: &DeleteOptions,
+    name: &str,
+    namespace: Option<&str>,
+    kind: &str,
+) -> Result<Value, ApiError> {
+    check_preconditions(&obj, opts)?;
+
+    // Finalizers the object must outlive: any it already carries, plus the one
+    // implied by a Foreground/Orphan propagation policy.
+    let mut finalizers: Vec<Value> = obj["metadata"]["finalizers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    match opts.propagation_policy.as_deref() {
+        Some("Foreground") => ensure_finalizer(&mut finalizers, "foregroundDeletion"),
+        Some("Orphan") => ensure_finalizer(&mut finalizers, "orphan"),
+        _ => {}
+    }
+    let terminating = !finalizers.is_empty();
+
+    if opts.dry_run {
+        return Ok(if terminating {
+            obj
+        } else {
+            delete_success(name, namespace, kind)
+        });
+    }
+
+    if terminating {
+        // Mark for deletion and persist; controllers finish the job. If it was
+        // already terminating and its finalizers are now clear, this branch isn't
+        // reached (finalizers empty) and the hard delete below removes it.
+        if obj["metadata"]["deletionTimestamp"].is_null() {
+            obj["metadata"]["deletionTimestamp"] =
+                json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        }
+        if let Some(g) = opts.grace_period_seconds {
+            obj["metadata"]["deletionGracePeriodSeconds"] = json!(g);
+        }
+        obj["metadata"]["finalizers"] = json!(finalizers);
+        let prev_rev = obj["metadata"]["resourceVersion"]
+            .as_str()
+            .and_then(|r| r.parse::<u64>().ok());
+        return state.storage.update(key, obj, prev_rev).await;
+    }
+
+    state.storage.delete(key, None).await?;
+    Ok(delete_success(name, namespace, kind))
+}
+
 /// DELETE a cluster-scoped resource.
 pub async fn delete_cluster_resource(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
     // Get the object first so we can return it (and inspect it for namespaces).
     let obj = state.storage.get(&key).await?;
+    let opts = parse_delete_options(&body);
+    check_preconditions(&obj, &opts)?;
 
     // Namespaces terminate gracefully (#28): instead of a hard delete, mark the
     // namespace Terminating with a deletionTimestamp and a `kubernetes`
@@ -327,6 +465,10 @@ pub async fn delete_cluster_resource(
     // actually removed. Admission already blocks new content in Terminating
     // namespaces (builtin_admission), so this closes the loop.
     if resource == "namespaces" {
+        // Dry-run: report the object without starting termination.
+        if opts.dry_run {
+            return Ok(Json(obj));
+        }
         let finalizers_empty = obj["spec"]["finalizers"]
             .as_array()
             .map(|a| a.is_empty())
@@ -370,19 +512,8 @@ pub async fn delete_cluster_resource(
         return Ok(Json(updated));
     }
 
-    state.storage.delete(&key, None).await?;
-
-    let status = json!({
-        "apiVersion": "v1",
-        "kind": "Status",
-        "metadata": {},
-        "status": "Success",
-        "details": {
-            "name": name,
-            "kind": resource
-        }
-    });
-    Ok(Json(status))
+    let out = perform_delete(&state, &key, obj, &opts, &name, None, &resource).await?;
+    Ok(Json(out))
 }
 
 /// PUT /api/v1/namespaces/{name}/finalize — apply the submitted finalizer list.
@@ -430,22 +561,13 @@ pub async fn finalize_namespace(
 pub async fn delete_namespaced_resource(
     State(state): State<AppState>,
     Path((namespace, resource, name)): Path<(String, String, String)>,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    state.storage.delete(&key, None).await?;
-
-    let status = json!({
-        "apiVersion": "v1",
-        "kind": "Status",
-        "metadata": {},
-        "status": "Success",
-        "details": {
-            "name": name,
-            "namespace": namespace,
-            "kind": resource
-        }
-    });
-    Ok(Json(status))
+    let obj = state.storage.get(&key).await?;
+    let opts = parse_delete_options(&body);
+    let out = perform_delete(&state, &key, obj, &opts, &name, Some(&namespace), &resource).await?;
+    Ok(Json(out))
 }
 
 // --- Status subresource handlers ---
@@ -827,6 +949,27 @@ mod tests {
         assert_eq!(obj["spec"]["replicas"], 3);
         assert!(obj["spec"].get("paused").is_none(), "null must delete the key");
         assert_eq!(obj["status"]["phase"], "A", "untouched fields survive");
+    }
+
+    #[test]
+    fn delete_options_parse_and_preconditions() {
+        let opts = parse_delete_options(
+            br#"{"gracePeriodSeconds":30,"propagationPolicy":"Foreground",
+                 "preconditions":{"uid":"abc","resourceVersion":"42"},"dryRun":["All"]}"#,
+        );
+        assert_eq!(opts.grace_period_seconds, Some(30));
+        assert_eq!(opts.propagation_policy.as_deref(), Some("Foreground"));
+        assert!(opts.dry_run);
+
+        let obj = json!({"metadata": {"uid": "abc", "resourceVersion": "42"}});
+        assert!(check_preconditions(&obj, &opts).is_ok());
+        // A uid mismatch is a Conflict.
+        let bad = parse_delete_options(br#"{"preconditions":{"uid":"WRONG"}}"#);
+        assert!(check_preconditions(&obj, &bad).is_err());
+        // Empty body → defaults (Background, no preconditions).
+        let empty = parse_delete_options(b"");
+        assert!(empty.propagation_policy.is_none() && !empty.dry_run);
+        assert!(check_preconditions(&obj, &empty).is_ok());
     }
 
     #[test]
