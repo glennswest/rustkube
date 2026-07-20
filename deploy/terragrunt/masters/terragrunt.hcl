@@ -1,10 +1,14 @@
-# Unit: rustkube control plane — master1/master2/master3.g8.lo
+# Unit: rustkube cluster — 3 master-nodes + 3 workers on g8.lo
 #
-# OpenShift-style compact control plane: 3 masters, each running BOTH a
-# fastetcd member (3-node Raft) AND the Kubernetes control plane
-# (kube-apiserver + kube-controller-manager + kube-scheduler). Masters are
-# also schedulable (a 3-node cluster runs control plane + app loads) once the
-# node components (kubelet/kube-proxy) land — tracked as a follow-up.
+# OpenShift-style compact cluster:
+#   * master1/2/3 (.51/.52/.53) each run a fastetcd member (3-node Raft) AND the
+#     Kubernetes control plane (apiserver + controller-manager + scheduler) AND
+#     the node components (kubelet + kube-proxy) — schedulable master-nodes.
+#   * worker1/2/3 (.54/.55/.56) run only the node components and join master1's
+#     apiserver.
+# Runtime is CRI-O (the OpenShift runtime); Cilium (CNI) + cluster YAML are a
+# separate step — this is the foundation test bed, so fresh nodes register
+# NotReady until CNI lands.
 #
 # Uses the shared, versioned proxmox-fedora-vm module (pinned ?ref). Disks →
 # test-lvm-thin, cloud-init snippets → terraform-snippets (token ACL scope).
@@ -32,18 +36,30 @@ locals {
   # components authenticate with client certs. Run gen-pki.sh before apply.
   pki = "${get_terragrunt_dir()}/pki"
 
-  # master nodes: fixed MAC -> reserved IP (outside the g8 DHCP pool .100-.200).
-  # vm_ids allocated live via deploy/terragrunt/free-vmid.sh (range 2000-2100).
-  nodes = {
-    master1 = { vm_id = 2000, mac = "BC:24:11:08:00:51", ip = "192.168.8.51" }
-    master2 = { vm_id = 2001, mac = "BC:24:11:08:00:52", ip = "192.168.8.52" }
-    master3 = { vm_id = 2002, mac = "BC:24:11:08:00:53", ip = "192.168.8.53" }
+  # Fixed MAC -> reserved IP (outside the g8 DHCP pool .100-.200). vm_ids
+  # allocated via deploy/terragrunt/free-vmid.sh (range 2000-2100). pod_cidr is a
+  # /24 per node carved from the 10.244.0.0/16 cluster pod network.
+  #
+  # masters: schedulable master-nodes (control plane + fastetcd + kubelet).
+  masters = {
+    master1 = { vm_id = 2000, mac = "BC:24:11:08:00:51", ip = "192.168.8.51", pod_cidr = "10.244.0.0/24" }
+    master2 = { vm_id = 2001, mac = "BC:24:11:08:00:52", ip = "192.168.8.52", pod_cidr = "10.244.1.0/24" }
+    master3 = { vm_id = 2002, mac = "BC:24:11:08:00:53", ip = "192.168.8.53", pod_cidr = "10.244.2.0/24" }
+  }
+  # workers: kubelet + kube-proxy only, joining master1's apiserver.
+  workers = {
+    worker1 = { vm_id = 2020, mac = "BC:24:11:08:00:54", ip = "192.168.8.54", pod_cidr = "10.244.3.0/24" }
+    worker2 = { vm_id = 2021, mac = "BC:24:11:08:00:55", ip = "192.168.8.55", pod_cidr = "10.244.4.0/24" }
+    worker3 = { vm_id = 2022, mac = "BC:24:11:08:00:56", ip = "192.168.8.56", pod_cidr = "10.244.5.0/24" }
   }
 
-  # fastetcd static bootstrap peer list: name=http://ip:2380,...
-  initial_cluster = join(",", [for k, v in local.nodes : "${k}=http://${v.ip}:2380"])
+  # fastetcd/apiserver topology derives from the masters only.
+  initial_cluster = join(",", [for k, v in local.masters : "${k}=http://${v.ip}:2380"])
   # kube-apiserver --etcd-servers: every member's client URL.
-  etcd_servers = join(",", [for k, v in local.nodes : "http://${v.ip}:2379"])
+  etcd_servers = join(",", [for k, v in local.masters : "http://${v.ip}:2379"])
+  # workers reach the control plane at master1 (no LB/VIP yet — its serving cert
+  # carries IP:192.168.8.51 as a SAN).
+  worker_apiserver = "https://${local.masters["master1"].ip}:6443"
 }
 
 inputs = {
@@ -56,38 +72,65 @@ inputs = {
   vm_datastore      = "test-lvm-thin"
   snippet_datastore = "terraform-snippets"
 
-  vms = {
-    for k, v in local.nodes : k => {
-      vm_id     = v.vm_id
-      mac       = v.mac
-      ip        = v.ip
-      cores     = 4
-      memory    = 4096
-      disk_size = 40
-      user_data = templatefile("${get_terragrunt_dir()}/templates/master-user-data.yaml.tftpl", {
-        hostname         = k
-        fqdn             = "${k}.g8.lo"
-        ci_user          = "fedora"
-        ssh_keys         = [local.ssh_key]
-        node_ip          = v.ip
-        initial_cluster  = local.initial_cluster
-        cluster_token    = local.cluster_token
-        etcd_servers     = local.etcd_servers
-        cluster_state    = (get_env("RK_REPLACE_MASTER", "") == k) ? "existing" : "new"
-        # PKI material, injected via cloud-init write_files.
-        ca_crt        = file("${local.pki}/ca.crt")
-        ca_key        = file("${local.pki}/ca.key")
-        sa_key        = file("${local.pki}/sa.key")
-        sa_pub        = file("${local.pki}/sa.pub")
-        apiserver_crt = file("${local.pki}/apiserver-${k}.crt")
-        apiserver_key = file("${local.pki}/apiserver-${k}.key")
-        cm_crt        = file("${local.pki}/controller-manager.crt")
-        cm_key        = file("${local.pki}/controller-manager.key")
-        sched_crt     = file("${local.pki}/scheduler.crt")
-        sched_key     = file("${local.pki}/scheduler.key")
-        admin_crt     = file("${local.pki}/admin.crt")
-        admin_key     = file("${local.pki}/admin.key")
-      })
-    }
-  }
+  vms = merge(
+    # master-nodes: control plane + fastetcd + kubelet
+    {
+      for k, v in local.masters : k => {
+        vm_id     = v.vm_id
+        mac       = v.mac
+        ip        = v.ip
+        cores     = 4
+        memory    = 4096
+        disk_size = 40
+        user_data = templatefile("${get_terragrunt_dir()}/templates/master-user-data.yaml.tftpl", {
+          hostname         = k
+          fqdn             = "${k}.g8.lo"
+          ci_user          = "fedora"
+          ssh_keys         = [local.ssh_key]
+          node_ip          = v.ip
+          pod_cidr         = v.pod_cidr
+          initial_cluster  = local.initial_cluster
+          cluster_token    = local.cluster_token
+          etcd_servers     = local.etcd_servers
+          cluster_state    = (get_env("RK_REPLACE_MASTER", "") == k) ? "existing" : "new"
+          # PKI material, injected via cloud-init write_files.
+          ca_crt        = file("${local.pki}/ca.crt")
+          ca_key        = file("${local.pki}/ca.key")
+          sa_key        = file("${local.pki}/sa.key")
+          sa_pub        = file("${local.pki}/sa.pub")
+          apiserver_crt = file("${local.pki}/apiserver-${k}.crt")
+          apiserver_key = file("${local.pki}/apiserver-${k}.key")
+          cm_crt        = file("${local.pki}/controller-manager.crt")
+          cm_key        = file("${local.pki}/controller-manager.key")
+          sched_crt     = file("${local.pki}/scheduler.crt")
+          sched_key     = file("${local.pki}/scheduler.key")
+          admin_crt     = file("${local.pki}/admin.crt")
+          admin_key     = file("${local.pki}/admin.key")
+          # Node identity: this master's SA-signed kubelet token.
+          node_token = trimspace(file("${local.pki}/tokens/${k}"))
+        })
+      }
+    },
+    # workers: kubelet + kube-proxy only
+    {
+      for k, v in local.workers : k => {
+        vm_id     = v.vm_id
+        mac       = v.mac
+        ip        = v.ip
+        cores     = 4
+        memory    = 4096
+        disk_size = 40
+        user_data = templatefile("${get_terragrunt_dir()}/templates/worker-user-data.yaml.tftpl", {
+          hostname      = k
+          fqdn          = "${k}.g8.lo"
+          ci_user       = "fedora"
+          ssh_keys      = [local.ssh_key]
+          pod_cidr      = v.pod_cidr
+          apiserver_url = local.worker_apiserver
+          ca_crt        = file("${local.pki}/ca.crt")
+          node_token    = trimspace(file("${local.pki}/tokens/${k}"))
+        })
+      }
+    },
+  )
 }

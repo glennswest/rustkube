@@ -16,11 +16,15 @@
 #
 set -euo pipefail
 
-OUT="${1:-$(cd "$(dirname "$0")" && pwd)/terragrunt/masters/pki}"
+SCRIPTDIR="$(cd "$(dirname "$0")" && pwd)"
+OUT="${1:-$SCRIPTDIR/terragrunt/masters/pki}"
 mkdir -p "$OUT"; cd "$OUT"
 
 # Masters (keep in sync with terragrunt masters `nodes`).
 declare -A MASTERS=( [master1]=192.168.8.51 [master2]=192.168.8.52 [master3]=192.168.8.53 )
+# Every node that runs a kubelet: the 3 masters (schedulable) + 3 workers. Each
+# gets a long-lived SA-signed bearer token (sub=system:node:<name>).
+NODES=( master1 master2 master3 worker1 worker2 worker3 )
 KUBE_SVC_IP=10.96.0.1   # apiserver ClusterIP (first IP of the service CIDR)
 DAYS=3650
 
@@ -75,6 +79,18 @@ EOF
 ) -out "apiserver-$m.crt"
   rm -f "apiserver-$m.csr"
   echo "generated apiserver serving cert for $m ($ip)"
+done
+
+# --- per-node kubelet tokens (masters run kubelet too, so they're nodes) ---
+# Signed with sa.key; the apiserver validates them via sa.pub (RS256), so they
+# authenticate like a TokenRequest token but never expire out from under a
+# kubelet. Injected per-node via cloud-init.
+mkdir -p tokens
+for n in "${NODES[@]}"; do
+  have "tokens/$n" && continue
+  bash "$SCRIPTDIR/gen-node-token.sh" sa.key "$n" > "tokens/$n"
+  chmod 600 "tokens/$n"
+  echo "generated kubelet token for $n"
 done
 
 echo "PKI ready in $OUT"

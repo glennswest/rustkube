@@ -1,0 +1,99 @@
+#cloud-config
+# rustkube worker node — kubelet + kube-proxy only (no control plane). Joins the
+# g8 control plane and authenticates as system:node:${hostname} with an
+# SA-signed token. Runtime is CRI-O (the OpenShift runtime); Cilium (CNI) is
+# deployed cluster-wide as a separate step. Keep in sync with the master unit's
+# node components — the only differences are the missing control plane and the
+# apiserver being remote (a master) rather than 127.0.0.1.
+hostname: ${hostname}
+fqdn: ${fqdn}
+prefer_fqdn_over_hostname: true
+manage_etc_hosts: true
+
+users:
+  - name: ${ci_user}
+    groups: [wheel, adm, systemd-journal]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+%{ for key in ssh_keys ~}
+      - ${key}
+%{ endfor ~}
+
+ssh_pwauth: false
+disable_root: false
+
+package_update: true
+package_upgrade: false
+packages:
+  - qemu-guest-agent
+
+write_files:
+  # install-latest-rpm <owner/repo> — dnf-install the newest x86_64 RPM from a
+  # repo's latest GitHub release. No version pins: nodes always pull the newest
+  # build (a changed user_data would force a VM replace).
+  - path: /usr/local/bin/install-latest-rpm
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      repo="$1"
+      url=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
+            | grep -o "https://[^\"]*\.x86_64\.rpm" | head -1)
+      [ -n "$url" ] || { echo "no x86_64 rpm in latest release of $repo" >&2; exit 1; }
+      echo "install-latest-rpm: $repo -> $url"
+      dnf install -y "$url"
+
+  # Cluster CA — trusted to verify the apiserver's serving cert.
+  - path: /etc/kubernetes/pki/ca.crt
+    permissions: "0644"
+    content: |
+      ${indent(6, ca_crt)}
+
+  # Node identity: SA-signed bearer token (sub=system:node:${hostname},
+  # groups=[system:nodes]); bound by the bootstrap RBAC.
+  - path: /etc/kubernetes/kubelet-token
+    permissions: "0600"
+    content: |
+      ${node_token}
+
+  - path: /etc/kubernetes/kubelet
+    permissions: "0644"
+    content: |
+      APISERVER_URL=${apiserver_url}
+      NODE_NAME=${hostname}
+      APISERVER_CA=/etc/kubernetes/pki/ca.crt
+      KUBELET_TOKEN_FILE=/etc/kubernetes/kubelet-token
+      POD_CIDR=${pod_cidr}
+      # CRI-O over gRPC (the OpenShift runtime); Cilium writes the CNI conf.
+      KUBELET_ARGS=--runtime=cri --cri-socket=/run/crio/crio.sock
+      # OpenShift KubeletConfiguration posture — not yet parsed by the
+      # rustkube-node kubelet (tracked in rustkube-node#24); kept as intended
+      # config so the flag surface lands drop-in:
+      #   --max-pods=250
+      #   --cgroup-driver=systemd
+      #   --system-reserved=cpu=500m,memory=1Gi
+      #   --kube-reserved=cpu=500m,memory=1Gi
+      #   --node-labels=node-role.kubernetes.io/worker=
+  - path: /etc/kubernetes/kube-proxy
+    permissions: "0644"
+    content: |
+      APISERVER_URL=${apiserver_url}
+      NODE_NAME=${hostname}
+      KUBE_PROXY_ARGS=
+
+runcmd:
+  - [ systemctl, enable, --now, qemu-guest-agent ]
+  - [ mkdir, -p, /var/lib/kubernetes ]
+
+  # CRI-O runtime, then rustkube-node (kubelet + kube-proxy). Cilium (CNI) is a
+  # cluster-wide step; until it lands the node registers NotReady, as expected
+  # for a foundation test bed.
+  - [ dnf, install, -y, cri-o, cri-tools ]
+  - [ systemctl, enable, --now, crio.service ]
+  - [ /usr/local/bin/install-latest-rpm, glennswest/rustkube-node ]
+  - [ systemctl, enable, --now, kubelet.service ]
+  - [ systemctl, enable, --now, kube-proxy.service ]
+
+final_message: "${fqdn} worker node (kubelet + kube-proxy) cloud-init complete in $UPTIME seconds"

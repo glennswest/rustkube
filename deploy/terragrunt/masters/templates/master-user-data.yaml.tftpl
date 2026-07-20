@@ -127,6 +127,39 @@ write_files:
       APISERVER_URL=https://127.0.0.1:6443
       KUBE_SCHEDULER_ARGS=--certificate-authority /etc/kubernetes/pki/ca.crt --client-certificate /etc/kubernetes/pki/scheduler.crt --client-key /etc/kubernetes/pki/scheduler.key
 
+  # --- Node components: masters are ALSO schedulable nodes (compact OpenShift
+  #     control plane). kubelet + kube-proxy run here alongside the control
+  #     plane, authenticating as system:node:${hostname} with an SA-signed token.
+  - path: /etc/kubernetes/kubelet-token
+    permissions: "0600"
+    content: |
+      ${node_token}
+  - path: /etc/kubernetes/kubelet
+    permissions: "0644"
+    content: |
+      APISERVER_URL=https://127.0.0.1:6443
+      NODE_NAME=${hostname}
+      APISERVER_CA=/etc/kubernetes/pki/ca.crt
+      KUBELET_TOKEN_FILE=/etc/kubernetes/kubelet-token
+      POD_CIDR=${pod_cidr}
+      # CRI-O over gRPC (the OpenShift runtime); Cilium writes the CNI conf.
+      KUBELET_ARGS=--runtime=cri --cri-socket=/run/crio/crio.sock
+      # OpenShift KubeletConfiguration posture. These knobs are not yet parsed by
+      # the rustkube-node kubelet (tracked in rustkube-node#24); kept here as the
+      # intended config so the flag surface lands drop-in:
+      #   --max-pods=250
+      #   --cgroup-driver=systemd
+      #   --system-reserved=cpu=500m,memory=1Gi
+      #   --kube-reserved=cpu=500m,memory=1Gi
+      #   --node-labels=node-role.kubernetes.io/control-plane=,node-role.kubernetes.io/master=,node-role.kubernetes.io/worker=
+      #   --register-with-taints=   (empty: masters are schedulable)
+  - path: /etc/kubernetes/kube-proxy
+    permissions: "0644"
+    content: |
+      APISERVER_URL=https://127.0.0.1:6443
+      NODE_NAME=${hostname}
+      KUBE_PROXY_ARGS=
+
 runcmd:
   - [ systemctl, enable, --now, qemu-guest-agent ]
   - [ mkdir, -p, /var/lib/kubernetes ]
@@ -144,4 +177,14 @@ runcmd:
   - [ systemctl, enable, --now, kube-controller-manager.service ]
   - [ systemctl, enable, --now, kube-scheduler.service ]
 
-final_message: "${fqdn} master (fastetcd + control plane) cloud-init complete in $UPTIME seconds"
+  # 3) Node components — CRI-O runtime + rustkube-node (kubelet + kube-proxy), so
+  #    this master is also a schedulable node. Cilium (CNI) is deployed
+  #    cluster-wide as a separate step; until then the node is NotReady, which is
+  #    expected for a foundation test bed.
+  - [ dnf, install, -y, cri-o, cri-tools ]
+  - [ systemctl, enable, --now, crio.service ]
+  - [ /usr/local/bin/install-latest-rpm, glennswest/rustkube-node ]
+  - [ systemctl, enable, --now, kubelet.service ]
+  - [ systemctl, enable, --now, kube-proxy.service ]
+
+final_message: "${fqdn} master-node (fastetcd + control plane + kubelet) cloud-init complete in $UPTIME seconds"
