@@ -175,14 +175,81 @@ impl CrdRegistry {
     }
 }
 
-/// Load all existing CRDs from storage into the registry.
+/// Load all existing CRDs from storage into the registry, and backfill the
+/// establishing status on any that predate #36.
 pub async fn load_existing_crds(storage: &ResourceStorage, registry: &CrdRegistry) {
     let prefix = ResourceStorage::cluster_prefix("customresourcedefinitions");
     if let Ok((crds, _, _)) = storage.list(&prefix, 1000, None).await {
         for crd in &crds {
             registry.register(crd).await;
+            // Establish any CRD whose status was never populated.
+            if crd["status"]["conditions"].as_array().is_none() {
+                let mut updated = crd.clone();
+                establish_crd_status(&mut updated);
+                let name = crd["metadata"]["name"].as_str().unwrap_or("");
+                let key = ResourceStorage::cluster_key("customresourcedefinitions", name);
+                let _ = storage.update(&key, updated, None).await;
+            }
         }
     }
+}
+
+/// Populate a CustomResourceDefinition's `status` the way the upstream
+/// apiextensions naming/establishing controller does (#36): copy the accepted
+/// names from spec, mark NamesAccepted + Established, and record the stored
+/// version. Clients (cilium-operator, kube-rs) block on Established=True.
+pub fn establish_crd_status(crd: &mut Value) {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let names = crd["spec"]["names"].clone();
+    let kind = names["kind"].as_str().unwrap_or("").to_string();
+
+    // acceptedNames mirror spec.names, filling list/singular defaults like the
+    // controller does.
+    let mut accepted = names.clone();
+    if accepted["listKind"].as_str().unwrap_or("").is_empty() && !kind.is_empty() {
+        accepted["listKind"] = json!(format!("{kind}List"));
+    }
+    if accepted["singular"].as_str().unwrap_or("").is_empty() && !kind.is_empty() {
+        accepted["singular"] = json!(kind.to_lowercase());
+    }
+
+    // storedVersions = the storage version (else all served version names).
+    let stored: Vec<Value> = crd["spec"]["versions"]
+        .as_array()
+        .map(|vs| {
+            let storage: Vec<Value> = vs
+                .iter()
+                .filter(|v| v["storage"].as_bool() == Some(true))
+                .filter_map(|v| v["name"].as_str().map(|s| json!(s)))
+                .collect();
+            if storage.is_empty() {
+                vs.iter().filter_map(|v| v["name"].as_str().map(|s| json!(s))).collect()
+            } else {
+                storage
+            }
+        })
+        .unwrap_or_default();
+
+    crd["status"] = json!({
+        "acceptedNames": accepted,
+        "storedVersions": stored,
+        "conditions": [
+            {
+                "type": "NamesAccepted",
+                "status": "True",
+                "reason": "NoConflicts",
+                "message": "no conflicts found",
+                "lastTransitionTime": now,
+            },
+            {
+                "type": "Established",
+                "status": "True",
+                "reason": "InitialNamesAccepted",
+                "message": "the initial names have been accepted",
+                "lastTransitionTime": now,
+            }
+        ]
+    });
 }
 
 // --- CRD API handlers ---
@@ -503,8 +570,11 @@ pub async fn crd_create_cluster(
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, None);
     let key = ResourceStorage::cluster_key(&resource, &name);
 
-    // Special handling: if this is a CRD being created, register it
+    // Special handling: if this is a CRD being created, establish it (populate
+    // status so clients that wait for Established=True proceed — #36) and
+    // register it for the dynamic API.
     if resource == "customresourcedefinitions" {
+        establish_crd_status(&mut body);
         let obj = state.storage.create(&key, body).await?;
         state.crd_registry.register(&obj).await;
         return Ok((StatusCode::CREATED, Json(obj)));
@@ -579,4 +649,38 @@ async fn validate_crd(
         return Ok(());
     }
     Err(ApiError::not_found("resource", resource))
+}
+
+#[cfg(test)]
+mod establish_tests {
+    use super::*;
+
+    #[test]
+    fn establishes_names_conditions_and_stored_versions() {
+        let mut crd = json!({
+            "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+            "metadata": {"name": "widgets.demo.io"},
+            "spec": {
+                "group": "demo.io", "scope": "Namespaced",
+                "names": {"plural": "widgets", "kind": "Widget"},
+                "versions": [
+                    {"name": "v1", "served": true, "storage": false},
+                    {"name": "v2", "served": true, "storage": true}
+                ]
+            }
+        });
+        establish_crd_status(&mut crd);
+        let s = &crd["status"];
+        // acceptedNames copied + defaults filled.
+        assert_eq!(s["acceptedNames"]["kind"], "Widget");
+        assert_eq!(s["acceptedNames"]["plural"], "widgets");
+        assert_eq!(s["acceptedNames"]["listKind"], "WidgetList");
+        assert_eq!(s["acceptedNames"]["singular"], "widget");
+        // stored version = the storage:true one.
+        assert_eq!(s["storedVersions"], json!(["v2"]));
+        // both conditions True.
+        let conds = s["conditions"].as_array().unwrap();
+        assert!(conds.iter().any(|c| c["type"] == "NamesAccepted" && c["status"] == "True"));
+        assert!(conds.iter().any(|c| c["type"] == "Established" && c["status"] == "True"));
+    }
 }
