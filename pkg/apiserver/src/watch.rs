@@ -27,6 +27,23 @@ const BOOKMARK_INTERVAL_SECS: u64 = 45;
 /// Depth of the rendered-line channel feeding the HTTP body.
 const LINE_CHANNEL: usize = 256;
 
+/// True if `Accept` requests the metadata-only projection
+/// (`application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1`), used by
+/// metadata informers — e.g. the Cilium agent watching CRDs.
+pub fn wants_partial_metadata(accept: &str) -> bool {
+    accept.contains("as=PartialObjectMetadata")
+}
+
+/// Project a full object to a meta.k8s.io/v1 `PartialObjectMetadata` (TypeMeta +
+/// metadata only), as the `as=PartialObjectMetadata` content negotiation returns.
+pub fn to_partial_object_metadata(obj: &Value) -> Value {
+    json!({
+        "apiVersion": "meta.k8s.io/v1",
+        "kind": "PartialObjectMetadata",
+        "metadata": obj.get("metadata").cloned().unwrap_or_else(|| json!({})),
+    })
+}
+
 /// Options for rendering a watch response.
 pub struct WatchResponseOpts {
     pub label_selector: Option<String>,
@@ -35,6 +52,9 @@ pub struct WatchResponseOpts {
     pub kind: String,
     /// Client set `allowWatchBookmarks=true` — emit periodic heartbeat bookmarks.
     pub allow_bookmarks: bool,
+    /// Client requested `as=PartialObjectMetadata` — project every event object
+    /// (and the type advertised on bookmarks) to PartialObjectMetadata.
+    pub metadata_only: bool,
     /// For `sendInitialEvents=true` (WatchList): the current objects and the
     /// revision they reflect. Streamed as ADDED events, followed by an
     /// `initial-events-end` BOOKMARK, before any live events. The caller must
@@ -51,8 +71,17 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         api_version,
         kind,
         allow_bookmarks,
+        metadata_only,
         initial,
     } = opts;
+
+    // Under `as=PartialObjectMetadata`, every event object (and the type on
+    // bookmarks/tombstones) is a meta.k8s.io/v1 PartialObjectMetadata.
+    let (api_version, kind) = if metadata_only {
+        ("meta.k8s.io/v1".to_string(), "PartialObjectMetadata".to_string())
+    } else {
+        (api_version, kind)
+    };
 
     let (tx, out_rx) = mpsc::channel::<std::result::Result<String, Infallible>>(LINE_CHANNEL);
     tokio::spawn(async move {
@@ -61,9 +90,9 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         // --- initial events (WatchList / sendInitialEvents=true) --------------
         if let Some((items, list_rev)) = initial {
             for obj in &items {
-                if let Some(line) =
-                    render_initial_added(obj, &label_selector, &field_selector, &api_version, &kind, list_rev)
-                {
+                if let Some(line) = render_initial_added(
+                    obj, &label_selector, &field_selector, &api_version, &kind, list_rev, metadata_only,
+                ) {
                     if tx.send(Ok(line)).await.is_err() {
                         return;
                     }
@@ -90,9 +119,9 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
                 maybe = rx.recv() => match maybe {
                     Some(event) => {
                         last_rev = event.revision();
-                        if let Some(line) =
-                            render_event(&event, &label_selector, &field_selector, &api_version, &kind)
-                        {
+                        if let Some(line) = render_event(
+                            &event, &label_selector, &field_selector, &api_version, &kind, metadata_only,
+                        ) {
                             if tx.send(Ok(line)).await.is_err() {
                                 return;
                             }
@@ -139,6 +168,7 @@ fn render_event(
     field_sel: &Option<String>,
     api_version: &str,
     kind: &str,
+    metadata_only: bool,
 ) -> Option<String> {
     let (event_type, mut object) = match event {
         WatchEvent::Added { value, revision, .. } => {
@@ -147,6 +177,10 @@ fn render_event(
             if !selector::matches_selectors(&obj, label_sel, field_sel) {
                 return None;
             }
+            // Selectors match on the full object; project after.
+            if metadata_only {
+                obj = to_partial_object_metadata(&obj);
+            }
             ("ADDED", obj)
         }
         WatchEvent::Modified { value, revision, .. } => {
@@ -154,6 +188,9 @@ fn render_event(
             inject_resource_version(&mut obj, *revision);
             if !selector::matches_selectors(&obj, label_sel, field_sel) {
                 return None;
+            }
+            if metadata_only {
+                obj = to_partial_object_metadata(&obj);
             }
             ("MODIFIED", obj)
         }
@@ -194,6 +231,7 @@ fn render_initial_added(
     api_version: &str,
     kind: &str,
     list_rev: u64,
+    metadata_only: bool,
 ) -> Option<String> {
     let mut obj = obj.clone();
     if obj.get("kind").and_then(|k| k.as_str()).is_none() {
@@ -211,6 +249,9 @@ fn render_initial_added(
     }
     if !selector::matches_selectors(&obj, label_sel, field_sel) {
         return None;
+    }
+    if metadata_only {
+        obj = to_partial_object_metadata(&obj);
     }
     Some(render_line("ADDED", obj))
 }
@@ -367,6 +408,25 @@ mod tests {
         assert!(p.watch);
         assert!(p.allow_watch_bookmarks);
         assert!(p.send_initial_events);
+    }
+
+    #[test]
+    fn partial_object_metadata_projection() {
+        assert!(super::wants_partial_metadata(
+            "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1"
+        ));
+        assert!(!super::wants_partial_metadata("application/json"));
+        let full = serde_json::json!({
+            "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+            "metadata": {"name": "ciliumidentities.cilium.io", "resourceVersion": "42"},
+            "spec": {"group": "cilium.io"}, "status": {"conditions": []}
+        });
+        let p = super::to_partial_object_metadata(&full);
+        assert_eq!(p["apiVersion"], "meta.k8s.io/v1");
+        assert_eq!(p["kind"], "PartialObjectMetadata");
+        assert_eq!(p["metadata"]["name"], "ciliumidentities.cilium.io");
+        assert_eq!(p["metadata"]["resourceVersion"], "42");
+        assert!(p.get("spec").is_none() && p.get("status").is_none(), "spec/status dropped");
     }
 
     #[test]

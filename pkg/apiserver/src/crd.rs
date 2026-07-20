@@ -271,10 +271,12 @@ pub async fn crd_api_resources(
 pub async fn crd_list_ns(
     State(state): State<AppState>,
     Path((group, version, namespace, resource)): Path<(String, String, String, String)>,
+    headers: axum::http::HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let params = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or(""));
+    let metadata_only = crate::handlers::resource::accept_partial_metadata(&headers);
     let prefix = ResourceStorage::namespace_prefix(&resource, &namespace);
 
     if params.watch {
@@ -284,6 +286,7 @@ pub async fn crd_list_ns(
             &params,
             format!("{group}/{version}"),
             crate::handlers::resource::resource_to_kind(&resource),
+            metadata_only,
         )
         .await;
     }
@@ -304,7 +307,7 @@ pub async fn crd_list_ns(
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
     }
-    Ok(Json(list).into_response())
+    Ok(Json(crate::handlers::resource::project_list(list, metadata_only)).into_response())
 }
 
 /// POST — create namespaced CRD instance.
@@ -526,10 +529,12 @@ pub async fn crd_patch_status_cluster(
 pub async fn crd_list_cluster(
     State(state): State<AppState>,
     Path((group, version, resource)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let params = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or(""));
+    let metadata_only = crate::handlers::resource::accept_partial_metadata(&headers);
     let prefix = ResourceStorage::cluster_prefix(&resource);
 
     if params.watch {
@@ -539,6 +544,7 @@ pub async fn crd_list_cluster(
             &params,
             format!("{group}/{version}"),
             crate::handlers::resource::resource_to_kind(&resource),
+            metadata_only,
         )
         .await;
     }
@@ -559,7 +565,7 @@ pub async fn crd_list_cluster(
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
     }
-    Ok(Json(list).into_response())
+    Ok(Json(crate::handlers::resource::project_list(list, metadata_only)).into_response())
 }
 
 /// POST — create cluster-scoped CRD instance.

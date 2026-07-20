@@ -44,6 +44,7 @@ pub(crate) async fn watch_prefix(
     params: &WatchParams,
     api_version: String,
     kind: String,
+    metadata_only: bool,
 ) -> Result<Response, ApiError> {
     // For WatchList, snapshot the current state and open the live watch at the
     // SAME revision so there is no gap or overlap between the initial list and
@@ -63,18 +64,46 @@ pub(crate) async fn watch_prefix(
             api_version,
             kind,
             allow_bookmarks: params.allow_watch_bookmarks,
+            metadata_only,
             initial,
         },
     ))
+}
+
+/// Whether the request `Accept`s the metadata-only projection.
+pub(crate) fn accept_partial_metadata(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(watch::wants_partial_metadata)
+        .unwrap_or(false)
+}
+
+/// Project a LIST response to a `PartialObjectMetadataList` when the client asked
+/// for `as=PartialObjectMetadata` (metadata informers, e.g. Cilium on CRDs).
+pub(crate) fn project_list(mut list: Value, metadata_only: bool) -> Value {
+    if !metadata_only {
+        return list;
+    }
+    if let Some(items) = list.get_mut("items").and_then(|i| i.as_array_mut()) {
+        for it in items.iter_mut() {
+            *it = watch::to_partial_object_metadata(it);
+        }
+    }
+    list["apiVersion"] = json!("meta.k8s.io/v1");
+    list["kind"] = json!("PartialObjectMetadataList");
+    list
 }
 
 /// LIST/WATCH cluster-scoped resources.
 pub async fn list_cluster_resources(
     State(state): State<AppState>,
     Path(resource): Path<String>,
+    headers: axum::http::HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     let params = WatchParams::from_query(query.as_deref().unwrap_or(""));
+    let metadata_only = accept_partial_metadata(&headers);
     let prefix = ResourceStorage::cluster_prefix(&resource);
 
     if params.watch {
@@ -84,6 +113,7 @@ pub async fn list_cluster_resources(
             &params,
             resource_to_api_version(&resource).to_string(),
             resource_to_kind(&resource),
+            metadata_only,
         )
         .await;
     }
@@ -110,16 +140,18 @@ pub async fn list_cluster_resources(
         list["metadata"]["continue"] = Value::String(token);
     }
 
-    Ok(Json(list).into_response())
+    Ok(Json(project_list(list, metadata_only)).into_response())
 }
 
 /// LIST/WATCH namespace-scoped resources in a single namespace.
 pub async fn list_namespaced_resources(
     State(state): State<AppState>,
     Path((namespace, resource)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     let params = WatchParams::from_query(query.as_deref().unwrap_or(""));
+    let metadata_only = accept_partial_metadata(&headers);
     let prefix = ResourceStorage::namespace_prefix(&resource, &namespace);
 
     if params.watch {
@@ -129,6 +161,7 @@ pub async fn list_namespaced_resources(
             &params,
             resource_to_api_version(&resource).to_string(),
             resource_to_kind(&resource),
+            metadata_only,
         )
         .await;
     }
@@ -155,16 +188,18 @@ pub async fn list_namespaced_resources(
         list["metadata"]["continue"] = Value::String(token);
     }
 
-    Ok(Json(list).into_response())
+    Ok(Json(project_list(list, metadata_only)).into_response())
 }
 
 /// LIST namespace-scoped resources across all namespaces.
 pub async fn list_all_namespaces_resources(
     State(state): State<AppState>,
     Path(resource): Path<String>,
+    headers: axum::http::HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     let params = WatchParams::from_query(query.as_deref().unwrap_or(""));
+    let metadata_only = accept_partial_metadata(&headers);
     let prefix = ResourceStorage::all_namespaces_prefix(&resource);
 
     if params.watch {
@@ -174,6 +209,7 @@ pub async fn list_all_namespaces_resources(
             &params,
             resource_to_api_version(&resource).to_string(),
             resource_to_kind(&resource),
+            metadata_only,
         )
         .await;
     }
@@ -200,7 +236,7 @@ pub async fn list_all_namespaces_resources(
         list["metadata"]["continue"] = Value::String(token);
     }
 
-    Ok(Json(list).into_response())
+    Ok(Json(project_list(list, metadata_only)).into_response())
 }
 
 /// POST — create a cluster-scoped resource.
