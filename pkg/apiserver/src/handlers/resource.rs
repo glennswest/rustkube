@@ -34,6 +34,40 @@ pub async fn get_namespaced_resource(
     Ok(Json(obj))
 }
 
+/// Build a watch `Response` for `prefix`, honoring `sendInitialEvents`
+/// (WatchList: replay current state as ADDED, then an `initial-events-end`
+/// BOOKMARK) and `allowWatchBookmarks` (periodic heartbeat bookmarks) from
+/// `params`. Shared by every LIST/WATCH handler (core + CRD).
+pub(crate) async fn watch_prefix(
+    storage: &ResourceStorage,
+    prefix: &str,
+    params: &WatchParams,
+    api_version: String,
+    kind: String,
+) -> Result<Response, ApiError> {
+    // For WatchList, snapshot the current state and open the live watch at the
+    // SAME revision so there is no gap or overlap between the initial list and
+    // the live stream. Otherwise start from the requested resourceVersion.
+    let (initial, live_rev) = if params.send_initial_events {
+        let (items, _continue, rev) = storage.list(prefix, 0, None).await?;
+        (Some((items, rev)), rev)
+    } else {
+        (None, params.resource_version.unwrap_or(0))
+    };
+    let rx = storage.watch(prefix, live_rev).await?;
+    Ok(watch::watch_response(
+        rx,
+        watch::WatchResponseOpts {
+            label_selector: params.label_selector.clone(),
+            field_selector: params.field_selector.clone(),
+            api_version,
+            kind,
+            allow_bookmarks: params.allow_watch_bookmarks,
+            initial,
+        },
+    ))
+}
+
 /// LIST/WATCH cluster-scoped resources.
 pub async fn list_cluster_resources(
     State(state): State<AppState>,
@@ -44,15 +78,14 @@ pub async fn list_cluster_resources(
     let prefix = ResourceStorage::cluster_prefix(&resource);
 
     if params.watch {
-        let start_rev = params.resource_version.unwrap_or(0);
-        let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(watch::watch_response(
-            rx,
-            params.label_selector,
-            params.field_selector,
+        return watch_prefix(
+            &state.storage,
+            &prefix,
+            &params,
             resource_to_api_version(&resource).to_string(),
             resource_to_kind(&resource),
-        ));
+        )
+        .await;
     }
 
     let limit = params.limit.unwrap_or(500);
@@ -90,15 +123,14 @@ pub async fn list_namespaced_resources(
     let prefix = ResourceStorage::namespace_prefix(&resource, &namespace);
 
     if params.watch {
-        let start_rev = params.resource_version.unwrap_or(0);
-        let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(watch::watch_response(
-            rx,
-            params.label_selector,
-            params.field_selector,
+        return watch_prefix(
+            &state.storage,
+            &prefix,
+            &params,
             resource_to_api_version(&resource).to_string(),
             resource_to_kind(&resource),
-        ));
+        )
+        .await;
     }
 
     let limit = params.limit.unwrap_or(500);
@@ -136,15 +168,14 @@ pub async fn list_all_namespaces_resources(
     let prefix = ResourceStorage::all_namespaces_prefix(&resource);
 
     if params.watch {
-        let start_rev = params.resource_version.unwrap_or(0);
-        let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(watch::watch_response(
-            rx,
-            params.label_selector,
-            params.field_selector,
+        return watch_prefix(
+            &state.storage,
+            &prefix,
+            &params,
             resource_to_api_version(&resource).to_string(),
             resource_to_kind(&resource),
-        ));
+        )
+        .await;
     }
 
     let limit = params.limit.unwrap_or(500);

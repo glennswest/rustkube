@@ -61,7 +61,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.7.24`
+## Current Version: `v0.7.25`
 
 ## Work Plan
 
@@ -216,6 +216,7 @@ Cargo.toml → workspace.package.version
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.7.25 | 2026-07-20 | Watch BOOKMARK support: WatchList sendInitialEvents→initial-events-end bookmark + allowWatchBookmarks heartbeat — client-go informers sync, unblocks Cilium agent (#39) |
 | v0.7.24 | 2026-07-19 | DaemonSet self-healing: delete+recreate Failed pods with random names (k8s generateName style) + failedPodsBackoff (1s→15min) — unblocks Cilium agent DS (#38) |
 | v0.7.23 | 2026-07-19 | Report K8s 1.36 API posture (/version, discovery); 1.33-1.36 served group-versions unchanged, substantive deltas are node-side (#37) |
 | v0.7.22 | 2026-07-19 | CRD establishing: created CRDs get status (acceptedNames + NamesAccepted/Established + storedVersions) so clients stop hanging (#36) |

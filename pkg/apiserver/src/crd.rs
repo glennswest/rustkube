@@ -278,11 +278,14 @@ pub async fn crd_list_ns(
     let prefix = ResourceStorage::namespace_prefix(&resource, &namespace);
 
     if params.watch {
-        let start_rev = params.resource_version.unwrap_or(0);
-        let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(crate::watch::watch_response(rx, params.label_selector, params.field_selector,
+        return crate::handlers::resource::watch_prefix(
+            &state.storage,
+            &prefix,
+            &params,
             format!("{group}/{version}"),
-            crate::handlers::resource::resource_to_kind(&resource)));
+            crate::handlers::resource::resource_to_kind(&resource),
+        )
+        .await;
     }
 
     let limit = params.limit.unwrap_or(500);
@@ -530,11 +533,14 @@ pub async fn crd_list_cluster(
     let prefix = ResourceStorage::cluster_prefix(&resource);
 
     if params.watch {
-        let start_rev = params.resource_version.unwrap_or(0);
-        let rx = state.storage.watch(&prefix, start_rev).await?;
-        return Ok(crate::watch::watch_response(rx, params.label_selector, params.field_selector,
+        return crate::handlers::resource::watch_prefix(
+            &state.storage,
+            &prefix,
+            &params,
             format!("{group}/{version}"),
-            crate::handlers::resource::resource_to_kind(&resource)));
+            crate::handlers::resource::resource_to_kind(&resource),
+        )
+        .await;
     }
 
     let limit = params.limit.unwrap_or(500);
