@@ -33,6 +33,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Build release binaries
         run: cargo build --release -p kube-apiserver -p kube-controller-manager -p kube-scheduler
 
