@@ -167,6 +167,21 @@ fn build_router(
             "/apis/discovery.k8s.io/v1/{resource}",
             get(resource::list_all_namespaces_resources),
         )
+        // events.k8s.io v1 — the modern Event API (#48). Same stored objects as
+        // core/v1 Event, translated field names both ways by dedicated handlers.
+        .route("/apis/events.k8s.io/v1", get(crate::events::discovery))
+        .route(
+            "/apis/events.k8s.io/v1/namespaces/{namespace}/events",
+            get(crate::events::list_ns).post(crate::events::create),
+        )
+        .route(
+            "/apis/events.k8s.io/v1/namespaces/{namespace}/events/{name}",
+            get(crate::events::get)
+                .put(crate::events::update)
+                .delete(crate::events::delete)
+                .patch(crate::events::patch),
+        )
+        .route("/apis/events.k8s.io/v1/events", get(crate::events::list_all))
         // storage.k8s.io v1 — CSI ecosystem (#24): StorageClass, CSIDriver,
         // CSINode, VolumeAttachment (cluster-scoped) + CSIStorageCapacity
         // (namespaced). Plain stored resources driven by the CSI sidecars.

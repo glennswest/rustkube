@@ -65,6 +65,7 @@ pub(crate) async fn watch_prefix(
             kind,
             allow_bookmarks: params.allow_watch_bookmarks,
             metadata_only,
+            transform: None,
             initial,
         },
     ))

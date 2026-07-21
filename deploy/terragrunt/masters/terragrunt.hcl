@@ -46,12 +46,10 @@ locals {
     master2 = { vm_id = 2001, mac = "BC:24:11:08:00:52", ip = "192.168.8.52", pod_cidr = "10.244.1.0/24" }
     master3 = { vm_id = 2002, mac = "BC:24:11:08:00:53", ip = "192.168.8.53", pod_cidr = "10.244.2.0/24" }
   }
-  # workers: kubelet + kube-proxy only, joining master1's apiserver.
-  workers = {
-    worker1 = { vm_id = 2020, mac = "BC:24:11:08:00:54", ip = "192.168.8.54", pod_cidr = "10.244.3.0/24" }
-    worker2 = { vm_id = 2021, mac = "BC:24:11:08:00:55", ip = "192.168.8.55", pod_cidr = "10.244.4.0/24" }
-    worker3 = { vm_id = 2022, mac = "BC:24:11:08:00:56", ip = "192.168.8.56", pod_cidr = "10.244.5.0/24" }
-  }
+  # workers: kubelet + kube-proxy only, joining master1's apiserver. Empty for
+  # now — the g8 cluster is the 3 master-nodes alone. Re-add entries here (IPs
+  # .54-.56 free) and apply to bring workers back.
+  workers = {}
 
   # fastetcd/apiserver topology derives from the masters only.
   initial_cluster = join(",", [for k, v in local.masters : "${k}=http://${v.ip}:2380"])

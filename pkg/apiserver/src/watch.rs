@@ -55,6 +55,9 @@ pub struct WatchResponseOpts {
     /// Client requested `as=PartialObjectMetadata` — project every event object
     /// (and the type advertised on bookmarks) to PartialObjectMetadata.
     pub metadata_only: bool,
+    /// Optional per-object transform applied before rendering (e.g. translating
+    /// stored core/v1 Events into the events.k8s.io/v1 representation).
+    pub transform: Option<fn(Value) -> Value>,
     /// For `sendInitialEvents=true` (WatchList): the current objects and the
     /// revision they reflect. Streamed as ADDED events, followed by an
     /// `initial-events-end` BOOKMARK, before any live events. The caller must
@@ -72,6 +75,7 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         kind,
         allow_bookmarks,
         metadata_only,
+        transform,
         initial,
     } = opts;
 
@@ -91,7 +95,7 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         if let Some((items, list_rev)) = initial {
             for obj in &items {
                 if let Some(line) = render_initial_added(
-                    obj, &label_selector, &field_selector, &api_version, &kind, list_rev, metadata_only,
+                    obj, &label_selector, &field_selector, &api_version, &kind, list_rev, metadata_only, transform,
                 ) {
                     if tx.send(Ok(line)).await.is_err() {
                         return;
@@ -120,7 +124,7 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
                     Some(event) => {
                         last_rev = event.revision();
                         if let Some(line) = render_event(
-                            &event, &label_selector, &field_selector, &api_version, &kind, metadata_only,
+                            &event, &label_selector, &field_selector, &api_version, &kind, metadata_only, transform,
                         ) {
                             if tx.send(Ok(line)).await.is_err() {
                                 return;
@@ -169,6 +173,7 @@ fn render_event(
     api_version: &str,
     kind: &str,
     metadata_only: bool,
+    transform: Option<fn(Value) -> Value>,
 ) -> Option<String> {
     let (event_type, mut object) = match event {
         WatchEvent::Added { value, revision, .. } => {
@@ -177,7 +182,10 @@ fn render_event(
             if !selector::matches_selectors(&obj, label_sel, field_sel) {
                 return None;
             }
-            // Selectors match on the full object; project after.
+            // Selectors match on the full stored object; translate/project after.
+            if let Some(f) = transform {
+                obj = f(obj);
+            }
             if metadata_only {
                 obj = to_partial_object_metadata(&obj);
             }
@@ -188,6 +196,9 @@ fn render_event(
             inject_resource_version(&mut obj, *revision);
             if !selector::matches_selectors(&obj, label_sel, field_sel) {
                 return None;
+            }
+            if let Some(f) = transform {
+                obj = f(obj);
             }
             if metadata_only {
                 obj = to_partial_object_metadata(&obj);
@@ -232,6 +243,7 @@ fn render_initial_added(
     kind: &str,
     list_rev: u64,
     metadata_only: bool,
+    transform: Option<fn(Value) -> Value>,
 ) -> Option<String> {
     let mut obj = obj.clone();
     if obj.get("kind").and_then(|k| k.as_str()).is_none() {
@@ -249,6 +261,9 @@ fn render_initial_added(
     }
     if !selector::matches_selectors(&obj, label_sel, field_sel) {
         return None;
+    }
+    if let Some(f) = transform {
+        obj = f(obj);
     }
     if metadata_only {
         obj = to_partial_object_metadata(&obj);

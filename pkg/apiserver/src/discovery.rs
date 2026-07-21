@@ -85,6 +85,11 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "preferredVersion": {"groupVersion": "discovery.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "events.k8s.io",
+            "versions": [{"groupVersion": "events.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "events.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "storage.k8s.io",
             "versions": [{"groupVersion": "storage.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "storage.k8s.io/v1", "version": "v1"}

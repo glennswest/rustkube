@@ -12,6 +12,7 @@ pub mod config;
 pub mod crd;
 pub mod discovery;
 pub mod error;
+pub mod events;
 pub mod eviction;
 pub mod handlers;
 pub mod protobuf_mw;
