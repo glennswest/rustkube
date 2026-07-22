@@ -12,8 +12,20 @@ members = [
     "cmd/kube-scheduler",
 ]
 
+# Release profile (#49). These binaries ship as images sealed into the read-only
+# node store, so whatever they carry, every node carries forever. Optimize for
+# the on-request-path control plane (opt 3 + thin LTO + one codegen unit) and
+# strip debuginfo — but keep line tables so apiserver/controller-manager/
+# scheduler panics stay symbolicated (matches fastetcd, the co-located static pod).
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+debug = "line-tables-only"
+
 [workspace.package]
-version = "0.7.34"
+version = "0.7.35"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
