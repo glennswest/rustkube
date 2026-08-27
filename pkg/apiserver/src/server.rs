@@ -571,6 +571,12 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let kv: Arc<dyn KvStore> = Arc::new(store);
     let storage = Arc::new(ResourceStorage::new(kv));
 
+    // One gate for the whole of bootstrap. `Client::connect` above succeeds
+    // against a datastore that is not up — the connection is lazy — so without
+    // this the next dozen writes go into a hole and the cluster comes up with
+    // no namespaces and no RBAC (#52).
+    wait_for_datastore(&storage).await;
+
     // Bootstrap default namespaces
     bootstrap_namespace(&storage, "default").await;
     bootstrap_namespace(&storage, "kube-system").await;
@@ -781,57 +787,84 @@ fn report_cert_expiry(name: &'static str, cert_pem: &[u8]) {
 }
 
 /// Create a namespace if it doesn't already exist.
-/// Create a bootstrap object, retrying until the datastore accepts it.
+/// Block until the datastore answers, then return.
 ///
-/// Bootstrap used to be `let _ = storage.create(...)`: one attempt, every error
-/// discarded. When the datastore was not ready at that instant — which is the
-/// normal case for a control plane whose apiserver and store start together —
-/// every namespace and every RBAC binding silently failed to be written, and
-/// nothing ever tried again. The cluster then ran permanently with no
-/// namespaces and no RBAC, so every request, including the kubelet's attempt to
-/// register its own Node, was denied.
+/// One gate for the whole bootstrap, rather than a retry loop around each of
+/// the dozen objects it writes. This is startup-only and costs nothing on the
+/// happy path: a store that is already up answers the first probe and this
+/// returns immediately.
 ///
-/// It presented as an authorization bug (`system:anonymous is not allowed ...`)
-/// and cost a day of looking at the authorizer, which was correct the whole
-/// time. The evidence in the end was a datastore holding exactly three keys:
-/// the `default/kubernetes` Service and its endpoints, written by the one block
-/// here that already re-ran periodically. That block succeeded for the same
-/// reason bootstrap failed — it retried.
+/// It exists because `Client::connect` succeeds against a datastore that is not
+/// up — the connection is established lazily, so the apiserver believed it had
+/// a store and wrote a dozen objects into a hole. Every one of those writes was
+/// `let _ = storage.create(...)`, so every failure was discarded, and the
+/// cluster ran permanently with no namespaces and no RBAC. It denied every
+/// request, including the kubelet registering its own Node, and presented as an
+/// authorization bug — the authorizer was correct throughout.
 ///
-/// `AlreadyExists` is success: another replica got there first, or this is a
-/// restart. Anything else is retried, and if it never succeeds the apiserver
-/// says so loudly rather than serving a cluster that cannot authorize anyone.
-async fn create_or_retry(
+/// Backoff is exponential and capped, not a fixed-interval poll: a store that
+/// comes up in 200 ms is not made to wait five seconds, and one that is broken
+/// is not hammered.
+async fn wait_for_datastore(storage: &ResourceStorage) -> bool {
+    // ~60s total. Longer than any datastore takes to come up, shorter than
+    // anyone's patience for a control plane that is silently useless.
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+    let start = std::time::Instant::now();
+    let mut delay = std::time::Duration::from_millis(50);
+    let mut complained = false;
+
+    loop {
+        // A read of a key that does not exist. NotFound means the store
+        // answered, which is the whole question — a transport error does not.
+        match storage
+            .get(&ResourceStorage::cluster_key("namespaces", "kube-system"))
+            .await
+        {
+            Ok(_) => return true,
+            Err(e) if e.reason == "NotFound" => return true,
+            Err(e) => {
+                if start.elapsed() >= DEADLINE {
+                    tracing::error!(
+                        "datastore did not answer within {DEADLINE:?}: {}. Bootstrap will \
+                         be attempted anyway and will almost certainly fail; this cluster \
+                         will have no namespaces and no RBAC.",
+                        e.message
+                    );
+                    return false;
+                }
+                if !complained {
+                    tracing::info!("waiting for the datastore to answer: {}", e.message);
+                    complained = true;
+                }
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(std::time::Duration::from_secs(2));
+            }
+        }
+    }
+}
+
+/// Write a bootstrap object, and say so when it does not land.
+///
+/// One attempt: `wait_for_datastore` has already established that the store
+/// answers, so a failure here is a real failure and not a race. What must never
+/// happen again is the previous `let _ = storage.create(...)`, which discarded
+/// it in silence.
+///
+/// `AlreadyExists` and `Conflict` are success — a restart, or another replica
+/// won the race to create it.
+async fn create_bootstrap(
     storage: &ResourceStorage,
     key: &str,
     obj: serde_json::Value,
     what: &str,
 ) {
-    // Roughly a minute in total, which is far longer than a datastore takes to
-    // come up and far shorter than an operator's patience for a control plane
-    // that is silently useless.
-    const ATTEMPTS: u32 = 12;
-    for attempt in 1..=ATTEMPTS {
-        match storage.create(key, obj.clone()).await {
-            Ok(_) => return,
-            // Already there: a restart, or another replica won the race.
-            Err(e) if e.reason == "AlreadyExists" || e.reason == "Conflict" => return,
-            Err(e) => {
-                if attempt == ATTEMPTS {
-                    tracing::error!(
-                        "bootstrap: giving up on {what} after {ATTEMPTS} attempts: {}. \
-                         This cluster has no {what} and will deny requests that need it.",
-                        e.message
-                    );
-                    return;
-                }
-                tracing::warn!(
-                    "bootstrap: {what} not written (attempt {attempt}/{ATTEMPTS}): {}",
-                    e.message
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            }
-        }
+    match storage.create(key, obj).await {
+        Ok(_) => {}
+        Err(e) if e.reason == "AlreadyExists" || e.reason == "Conflict" => {}
+        Err(e) => tracing::error!(
+            "bootstrap: {what} was not created: {}. Requests needing it will be denied.",
+            e.message
+        ),
     }
 }
 
@@ -852,7 +885,7 @@ async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
             "phase": "Active"
         }
     });
-    create_or_retry(storage, &key, ns, &format!("namespace {name}")).await;
+    create_bootstrap(storage, &key, ns, &format!("namespace {name}")).await;
 }
 
 /// First usable address of a service CIDR (`10.96.0.0/12` → `10.96.0.1`), which
@@ -989,7 +1022,7 @@ async fn bootstrap_rbac(
             "verbs": ["*"]
         }]
     });
-    create_or_retry(
+    create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterroles", "cluster-admin"),
             cluster_admin_role,
@@ -1017,7 +1050,7 @@ async fn bootstrap_rbac(
             "apiGroup": "rbac.authorization.k8s.io"
         }]
     });
-    create_or_retry(
+    create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterrolebindings", "system:masters"),
             masters_binding,
@@ -1048,7 +1081,7 @@ async fn bootstrap_rbac(
                 "apiGroup": "rbac.authorization.k8s.io"
             }]
         });
-        create_or_retry(
+        create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterrolebindings", user),
             binding,
@@ -1073,7 +1106,7 @@ async fn bootstrap_rbac(
             "verbs": ["create", "get", "list", "watch"]
         }]
     });
-    create_or_retry(
+    create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterroles", "system:node-bootstrapper"),
             bootstrapper_role,
@@ -1103,7 +1136,7 @@ async fn bootstrap_rbac(
                 "apiGroup": "rbac.authorization.k8s.io"
             }]
         });
-        create_or_retry(
+        create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterrolebindings", name),
             binding,
@@ -1126,7 +1159,7 @@ async fn bootstrap_rbac(
             "verbs": ["get"]
         }]
     });
-    create_or_retry(
+    create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterroles", "system:discovery"),
             discovery_role,
@@ -1154,7 +1187,7 @@ async fn bootstrap_rbac(
             "apiGroup": "rbac.authorization.k8s.io"
         }]
     });
-    create_or_retry(
+    create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-discovery"),
             anon_discovery_binding,
@@ -1186,7 +1219,7 @@ async fn bootstrap_rbac(
                 "apiGroup": "rbac.authorization.k8s.io"
             }]
         });
-        create_or_retry(
+        create_bootstrap(
             storage,
             &ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-admin"),
             anon_admin_binding,
