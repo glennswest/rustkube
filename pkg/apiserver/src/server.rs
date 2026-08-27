@@ -781,6 +781,55 @@ fn report_cert_expiry(name: &'static str, cert_pem: &[u8]) {
 }
 
 /// Create a namespace if it doesn't already exist.
+/// Create a bootstrap object, retrying until the datastore accepts it.
+///
+/// Bootstrap used to be `let _ = storage.create(...)`: one attempt, every error
+/// discarded. When the datastore was not ready at that instant — which is the
+/// normal case for a control plane whose apiserver and store start together —
+/// every namespace and every RBAC binding silently failed to be written, and
+/// nothing ever tried again. The cluster then ran permanently with no
+/// namespaces and no RBAC, so every request, including the kubelet's attempt to
+/// register its own Node, was denied.
+///
+/// It presented as an authorization bug (`system:anonymous is not allowed ...`)
+/// and cost a day of looking at the authorizer, which was correct the whole
+/// time. The evidence in the end was a datastore holding exactly three keys:
+/// the `default/kubernetes` Service and its endpoints, written by the one block
+/// here that already re-ran periodically. That block succeeded for the same
+/// reason bootstrap failed — it retried.
+///
+/// `AlreadyExists` is success: another replica got there first, or this is a
+/// restart. Anything else is retried, and if it never succeeds the apiserver
+/// says so loudly rather than serving a cluster that cannot authorize anyone.
+async fn create_or_retry(storage: &ResourceStorage, key: &str, obj: Value, what: &str) {
+    // Roughly a minute in total, which is far longer than a datastore takes to
+    // come up and far shorter than an operator's patience for a control plane
+    // that is silently useless.
+    const ATTEMPTS: u32 = 12;
+    for attempt in 1..=ATTEMPTS {
+        match storage.create(key, obj.clone()).await {
+            Ok(_) => return,
+            // Already there: a restart, or another replica won the race.
+            Err(e) if e.reason == "AlreadyExists" || e.reason == "Conflict" => return,
+            Err(e) => {
+                if attempt == ATTEMPTS {
+                    tracing::error!(
+                        "bootstrap: giving up on {what} after {ATTEMPTS} attempts: {}. \
+                         This cluster has no {what} and will deny requests that need it.",
+                        e.message
+                    );
+                    return;
+                }
+                tracing::warn!(
+                    "bootstrap: {what} not written (attempt {attempt}/{ATTEMPTS}): {}",
+                    e.message
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
 async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
     let key = ResourceStorage::cluster_key("namespaces", name);
     let ns = json!({
@@ -798,7 +847,7 @@ async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
             "phase": "Active"
         }
     });
-    let _ = storage.create(&key, ns).await;
+    create_or_retry(storage, &key, ns, &format!("namespace {name}")).await;
 }
 
 /// First usable address of a service CIDR (`10.96.0.0/12` → `10.96.0.1`), which
@@ -935,10 +984,11 @@ async fn bootstrap_rbac(
             "verbs": ["*"]
         }]
     });
-    let _ = storage
-        .create(
+    create_or_retry(
+            storage,
             &ResourceStorage::cluster_key("clusterroles", "cluster-admin"),
             cluster_admin_role,
+            &format!("clusterroles {}", "cluster-admin"),
         )
         .await;
 
@@ -962,10 +1012,11 @@ async fn bootstrap_rbac(
             "apiGroup": "rbac.authorization.k8s.io"
         }]
     });
-    let _ = storage
-        .create(
+    create_or_retry(
+            storage,
             &ResourceStorage::cluster_key("clusterrolebindings", "system:masters"),
             masters_binding,
+            &format!("clusterrolebindings {}", "system:masters"),
         )
         .await;
 
@@ -992,12 +1043,13 @@ async fn bootstrap_rbac(
                 "apiGroup": "rbac.authorization.k8s.io"
             }]
         });
-        let _ = storage
-            .create(
-                &ResourceStorage::cluster_key("clusterrolebindings", user),
-                binding,
-            )
-            .await;
+        create_or_retry(
+            storage,
+            &ResourceStorage::cluster_key("clusterrolebindings", user),
+            binding,
+            &format!("clusterrolebindings {}", user),
+        )
+        .await;
     }
 
     // Node-join bootstrap: bootstrappers may create CSRs; joined nodes (the
@@ -1016,10 +1068,11 @@ async fn bootstrap_rbac(
             "verbs": ["create", "get", "list", "watch"]
         }]
     });
-    let _ = storage
-        .create(
+    create_or_retry(
+            storage,
             &ResourceStorage::cluster_key("clusterroles", "system:node-bootstrapper"),
             bootstrapper_role,
+            &format!("clusterroles {}", "system:node-bootstrapper"),
         )
         .await;
     for (name, group, role) in [
@@ -1045,12 +1098,13 @@ async fn bootstrap_rbac(
                 "apiGroup": "rbac.authorization.k8s.io"
             }]
         });
-        let _ = storage
-            .create(
-                &ResourceStorage::cluster_key("clusterrolebindings", name),
-                binding,
-            )
-            .await;
+        create_or_retry(
+            storage,
+            &ResourceStorage::cluster_key("clusterrolebindings", name),
+            binding,
+            &format!("clusterrolebindings {}", name),
+        )
+        .await;
     }
 
     // ClusterRole: system:discovery — GET on discovery endpoints
@@ -1067,10 +1121,11 @@ async fn bootstrap_rbac(
             "verbs": ["get"]
         }]
     });
-    let _ = storage
-        .create(
+    create_or_retry(
+            storage,
             &ResourceStorage::cluster_key("clusterroles", "system:discovery"),
             discovery_role,
+            &format!("clusterroles {}", "system:discovery"),
         )
         .await;
 
@@ -1094,10 +1149,11 @@ async fn bootstrap_rbac(
             "apiGroup": "rbac.authorization.k8s.io"
         }]
     });
-    let _ = storage
-        .create(
+    create_or_retry(
+            storage,
             &ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-discovery"),
             anon_discovery_binding,
+            &format!("clusterrolebindings {}", "system:anonymous-discovery"),
         )
         .await;
 
@@ -1125,12 +1181,13 @@ async fn bootstrap_rbac(
                 "apiGroup": "rbac.authorization.k8s.io"
             }]
         });
-        let _ = storage
-            .create(
-                &ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-admin"),
-                anon_admin_binding,
-            )
-            .await;
+        create_or_retry(
+            storage,
+            &ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-admin"),
+            anon_admin_binding,
+            &format!("clusterrolebindings {}", "system:anonymous-admin"),
+        )
+        .await;
     }
 }
 
