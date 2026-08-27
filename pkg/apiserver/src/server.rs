@@ -801,7 +801,12 @@ fn report_cert_expiry(name: &'static str, cert_pem: &[u8]) {
 /// `AlreadyExists` is success: another replica got there first, or this is a
 /// restart. Anything else is retried, and if it never succeeds the apiserver
 /// says so loudly rather than serving a cluster that cannot authorize anyone.
-async fn create_or_retry(storage: &ResourceStorage, key: &str, obj: Value, what: &str) {
+async fn create_or_retry(
+    storage: &ResourceStorage,
+    key: &str,
+    obj: serde_json::Value,
+    what: &str,
+) {
     // Roughly a minute in total, which is far longer than a datastore takes to
     // come up and far shorter than an operator's patience for a control plane
     // that is silently useless.
