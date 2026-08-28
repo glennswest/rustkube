@@ -52,8 +52,15 @@ pub async fn api_versions() -> impl IntoResponse {
 }
 
 /// GET /apis — list API groups (includes dynamic CRD groups).
-pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoResponse {
-    let mut groups = vec![
+/// The built-in API groups, as `/apis` lists them.
+///
+/// Extracted so it can be tested. A group whose resources are served but which
+/// is missing here is invisible: `oc api-resources` never asks for it, so the
+/// resources exist and nothing finds them — which is exactly how the Route
+/// group shipped serving `/apis/route.openshift.io/v1` while `/apis` did not
+/// mention it.
+fn builtin_groups() -> Vec<Value> {
+    vec![
         json!({
             "name": "apps",
             "versions": [{"groupVersion": "apps/v1", "version": "v1"}],
@@ -120,6 +127,13 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "preferredVersion": {"groupVersion": "admissionregistration.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            // OpenShift's Route, under its upstream group name so `oc get
+            // route` and manifests written for OpenShift work unchanged.
+            "name": "route.openshift.io",
+            "versions": [{"groupVersion": "route.openshift.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "route.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "gateway.networking.k8s.io",
             "versions": [{"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}
@@ -134,7 +148,11 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
             "versions": [{"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}],
             "preferredVersion": {"groupVersion": "rustkube.io/v1alpha1", "version": "v1alpha1"}
         }),
-    ];
+    ]
+}
+
+pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoResponse {
+    let mut groups = builtin_groups();
 
     // Add dynamically registered CRD groups
     let crd_groups = state.crd_registry.api_groups().await;
@@ -1037,5 +1055,66 @@ mod openapi_tests {
         assert!(!resources_for("apps", "v1").is_empty());
         assert!(!resources_for("storage.k8s.io", "v1").is_empty());
         assert!(resources_for("nope.example.com", "v1").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every group whose resources this apiserver serves must appear in
+    /// `/apis`. A group that is missing here is invisible to `oc`: discovery
+    /// never asks for its resource list, so the resources exist and nothing
+    /// finds them. That is exactly how the Route group first shipped —
+    /// `/apis/route.openshift.io/v1` answered and `/apis` did not mention it.
+    #[test]
+    fn every_served_group_is_discoverable() {
+        let names: Vec<String> = builtin_groups()
+            .iter()
+            .map(|g| g["name"].as_str().unwrap_or("").to_string())
+            .collect();
+        for want in [
+            "apps",
+            "batch",
+            "rbac.authorization.k8s.io",
+            "coordination.k8s.io",
+            "certificates.k8s.io",
+            "discovery.k8s.io",
+            "events.k8s.io",
+            "storage.k8s.io",
+            "apiextensions.k8s.io",
+            "networking.k8s.io",
+            "admissionregistration.k8s.io",
+            "gateway.networking.k8s.io",
+            "route.openshift.io",
+            "apiregistration.k8s.io",
+        ] {
+            assert!(
+                names.contains(&want.to_string()),
+                "{want} is served but not in /apis: {names:?}"
+            );
+        }
+    }
+
+    /// A group whose preferredVersion is not among its versions makes clients
+    /// pick a version that 404s.
+    #[test]
+    fn group_entries_are_well_formed() {
+        for g in builtin_groups() {
+            let name = g["name"].as_str().expect("group has a name");
+            let preferred = g["preferredVersion"]["groupVersion"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{name} has no preferredVersion"));
+            let versions: Vec<&str> = g["versions"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{name} has no versions"))
+                .iter()
+                .filter_map(|v| v["groupVersion"].as_str())
+                .collect();
+            assert!(
+                versions.contains(&preferred),
+                "{name} prefers {preferred}, which is not among {versions:?}"
+            );
+        }
     }
 }
