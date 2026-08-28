@@ -3,7 +3,7 @@
 //! Watches for pods without a nodeName, runs filter and score plugins,
 //! then binds the pod to the best node via the API server.
 
-use crate::filter::{self, FilterResult};
+use crate::filter::{self, FilterResult, NodeUsage};
 use crate::score;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -116,6 +116,71 @@ fn default_identity() -> String {
         .unwrap_or_else(|| "kube-scheduler".to_string())
 }
 
+
+
+/// What the rest of the cluster looks like, for one scheduling pass.
+///
+/// Placement is not a property of a pod and a node alone: resource fit needs
+/// what a node has already promised, and affinity, anti-affinity and topology
+/// spread all need the pods that are already placed and where they landed.
+/// Passing one object keeps those from being re-derived per plugin, and keeps
+/// every plugin looking at the same snapshot.
+#[derive(Debug, Default, Clone)]
+pub struct ClusterState {
+    /// Per node name: what the pods bound to it have requested.
+    pub usage: std::collections::HashMap<String, NodeUsage>,
+    /// Every non-terminal pod already bound, paired with the node it is on.
+    pub placed: Vec<(String, Value)>,
+}
+
+impl ClusterState {
+    /// What a node has already promised.
+    pub fn used(&self, node: &Value) -> NodeUsage {
+        self.usage.get(node_name_of(node)).copied().unwrap_or_default()
+    }
+}
+
+/// A node's name, for looking up what it has already promised.
+fn node_name_of(node: &Value) -> &str {
+    node["metadata"]["name"].as_str().unwrap_or("")
+}
+
+/// A pod's total requests, in milli-CPU and bytes.
+///
+/// Init containers are counted as the *maximum* of any single one rather than
+/// the sum: they run one at a time and are finished before the app containers
+/// start, so summing them would reserve capacity no pod ever holds at once.
+/// This is the upstream rule and it matters on a small node, where summing a
+/// handful of init containers can make a pod unschedulable that would run.
+fn pod_requests(pod: &Value) -> (u64, u64) {
+    let sum = |list: &Value| -> (u64, u64) {
+        let mut cpu = 0u64;
+        let mut mem = 0u64;
+        for c in list.as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
+            let r = &c["resources"]["requests"];
+            if let Some(v) = r["cpu"].as_str() {
+                cpu += crate::filter::parse_cpu_millis(v);
+            }
+            if let Some(v) = r["memory"].as_str() {
+                mem += crate::filter::parse_memory_bytes(v);
+            }
+        }
+        (cpu, mem)
+    };
+    let (mut cpu, mut mem) = sum(&pod["spec"]["containers"]);
+    let mut init_cpu = 0u64;
+    let mut init_mem = 0u64;
+    for c in pod["spec"]["initContainers"].as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
+        let r = &c["resources"]["requests"];
+        init_cpu = init_cpu.max(r["cpu"].as_str().map(crate::filter::parse_cpu_millis).unwrap_or(0));
+        init_mem =
+            init_mem.max(r["memory"].as_str().map(crate::filter::parse_memory_bytes).unwrap_or(0));
+    }
+    cpu = cpu.max(init_cpu);
+    mem = mem.max(init_mem);
+    (cpu, mem)
+}
+
 /// The scheduler — assigns unscheduled pods to nodes.
 pub struct Scheduler {
     api: Arc<ApiClient>,
@@ -210,8 +275,15 @@ impl Scheduler {
         let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
         let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
 
-        // Collect all unscheduled, non-terminal pods across namespaces.
+        // Collect all unscheduled, non-terminal pods across namespaces — and,
+        // in the same pass, what each node has already promised.
+        //
+        // The already-bound pods are not a distraction from the work: without
+        // them a node's free capacity is unknowable, every node looks empty
+        // forever, and the cluster piles every pod onto whichever node scores
+        // highest. The listing is already in hand, so this costs nothing.
         let mut pending: Vec<(String, Value)> = Vec::new();
+        let mut state = ClusterState::default();
         for ns in &namespaces {
             let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default").to_string();
             let pod_list: Value = self
@@ -219,12 +291,21 @@ impl Scheduler {
                 .list(&format!("/api/v1/namespaces/{ns_name}/pods"))
                 .await?;
             for pod in pod_list["items"].as_array().cloned().unwrap_or_default() {
-                if !pod["spec"]["nodeName"].as_str().unwrap_or("").is_empty() {
+                let phase_now = pod["status"]["phase"].as_str().unwrap_or("Pending");
+                let terminal = phase_now == "Succeeded" || phase_now == "Failed";
+                if let Some(on) = pod["spec"]["nodeName"].as_str().filter(|s| !s.is_empty()) {
+                    // A pod that has finished has given its request back.
+                    if !terminal {
+                        let (cpu, mem) = pod_requests(&pod);
+                        let e = state.usage.entry(on.to_string()).or_default();
+                        e.cpu_milli += cpu;
+                        e.mem_bytes += mem;
+                        state.placed.push((on.to_string(), pod.clone()));
+                    }
                     continue; // already scheduled
                 }
-                let phase = pod["status"]["phase"].as_str().unwrap_or("Pending");
-                if phase == "Succeeded" || phase == "Failed" {
-                    continue; // terminal
+                if terminal {
+                    continue;
                 }
                 pending.push((ns_name.clone(), pod));
             }
@@ -239,7 +320,7 @@ impl Scheduler {
 
         for (ns_name, pod) in &pending {
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
-            match self.schedule_pod(ns_name, pod, &nodes).await {
+            match self.schedule_pod(ns_name, pod, &nodes, &state).await {
                 Ok(chosen_node) => info!("Scheduled pod {ns_name}/{pod_name} -> {chosen_node}"),
                 Err(e) => debug!("Failed to schedule pod {ns_name}/{pod_name}: {e}"),
             }
@@ -253,6 +334,7 @@ impl Scheduler {
         namespace: &str,
         pod: &Value,
         nodes: &[Value],
+        state: &ClusterState,
     ) -> anyhow::Result<String> {
         let pod_name = pod["metadata"]["name"]
             .as_str()
@@ -262,7 +344,7 @@ impl Scheduler {
         let feasible: Vec<&Value> = nodes
             .iter()
             .filter(|node| {
-                let result = filter::run_filters(pod, node);
+                let result = filter::run_filters(pod, node, state.used(node), state, nodes);
                 matches!(result, FilterResult::Pass)
             })
             .collect();
@@ -276,7 +358,9 @@ impl Scheduler {
         // Phase 2: Score — rank feasible nodes
         let mut scored: Vec<(&Value, i64)> = feasible
             .iter()
-            .map(|node| (*node, score::score_node(pod, node)))
+            .map(|node| {
+                (*node, score::score_node(pod, node, state.used(node), state, nodes))
+            })
             .collect();
 
         // Sort by score descending

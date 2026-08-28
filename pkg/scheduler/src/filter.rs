@@ -13,7 +13,26 @@ pub enum FilterResult {
 }
 
 /// Run all filter plugins on a pod-node pair.
-pub fn run_filters(pod: &Value, node: &Value) -> FilterResult {
+/// What a node has already promised to the pods bound to it.
+///
+/// Milli-CPU and bytes, summed from the requests of every non-terminal pod
+/// whose `spec.nodeName` names this node. Without it a node's capacity is read
+/// as its `allocatable` forever: nothing ever fills up, every pod fits
+/// everywhere, and a cluster overcommits without limit while reporting that
+/// each node is empty.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NodeUsage {
+    pub cpu_milli: u64,
+    pub mem_bytes: u64,
+}
+
+pub fn run_filters(
+    pod: &Value,
+    node: &Value,
+    used: NodeUsage,
+    state: &crate::scheduler::ClusterState,
+    nodes: &[Value],
+) -> FilterResult {
     // Filter 1: Node must be Ready
     if let FilterResult::Fail(reason) = node_ready_filter(node) {
         return FilterResult::Fail(reason);
@@ -44,8 +63,19 @@ pub fn run_filters(pod: &Value, node: &Value) -> FilterResult {
         return FilterResult::Fail(reason);
     }
 
-    // Filter 7: Resource fit
-    if let FilterResult::Fail(reason) = resource_fit_filter(pod, node) {
+    // Filter 7: inter-pod affinity and anti-affinity. Placement that depends
+    // on where *other* pods are, which is what keeps replicas off one node.
+    if let Err(reason) = crate::affinity::pod_affinity_filter(pod, node, nodes, state) {
+        return FilterResult::Fail(reason);
+    }
+
+    // Filter 8: topology spread constraints.
+    if let Err(reason) = crate::spread::spread_filter(pod, node, nodes, state) {
+        return FilterResult::Fail(reason);
+    }
+
+    // Filter 9: Resource fit
+    if let FilterResult::Fail(reason) = resource_fit_filter(pod, node, used) {
         return FilterResult::Fail(reason);
     }
 
@@ -159,7 +189,7 @@ fn node_selector_filter(pod: &Value, node: &Value) -> FilterResult {
 }
 
 /// Check that node has sufficient resources for the pod.
-fn resource_fit_filter(pod: &Value, node: &Value) -> FilterResult {
+fn resource_fit_filter(pod: &Value, node: &Value, used: NodeUsage) -> FilterResult {
     // Extract pod resource requests
     let containers = pod["spec"]["containers"]
         .as_array()
@@ -191,19 +221,25 @@ fn resource_fit_filter(pod: &Value, node: &Value) -> FilterResult {
     }
 
     if let Some(cpu_str) = allocatable["cpu"].as_str() {
-        let node_cpu = parse_cpu_millis(cpu_str);
+        // Free, not total: what the node can still promise after the pods
+        // already bound to it.
+        let node_cpu = parse_cpu_millis(cpu_str).saturating_sub(used.cpu_milli);
         if total_cpu_milli > node_cpu {
             return FilterResult::Fail(format!(
-                "insufficient CPU: requested {total_cpu_milli}m, available {node_cpu}m"
+                "insufficient CPU: requested {total_cpu_milli}m, free {node_cpu}m \
+                 ({}m already requested)",
+                used.cpu_milli
             ));
         }
     }
 
     if let Some(mem_str) = allocatable["memory"].as_str() {
-        let node_mem = parse_memory_bytes(mem_str);
+        let node_mem = parse_memory_bytes(mem_str).saturating_sub(used.mem_bytes);
         if total_mem_bytes > node_mem {
             return FilterResult::Fail(format!(
-                "insufficient memory: requested {total_mem_bytes}B, available {node_mem}B"
+                "insufficient memory: requested {total_mem_bytes}B, free {node_mem}B \
+                 ({}B already requested)",
+                used.mem_bytes
             ));
         }
     }
@@ -212,7 +248,7 @@ fn resource_fit_filter(pod: &Value, node: &Value) -> FilterResult {
 }
 
 /// Parse Kubernetes CPU notation to millicores.
-fn parse_cpu_millis(s: &str) -> u64 {
+pub fn parse_cpu_millis(s: &str) -> u64 {
     if let Some(stripped) = s.strip_suffix('m') {
         stripped.parse().unwrap_or(0)
     } else {
@@ -223,7 +259,7 @@ fn parse_cpu_millis(s: &str) -> u64 {
 }
 
 /// Parse Kubernetes memory notation to bytes.
-fn parse_memory_bytes(s: &str) -> u64 {
+pub fn parse_memory_bytes(s: &str) -> u64 {
     let s = s.trim();
     if let Some(stripped) = s.strip_suffix("Ki") {
         stripped.parse::<u64>().unwrap_or(0) * 1024
