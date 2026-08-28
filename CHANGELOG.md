@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### 2026-08-28
+- **fix:** taints and tolerations. A not-ready taint was added when a node went
+  bad and **never removed when it recovered**, leaving a healthy node
+  permanently unschedulable with the reason in `spec` while everyone reads
+  `status`. `NoExecute` now evicts rather than only blocking placement — without
+  that it was `NoSchedule` with a different spelling — and `tolerationSeconds`
+  is honoured, so a pod that tolerates `not-ready` for 300s gets its five
+  minutes instead of a blip becoming an outage. The matching rules move to
+  `apimachinery::taint`, shared with the scheduler, whose own copy had already
+  drifted: it treated an unknown `operator` as `Equal`, so a typo tolerated a
+  taint instead of failing closed.
 - **feat:** Deployments do **real rolling updates**. The controller created the
   new ReplicaSet at full size and zeroed every old one in the same pass — an
   outage, not a rollout, and it ignored `maxSurge`/`maxUnavailable` entirely.

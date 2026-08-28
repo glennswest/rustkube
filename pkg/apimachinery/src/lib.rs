@@ -10,6 +10,7 @@ pub mod meta;
 pub mod rbac;
 pub mod certs;
 pub mod cron;
+pub mod taint;
 pub mod protobuf;
 
 pub use error::{Error, Result};

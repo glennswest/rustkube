@@ -110,46 +110,32 @@ fn unschedulable_filter(node: &Value) -> FilterResult {
 }
 
 /// Check taints/tolerations.
+///
+/// The matching rules live in `apimachinery::taint` and are shared with the
+/// node controller's eviction pass. **One ruleset, one implementation**: the
+/// scheduler's own copy had already drifted — it treated an unrecognised
+/// `operator` as `Equal`, so a typo tolerated a taint instead of failing
+/// closed, which is the direction that puts a workload somewhere it was told
+/// not to go.
 fn taint_toleration_filter(pod: &Value, node: &Value) -> FilterResult {
     let taints = node["spec"]["taints"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let tolerations = pod["spec"]["tolerations"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
 
     for taint in &taints {
-        let taint_effect = taint["effect"].as_str().unwrap_or("");
-        // Only NoSchedule and NoExecute prevent scheduling
-        if taint_effect != "NoSchedule" && taint_effect != "NoExecute" {
+        let effect = taint["effect"].as_str().unwrap_or("");
+        // Only NoSchedule and NoExecute keep a pod off a node.
+        // PreferNoSchedule is a preference and belongs to scoring.
+        if effect != "NoSchedule" && effect != "NoExecute" {
             continue;
         }
-
-        let taint_key = taint["key"].as_str().unwrap_or("");
-        let taint_value = taint["value"].as_str().unwrap_or("");
-
-        let tolerated = tolerations.iter().any(|t| {
-            let t_key = t["key"].as_str().unwrap_or("");
-            let t_operator = t["operator"].as_str().unwrap_or("Equal");
-            let t_value = t["value"].as_str().unwrap_or("");
-            let t_effect = t["effect"].as_str().unwrap_or("");
-
-            // Effect must match (or toleration has empty effect = match all)
-            if !t_effect.is_empty() && t_effect != taint_effect {
-                return false;
-            }
-
-            match t_operator {
-                "Exists" => t_key == taint_key || t_key.is_empty(),
-                _ => t_key == taint_key && t_value == taint_value,
-            }
-        });
-
-        if !tolerated {
+        if apimachinery::taint::pod_tolerates(pod, taint).is_none() {
             return FilterResult::Fail(format!(
-                "node has taint {taint_key}={taint_value}:{taint_effect} not tolerated"
+                "node has taint {}={}:{} not tolerated",
+                taint["key"].as_str().unwrap_or(""),
+                taint["value"].as_str().unwrap_or(""),
+                effect
             ));
         }
     }
