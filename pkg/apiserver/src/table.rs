@@ -406,9 +406,14 @@ fn cell(v: &Value) -> Value {
 
 /// Columns and rows from a CRD's own `additionalPrinterColumns`.
 ///
-/// NAME first and AGE last, which is what upstream does regardless of what the
-/// CRD declares — every `kubectl get` output starts with a name, and a CRD
-/// that also declares an Age column simply gets it twice, as upstream allows.
+/// NAME first always. **AGE only when the CRD declares no columns of its
+/// own** — that is what upstream's apiextensions table converter does, and it
+/// matters because most real CRDs declare an Age column themselves. Appending
+/// one unconditionally prints Age twice, which is exactly what Cilium's
+/// CiliumNetworkPolicy did before this was fixed.
+///
+/// A column of type `date` carries the raw timestamp; kubectl renders it as an
+/// age itself, so converting here would double-translate it.
 fn crd_printer(columns: &[Value]) -> (Vec<Value>, Vec<(String, i64)>) {
     let mut cols = vec![col("Name", "string", 0, "Name of the object")];
     let mut paths = Vec::new();
@@ -424,7 +429,9 @@ fn crd_printer(columns: &[Value]) -> (Vec<Value>, Vec<(String, i64)>) {
         cols.push(col(name, ty, c["priority"].as_i64().unwrap_or(0), desc));
         paths.push((path.to_string(), 0i64));
     }
-    cols.push(col("Age", "string", 0, "Time since creation"));
+    if columns.is_empty() {
+        cols.push(col("Age", "string", 0, "Time since creation"));
+    }
     (cols, paths)
 }
 
@@ -446,7 +453,9 @@ pub fn to_table_crd(body: Value, columns: &[Value]) -> Value {
             for (path, _) in &paths {
                 cells.push(json_path(o, path).map(cell).unwrap_or(json!("")));
             }
-            cells.push(json!(age(o)));
+            if paths.is_empty() {
+                cells.push(json!(age(o)));
+            }
             json!({ "cells": cells, "object": o })
         })
         .collect();
@@ -593,13 +602,15 @@ mod tests {
             .iter()
             .map(|c| c["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["Name", "Endpoint", "Ready", "Age"]);
+        // No trailing Age: the CRD declared its own columns.
+        assert_eq!(names, ["Name", "Endpoint", "Ready"]);
         let cells = &t["rows"][0]["cells"];
         assert_eq!(cells[0], json!("cep-1"));
         // A number stays a number: the column says type integer and a client
         // formatting by type would be handed a string otherwise.
         assert_eq!(cells[1], json!(42));
         assert_eq!(cells[2], json!("True"));
+        assert_eq!(cells.as_array().unwrap().len(), 3, "no extra Age cell");
         // The whole object rides along, as every Table row must.
         assert_eq!(t["rows"][0]["object"]["metadata"]["name"], json!("cep-1"));
     }
@@ -620,6 +631,19 @@ mod tests {
     }
 
     /// A single object, not a list — `oc get cnp foo` takes this path.
+    /// A CRD that declares its own Age column must not get a second one —
+    /// what CiliumNetworkPolicy does, and what printed "Age Age" before.
+    #[test]
+    fn a_crd_declaring_age_does_not_get_two() {
+        let cols = vec![json!({
+            "name": "Age", "type": "date", "jsonPath": ".metadata.creationTimestamp"})];
+        let list = json!({"items": [{"metadata": {"name": "allow-dns"}}]});
+        let t = to_table_crd(list, &cols);
+        let names: Vec<&str> = t["columnDefinitions"]
+            .as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Name", "Age"]);
+    }
+
     #[test]
     fn a_single_custom_resource_is_one_row() {
         let one = json!({"metadata": {"name": "only"}, "spec": {"n": 1}});
