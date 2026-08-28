@@ -153,6 +153,19 @@ fn node_name_of(node: &Value) -> &str {
 /// This is the upstream rule and it matters on a small node, where summing a
 /// handful of init containers can make a pod unschedulable that would run.
 fn pod_requests(pod: &Value) -> (u64, u64) {
+    // Pod-level requests win outright when present.
+    //
+    // `spec.resources` on the pod (beta-on since v1.34) is the pod's total, and
+    // upstream uses it in place of the container sum rather than in addition to
+    // it. Summing both would double-count every pod that sets it.
+    let pod_level = &pod["spec"]["resources"]["requests"];
+    if !pod_level.is_null() {
+        let cpu = pod_level["cpu"].as_str().map(crate::filter::parse_cpu_millis).unwrap_or(0);
+        let mem = pod_level["memory"].as_str().map(crate::filter::parse_memory_bytes).unwrap_or(0);
+        if cpu != 0 || mem != 0 {
+            return (cpu, mem);
+        }
+    }
     let sum = |list: &Value| -> (u64, u64) {
         let mut cpu = 0u64;
         let mut mem = 0u64;
@@ -178,6 +191,31 @@ fn pod_requests(pod: &Value) -> (u64, u64) {
     }
     cpu = cpu.max(init_cpu);
     mem = mem.max(init_mem);
+
+    // What the pod actually holds, which is not always what its spec asks for.
+    //
+    // In-place pod resize is GA-locked as of v1.35, so `spec` is a *request to
+    // become* that size and the kubelet actuates it asynchronously. On a shrink
+    // the pod still holds the larger amount until it does, and a scheduler that
+    // believes the spec will hand the difference to somebody else and overcommit
+    // the node. Upstream's rule is the maximum of the desired, the actuated and
+    // the allocated — the pessimistic one, which is the only safe direction when
+    // the three disagree.
+    for (i, cs) in pod["status"]["containerStatuses"]
+        .as_array().map(|v| v.as_slice()).unwrap_or(&[]).iter().enumerate()
+    {
+        let _ = i;
+        for field in ["resources", "allocatedResources"] {
+            let r = &cs[field]["requests"];
+            if r.is_null() {
+                continue;
+            }
+            // Per container, so this is a floor on the total rather than an
+            // exact sum — which is the safe side of the same argument.
+            cpu = cpu.max(r["cpu"].as_str().map(crate::filter::parse_cpu_millis).unwrap_or(0));
+            mem = mem.max(r["memory"].as_str().map(crate::filter::parse_memory_bytes).unwrap_or(0));
+        }
+    }
     (cpu, mem)
 }
 
@@ -437,5 +475,49 @@ mod priority_tests {
         });
         let order: Vec<&str> = v.iter().map(|(_, p)| p["metadata"]["name"].as_str().unwrap()).collect();
         assert_eq!(order, ["high", "old-default", "new-default", "low"]);
+    }
+}
+
+#[cfg(test)]
+mod accounting_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_shrinking_pod_still_holds_the_larger_amount() {
+        // In-place resize is asynchronous: the spec says 500m, the kubelet has
+        // not actuated it, and the pod is still holding 2000m. Believing the
+        // spec here hands 1500m to another pod that the node does not have.
+        let pod = json!({
+            "spec":{"containers":[{"resources":{"requests":{"cpu":"500m"}}}]},
+            "status":{"containerStatuses":[
+                {"resources":{"requests":{"cpu":"2"}}}]}});
+        let (cpu, _) = pod_requests(&pod);
+        assert_eq!(cpu, 2000, "must account the actuated size, not the desired one");
+    }
+
+    #[test]
+    fn pod_level_requests_replace_the_container_sum() {
+        // spec.resources is the pod's total, not an addition to its containers.
+        // Summing both double-counts every pod that sets it.
+        let pod = json!({
+            "spec":{"resources":{"requests":{"cpu":"1","memory":"1Gi"}},
+                    "containers":[{"resources":{"requests":{"cpu":"500m"}}},
+                                  {"resources":{"requests":{"cpu":"500m"}}}]}});
+        let (cpu, _) = pod_requests(&pod);
+        assert_eq!(cpu, 1000, "pod-level wins; 2000 would be double counting");
+    }
+
+    #[test]
+    fn init_containers_count_as_the_largest_not_the_sum() {
+        // They run one at a time and are done before the app starts, so summing
+        // them reserves capacity the pod never holds at once — and can make a
+        // pod unschedulable on a small node that would have run it.
+        let pod = json!({"spec":{
+            "containers":[{"resources":{"requests":{"cpu":"100m"}}}],
+            "initContainers":[{"resources":{"requests":{"cpu":"400m"}}},
+                              {"resources":{"requests":{"cpu":"300m"}}}]}});
+        let (cpu, _) = pod_requests(&pod);
+        assert_eq!(cpu, 400, "the largest init container, not 700m");
     }
 }
