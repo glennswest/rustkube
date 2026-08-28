@@ -69,6 +69,7 @@ impl Default for ApiServerConfig {
             tls_cert: None,
             tls_key: None,
             tls_auto: false,
+            manifest_dir: None,
             client_ca: None,
             etcd_servers: Vec::new(),
             etcd_cacert: None,

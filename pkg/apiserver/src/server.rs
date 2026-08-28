@@ -670,7 +670,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // already established; before the HTTP server starts, so a controller or a
     // kubelet never observes a half-applied cluster.
     if let Some(dir) = &config.manifest_dir {
-        manifests::apply_dir(&storage, &crd_registry, dir).await;
+        crate::manifests::apply_dir(&storage, &crd_registry, dir).await;
     }
 
     // ServiceAccount token signing keys. A real cluster supplies the RSA
