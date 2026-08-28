@@ -21,6 +21,7 @@ pub mod namespace;
 pub mod pdb;
 pub mod node;
 pub mod replicaset;
+pub mod rollout;
 pub mod runner;
 pub mod service;
 pub mod statefulset;
