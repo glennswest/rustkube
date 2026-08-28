@@ -274,7 +274,9 @@ impl DaemonSetController {
 
         let _ = self
             .api
-            .update(
+            // status only: a whole-object PUT would carry a spec read
+            // before the last reconcile and revert it.
+            .update_status(
                 &format!("/apis/apps/v1/namespaces/{namespace}/daemonsets/{ds_name}"),
                 &updated,
             )

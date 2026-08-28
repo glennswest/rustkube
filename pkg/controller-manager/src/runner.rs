@@ -111,6 +111,32 @@ impl ApiClient {
             .await
     }
 
+    /// PUT a resource's **status only**, through the `/status` subresource.
+    ///
+    /// **Use this for every status write.** Writing status by PUTting the
+    /// whole object sends a `spec` that was read some time ago, so a
+    /// controller updating status silently reverts any spec change made since
+    /// its last list — a Deployment controller scaling a ReplicaSet up and a
+    /// ReplicaSet controller writing its status will fight, and the scale-up
+    /// loses. The `/status` endpoint re-reads server-side, replaces only
+    /// `status`, and applies the update with a compare-and-set on
+    /// resourceVersion, so neither can happen.
+    ///
+    /// `path` is the resource's own path, without the `/status` suffix.
+    pub async fn update_status(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> reqwest::Result<serde_json::Value> {
+        self.client
+            .put(format!("{}{}/status", self.base_url, path))
+            .json(body)
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
     /// PATCH a resource.
     pub async fn patch(
         &self,

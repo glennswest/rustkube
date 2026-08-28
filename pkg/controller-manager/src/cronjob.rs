@@ -194,7 +194,7 @@ impl CronJobController {
                     json!(now.format("%Y-%m-%dT%H:%M:%SZ").to_string());
                 let _ = self
                     .api
-                    .update(
+                    .update_status(
                         &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
                         &updated_cj,
                     )
@@ -264,7 +264,7 @@ impl CronJobController {
 
                 let _ = self
                     .api
-                    .update(
+                    .update_status(
                         &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
                         &updated_cj,
                     )
