@@ -578,7 +578,10 @@ mod tests {
     fn the_template_hash_is_stable_across_builds() {
         let t = json!({"metadata": {"labels": {"app": "web"}},
                        "spec": {"containers": [{"name": "c", "image": "busybox"}]}});
-        assert_eq!(compute_template_hash(&t), "e2b8a3a3f7");
+        // Pinned, and cross-checked against an independent FNV-1a of
+        // serde_json's output — so this asserts the algorithm, not merely
+        // that the function agrees with itself.
+        assert_eq!(compute_template_hash(&t), "604fe2c1f8");
     }
 
     #[test]
