@@ -338,6 +338,14 @@ fn build_router(
                 .put(resource::update_cluster_status)
                 .merge(patch(resource::patch_cluster_status)),
         )
+        // pods/log — what `kubectl logs` actually calls. Registered before the
+        // generic {resource}/{name}/status route so the more specific path
+        // wins, and separate from it because a log is proxied to the node
+        // rather than read from the datastore (#54).
+        .route(
+            "/api/v1/namespaces/{namespace}/pods/{name}/log",
+            get(crate::handlers::logs::pod_logs),
+        )
         // Status subresource routes — core v1 namespace-scoped
         .route(
             "/api/v1/namespaces/{namespace}/{resource}/{name}/status",

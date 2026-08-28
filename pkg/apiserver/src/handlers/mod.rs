@@ -3,6 +3,7 @@
 //! Provides generic CRUD+Watch handlers that work with any resource type,
 //! plus specific route builders for core/v1 and apps/v1 resources.
 
+pub mod logs;
 pub mod resource;
 pub mod token;
 
