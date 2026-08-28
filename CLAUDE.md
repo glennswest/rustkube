@@ -212,6 +212,34 @@ Cargo.toml → workspace.package.version
 - [ ] ARM64 cross-compile verification
 - [ ] MikroTik minimal build verification
 
+### `oc` compatibility — the surface that drives completeness
+
+**[docs/oc-compatibility.md](docs/oc-compatibility.md)** is the reference: what
+`oc` can ask a cluster to do, and therefore what this apiserver has to answer
+for. It is the specification for "complete", not a wish list — a verb that is
+not answered is a gap whether or not anyone has hit it yet.
+
+Work it as a checklist against a live cluster rather than by reading: `oc
+<verb> --help` on the target is authoritative, and the runbook's Part II is a
+verification pass that should collapse into one script with an exit code.
+
+Known state on 2026-08-28:
+
+- [x] `oc logs` — apiserver `pods/log` proxying to the kubelet's
+      `/containerLogs`, with TokenReview so anything can authenticate to a
+      kubelet at all (#54). `container`, `tailLines`, `previous` work;
+      `timestamps`/`sinceSeconds`/`sinceTime` are inert because stormpump logs
+      are raw by design; `follow` is not implemented.
+- [ ] `oc exec`, `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` —
+      **none built.** They share the log proxy's plumbing: node-address
+      lookup, a token minted for the hop, and a kubelet route. That part is
+      done once and already is; each verb is then its own streaming endpoint.
+- [ ] `oc adm` — largely unexamined.
+- [ ] Routes, DeploymentConfig, ImageStream, BuildConfig, SCC — the
+      genuinely OpenShift-only half. Whether these are in scope at all is a
+      decision nobody has made; `oc` without them is `kubectl` with better
+      ergonomics, which may be the right target.
+
 ## Release History
 
 | Version | Date | Summary |
