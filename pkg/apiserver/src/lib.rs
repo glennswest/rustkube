@@ -20,6 +20,7 @@ pub mod rbac_engine;
 pub mod selector;
 pub mod server;
 pub mod storage;
+pub mod table;
 pub mod tls;
 pub mod watch;
 pub mod watch_cache;

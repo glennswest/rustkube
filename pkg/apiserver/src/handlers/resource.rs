@@ -141,7 +141,16 @@ pub async fn list_cluster_resources(
         list["metadata"]["continue"] = Value::String(token);
     }
 
-    Ok(Json(project_list(list, metadata_only)).into_response())
+    {
+        let body = project_list(list, metadata_only);
+        // `kubectl get` and `oc get` ask for a Table and print NAME + AGE when
+        // they do not get one — which is why every listing looked empty of
+        // detail while the objects were complete (#53).
+        if crate::table::wants_table(&headers) {
+            return Ok(Json(crate::table::to_table(&resource, body)).into_response());
+        }
+        Ok(Json(body).into_response())
+    }
 }
 
 /// LIST/WATCH namespace-scoped resources in a single namespace.
@@ -189,7 +198,16 @@ pub async fn list_namespaced_resources(
         list["metadata"]["continue"] = Value::String(token);
     }
 
-    Ok(Json(project_list(list, metadata_only)).into_response())
+    {
+        let body = project_list(list, metadata_only);
+        // `kubectl get` and `oc get` ask for a Table and print NAME + AGE when
+        // they do not get one — which is why every listing looked empty of
+        // detail while the objects were complete (#53).
+        if crate::table::wants_table(&headers) {
+            return Ok(Json(crate::table::to_table(&resource, body)).into_response());
+        }
+        Ok(Json(body).into_response())
+    }
 }
 
 /// LIST namespace-scoped resources across all namespaces.
@@ -237,7 +255,16 @@ pub async fn list_all_namespaces_resources(
         list["metadata"]["continue"] = Value::String(token);
     }
 
-    Ok(Json(project_list(list, metadata_only)).into_response())
+    {
+        let body = project_list(list, metadata_only);
+        // `kubectl get` and `oc get` ask for a Table and print NAME + AGE when
+        // they do not get one — which is why every listing looked empty of
+        // detail while the objects were complete (#53).
+        if crate::table::wants_table(&headers) {
+            return Ok(Json(crate::table::to_table(&resource, body)).into_response());
+        }
+        Ok(Json(body).into_response())
+    }
 }
 
 /// POST — create a cluster-scoped resource.
