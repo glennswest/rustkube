@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+
+### 2026-08-28
+- **feat:** Deployments do **real rolling updates**. The controller created the
+  new ReplicaSet at full size and zeroed every old one in the same pass — an
+  outage, not a rollout, and it ignored `maxSurge`/`maxUnavailable` entirely.
+  The arithmetic is now pure functions in `rollout.rs` holding two tested
+  invariants: never more than `replicas + maxSurge` pods, and never fewer than
+  `replicas - maxUnavailable` available — counting the new ReplicaSet's
+  not-yet-ready pods against the second, which is the classic bug.
+- **feat:** revisions and rollback. Every ReplicaSet carries
+  `deployment.kubernetes.io/revision`, retained to `revisionHistoryLimit`; a
+  rollback takes a *new* revision rather than reclaiming an old number. This is
+  what makes `rollout history` and `rollout undo` work at all.
+- **feat:** `Recreate` strategy and `spec.paused`.
+- **feat:** CronJob rejects a schedule that can never fire (`0 0 30 2 *`), with
+  the reason, at admission — it used to be accepted silently and never run.
+- **feat:** CronJob lifetime stats and an Event per scheduling decision, naming
+  the scheduled time so a catch-up run is distinguishable from an on-time one.
+- **feat:** the apiserver applies a directory of manifests at startup
+  (`--manifest-dir`), `EnsureExists` by default and `Reconcile` opt-in.
+- **feat:** `route.openshift.io/v1` Routes; printers for routes, services,
+  ingresses, deployments and daemonsets; custom resources honour their CRD's
+  `additionalPrinterColumns`.
+- **fix:** cron's day-of-month/day-of-week **OR** rule was implemented as an
+  AND, turning `0 0 1 * 1` from "the 1st, and every Monday" into roughly one
+  run every seven months. Missed starts were also lost entirely.
+- **fix:** status is written through the `/status` subresource. Nine
+  controllers PUT the whole object, so a status write reverted whatever spec
+  change had happened since that controller's last list — the Deployment
+  controller's scale-up lost to the ReplicaSet controller's status write,
+  repeatedly.
+- **fix:** CRD registration kept only `spec.versions[0]`, so every other served
+  version 404'd — half of Cilium's API did not exist.
+- **fix:** the Route group served its resources but was absent from `/apis`, so
+  discovery never found them.
+- **fix:** a CRD declaring its own Age column no longer gets two.
+- **fix:** the pod-template hash moves off `DefaultHasher`, which is documented
+  as unstable across Rust releases; it names a ReplicaSet, so a change would
+  orphan every existing one and its pods.
+
 ## [v0.3.0] — 2026-03-19
 
 ### Added
