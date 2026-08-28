@@ -872,6 +872,36 @@ pub async fn api_networking_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/route.openshift.io/v1 — OpenShift Routes.
+///
+/// A Route is "this hostname reaches this service", which is the object the
+/// console and every other web service on the node needs in order to be
+/// reachable by name rather than by port. See stormpump docs/routing.md for
+/// the wildcard domain and VIP it resolves against.
+pub async fn api_route_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "route.openshift.io/v1",
+        "resources": [
+            {
+                "name": "routes",
+                "singularName": "route",
+                "namespaced": true,
+                "kind": "Route",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "routes/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Route",
+                "verbs": ["get", "patch", "update"]
+            }
+        ]
+    }))
+}
+
 /// GET /apis/admissionregistration.k8s.io/v1 — admission webhook resources.
 pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
     Json(json!({

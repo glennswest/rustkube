@@ -401,6 +401,27 @@ fn build_router(
             "/apis/autoscaling/v2/{resource}",
             get(resource::list_cluster_resources),
         )
+        // route.openshift.io/v1 — OpenShift Routes
+        .route(
+            "/apis/route.openshift.io/v1",
+            get(discovery::api_route_v1_resources),
+        )
+        .route(
+            "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
+        )
+        .route(
+            "/apis/route.openshift.io/v1/{resource}",
+            get(resource::list_cluster_resources),
+        )
         // networking.k8s.io/v1
         .route(
             "/apis/networking.k8s.io/v1",

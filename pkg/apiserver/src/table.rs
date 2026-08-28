@@ -195,6 +195,156 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                 ]
             }) as RowFn,
         )),
+        "routes" => Some((
+            vec![
+                col("Name", "string", 0, "Name of the route"),
+                col("Host/Port", "string", 0, "The hostname it answers on"),
+                col("Path", "string", 0, "Path prefix, if the route is path-scoped"),
+                col("Services", "string", 0, "The service it reaches"),
+                col("Port", "string", 0, "Target port on that service"),
+                col("Termination", "string", 0, "TLS termination, if any"),
+                col("Wildcard", "string", 0, "Wildcard policy"),
+            ],
+            (|o: &Value| {
+                // `host` is what the router admitted; `spec.host` is what was
+                // asked for. Neither is guaranteed, and an unadmitted route
+                // showing a blank host is the signal that it was not admitted.
+                let host = o["spec"]["host"].as_str().unwrap_or("");
+                let port = o["spec"]["port"]["targetPort"].as_str().map(str::to_string).or_else(
+                    || o["spec"]["port"]["targetPort"].as_i64().map(|n| n.to_string()),
+                );
+                vec![
+                    json!(name_of(o)),
+                    json!(host),
+                    json!(o["spec"]["path"].as_str().unwrap_or("")),
+                    json!(o["spec"]["to"]["name"].as_str().unwrap_or("")),
+                    json!(port.unwrap_or_default()),
+                    json!(o["spec"]["tls"]["termination"].as_str().unwrap_or("")),
+                    json!(o["spec"]["wildcardPolicy"].as_str().unwrap_or("None")),
+                ]
+            }) as RowFn,
+        )),
+        "services" => Some((
+            vec![
+                col("Name", "string", 0, "Name of the service"),
+                col("Type", "string", 0, "ClusterIP, NodePort, LoadBalancer or ExternalName"),
+                col("Cluster-IP", "string", 0, "The service's cluster IP"),
+                col("External-IP", "string", 0, "External address, if any"),
+                col("Port(s)", "string", 0, "Exposed ports"),
+                col("Age", "string", 0, "Time since creation"),
+            ],
+            (|o: &Value| {
+                let ports = o["spec"]["ports"]
+                    .as_array()
+                    .map(|ps| {
+                        ps.iter()
+                            .map(|p| {
+                                let port = p["port"].as_i64().unwrap_or(0);
+                                let proto = p["protocol"].as_str().unwrap_or("TCP");
+                                match p["nodePort"].as_i64() {
+                                    Some(np) => format!("{port}:{np}/{proto}"),
+                                    None => format!("{port}/{proto}"),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                vec![
+                    json!(name_of(o)),
+                    json!(o["spec"]["type"].as_str().unwrap_or("ClusterIP")),
+                    // "None" for a headless service is what upstream prints,
+                    // and it is meaningful — not a missing value.
+                    json!(o["spec"]["clusterIP"].as_str().unwrap_or("<none>")),
+                    json!(o["spec"]["externalIPs"][0].as_str().unwrap_or("<none>")),
+                    json!(ports),
+                    json!(age(o)),
+                ]
+            }) as RowFn,
+        )),
+        "ingresses" => Some((
+            vec![
+                col("Name", "string", 0, "Name of the ingress"),
+                col("Class", "string", 0, "IngressClass that serves it"),
+                col("Hosts", "string", 0, "Hostnames it answers on"),
+                col("Address", "string", 0, "Address the controller assigned"),
+                col("Ports", "string", 0, "80, and 443 when TLS is configured"),
+                col("Age", "string", 0, "Time since creation"),
+            ],
+            (|o: &Value| {
+                let hosts = o["spec"]["rules"]
+                    .as_array()
+                    .map(|rs| {
+                        rs.iter()
+                            .filter_map(|r| r["host"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .filter(|h: &String| !h.is_empty())
+                    .unwrap_or_else(|| "*".to_string());
+                let addr = o["status"]["loadBalancer"]["ingress"][0]["ip"]
+                    .as_str()
+                    .or_else(|| o["status"]["loadBalancer"]["ingress"][0]["hostname"].as_str())
+                    .unwrap_or("");
+                let ports =
+                    if o["spec"]["tls"].as_array().is_some_and(|t| !t.is_empty()) {
+                        "80, 443"
+                    } else {
+                        "80"
+                    };
+                vec![
+                    json!(name_of(o)),
+                    json!(o["spec"]["ingressClassName"].as_str().unwrap_or("<none>")),
+                    json!(hosts),
+                    json!(addr),
+                    json!(ports),
+                    json!(age(o)),
+                ]
+            }) as RowFn,
+        )),
+        "deployments" => Some((
+            vec![
+                col("Name", "string", 0, "Name of the deployment"),
+                col("Ready", "string", 0, "Ready replicas over desired"),
+                col("Up-to-date", "integer", 0, "Replicas at the current spec"),
+                col("Available", "integer", 0, "Replicas available to serve"),
+                col("Age", "string", 0, "Time since creation"),
+            ],
+            (|o: &Value| {
+                let want = o["spec"]["replicas"].as_i64().unwrap_or(1);
+                let ready = o["status"]["readyReplicas"].as_i64().unwrap_or(0);
+                vec![
+                    json!(name_of(o)),
+                    json!(format!("{ready}/{want}")),
+                    json!(o["status"]["updatedReplicas"].as_i64().unwrap_or(0)),
+                    json!(o["status"]["availableReplicas"].as_i64().unwrap_or(0)),
+                    json!(age(o)),
+                ]
+            }) as RowFn,
+        )),
+        "daemonsets" => Some((
+            vec![
+                col("Name", "string", 0, "Name of the daemonset"),
+                col("Desired", "integer", 0, "Nodes that should run it"),
+                col("Current", "integer", 0, "Nodes running it"),
+                col("Ready", "integer", 0, "Pods ready"),
+                col("Up-to-date", "integer", 0, "Pods at the current spec"),
+                col("Available", "integer", 0, "Pods available"),
+                col("Age", "string", 0, "Time since creation"),
+            ],
+            (|o: &Value| {
+                let st = &o["status"];
+                vec![
+                    json!(name_of(o)),
+                    json!(st["desiredNumberScheduled"].as_i64().unwrap_or(0)),
+                    json!(st["currentNumberScheduled"].as_i64().unwrap_or(0)),
+                    json!(st["numberReady"].as_i64().unwrap_or(0)),
+                    json!(st["updatedNumberScheduled"].as_i64().unwrap_or(0)),
+                    json!(st["numberAvailable"].as_i64().unwrap_or(0)),
+                    json!(age(o)),
+                ]
+            }) as RowFn,
+        )),
         _ => None,
     }
 }
@@ -477,5 +627,57 @@ mod tests {
         let t = to_table_crd(one, &cols);
         assert_eq!(t["rows"].as_array().unwrap().len(), 1);
         assert_eq!(t["rows"][0]["cells"][1], json!(1));
+    }
+
+    /// A Route prints what `oc get route` prints. The DaemonSet columns matter
+    /// for Cilium in particular — it is the shape a pod network is deployed in.
+    #[test]
+    fn routes_services_and_daemonsets_print_their_own_columns() {
+        let route = json!({"items": [{
+            "metadata": {"name": "console"},
+            "spec": {
+                "host": "console.storm1.g8.lo",
+                "to": {"name": "stormconsole"},
+                "port": {"targetPort": 9094},
+                "tls": {"termination": "edge"},
+            },
+        }]});
+        let c = &to_table("routes", route)["rows"][0]["cells"];
+        assert_eq!(c[1], json!("console.storm1.g8.lo"));
+        assert_eq!(c[3], json!("stormconsole"));
+        // A numeric targetPort prints as a number's text, not an empty cell.
+        assert_eq!(c[4], json!("9094"));
+        assert_eq!(c[5], json!("edge"));
+        assert_eq!(c[6], json!("None"));
+
+        let svc = json!({"items": [{
+            "metadata": {"name": "api"},
+            "spec": {"type": "NodePort", "clusterIP": "10.0.0.1",
+                     "ports": [{"port": 443, "nodePort": 30443, "protocol": "TCP"}]},
+        }]});
+        let c = &to_table("services", svc)["rows"][0]["cells"];
+        assert_eq!(c[1], json!("NodePort"));
+        assert_eq!(c[4], json!("443:30443/TCP"));
+
+        let ds = json!({"items": [{
+            "metadata": {"name": "cilium"},
+            "status": {"desiredNumberScheduled": 3, "numberReady": 2},
+        }]});
+        let c = &to_table("daemonsets", ds)["rows"][0]["cells"];
+        assert_eq!(c[1], json!(3));
+        assert_eq!(c[3], json!(2));
+    }
+
+    /// An ingress with no host is `*`, and with TLS it serves 443 too — both
+    /// are what upstream prints and both read as wrong if guessed.
+    #[test]
+    fn an_ingress_without_a_host_prints_a_star() {
+        let ing = json!({"items": [{
+            "metadata": {"name": "i"},
+            "spec": {"rules": [{}], "tls": [{"hosts": ["a"]}]},
+        }]});
+        let c = &to_table("ingresses", ing)["rows"][0]["cells"];
+        assert_eq!(c[2], json!("*"));
+        assert_eq!(c[4], json!("80, 443"));
     }
 }
