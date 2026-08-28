@@ -338,6 +338,13 @@ fn build_router(
                 .put(resource::update_cluster_status)
                 .merge(patch(resource::patch_cluster_status)),
         )
+        // TokenReview — how a component that holds a token but not the signing
+        // key asks whether it is valid. The kubelet authenticates every inbound
+        // request this way.
+        .route(
+            "/apis/authentication.k8s.io/v1/tokenreviews",
+            axum::routing::post(crate::handlers::token::create_token_review),
+        )
         // pods/log — what `kubectl logs` actually calls. Registered before the
         // generic {resource}/{name}/status route so the more specific path
         // wins, and separate from it because a log is proxied to the node

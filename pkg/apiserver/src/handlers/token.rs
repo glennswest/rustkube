@@ -49,3 +49,56 @@ pub async fn create_serviceaccount_token(
         }
     })))
 }
+
+/// `POST /apis/authentication.k8s.io/v1/tokenreviews`
+///
+/// Answers "is this token valid, and who is it?" for a component that has been
+/// handed one and cannot verify it itself. The kubelet is the caller that
+/// matters here: it authenticates inbound requests — `kubectl logs`, `exec`,
+/// metrics scrapes — by asking this endpoint, because only the apiserver holds
+/// the signing key.
+///
+/// Without it the kubelet cannot validate anything and answers 401 to every
+/// authenticated request, including the apiserver's own log proxy. The failure
+/// surfaces as a bare "Unauthorized" from `kubectl logs`, which names neither
+/// the hop that refused nor the reason (#54).
+///
+/// An invalid token is **not** an error: the review succeeded and its answer is
+/// `authenticated: false`. Returning 401 here would conflate "this caller may
+/// not ask" with "the token they asked about is bad".
+pub async fn create_token_review(
+    axum::extract::Extension(keys): axum::extract::Extension<crate::auth::SigningKeys>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl axum::response::IntoResponse {
+    let token = body["spec"]["token"].as_str().unwrap_or("");
+    let audiences = body["spec"]["audiences"].clone();
+
+    let status = match keys.validate_token(token) {
+        Some(data) => serde_json::json!({
+            "authenticated": true,
+            "user": {
+                "username": data.claims.sub,
+                "groups": data.claims.groups,
+            },
+            "audiences": audiences,
+        }),
+        None => serde_json::json!({
+            "authenticated": false,
+            "error": "token is invalid or expired",
+        }),
+    };
+
+    (
+        axum::http::StatusCode::CREATED,
+        axum::Json(serde_json::json!({
+            "apiVersion": "authentication.k8s.io/v1",
+            "kind": "TokenReview",
+            "metadata": {},
+            // The token is echoed back by upstream only when it was already
+            // present; it is omitted here so a review does not put a live
+            // credential into whatever logs the response.
+            "spec": { "audiences": body["spec"]["audiences"].clone() },
+            "status": status,
+        })),
+    )
+}

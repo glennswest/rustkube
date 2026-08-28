@@ -13,7 +13,7 @@
 use crate::error::ApiError;
 use crate::handlers::AppState;
 use crate::storage::ResourceStorage;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
@@ -23,6 +23,7 @@ use std::sync::Arc;
 /// `GET /api/v1/namespaces/{namespace}/pods/{name}/log`
 pub async fn pod_logs(
     State(state): State<AppState>,
+    Extension(keys): Extension<crate::auth::SigningKeys>,
     Path((namespace, name)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -130,7 +131,22 @@ pub async fn pod_logs(
         }
     };
 
-    match client.get(&url).send().await {
+    // Authenticate to the kubelet as the apiserver.
+    //
+    // The kubelet validates a bearer token by TokenReview against this
+    // apiserver, so a token this apiserver signs is one it will accept — which
+    // means no shared secret has to be baked into the node image, and the
+    // identity in the kubelet's logs is the apiserver rather than "someone
+    // with the token". `system:masters` because reading any pod's log on any
+    // node is exactly what this endpoint is for.
+    //
+    // Without it the proxy is answered with 401 and `kubectl logs` reports
+    // "Unauthorized" with nothing to say which hop refused.
+    let bearer = keys
+        .create_token("system:kube-apiserver", &["system:masters".to_string()])
+        .unwrap_or_default();
+
+    match client.get(&url).bearer_auth(&bearer).send().await {
         Ok(resp) => {
             let status = StatusCode::from_u16(resp.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
