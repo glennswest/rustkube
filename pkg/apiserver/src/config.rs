@@ -31,6 +31,12 @@ pub struct ApiServerConfig {
     pub service_cidr: String,
     /// Cluster DNS domain.
     pub cluster_domain: String,
+    /// A directory of manifests applied once at startup.
+    ///
+    /// How a component that ships in the disk image — the pod network first —
+    /// becomes API objects before anything can schedule it. See
+    /// [`crate::manifests`].
+    pub manifest_dir: Option<PathBuf>,
     /// Public key (SPKI PEM) used to *verify* ServiceAccount tokens.
     pub service_account_key: Option<PathBuf>,
     /// Private key (PKCS#1/PKCS#8 PEM) used to *sign* ServiceAccount tokens.

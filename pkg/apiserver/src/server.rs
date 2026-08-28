@@ -665,6 +665,14 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let crd_registry = Arc::new(CrdRegistry::new());
     crd::load_existing_crds(&storage, &crd_registry).await;
 
+    // Manifests that ship with the node, applied once. After the CRD registry
+    // is loaded, because a manifest may be a custom resource of a CRD that is
+    // already established; before the HTTP server starts, so a controller or a
+    // kubelet never observes a half-applied cluster.
+    if let Some(dir) = &config.manifest_dir {
+        manifests::apply_dir(&storage, &crd_registry, dir).await;
+    }
+
     // ServiceAccount token signing keys. A real cluster supplies the RSA
     // keypair (--service-account-signing-key-file / --service-account-key-file)
     // so every replica signs and verifies with the same key — tokens then work

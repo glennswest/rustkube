@@ -566,7 +566,7 @@ fn parse_openapi_path(path: &str) -> Option<(String, String, String)> {
 /// Only what `kubectl apply` needs to resolve a GVK to a path — the schemas
 /// themselves stay empty, so validation happens server-side rather than against
 /// a client-side copy of the type.
-fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'static str, bool)> {
+pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'static str, bool)> {
     match (group, version) {
         ("", "v1") => vec![
             ("namespaces", "Namespace", false),

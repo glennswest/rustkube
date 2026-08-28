@@ -15,6 +15,7 @@ pub mod error;
 pub mod events;
 pub mod eviction;
 pub mod handlers;
+pub mod manifests;
 pub mod protobuf_mw;
 pub mod rbac_engine;
 pub mod selector;

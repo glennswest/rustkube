@@ -70,6 +70,13 @@ struct Cli {
     #[arg(long = "service-account-key-file")]
     service_account_key: Option<PathBuf>,
 
+    /// Directory of manifests to apply once at startup (YAML or JSON, applied
+    /// in filename order). Objects are created if absent; an object annotated
+    /// `addonmanager.kubernetes.io/mode: Reconcile` is also overwritten when
+    /// it already exists.
+    #[arg(long = "manifest-dir", env = "MANIFEST_DIR")]
+    manifest_dir: Option<PathBuf>,
+
     /// Private key (PEM) used to SIGN ServiceAccount tokens (upstream name).
     /// Without it the apiserver falls back to an ephemeral per-process key and
     /// tokens will not validate on other replicas or survive a restart.
@@ -118,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
         anonymous_auth: cli.anonymous_auth,
         dev_anonymous_admin: cli.dev_anonymous_admin,
         insecure: cli.insecure,
+        manifest_dir: cli.manifest_dir,
         service_account_key: cli.service_account_key,
         service_account_signing_key: cli.service_account_signing_key,
         advertise_address: cli.advertise_address,

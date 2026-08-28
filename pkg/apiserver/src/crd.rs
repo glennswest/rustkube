@@ -123,6 +123,21 @@ impl CrdRegistry {
         }
     }
 
+    /// `(plural, namespaced)` for a custom kind, so a manifest naming a
+    /// custom resource can be resolved to a storage path the same way a
+    /// built-in one is.
+    pub async fn resource_for_kind(
+        &self,
+        group: &str,
+        version: &str,
+        kind: &str,
+    ) -> Option<(String, bool)> {
+        let crds = self.crds.read().await;
+        crds.get(group)?.get(version)?.values().find(|d| d.kind == kind).map(|d| {
+            (d.plural.clone(), matches!(d.scope, CrdScope::Namespaced))
+        })
+    }
+
     /// The printer columns a version declares, if any.
     pub async fn printer_columns(&self, group: &str, version: &str, plural: &str) -> Vec<Value> {
         let crds = self.crds.read().await;
