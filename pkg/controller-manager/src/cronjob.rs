@@ -142,23 +142,69 @@ impl CronJobController {
             }
         }
 
-        // Check if we should create a new job
+        // What start, if any, is owed right now.
+        //
+        // Not "does the schedule match this instant": the controller ticks
+        // every five seconds and a schedule fires on a minute, so asking only
+        // about *now* loses every run the controller was not awake for — a
+        // restart, a slow reconcile, a node that was paused. The window since
+        // the last run is what gets evaluated, and only the most recent missed
+        // start is acted on.
         let now = chrono::Utc::now();
-        let should_run = cron_matches(schedule, &now);
+        let created = cj["metadata"]["creationTimestamp"]
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+            .unwrap_or(now);
+        let last_schedule = cj["status"]["lastScheduleTime"]
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&chrono::Utc));
+        let deadline = cj["spec"]["startingDeadlineSeconds"].as_i64();
 
-        if should_run {
-            // Check if we already ran this minute
-            let current_minute = now.format("%Y-%m-%dT%H:%M").to_string();
-            let last_schedule = cj["status"]["lastScheduleTime"]
-                .as_str()
-                .unwrap_or("");
-            let last_minute = if last_schedule.len() >= 16 {
-                &last_schedule[..16]
-            } else {
-                ""
-            };
+        // A time zone is not honoured, and saying so beats scheduling in the
+        // wrong one: `spec.timeZone` means the schedule is in that zone, and
+        // everything here is UTC.
+        if let Some(tz) = cj["spec"]["timeZone"].as_str() {
+            warn!(
+                "CronJob {namespace}/{cj_name} sets timeZone={tz}, which is not \
+                 implemented — the schedule is being read as UTC"
+            );
+        }
 
-            if current_minute != last_minute {
+        let due = match crate::schedule::start_to_run(
+            schedule,
+            last_schedule,
+            created,
+            now,
+            deadline,
+        ) {
+            Ok(d) => d,
+            Err(e) => {
+                // Refused rather than guessed. Move the marker to now so the
+                // next pass is a normal one instead of repeating the refusal
+                // forever.
+                warn!("CronJob {namespace}/{cj_name}: cannot catch up ({e:?}); \
+                       resuming from now without running the missed starts");
+                let mut updated_cj = cj.clone();
+                if updated_cj["status"].is_null() {
+                    updated_cj["status"] = json!({});
+                }
+                updated_cj["status"]["lastScheduleTime"] =
+                    json!(now.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+                let _ = self
+                    .api
+                    .update(
+                        &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
+                        &updated_cj,
+                    )
+                    .await;
+                None
+            }
+        };
+
+        if let Some(scheduled_for) = due {
+            {
                 match concurrency {
                     "Forbid" => {
                         if !active_jobs.is_empty() {
@@ -188,9 +234,12 @@ impl CronJobController {
                     }
                 }
 
-                // Update lastScheduleTime
+                // The *scheduled* instant, not the wall clock. Recording
+                // "now" makes a catch-up run look like an on-time one and
+                // shifts the next window, so a controller that is a few
+                // seconds late slowly drifts off the schedule.
                 let mut updated_cj = cj.clone();
-                let now_str = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                let now_str = scheduled_for.format("%Y-%m-%dT%H:%M:%SZ").to_string();
                 if updated_cj["status"].is_null() {
                     updated_cj["status"] = json!({});
                 }

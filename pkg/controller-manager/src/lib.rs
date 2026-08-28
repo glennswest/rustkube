@@ -22,6 +22,7 @@ pub mod pdb;
 pub mod node;
 pub mod replicaset;
 pub mod rollout;
+pub mod schedule;
 pub mod runner;
 pub mod service;
 pub mod statefulset;
