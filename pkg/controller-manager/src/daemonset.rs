@@ -310,17 +310,48 @@ fn build_daemonset_pod(
     if let Some(s) = spec.as_object_mut() {
         // Bypass scheduler — place directly on node
         s.insert("nodeName".into(), Value::String(node_name.to_string()));
-        // Add not-ready toleration so DaemonSet pods run on NotReady nodes too
-        let toleration = json!({
-            "key": "node.kubernetes.io/not-ready",
-            "operator": "Exists",
-            "effect": "NoExecute"
-        });
-        let tolerations = s
-            .entry("tolerations")
-            .or_insert_with(|| json!([]));
+        // The tolerations upstream's DaemonSet controller adds to every pod
+        // it creates.
+        //
+        // **A DaemonSet has to run on a node that is not working.** That is
+        // the point of one: the pod network, the CSI driver and the log
+        // shipper are what *make* a node usable, so a scheduling rule that
+        // keeps pods off a broken node keeps off exactly the pods that would
+        // fix it. Only `not-ready` was here before, so a node under memory or
+        // disk pressure, or one cordoned by an operator, would have its
+        // DaemonSet pods evicted and never replaced.
+        //
+        // `network-unavailable` matters most immediately: it is the taint a
+        // node carries when it has no pod network, and Cilium is the thing
+        // that removes it. Without the toleration the pod network cannot be
+        // deployed to a node that has no pod network.
+        let defaults = [
+            ("node.kubernetes.io/not-ready", "NoExecute"),
+            ("node.kubernetes.io/unreachable", "NoExecute"),
+            ("node.kubernetes.io/disk-pressure", "NoSchedule"),
+            ("node.kubernetes.io/memory-pressure", "NoSchedule"),
+            ("node.kubernetes.io/pid-pressure", "NoSchedule"),
+            ("node.kubernetes.io/unschedulable", "NoSchedule"),
+            ("node.kubernetes.io/network-unavailable", "NoSchedule"),
+        ];
+        let tolerations = s.entry("tolerations").or_insert_with(|| json!([]));
         if let Some(arr) = tolerations.as_array_mut() {
-            arr.push(toleration);
+            for (key, effect) in defaults {
+                // Never duplicate one the author already wrote: a DaemonSet
+                // that tolerates everything (`operator: Exists` with no key,
+                // which is what Cilium ships) already covers these, and
+                // appending seven more would change the pod spec on every
+                // reconcile.
+                let covered = arr.iter().any(|t| {
+                    let tk = t["key"].as_str().unwrap_or("");
+                    let te = t["effect"].as_str().unwrap_or("");
+                    let wildcard_key = tk.is_empty() && t["operator"].as_str() == Some("Exists");
+                    (wildcard_key || tk == key) && (te.is_empty() || te == effect)
+                });
+                if !covered {
+                    arr.push(json!({ "key": key, "operator": "Exists", "effect": effect }));
+                }
+            }
         }
     }
 
@@ -390,4 +421,80 @@ fn is_pod_ready(pod: &Value) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ds(tolerations: Value) -> Value {
+        let mut spec = json!({"containers": [{"name": "c", "image": "x"}]});
+        if !tolerations.is_null() {
+            spec["tolerations"] = tolerations;
+        }
+        json!({
+            "metadata": {"name": "d", "namespace": "kube-system", "uid": "u"},
+            "spec": {"template": {"metadata": {"labels": {"a": "b"}}, "spec": spec}}
+        })
+    }
+
+    /// A DaemonSet must run on a node that is not working — that is the point
+    /// of one. The pod network, the CSI driver and the log shipper are what
+    /// *make* a node usable, so keeping their pods off a broken node keeps off
+    /// exactly the pods that would fix it. Only `not-ready` was tolerated
+    /// before.
+    #[test]
+    fn daemonset_pods_tolerate_every_node_condition() {
+        let pod =
+            build_daemonset_pod("kube-system", "d", "u", "node1", &ds(Value::Null)).unwrap();
+        let tol = pod["spec"]["tolerations"].as_array().expect("tolerations");
+        let keys: Vec<&str> = tol.iter().filter_map(|t| t["key"].as_str()).collect();
+        for want in [
+            "node.kubernetes.io/not-ready",
+            "node.kubernetes.io/unreachable",
+            "node.kubernetes.io/disk-pressure",
+            "node.kubernetes.io/memory-pressure",
+            "node.kubernetes.io/pid-pressure",
+            "node.kubernetes.io/unschedulable",
+            // The one Cilium needs: it is the taint a node carries when it has
+            // no pod network, and Cilium is what removes it.
+            "node.kubernetes.io/network-unavailable",
+        ] {
+            assert!(keys.contains(&want), "{want} not tolerated: {keys:?}");
+        }
+    }
+
+    /// A DaemonSet that already tolerates everything — which is what Cilium
+    /// ships — gets nothing appended, or the pod spec would differ on every
+    /// reconcile.
+    #[test]
+    fn a_tolerate_everything_daemonset_gets_nothing_appended() {
+        let pod = build_daemonset_pod(
+            "kube-system", "d", "u", "node1",
+            &ds(json!([{"operator": "Exists"}])),
+        )
+        .unwrap();
+        let tol = pod["spec"]["tolerations"].as_array().expect("tolerations");
+        assert_eq!(tol.len(), 1, "appended to a tolerate-everything spec: {tol:?}");
+    }
+
+    /// An author's own toleration for one of the defaults is not duplicated.
+    #[test]
+    fn an_explicit_toleration_is_not_duplicated() {
+        let pod = build_daemonset_pod(
+            "kube-system", "d", "u", "node1",
+            &ds(json!([{
+                "key": "node.kubernetes.io/disk-pressure",
+                "operator": "Exists",
+                "effect": "NoSchedule"
+            }])),
+        )
+        .unwrap();
+        let tol = pod["spec"]["tolerations"].as_array().unwrap();
+        let n = tol
+            .iter()
+            .filter(|t| t["key"].as_str() == Some("node.kubernetes.io/disk-pressure"))
+            .count();
+        assert_eq!(n, 1, "duplicated an explicit toleration");
+    }
 }
