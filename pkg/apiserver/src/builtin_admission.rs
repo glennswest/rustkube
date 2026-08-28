@@ -45,6 +45,29 @@ pub async fn admit_create(
             pod_security(level, obj)?;
         }
     }
+
+    if resource == "cronjobs" {
+        cronjob_schedule(obj)?;
+    }
+    Ok(())
+}
+
+/// Reject a CronJob whose schedule can never fire.
+///
+/// Without this the failure is silent and looks like patience: the object is
+/// accepted, `get cronjobs` shows it, `lastScheduleTime` stays empty, and
+/// nothing anywhere says the schedule is unsatisfiable. `0 0 30 2 *` waits
+/// for the 30th of February forever. Rejecting at admission turns a month-long
+/// mystery into a message at `kubectl apply`.
+fn cronjob_schedule(obj: &Value) -> Result<(), ApiError> {
+    let Some(schedule) = obj["spec"]["schedule"].as_str() else {
+        return Err(ApiError::invalid("spec.schedule is required"));
+    };
+    if let Err(e) = apimachinery::cron::validate(schedule) {
+        return Err(ApiError::invalid(&format!(
+            "spec.schedule {schedule:?} will never fire: {e}"
+        )));
+    }
     Ok(())
 }
 

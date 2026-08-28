@@ -67,6 +67,97 @@ pub fn matches(schedule: &str, at: &DateTime<Utc>) -> bool {
     }
 }
 
+/// Why a schedule can never fire.
+#[derive(Debug, PartialEq)]
+pub enum Invalid {
+    /// Not five whitespace-separated fields.
+    WrongFieldCount(usize),
+    /// A field matched nothing at all — `70 * * * *`, `*/0 * * * *`,
+    /// `5-2 * * * *`.
+    EmptyField { field: &'static str, value: String },
+    /// Every field is individually satisfiable but no date satisfies them
+    /// together: `0 0 30 2 *` — the 30th of February.
+    ImpossibleDate,
+}
+
+impl std::fmt::Display for Invalid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Invalid::WrongFieldCount(n) => write!(
+                f,
+                "a cron schedule has 5 fields (minute hour day-of-month month \
+                 day-of-week), this has {n}"
+            ),
+            Invalid::EmptyField { field, value } => {
+                write!(f, "the {field} field {value:?} matches nothing")
+            }
+            Invalid::ImpossibleDate => {
+                write!(f, "no date satisfies the day-of-month and month fields together")
+            }
+        }
+    }
+}
+
+/// Reject a schedule that can never fire.
+///
+/// **A CronJob with an unsatisfiable schedule is silent.** It is accepted, it
+/// appears in `get cronjobs`, its `lastScheduleTime` stays empty, and nothing
+/// ever says why — the failure looks exactly like a job that simply has not
+/// come due yet. Catching it at admission is the difference between a typo
+/// and an outage discovered a month later.
+///
+/// The impossible-date check walks a four-year window, which covers a leap
+/// year, so `0 0 29 2 *` is accepted and `0 0 30 2 *` is not.
+pub fn validate(schedule: &str) -> Result<(), Invalid> {
+    let fields: Vec<&str> = schedule.split_whitespace().collect();
+    if fields.len() != 5 {
+        return Err(Invalid::WrongFieldCount(fields.len()));
+    }
+    let specs: [(&'static str, u32, u32); 5] = [
+        ("minute", 0, 59),
+        ("hour", 0, 23),
+        ("day-of-month", 1, 31),
+        ("month", 1, 12),
+        ("day-of-week", 0, 7),
+    ];
+    for (i, (name, lo, hi)) in specs.iter().enumerate() {
+        if parse_field(fields[i], *lo, *hi).is_empty() {
+            return Err(Invalid::EmptyField {
+                field: name,
+                value: fields[i].to_string(),
+            });
+        }
+    }
+
+    // Every field is satisfiable alone; the remaining way to be impossible is
+    // a day that the month never has. Only day-of-month and month can
+    // conflict, and only when day-of-month is restricted.
+    if fields[2] != "*" {
+        let days = parse_field(fields[2], 1, 31);
+        let months = parse_field(fields[3], 1, 12);
+        let mut possible = false;
+        'outer: for year in 2024..2028 {
+            for m in 1..=12u32 {
+                if !months.contains(&m) {
+                    continue;
+                }
+                for d in 1..=31u32 {
+                    if days.contains(&d)
+                        && chrono::NaiveDate::from_ymd_opt(year, m, d).is_some()
+                    {
+                        possible = true;
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        if !possible {
+            return Err(Invalid::ImpossibleDate);
+        }
+    }
+    Ok(())
+}
+
 /// Why a catch-up was refused.
 #[derive(Debug, PartialEq)]
 pub enum MissedError {
@@ -337,5 +428,41 @@ mod tests {
             start_to_run("*/15 * * * *", None, created, now, None).unwrap(),
             Some(now)
         );
+    }
+
+    /// A schedule that can never fire is rejected, because otherwise it is
+    /// silent: the CronJob exists, looks healthy, and never runs.
+    #[test]
+    fn unsatisfiable_schedules_are_rejected() {
+        assert!(validate("* * * * *").is_ok());
+        assert!(validate("0 0 29 2 *").is_ok(), "29 Feb exists in a leap year");
+
+        assert_eq!(validate("* * * *"), Err(Invalid::WrongFieldCount(4)));
+        assert_eq!(validate(""), Err(Invalid::WrongFieldCount(0)));
+        assert_eq!(
+            validate("70 * * * *"),
+            Err(Invalid::EmptyField { field: "minute", value: "70".into() })
+        );
+        assert_eq!(
+            validate("*/0 * * * *"),
+            Err(Invalid::EmptyField { field: "minute", value: "*/0".into() })
+        );
+        // A backwards range matches nothing.
+        assert_eq!(
+            validate("5-2 * * * *"),
+            Err(Invalid::EmptyField { field: "minute", value: "5-2".into() })
+        );
+        assert_eq!(validate("0 0 30 2 *"), Err(Invalid::ImpossibleDate));
+        assert_eq!(validate("0 0 31 4 *"), Err(Invalid::ImpossibleDate));
+    }
+
+    /// The message has to say what is wrong, since the whole point is that a
+    /// silent failure becomes a loud one.
+    #[test]
+    fn the_rejection_says_what_is_wrong() {
+        let msg = validate("70 * * * *").unwrap_err().to_string();
+        assert!(msg.contains("minute"), "{msg}");
+        assert!(msg.contains("70"), "{msg}");
+        assert!(validate("0 0 30 2 *").unwrap_err().to_string().contains("no date"));
     }
 }

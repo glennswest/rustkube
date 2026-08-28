@@ -13,11 +13,22 @@ use tracing::{debug, error, info, warn};
 
 pub struct CronJobController {
     api: Arc<ApiClient>,
+    /// Every scheduling decision becomes an Event.
+    ///
+    /// This is the audit trail. A CronJob's own status says what is true now;
+    /// it cannot say "at 02:00 the run was skipped because the previous one
+    /// was still going", and that is exactly the question asked afterwards.
+    /// Events are also what `oc describe cronjob` prints, so the history shows
+    /// up with no client changes.
+    recorder: crate::events::EventRecorder,
 }
 
 impl CronJobController {
     pub fn new(api: Arc<ApiClient>) -> Self {
-        Self { api }
+        Self {
+            recorder: crate::events::EventRecorder::new(api.clone(), "cronjob-controller"),
+            api,
+        }
     }
 
     pub async fn run(&self) {
@@ -172,7 +183,7 @@ impl CronJobController {
             );
         }
 
-        let due = match crate::schedule::start_to_run(
+        let due = match apimachinery::cron::start_to_run(
             schedule,
             last_schedule,
             created,
@@ -186,6 +197,18 @@ impl CronJobController {
                 // forever.
                 warn!("CronJob {namespace}/{cj_name}: cannot catch up ({e:?}); \
                        resuming from now without running the missed starts");
+                self.recorder
+                    .event(
+                        cj,
+                        "Warning",
+                        "TooManyMissedTimes",
+                        &format!(
+                            "Cannot determine the missed start times ({e:?}); resuming \
+                             from now. Set startingDeadlineSeconds to bound how far back \
+                             the controller looks."
+                        ),
+                    )
+                    .await;
                 let mut updated_cj = cj.clone();
                 if updated_cj["status"].is_null() {
                     updated_cj["status"] = json!({});
@@ -209,6 +232,18 @@ impl CronJobController {
                     "Forbid" => {
                         if !active_jobs.is_empty() {
                             debug!("CronJob {cj_name}: skipping (Forbid, active jobs exist)");
+                            self.recorder
+                                .event(
+                                    cj,
+                                    "Normal",
+                                    "MissSchedule",
+                                    &format!(
+                                        "Skipped the {scheduled_for} run: concurrencyPolicy \
+                                         is Forbid and {} job(s) are still active",
+                                        active_jobs.len()
+                                    ),
+                                )
+                                .await;
                         } else {
                             self.create_job(namespace, cj_name, cj_uid, cj).await?;
                         }
@@ -227,10 +262,33 @@ impl CronJobController {
                             }
                         }
                         self.create_job(namespace, cj_name, cj_uid, cj).await?;
+                        self.recorder
+                            .event(
+                                cj,
+                                "Normal",
+                                "SuccessfulCreate",
+                                &format!(
+                                    "Replaced the running job and started the \
+                                     {scheduled_for} run"
+                                ),
+                            )
+                            .await;
                     }
                     _ => {
                         // Allow
                         self.create_job(namespace, cj_name, cj_uid, cj).await?;
+                        // Says which scheduled time this run is for, not just
+                        // that a job appeared: a catch-up run and an on-time
+                        // one are indistinguishable otherwise, and telling
+                        // them apart is most of what the history is for.
+                        self.recorder
+                            .event(
+                                cj,
+                                "Normal",
+                                "SuccessfulCreate",
+                                &format!("Started the job for the {scheduled_for} run"),
+                            )
+                            .await;
                     }
                 }
 
@@ -262,6 +320,11 @@ impl CronJobController {
                     .collect();
                 updated_cj["status"]["active"] = json!(active_refs);
 
+                // `lastSuccessfulTime` is upstream's field.
+                if let Some(t) = last_completion(&successful_jobs) {
+                    updated_cj["status"]["lastSuccessfulTime"] = json!(t);
+                }
+
                 let _ = self
                     .api
                     .update_status(
@@ -272,13 +335,83 @@ impl CronJobController {
             }
         }
 
-        // Clean up history
-        self.cleanup_history(namespace, &mut successful_jobs, successful_limit)
+        // Clean up history, counting what left the window.
+        let pruned_ok = self
+            .cleanup_history(namespace, &mut successful_jobs, successful_limit)
             .await;
-        self.cleanup_history(namespace, &mut failed_jobs, failed_limit)
+        let pruned_bad = self
+            .cleanup_history(namespace, &mut failed_jobs, failed_limit)
             .await;
 
+        self.write_stats(
+            namespace,
+            cj_name,
+            cj,
+            active_jobs.len() as u64,
+            successful_jobs.len() as u64 - pruned_ok,
+            failed_jobs.len() as u64 - pruned_bad,
+            pruned_ok,
+            pruned_bad,
+        )
+        .await;
+
         Ok(())
+    }
+
+    /// Lifetime counters for a CronJob.
+    ///
+    /// **Exact rather than sampled.** Counting the Jobs that currently exist
+    /// would make the totals *fall* as `successfulJobsHistoryLimit` trims them
+    /// — a CronJob that has run ten thousand times would report three. So the
+    /// counters are "what is retained right now" plus "everything ever pruned",
+    /// and pruning is the only way a Job leaves the window.
+    ///
+    /// Under `storm.io/` because they are not upstream fields. A client that
+    /// does not know them ignores them; `oc get cronjob -o yaml` shows them
+    /// without any client changes, which is the point.
+    #[allow(clippy::too_many_arguments)]
+    async fn write_stats(
+        &self,
+        namespace: &str,
+        cj_name: &str,
+        cj: &Value,
+        active: u64,
+        retained_ok: u64,
+        retained_bad: u64,
+        pruned_ok: u64,
+        pruned_bad: u64,
+    ) {
+        let prior = &cj["status"]["storm.io/stats"];
+        let ever_pruned_ok = prior["prunedSucceeded"].as_u64().unwrap_or(0) + pruned_ok;
+        let ever_pruned_bad = prior["prunedFailed"].as_u64().unwrap_or(0) + pruned_bad;
+
+        let succeeded = retained_ok + ever_pruned_ok;
+        let failed = retained_bad + ever_pruned_bad;
+        let total = succeeded + failed;
+
+        let mut updated = cj.clone();
+        if updated["status"].is_null() {
+            updated["status"] = json!({});
+        }
+        updated["status"]["storm.io/stats"] = json!({
+            "succeeded": succeeded,
+            "failed": failed,
+            "active": active,
+            // Kept so the sum above stays exact across restarts.
+            "prunedSucceeded": ever_pruned_ok,
+            "prunedFailed": ever_pruned_bad,
+            // A rate is what someone actually looks at, and computing it here
+            // means every client gets the same number.
+            "failureRate": if total == 0 { 0.0 } else { failed as f64 / total as f64 },
+        });
+
+        let _ = self
+            .api
+            .update_status(
+                &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
+                &updated,
+            )
+            .await;
     }
 
     async fn create_job(
@@ -330,14 +463,21 @@ impl CronJobController {
         Ok(())
     }
 
+    /// Trim the retained Jobs to the history limit, returning how many were
+    /// removed.
+    ///
+    /// The count matters: pruning is the **only** way a Job leaves the
+    /// window, so it is the one place an exact lifetime counter can be
+    /// maintained. Counting the Jobs that happen to still exist would make
+    /// the totals fall as history is trimmed.
     async fn cleanup_history(
         &self,
         namespace: &str,
         jobs: &mut Vec<&Value>,
         limit: usize,
-    ) {
+    ) -> u64 {
         if jobs.len() <= limit {
-            return;
+            return 0;
         }
         // Sort by creation timestamp (oldest first)
         jobs.sort_by(|a, b| {
@@ -357,7 +497,16 @@ impl CronJobController {
                     .await;
             }
         }
+        to_delete as u64
     }
+}
+
+/// The latest `status.completionTime` among a set of Jobs.
+fn last_completion(jobs: &[&Value]) -> Option<String> {
+    jobs.iter()
+        .filter_map(|j| j["status"]["completionTime"].as_str())
+        .max()
+        .map(str::to_owned)
 }
 
 // --- Cron parser ---
