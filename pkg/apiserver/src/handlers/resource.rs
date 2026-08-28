@@ -658,8 +658,18 @@ pub fn apply_patch_body(
             normalize_json_patch(target, &mut ops);
             let patch: json_patch::Patch = serde_json::from_value(ops)
                 .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
-            json_patch::patch(target, &patch)
-                .map_err(|e| ApiError::invalid(&format!("JSON Patch could not be applied: {e}")))?;
+            json_patch::patch(target, &patch).map_err(|e| {
+                // **Say which patch.** "operation '/0' failed at path
+                // '/spec/taints'" names an index into a document the reader
+                // does not have, so the next question is always "what was the
+                // patch" — and on a node with no shell there is no way to
+                // find out. Quoting it turns one round trip into none.
+                let body = String::from_utf8_lossy(body);
+                ApiError::invalid(&format!(
+                    "JSON Patch could not be applied: {e} — patch was: {}",
+                    body.chars().take(400).collect::<String>()
+                ))
+            })?;
         }
         "application/apply-patch+yaml" => {
             let patch: Value = serde_yaml::from_slice(body)
@@ -693,18 +703,68 @@ pub fn apply_patch_body(
 fn normalize_json_patch(target: &Value, ops: &mut Value) {
     let Some(arr) = ops.as_array_mut() else { return };
     arr.retain(|op| {
-        let is_null_test = op.get("op").and_then(Value::as_str) == Some("test")
-            && op.get("value").map(Value::is_null).unwrap_or(true);
-        if !is_null_test {
+        if op.get("op").and_then(Value::as_str) != Some("test") {
+            return true;
+        }
+        // A test whose value is "nothing" — null, or an empty list or object.
+        //
+        // **Absent and empty are the same thing to a controller.** Go marshals
+        // a nil slice as `null` and an allocated-but-empty one as `[]`, and
+        // which one a client sends is an accident of how it built the struct;
+        // cilium-operator CAS-guards the node taint list either way. Treating
+        // only `null` as holding made the empty-list spelling fail against a
+        // node that simply has no taints yet.
+        let holds_when_absent = match op.get("value") {
+            None | Some(Value::Null) => true,
+            Some(Value::Array(a)) => a.is_empty(),
+            Some(Value::Object(o)) => o.is_empty(),
+            _ => false,
+        };
+        if !holds_when_absent {
             return true;
         }
         // Keep the test only if the path resolves (let the crate check it);
-        // an absent path means `test null` holds, so drop it.
+        // an absent path means the test holds, so drop it.
         match op.get("path").and_then(Value::as_str) {
             Some(p) => target.pointer(p).is_some(),
             None => true,
         }
     });
+
+    // `replace` on an absent member whose parent exists becomes `add`.
+    //
+    // RFC 6902 says replace requires the target to exist; kube-apiserver's
+    // evanphx/json-patch is lenient, and controllers rely on that leniency
+    // because on a real cluster the field usually *does* exist and they never
+    // find out. Here the node genuinely has no taints, so the strict reading
+    // rejects a patch that works everywhere else.
+    for op in arr.iter_mut() {
+        if op.get("op").and_then(Value::as_str) != Some("replace") {
+            continue;
+        }
+        let Some(path) = op.get("path").and_then(Value::as_str).map(str::to_owned) else {
+            continue;
+        };
+        if target.pointer(&path).is_some() {
+            continue; // present: an ordinary replace
+        }
+        // Only when the parent is there — `add` cannot create a path two
+        // levels deep either, and inventing one would hide a real mistake.
+        let parent = match path.rfind('/') {
+            Some(0) | None => String::new(),
+            Some(i) => path[..i].to_string(),
+        };
+        let parent_exists = if parent.is_empty() {
+            true
+        } else {
+            target.pointer(&parent).is_some()
+        };
+        if parent_exists {
+            if let Some(o) = op.as_object_mut() {
+                o.insert("op".to_string(), Value::String("add".to_string()));
+            }
+        }
+    }
 }
 
 /// Read-modify-write a stored object through `apply_patch_body`, preserving the
@@ -1202,6 +1262,78 @@ mod tests {
         let empty = parse_delete_options(b"");
         assert!(empty.propagation_policy.is_none() && !empty.dry_run);
         assert!(check_preconditions(&obj, &empty).is_ok());
+    }
+
+    /// Absent and empty are the same thing to a controller.
+    ///
+    /// Go marshals a nil slice as `null` and an allocated-but-empty one as
+    /// `[]`; which one a client sends is an accident of how it built the
+    /// struct. cilium-operator CAS-guards the node taint list either way, and
+    /// only the `null` spelling used to hold — so the empty-list one failed
+    /// against a node that simply has no taints yet.
+    #[test]
+    fn json_patch_test_empty_list_on_absent_path_also_holds() {
+        for guard in [r#"[]"#, r#"null"#, r#"{}"#] {
+            let mut node = json!({"spec": {"podCIDR": "10.244.0.0/24"}});
+            let body = format!(
+                r#"[{{"op":"test","path":"/spec/taints","value":{guard}}},
+                    {{"op":"add","path":"/spec/taints","value":[{{"key":"node.cilium.io/agent-not-ready","effect":"NoSchedule"}}]}}]"#
+            );
+            apply_patch_body(&mut node, "application/json-patch+json", body.as_bytes())
+                .unwrap_or_else(|e| panic!("guard {guard} should hold: {e:?}"));
+            assert_eq!(node["spec"]["taints"][0]["key"], "node.cilium.io/agent-not-ready");
+        }
+
+        // A non-empty test value against an absent path must still fail — that
+        // is a genuine CAS miss, not a spelling difference.
+        let mut n = json!({"spec": {}});
+        assert!(apply_patch_body(
+            &mut n,
+            "application/json-patch+json",
+            br#"[{"op":"test","path":"/spec/taints","value":[{"key":"x"}]}]"#,
+        )
+        .is_err());
+    }
+
+    /// `replace` on an absent member whose parent exists behaves as `add`,
+    /// which is the leniency kube-apiserver has and controllers rely on
+    /// without knowing it — on a real cluster the field usually exists.
+    #[test]
+    fn json_patch_replace_on_an_absent_member_adds_it() {
+        let mut node = json!({"spec": {}});
+        apply_patch_body(
+            &mut node,
+            "application/json-patch+json",
+            br#"[{"op":"replace","path":"/spec/taints","value":[{"key":"k"}]}]"#,
+        )
+        .expect("replace on an absent member should add it");
+        assert_eq!(node["spec"]["taints"][0]["key"], "k");
+
+        // But not when the parent is missing too: inventing two levels would
+        // hide a real mistake.
+        let mut empty = json!({});
+        assert!(apply_patch_body(
+            &mut empty,
+            "application/json-patch+json",
+            br#"[{"op":"replace","path":"/spec/taints","value":[]}]"#,
+        )
+        .is_err());
+    }
+
+    /// A rejected patch quotes itself. "operation '/0' failed at path
+    /// '/spec/taints'" names an index into a document the reader does not
+    /// have.
+    #[test]
+    fn a_rejected_patch_says_what_the_patch_was() {
+        let mut obj = json!({"spec": {"taints": [{"key": "real"}]}});
+        let err = apply_patch_body(
+            &mut obj,
+            "application/json-patch+json",
+            br#"[{"op":"test","path":"/spec/taints","value":[{"key":"other"}]}]"#,
+        )
+        .unwrap_err();
+        assert!(err.message.contains("patch was:"), "{}", err.message);
+        assert!(err.message.contains("/spec/taints"), "{}", err.message);
     }
 
     #[test]
