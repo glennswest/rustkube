@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 /// Scope of a CRD — determines whether instances are namespaced or cluster-scoped.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CrdScope {
     Namespaced,
     Cluster,
