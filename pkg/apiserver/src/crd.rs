@@ -760,3 +760,48 @@ mod establish_tests {
         assert!(conds.iter().any(|c| c["type"] == "Established" && c["status"] == "True"));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every served version registers, not just the first. Cilium ships v2 and
+    /// v2alpha1 kinds side by side; taking versions[0] made the rest 404.
+    #[tokio::test]
+    async fn all_served_versions_register() {
+        let reg = CrdRegistry::new();
+        reg.register(&serde_json::json!({
+            "spec": {
+                "group": "cilium.io",
+                "scope": "Namespaced",
+                "names": {"plural": "ciliumendpoints", "kind": "CiliumEndpoint"},
+                "versions": [
+                    {"name": "v2", "served": true,
+                     "additionalPrinterColumns": [
+                        {"name": "Endpoint", "type": "integer", "jsonPath": ".status.id"}
+                     ]},
+                    {"name": "v2alpha1", "served": true},
+                    {"name": "v1", "served": false},
+                ]
+            }
+        }))
+        .await;
+
+        assert!(!reg.api_resources("cilium.io", "v2").await.is_empty(), "v2 missing");
+        assert!(
+            !reg.api_resources("cilium.io", "v2alpha1").await.is_empty(),
+            "v2alpha1 missing — only the first version registered"
+        );
+        // served: false is storage-only and is not offered over the API.
+        assert!(reg.api_resources("cilium.io", "v1").await.is_empty(), "v1 is not served");
+
+        // Columns travel with the version that declared them.
+        let cols = reg.printer_columns("cilium.io", "v2", "ciliumendpoints").await;
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0]["name"], "Endpoint");
+        assert!(reg
+            .printer_columns("cilium.io", "v2alpha1", "ciliumendpoints")
+            .await
+            .is_empty());
+    }
+}

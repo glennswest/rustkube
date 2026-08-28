@@ -405,4 +405,77 @@ mod tests {
         assert_eq!(t["rows"].as_array().unwrap().len(), 1);
         assert_eq!(t["rows"][0]["cells"][0], "solo");
     }
+
+    /// The JSONPath subset a printer column may use: dotted fields and
+    /// numeric indices. Anything unresolvable is an empty cell rather than an
+    /// error — a column whose field is not set yet is normal.
+    #[test]
+    fn printer_column_paths_resolve_fields_and_indices() {
+        let o = json!({
+            "spec": { "replicas": 3, "name": "web" },
+            "status": { "conditions": [{ "type": "Ready", "status": "True" }] },
+        });
+        assert_eq!(json_path(&o, ".spec.replicas"), Some(&json!(3)));
+        assert_eq!(json_path(&o, ".spec.name"), Some(&json!("web")));
+        assert_eq!(
+            json_path(&o, ".status.conditions[0].type"),
+            Some(&json!("Ready"))
+        );
+        assert_eq!(json_path(&o, ".status.conditions[1].type"), None);
+        assert_eq!(json_path(&o, ".spec.missing"), None);
+    }
+
+    /// A CRD's own columns become the table's, with NAME first and AGE last.
+    #[test]
+    fn a_crd_prints_the_columns_it_declares() {
+        let columns = vec![
+            json!({"name": "Endpoint", "type": "string", "jsonPath": ".status.id"}),
+            json!({"name": "Ready", "type": "string", "jsonPath": ".status.conditions[0].status"}),
+        ];
+        let list = json!({"items": [{
+            "metadata": {"name": "cep-1"},
+            "status": {"id": 42, "conditions": [{"status": "True"}]},
+        }]});
+        let t = to_table_crd(list, &columns);
+        let names: Vec<&str> = t["columnDefinitions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Name", "Endpoint", "Ready", "Age"]);
+        let cells = &t["rows"][0]["cells"];
+        assert_eq!(cells[0], json!("cep-1"));
+        // A number stays a number: the column says type integer and a client
+        // formatting by type would be handed a string otherwise.
+        assert_eq!(cells[1], json!(42));
+        assert_eq!(cells[2], json!("True"));
+        // The whole object rides along, as every Table row must.
+        assert_eq!(t["rows"][0]["object"]["metadata"]["name"], json!("cep-1"));
+    }
+
+    /// A CRD with no declared columns still gets a usable table rather than an
+    /// empty one — this is the shape every CRD had before.
+    #[test]
+    fn a_crd_without_columns_still_prints_name_and_age() {
+        let list = json!({"items": [{"metadata": {"name": "x"}}]});
+        let t = to_table_crd(list, &[]);
+        let names: Vec<&str> = t["columnDefinitions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Name", "Age"]);
+    }
+
+    /// A single object, not a list — `oc get cnp foo` takes this path.
+    #[test]
+    fn a_single_custom_resource_is_one_row() {
+        let one = json!({"metadata": {"name": "only"}, "spec": {"n": 1}});
+        let cols = vec![json!({"name": "N", "type": "integer", "jsonPath": ".spec.n"})];
+        let t = to_table_crd(one, &cols);
+        assert_eq!(t["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(t["rows"][0]["cells"][1], json!(1));
+    }
 }
