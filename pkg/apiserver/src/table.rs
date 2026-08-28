@@ -215,6 +215,100 @@ fn modes(v: &Value) -> String {
     out.join(",")
 }
 
+/// Resolve one `additionalPrinterColumns` JSONPath against an object.
+///
+/// The subset upstream actually allows in a printer column: a leading `.`,
+/// dotted field names, and numeric indices — `.spec.replicas`,
+/// `.status.conditions[0].type`. Filters and wildcards are not permitted
+/// there, so they are not implemented here; an unresolvable path yields an
+/// empty cell, which is what upstream prints.
+fn json_path<'a>(obj: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut cur = obj;
+    for seg in path.trim_start_matches('.').split('.') {
+        if seg.is_empty() {
+            continue;
+        }
+        // `conditions[0]` — a field, then one or more indices.
+        let (field, rest) = match seg.find('[') {
+            Some(i) => (&seg[..i], &seg[i..]),
+            None => (seg, ""),
+        };
+        if !field.is_empty() {
+            cur = cur.get(field)?;
+        }
+        for idx in rest.split('[').filter(|p| !p.is_empty()) {
+            let n: usize = idx.trim_end_matches(']').parse().ok()?;
+            cur = cur.get(n)?;
+        }
+    }
+    Some(cur)
+}
+
+/// A cell's printed form. Strings print bare; everything else prints as JSON,
+/// so a number is `3` rather than `"3"` and a client formatting by `type`
+/// gets what it expects.
+fn cell(v: &Value) -> Value {
+    match v {
+        Value::String(s) => json!(s),
+        other => other.clone(),
+    }
+}
+
+/// Columns and rows from a CRD's own `additionalPrinterColumns`.
+///
+/// NAME first and AGE last, which is what upstream does regardless of what the
+/// CRD declares — every `kubectl get` output starts with a name, and a CRD
+/// that also declares an Age column simply gets it twice, as upstream allows.
+fn crd_printer(columns: &[Value]) -> (Vec<Value>, Vec<(String, i64)>) {
+    let mut cols = vec![col("Name", "string", 0, "Name of the object")];
+    let mut paths = Vec::new();
+    for c in columns {
+        let Some(name) = c["name"].as_str() else { continue };
+        let Some(path) = c["jsonPath"].as_str().or_else(|| c["JSONPath"].as_str()) else {
+            continue;
+        };
+        let ty = c["type"].as_str().unwrap_or("string");
+        let desc = c["description"].as_str().unwrap_or("");
+        // `priority` > 0 is a wide-only column. kubectl asks for every column
+        // and hides the wide ones itself, so they are all emitted.
+        cols.push(col(name, ty, c["priority"].as_i64().unwrap_or(0), desc));
+        paths.push((path.to_string(), 0i64));
+    }
+    cols.push(col("Age", "string", 0, "Time since creation"));
+    (cols, paths)
+}
+
+/// Convert a List into a Table using a CRD's declared printer columns.
+///
+/// Separate from [`to_table`] because the columns are data rather than code:
+/// they come from the CustomResourceDefinition, so one implementation serves
+/// every custom resource on the cluster instead of a printer per kind.
+pub fn to_table_crd(body: Value, columns: &[Value]) -> Value {
+    let (cols, paths) = crd_printer(columns);
+    let items: Vec<Value> = match body.get("items").and_then(|i| i.as_array()) {
+        Some(arr) => arr.clone(),
+        None => vec![body.clone()],
+    };
+    let rows: Vec<Value> = items
+        .iter()
+        .map(|o| {
+            let mut cells = vec![json!(name_of(o))];
+            for (path, _) in &paths {
+                cells.push(json_path(o, path).map(cell).unwrap_or(json!("")));
+            }
+            cells.push(json!(age(o)));
+            json!({ "cells": cells, "object": o })
+        })
+        .collect();
+    json!({
+        "kind": "Table",
+        "apiVersion": "meta.k8s.io/v1",
+        "metadata": body.get("metadata").cloned().unwrap_or(json!({})),
+        "columnDefinitions": cols,
+        "rows": rows,
+    })
+}
+
 /// Convert a List (or a single object) into a `meta.k8s.io/v1` Table.
 ///
 /// The whole object rides in `row.object`, because `kubectl -o wide` and

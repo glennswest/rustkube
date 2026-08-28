@@ -31,6 +31,12 @@ pub struct CrdDefinition {
     pub singular: String,
     pub short_names: Vec<String>,
     pub scope: CrdScope,
+    /// `additionalPrinterColumns` for this version, verbatim from the CRD.
+    ///
+    /// What makes `oc get ciliumendpoints` print something other than NAME and
+    /// AGE. The columns are the CRD author's, so honouring them covers every
+    /// custom resource at once rather than one hand-written printer per kind.
+    pub printer_columns: Vec<Value>,
 }
 
 /// Registry of all active CRDs, keyed by group → version → plural.
@@ -65,34 +71,66 @@ impl CrdRegistry {
             _ => CrdScope::Namespaced,
         };
 
-        // Get version from the first entry in spec.versions
-        let version = crd["spec"]["versions"]
-            .as_array()
-            .and_then(|vs| vs.first())
-            .and_then(|v| v["name"].as_str())
-            .unwrap_or("v1")
-            .to_string();
-
         if plural.is_empty() || group.is_empty() {
             return;
         }
 
-        let def = CrdDefinition {
-            group: group.clone(),
-            version: version.clone(),
-            kind,
-            plural: plural.clone(),
-            singular,
-            short_names,
-            scope,
-        };
+        // **Every served version, not just the first.** A CRD declares a list
+        // of versions and clients pick one; registering only `versions[0]`
+        // made every other version 404 — which for Cilium means its v2alpha1
+        // kinds (CiliumEndpointSlice among them) do not exist as far as the
+        // apiserver is concerned, while its v2 kinds do.
+        //
+        // `served: false` is a version that exists in storage and is not
+        // offered over the API, so it is skipped rather than registered.
+        let mut versions: Vec<(String, Vec<Value>)> = crd["spec"]["versions"]
+            .as_array()
+            .map(|vs| {
+                vs.iter()
+                    .filter(|v| v["served"].as_bool().unwrap_or(true))
+                    .filter_map(|v| {
+                        let name = v["name"].as_str()?.to_string();
+                        let cols = v["additionalPrinterColumns"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default();
+                        Some((name, cols))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if versions.is_empty() {
+            versions.push(("v1".to_string(), Vec::new()));
+        }
 
         let mut crds = self.crds.write().await;
-        crds.entry(group)
-            .or_default()
-            .entry(version)
-            .or_default()
-            .insert(plural, def);
+        for (version, printer_columns) in versions {
+            let def = CrdDefinition {
+                group: group.clone(),
+                version: version.clone(),
+                kind: kind.clone(),
+                plural: plural.clone(),
+                singular: singular.clone(),
+                short_names: short_names.clone(),
+                scope,
+                printer_columns,
+            };
+            crds.entry(group.clone())
+                .or_default()
+                .entry(version)
+                .or_default()
+                .insert(plural.clone(), def);
+        }
+    }
+
+    /// The printer columns a version declares, if any.
+    pub async fn printer_columns(&self, group: &str, version: &str, plural: &str) -> Vec<Value> {
+        let crds = self.crds.read().await;
+        crds.get(group)
+            .and_then(|vs| vs.get(version))
+            .and_then(|ps| ps.get(plural))
+            .map(|d| d.printer_columns.clone())
+            .unwrap_or_default()
     }
 
     /// Unregister a CRD by name (e.g. "foos.example.com").
@@ -308,7 +346,15 @@ pub async fn crd_list_ns(
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
     }
-    Ok(Json(crate::handlers::resource::project_list(list, metadata_only)).into_response())
+    let body = crate::handlers::resource::project_list(list, metadata_only);
+    // A custom resource gets a Table too, built from the columns its own CRD
+    // declares. Without this every `oc get <anything custom>` printed NAME and
+    // AGE and nothing else, however much the CRD had to say.
+    if crate::table::wants_table(&headers) {
+        let cols = state.crd_registry.printer_columns(&group, &version, &resource).await;
+        return Ok(Json(crate::table::to_table_crd(body, &cols)).into_response());
+    }
+    Ok(Json(body).into_response())
 }
 
 /// POST — create namespaced CRD instance.
@@ -560,7 +606,15 @@ pub async fn crd_list_cluster(
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
     }
-    Ok(Json(crate::handlers::resource::project_list(list, metadata_only)).into_response())
+    let body = crate::handlers::resource::project_list(list, metadata_only);
+    // A custom resource gets a Table too, built from the columns its own CRD
+    // declares. Without this every `oc get <anything custom>` printed NAME and
+    // AGE and nothing else, however much the CRD had to say.
+    if crate::table::wants_table(&headers) {
+        let cols = state.crd_registry.printer_columns(&group, &version, &resource).await;
+        return Ok(Json(crate::table::to_table_crd(body, &cols)).into_response());
+    }
+    Ok(Json(body).into_response())
 }
 
 /// POST — create cluster-scoped CRD instance.
