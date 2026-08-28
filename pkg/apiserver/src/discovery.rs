@@ -7,7 +7,7 @@ use crate::handlers::AppState;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::Json;
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// GET /version — server version info (kubectl uses this).
 pub async fn version() -> impl IntoResponse {
