@@ -34,6 +34,7 @@ pub async fn admit_create(
     };
 
     if resource == "services" {
+        default_service_ports(obj);
         allocate_cluster_ip(storage, service_cidr, obj).await?;
     }
 
@@ -308,9 +309,55 @@ fn parse_cidr(cidr: &str) -> Option<(std::net::Ipv4Addr, u32)> {
     Some((addr.parse().ok()?, prefix.parse().ok()?))
 }
 
+/// Default `spec.ports[].protocol` to TCP, and `targetPort` to `port`.
+///
+/// **A port with no protocol matches no endpoint.** Kubernetes defaults the
+/// protocol, so nearly every Service in the world omits it; this apiserver did
+/// not, and Cilium listed the frontend as `10.96.0.2:8080/NONE` with no
+/// backend while the pod behind it answered on its own address perfectly well.
+/// Nothing logged an error — the Service simply never worked, which is the
+/// worst way for a default to be missing.
+fn default_service_ports(obj: &mut Value) {
+    let Some(ports) = obj["spec"]["ports"].as_array_mut() else {
+        return;
+    };
+    for p in ports {
+        if p["protocol"].as_str().is_none() {
+            p["protocol"] = json!("TCP");
+        }
+        // Upstream defaults targetPort to port when it is absent.
+        if p["targetPort"].is_null() {
+            if let Some(port) = p["port"].as_i64() {
+                p["targetPort"] = json!(port);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod cluster_ip_tests {
     use super::*;
+
+
+    /// A Service written the way nearly every Service is written — no
+    /// protocol — must come out with one, or it matches no endpoint.
+    #[test]
+    fn a_port_with_no_protocol_gets_tcp() {
+        let mut svc = json!({"spec": {"ports": [{"port": 8080}]}});
+        default_service_ports(&mut svc);
+        assert_eq!(svc["spec"]["ports"][0]["protocol"], "TCP");
+        assert_eq!(svc["spec"]["ports"][0]["targetPort"], 8080);
+
+        // An explicit protocol is left alone.
+        let mut udp = json!({"spec": {"ports": [{"port": 53, "protocol": "UDP"}]}});
+        default_service_ports(&mut udp);
+        assert_eq!(udp["spec"]["ports"][0]["protocol"], "UDP");
+
+        // And an explicit targetPort is not overwritten.
+        let mut tp = json!({"spec": {"ports": [{"port": 80, "targetPort": 8080}]}});
+        default_service_ports(&mut tp);
+        assert_eq!(tp["spec"]["ports"][0]["targetPort"], 8080);
+    }
 
     #[test]
     fn a_cidr_parses_into_a_base_and_a_prefix() {
