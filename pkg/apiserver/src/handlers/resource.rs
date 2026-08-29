@@ -128,8 +128,17 @@ pub async fn list_cluster_resources(
     let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let kind = resource_to_list_kind(&resource);
+    // The group's version, not "v1".
+    //
+    // **A client looks up (apiVersion, kind) as a pair.** Saying "v1" for a
+    // list of NetworkPolicies claims core/v1, where no NetworkPolicyList is
+    // registered, so a typed client rejects the whole response — Cilium
+    // reported `no kind "NetworkPolicyList" is registered for version "v1"`
+    // and stopped watching policies and endpoint slices entirely. Every
+    // non-core group was affected. The watch path beside this already had it
+    // right, which is why watches worked and lists did not.
     let mut list = json!({
-        "apiVersion": "v1",
+        "apiVersion": resource_to_api_version(&resource),
         "kind": kind,
         "metadata": {
             "resourceVersion": revision.to_string()
@@ -185,8 +194,17 @@ pub async fn list_namespaced_resources(
     let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let kind = resource_to_list_kind(&resource);
+    // The group's version, not "v1".
+    //
+    // **A client looks up (apiVersion, kind) as a pair.** Saying "v1" for a
+    // list of NetworkPolicies claims core/v1, where no NetworkPolicyList is
+    // registered, so a typed client rejects the whole response — Cilium
+    // reported `no kind "NetworkPolicyList" is registered for version "v1"`
+    // and stopped watching policies and endpoint slices entirely. Every
+    // non-core group was affected. The watch path beside this already had it
+    // right, which is why watches worked and lists did not.
     let mut list = json!({
-        "apiVersion": "v1",
+        "apiVersion": resource_to_api_version(&resource),
         "kind": kind,
         "metadata": {
             "resourceVersion": revision.to_string()
@@ -242,8 +260,17 @@ pub async fn list_all_namespaces_resources(
     let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let kind = resource_to_list_kind(&resource);
+    // The group's version, not "v1".
+    //
+    // **A client looks up (apiVersion, kind) as a pair.** Saying "v1" for a
+    // list of NetworkPolicies claims core/v1, where no NetworkPolicyList is
+    // registered, so a typed client rejects the whole response — Cilium
+    // reported `no kind "NetworkPolicyList" is registered for version "v1"`
+    // and stopped watching policies and endpoint slices entirely. Every
+    // non-core group was affected. The watch path beside this already had it
+    // right, which is why watches worked and lists did not.
     let mut list = json!({
-        "apiVersion": "v1",
+        "apiVersion": resource_to_api_version(&resource),
         "kind": kind,
         "metadata": {
             "resourceVersion": revision.to_string()
