@@ -15,6 +15,15 @@ use tracing::{debug, error, info, warn};
 
 pub struct DaemonSetController {
     api: Arc<ApiClient>,
+    /// The events upstream's DaemonSet controller emits.
+    ///
+    /// **A controller that declines to act and records nothing leaves you
+    /// inferring from status arithmetic.** `oc describe ds` showed
+    /// `Desired 1 / Current 0` and an empty Events section, which is
+    /// indistinguishable between "backing off after failures", "the create was
+    /// rejected" and "the controller is not running" — three very different
+    /// problems that took two boots to tell apart.
+    recorder: crate::events::EventRecorder,
     /// Per-(DaemonSet uid + node) recreation backoff after failed pods, so a
     /// node whose pod keeps failing is retried with widening spacing instead of
     /// a per-reconcile pod storm on that node.
@@ -24,6 +33,7 @@ pub struct DaemonSetController {
 impl DaemonSetController {
     pub fn new(api: Arc<ApiClient>) -> Self {
         Self {
+            recorder: crate::events::EventRecorder::new(api.clone(), "daemonset-controller"),
             api,
             // Match the k8s DaemonSetController's failedPodsBackoff window: 1s
             // doubling to a 15min cap, keyed per (DaemonSet uid, node).
@@ -160,16 +170,44 @@ impl DaemonSetController {
             }
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
             if !pod_name.is_empty() {
+                if pod["status"]["phase"].as_str() == Some("Failed") {
+                    self.recorder
+                        .event(
+                            ds,
+                            "Warning",
+                            "FailedDaemonPod",
+                            &format!(
+                                "Found failed daemon pod {namespace}/{pod_name} on node \
+                                 {node}, will try to kill it"
+                            ),
+                        )
+                        .await;
+                }
                 match self
                     .api
                     .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
                     .await
                 {
-                    Ok(_) => info!(
-                        "Deleted terminal DaemonSet pod {namespace}/{pod_name} (node {node}); \
-                         will recreate"
-                    ),
-                    Err(e) => debug!("Failed to delete terminal DaemonSet pod {pod_name}: {e}"),
+                    Ok(_) => {
+                        info!(
+                            "Deleted terminal DaemonSet pod {namespace}/{pod_name} \
+                             (node {node}); will recreate"
+                        );
+                        self.recorder
+                            .event(
+                                ds,
+                                "Normal",
+                                "SuccessfulDelete",
+                                &format!("Deleted pod: {pod_name}"),
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        debug!("Failed to delete terminal DaemonSet pod {pod_name}: {e}");
+                        self.recorder
+                            .event(ds, "Warning", "FailedDelete", &format!("Error deleting: {e}"))
+                            .await;
+                    }
                 }
             }
         }
@@ -191,6 +229,22 @@ impl DaemonSetController {
                     "DaemonSet {namespace}/{ds_name}: backing off pod creation on \
                      node {node_name} after repeated failures"
                 );
+                // Not an upstream event, and it earns its place: without it,
+                // "Desired 1 / Current 0" with an empty Events section is
+                // indistinguishable from a controller that is not running.
+                // Deduplicated by the recorder, so a long backoff does not
+                // become a log of its own.
+                self.recorder
+                    .event(
+                        ds,
+                        "Normal",
+                        "BackingOff",
+                        &format!(
+                            "Waiting before recreating a pod on node {node_name} after \
+                             repeated failures"
+                        ),
+                    )
+                    .await;
                 continue;
             }
             let pod = build_daemonset_pod(namespace, ds_name, ds_uid, node_name, ds)?;
@@ -202,9 +256,17 @@ impl DaemonSetController {
                 Ok(_) => {
                     let pod_name = pod["metadata"]["name"].as_str().unwrap_or("?");
                     info!("Created DaemonSet pod {namespace}/{pod_name} on node {node_name}");
+                    self.recorder
+                        .event(ds, "Normal", "SuccessfulCreate", &format!("Created pod: {pod_name}"))
+                        .await;
                 }
                 Err(e) => {
                     warn!("Failed to create DaemonSet pod on {node_name}: {e}");
+                    // The one that was invisible. A create the apiserver
+                    // rejects was a `warn!` on a node with no reachable log.
+                    self.recorder
+                        .event(ds, "Warning", "FailedCreate", &format!("Error creating: {e}"))
+                        .await;
                 }
             }
         }

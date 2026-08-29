@@ -509,70 +509,7 @@ fn last_completion(jobs: &[&Value]) -> Option<String> {
         .map(str::to_owned)
 }
 
-// --- Cron parser ---
 
-/// Check if the current time matches a 5-field cron schedule.
-fn cron_matches(schedule: &str, now: &chrono::DateTime<chrono::Utc>) -> bool {
-    let fields: Vec<&str> = schedule.split_whitespace().collect();
-    if fields.len() != 5 {
-        return false;
-    }
-
-    let minute = now.format("%M").to_string().parse::<u32>().unwrap_or(0);
-    let hour = now.format("%H").to_string().parse::<u32>().unwrap_or(0);
-    let day = now.format("%d").to_string().parse::<u32>().unwrap_or(1);
-    let month = now.format("%m").to_string().parse::<u32>().unwrap_or(1);
-    let weekday = now.format("%u").to_string().parse::<u32>().unwrap_or(1); // 1=Mon, 7=Sun
-
-    let minute_set = parse_cron_field(fields[0], 0, 59);
-    let hour_set = parse_cron_field(fields[1], 0, 23);
-    let day_set = parse_cron_field(fields[2], 1, 31);
-    let month_set = parse_cron_field(fields[3], 1, 12);
-    let weekday_set = parse_cron_field(fields[4], 0, 7); // 0 and 7 both = Sunday
-
-    // Map weekday: chrono uses 1=Mon..7=Sun, cron uses 0=Sun..6=Sat (and 7=Sun)
-    let cron_weekday = if weekday == 7 { 0 } else { weekday };
-
-    minute_set.contains(&minute)
-        && hour_set.contains(&hour)
-        && day_set.contains(&day)
-        && month_set.contains(&month)
-        && (weekday_set.contains(&cron_weekday) || weekday_set.contains(&7u32) && cron_weekday == 0)
-}
-
-/// Parse a single cron field into a set of matching values.
-fn parse_cron_field(field: &str, min: u32, max: u32) -> HashSet<u32> {
-    let mut result = HashSet::new();
-    for part in field.split(',') {
-        let part = part.trim();
-        if part == "*" {
-            result.extend(min..=max);
-        } else if let Some(step_str) = part.strip_prefix("*/") {
-            if let Ok(step) = step_str.parse::<u32>() {
-                if step > 0 {
-                    let mut val = min;
-                    while val <= max {
-                        result.insert(val);
-                        val += step;
-                    }
-                }
-            }
-        } else if part.contains('-') {
-            let range_parts: Vec<&str> = part.split('-').collect();
-            if range_parts.len() == 2 {
-                if let (Ok(start), Ok(end)) = (
-                    range_parts[0].parse::<u32>(),
-                    range_parts[1].parse::<u32>(),
-                ) {
-                    result.extend(start..=end);
-                }
-            }
-        } else if let Ok(val) = part.parse::<u32>() {
-            result.insert(val);
-        }
-    }
-    result
-}
 
 #[cfg(test)]
 mod tests {
