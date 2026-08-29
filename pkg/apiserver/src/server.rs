@@ -707,7 +707,10 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     };
 
     // Initialize RBAC engine
-    let rbac = Arc::new(RbacEngine::new(storage.clone()));
+    let rbac = Arc::new(
+        RbacEngine::new(storage.clone())
+            .with_anonymous_admin(config.anonymous_auth && config.dev_anonymous_admin),
+    );
 
     let state = AppState {
         storage,

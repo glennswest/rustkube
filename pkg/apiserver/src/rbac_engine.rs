@@ -26,17 +26,43 @@ pub struct AuthorizationRequest {
 /// RBAC authorization engine.
 pub struct RbacEngine {
     storage: Arc<ResourceStorage>,
+    /// Dev only: `system:anonymous` is cluster-admin.
+    ///
+    /// **Held here rather than only written as a ClusterRoleBinding.** The
+    /// binding is still created at bootstrap so `kubectl get clusterrolebindings`
+    /// shows the truth, but authorization must not *depend* on it: a stored
+    /// object can be deleted by anything with permission, and the lookup that
+    /// reads it fails closed when the datastore hiccups. On this test rig the
+    /// grant stopped working mid-boot and every request became
+    /// `system:anonymous is not allowed to ...`, which reads as a broken
+    /// authorizer rather than a missing row.
+    ///
+    /// A flag given once at startup is a decision, not data. It belongs in the
+    /// engine.
+    dev_anonymous_admin: bool,
 }
 
 impl RbacEngine {
     pub fn new(storage: Arc<ResourceStorage>) -> Self {
-        Self { storage }
+        Self { storage, dev_anonymous_admin: false }
+    }
+
+    /// Bind `system:anonymous` to cluster-admin. Dev rigs only; see the field.
+    pub fn with_anonymous_admin(mut self, on: bool) -> Self {
+        self.dev_anonymous_admin = on;
+        self
     }
 
     /// Check if the user is authorized for the given request.
     pub async fn authorize(&self, user: &UserInfo, req: &AuthorizationRequest) -> bool {
         // system:masters group always has full access
         if user.groups.iter().any(|g| g == "system:masters") {
+            return true;
+        }
+
+        // The dev rig's standing grant, decided at startup rather than looked
+        // up. See `dev_anonymous_admin`.
+        if self.dev_anonymous_admin && user.username == "system:anonymous" {
             return true;
         }
 
