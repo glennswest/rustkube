@@ -16,4 +16,6 @@ use std::sync::Arc;
 pub struct AppState {
     pub storage: Arc<ResourceStorage>,
     pub crd_registry: Arc<CrdRegistry>,
+    /// The range ClusterIPs are allocated from.
+    pub service_cidr: String,
 }

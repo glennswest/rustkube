@@ -715,7 +715,8 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let state = AppState {
         storage,
         crd_registry,
-    };
+            service_cidr: config.service_cidr.clone(),
+};
     // Prometheus metrics recorder + /metrics endpoint (scraped by ironprom).
     let prom = metrics_exporter_prometheus::PrometheusBuilder::new()
         .install_recorder()

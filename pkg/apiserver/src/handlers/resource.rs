@@ -307,7 +307,10 @@ pub async fn create_cluster_resource(
 
     ensure_metadata(&mut body, &name, None);
 
-    crate::builtin_admission::admit_create(&state.storage, &resource, None, &mut body).await?;
+    crate::builtin_admission::admit_create(
+        &state.storage, &resource, None, &mut body, &state.service_cidr,
+    )
+    .await?;
 
     let key = ResourceStorage::cluster_key(&resource, &name);
     let obj = state.storage.create(&key, body).await?;
@@ -328,7 +331,9 @@ pub async fn create_namespaced_resource(
     ensure_metadata(&mut body, &name, Some(&namespace));
 
     // Built-in admission (NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds).
-    crate::builtin_admission::admit_create(&state.storage, &resource, Some(&namespace), &mut body)
+    crate::builtin_admission::admit_create(
+        &state.storage, &resource, Some(&namespace), &mut body, &state.service_cidr,
+    )
         .await?;
 
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
@@ -853,7 +858,9 @@ pub(crate) async fn patch_stored_object(
                 .expect("create apply cannot conflict");
             ensure_metadata(&mut obj, name, namespace);
             if let Some(ns) = namespace {
-                crate::builtin_admission::admit_create(&state.storage, resource, Some(ns), &mut obj)
+                crate::builtin_admission::admit_create(
+                    &state.storage, resource, Some(ns), &mut obj, &state.service_cidr,
+                )
                     .await?;
             }
             state.storage.create(key, obj).await
