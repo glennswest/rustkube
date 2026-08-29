@@ -69,9 +69,16 @@ impl EventRecorder {
         let meta = &involved["metadata"];
         let namespace = meta["namespace"].as_str().unwrap_or("default");
         let name = meta["name"].as_str().unwrap_or("");
-        let now = chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
+        // Two clocks, deliberately.
+        //
+        // `firstTimestamp` and `lastTimestamp` are `metav1.Time` — RFC3339 to
+        // the second. `eventTime` is `metav1.MicroTime` and **requires
+        // microseconds**: a plain RFC3339 there fails to unmarshal, and the
+        // client discards the whole EventList rather than one field. That is
+        // why `oc describe` printed `Events: <none>` while the API was
+        // returning twenty-five of them and `oc get events` listed them fine.
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now_micro = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
         // Two events are "the same" when they say the same thing about the
         // same object from the same source — which is exactly upstream's
         // aggregation key.
@@ -91,7 +98,7 @@ impl EventRecorder {
                 "count": prev.count,
                 "firstTimestamp": prev.first,
                 "lastTimestamp": now,
-                "eventTime": now,
+                "eventTime": now_micro,
             });
             let path = format!("/api/v1/namespaces/{namespace}/events/{}", prev.name);
             if let Err(e) = self.api.patch(&path, &patch).await {
@@ -133,7 +140,7 @@ impl EventRecorder {
             "reportingInstance": self.host,
             "firstTimestamp": now,
             "lastTimestamp": now,
-            "eventTime": now,
+            "eventTime": now_micro,
             "count": 1,
         });
 
@@ -181,5 +188,27 @@ mod tests {
     fn repeats_are_written_on_an_interval_not_every_time() {
         assert!(AGGREGATION_INTERVAL >= Duration::from_secs(10));
         assert!(AGGREGATION_INTERVAL <= Duration::from_secs(60));
+    }
+
+    /// `eventTime` is a metav1.MicroTime and requires microseconds.
+    ///
+    /// Without them the client fails to unmarshal the whole EventList rather
+    /// than one field, so `oc describe` printed `Events: <none>` while the API
+    /// returned twenty-five of them and `oc get events` listed them fine — a
+    /// format error that presents as an absence.
+    #[test]
+    fn event_time_carries_microseconds() {
+        let micro = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+        // 2026-08-29T02:18:56.123456Z
+        assert_eq!(micro.len(), 27, "{micro}");
+        let frac = micro.split('.').nth(1).expect("a fractional part");
+        assert_eq!(frac.len(), 7, "six digits and the Z: {micro}");
+        assert!(micro.ends_with('Z'));
+
+        // The second-precision spelling is what firstTimestamp/lastTimestamp
+        // use, and is exactly what eventTime must not be.
+        let secs = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        assert!(!secs.contains('.'), "{secs}");
+        assert_ne!(secs.len(), micro.len());
     }
 }
