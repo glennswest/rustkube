@@ -56,6 +56,30 @@ fn age(obj: &Value) -> String {
     }
 }
 
+/// Render a timestamp the way kubectl renders an age.
+///
+/// Separate from [`age`], which reads `metadata.creationTimestamp`: an event's
+/// useful clock is `lastTimestamp`, because an event created an hour ago and
+/// last seen ten seconds ago is a live problem, not an old one.
+fn age_of(stamp: &str) -> String {
+    let Ok(t) = chrono::DateTime::parse_from_rfc3339(stamp) else {
+        return String::new();
+    };
+    let secs = chrono::Utc::now()
+        .signed_duration_since(t.with_timezone(&chrono::Utc))
+        .num_seconds()
+        .max(0);
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86400)
+    }
+}
+
 fn name_of(obj: &Value) -> String {
     obj["metadata"]["name"].as_str().unwrap_or("").to_string()
 }
@@ -342,6 +366,46 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                     json!(st["updatedNumberScheduled"].as_i64().unwrap_or(0)),
                     json!(st["numberAvailable"].as_i64().unwrap_or(0)),
                     json!(age(o)),
+                ]
+            }) as RowFn,
+        )),
+        "events" => Some((
+            vec![
+                col("Last Seen", "string", 0, "Time since the event was last seen"),
+                col("Type", "string", 0, "Normal or Warning"),
+                col("Reason", "string", 0, "Machine-readable reason"),
+                col("Object", "string", 0, "The object the event is about"),
+                col("Message", "string", 0, "What happened"),
+            ],
+            (|o: &Value| {
+                // Upstream's `oc get events` leads with age, not name — the
+                // name of an event is a uuid nobody reads, and what matters is
+                // when it last happened and to what.
+                let last = o["lastTimestamp"]
+                    .as_str()
+                    .or_else(|| o["eventTime"].as_str())
+                    .or_else(|| o["firstTimestamp"].as_str())
+                    .unwrap_or("");
+                let ago = age_of(last);
+                // A repeated event says so, the way upstream does.
+                let count = o["count"].as_i64().unwrap_or(1);
+                let seen = if count > 1 {
+                    format!("{ago} (x{count})")
+                } else {
+                    ago
+                };
+                let io = &o["involvedObject"];
+                let object = format!(
+                    "{}/{}",
+                    io["kind"].as_str().unwrap_or("").to_lowercase(),
+                    io["name"].as_str().unwrap_or("")
+                );
+                vec![
+                    json!(seen),
+                    json!(o["type"].as_str().unwrap_or("")),
+                    json!(o["reason"].as_str().unwrap_or("")),
+                    json!(object),
+                    json!(o["message"].as_str().unwrap_or("")),
                 ]
             }) as RowFn,
         )),
@@ -703,5 +767,69 @@ mod tests {
         let c = &to_table("ingresses", ing)["rows"][0]["cells"];
         assert_eq!(c[2], json!("*"));
         assert_eq!(c[4], json!("80, 443"));
+    }
+
+    /// `oc get events` leads with when it last happened and to what — the name
+    /// of an event is a uuid nobody reads.
+    #[test]
+    fn events_print_like_upstream() {
+        let now = chrono::Utc::now();
+        let stamp = |secs: i64| {
+            (now - chrono::Duration::seconds(secs))
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+        };
+        let list = json!({"items": [{
+            "metadata": {"name": "cilium.abc123"},
+            "type": "Warning",
+            "reason": "FailedDaemonPod",
+            "count": 28,
+            "lastTimestamp": stamp(90),
+            "involvedObject": {"kind": "DaemonSet", "name": "cilium"},
+            "message": "Found failed daemon pod",
+        }]});
+        let t = to_table("events", list);
+        let names: Vec<&str> = t["columnDefinitions"].as_array().unwrap()
+            .iter().map(|c| c["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Last Seen", "Type", "Reason", "Object", "Message"]);
+
+        let c = &t["rows"][0]["cells"];
+        // A repeated event says so, the way upstream does.
+        assert_eq!(c[0], json!("1m (x28)"));
+        assert_eq!(c[1], json!("Warning"));
+        assert_eq!(c[2], json!("FailedDaemonPod"));
+        assert_eq!(c[3], json!("daemonset/cilium"));
+    }
+
+    /// The clock is lastTimestamp, not creationTimestamp: an event created an
+    /// hour ago and last seen ten seconds ago is a live problem.
+    #[test]
+    fn an_event_ages_from_when_it_was_last_seen() {
+        let now = chrono::Utc::now();
+        let list = json!({"items": [{
+            "metadata": {
+                "name": "e",
+                "creationTimestamp": (now - chrono::Duration::hours(2))
+                    .format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            },
+            "type": "Normal", "reason": "R", "count": 1,
+            "lastTimestamp": (now - chrono::Duration::seconds(5))
+                .format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            "involvedObject": {"kind": "Pod", "name": "p"},
+            "message": "m",
+        }]});
+        let c = &to_table("events", list)["rows"][0]["cells"];
+        assert_eq!(c[0], json!("5s"), "should age from lastTimestamp, not creation");
+    }
+
+    /// An event with no usable timestamp prints an empty age rather than a
+    /// wrong one.
+    #[test]
+    fn an_event_without_a_timestamp_prints_no_age() {
+        let list = json!({"items": [{
+            "metadata": {"name": "e"}, "type": "Normal", "reason": "R",
+            "involvedObject": {"kind": "Pod", "name": "p"}, "message": "m",
+        }]});
+        assert_eq!(to_table("events", list)["rows"][0]["cells"][0], json!(""));
     }
 }
