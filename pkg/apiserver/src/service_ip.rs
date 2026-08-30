@@ -69,6 +69,45 @@ pub async fn release(storage: &ResourceStorage, obj: &Value) {
     }
 }
 
+/// Claim every address an existing Service already holds.
+///
+/// **Not every Service is created through admission.** Bootstrap objects — the
+/// `kubernetes` Service — and everything the manifest applier writes go
+/// straight to storage, so no claim is recorded for them. The allocator then
+/// scans from the bottom of the range, finds the first address unclaimed, and
+/// hands out one that is already in use: a new Service was given `10.96.0.1`,
+/// the apiserver's own address, and every connection to it silently reached
+/// the apiserver instead.
+///
+/// So this runs at startup, after bootstrap and after the manifests, and
+/// claims what is already there. It is the repair loop the claim record exists
+/// to make possible — a scan over Services can tell you what *should* be
+/// allocated, and only a durable claim can tell you what is.
+///
+/// Idempotent and best-effort: a claim that already exists is the normal case,
+/// and a store that will not answer is not a reason to refuse to start.
+pub async fn reconcile(storage: &ResourceStorage) -> usize {
+    let prefix = ResourceStorage::cluster_prefix("services");
+    let Ok((items, _, _)) = storage.list(&prefix, 10_000, None).await else {
+        return 0;
+    };
+    let mut claimed = 0;
+    for svc in &items {
+        let Some(ip) = svc["spec"]["clusterIP"].as_str() else {
+            continue;
+        };
+        if ip == "None" || ip.is_empty() {
+            continue;
+        }
+        let ns = svc["metadata"]["namespace"].as_str().unwrap_or("default");
+        let name = svc["metadata"]["name"].as_str().unwrap_or("");
+        if matches!(claim(storage, ip, ns, name).await, Ok(true)) {
+            claimed += 1;
+        }
+    }
+    claimed
+}
+
 /// Give a Service a ClusterIP, unless it should not have one.
 pub async fn allocate(
     storage: &ResourceStorage,

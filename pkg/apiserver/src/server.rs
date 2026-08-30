@@ -673,6 +673,21 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         crate::manifests::apply_dir(&storage, &crd_registry, dir).await;
     }
 
+    // Claim the addresses Services already hold.
+    //
+    // Bootstrap objects and everything the manifest applier writes go straight
+    // to storage rather than through admission, so nothing recorded a claim
+    // for them. The allocator would then scan from the bottom of the range and
+    // hand out an address already in use — a new Service was given 10.96.0.1,
+    // the apiserver's own, and every connection to it reached the apiserver.
+    //
+    // After the manifests and before the server accepts anything, so the first
+    // Service a client creates is allocated against a complete picture.
+    let claimed = crate::service_ip::reconcile(&storage).await;
+    if claimed > 0 {
+        info!("service-ip: claimed {claimed} address(es) already in use");
+    }
+
     // ServiceAccount token signing keys. A real cluster supplies the RSA
     // keypair (--service-account-signing-key-file / --service-account-key-file)
     // so every replica signs and verifies with the same key — tokens then work
