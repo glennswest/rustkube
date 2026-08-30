@@ -19,7 +19,7 @@ use storage::{EtcdStore, EtcdTls};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{error, info};
 
 /// Build the complete K8s API router.
 fn build_router(
@@ -686,6 +686,23 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let claimed = crate::service_ip::reconcile(&storage).await;
     if claimed > 0 {
         info!("service-ip: claimed {claimed} address(es) already in use");
+    }
+
+    // And then check, rather than assume.
+    //
+    // Claims, the reconcile above and claiming on the direct write paths are
+    // all guards, and a guard nobody checks is a guess. A duplicate ClusterIP
+    // is silent, intermittent and blames the network, so it is worth one list
+    // at startup to be able to say it did not happen — and to say so loudly
+    // when it did, rather than leaving it to be found from the far end months
+    // later.
+    for (ip, holders) in crate::service_ip::duplicates(&storage).await {
+        error!(
+            "service-ip: {ip} is held by {} Services ({}) — something wrote a \
+             Service by a path that does not claim its address",
+            holders.len(),
+            holders.join(", ")
+        );
     }
 
     // ServiceAccount token signing keys. A real cluster supplies the RSA

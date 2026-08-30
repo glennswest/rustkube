@@ -181,6 +181,17 @@ pub async fn apply_one(
                 crate::crd::establish_crd_status(&mut with_status);
                 obj = with_status;
             }
+            // A Service written here must claim its address like any other.
+            //
+            // This path goes straight to storage rather than through
+            // admission, so nothing claimed the ClusterIP a manifest asks for
+            // — and the allocator, seeing it free, later handed the same
+            // address to somebody else. A duplicate address is the worst bug
+            // this system can have: silent, intermittent, and it blames the
+            // network.
+            if obj["kind"].as_str() == Some("Service") {
+                crate::service_ip::claim_for(storage, &obj).await;
+            }
             match storage.create(&key, obj.clone()).await {
                 Ok(_) => {
                     if is_crd {

@@ -69,6 +69,55 @@ pub async fn release(storage: &ResourceStorage, obj: &Value) {
     }
 }
 
+/// Claim whatever address this Service object carries, best-effort.
+///
+/// For the paths that write a Service directly rather than through admission —
+/// the bootstrap objects and the manifest applier. Best-effort because those
+/// paths are idempotent and re-run: a claim that already exists is the normal
+/// case on every boot after the first.
+pub async fn claim_for(storage: &ResourceStorage, obj: &Value) {
+    let Some(ip) = obj["spec"]["clusterIP"].as_str() else {
+        return;
+    };
+    if ip == "None" || ip.is_empty() {
+        return;
+    }
+    let ns = obj["metadata"]["namespace"].as_str().unwrap_or("default");
+    let name = obj["metadata"]["name"].as_str().unwrap_or("");
+    let _ = claim(storage, ip, ns, name).await;
+}
+
+/// Find Services sharing an address.
+///
+/// **A duplicate address is the failure this whole module exists to prevent**,
+/// and preventing it is not the same as being able to prove it did not happen.
+/// Every mechanism here — claims, reconcile, claiming on the direct write
+/// paths — is a guard, and a guard nobody checks is a guess. This checks.
+///
+/// Returns each address held by more than one Service. Empty is the only
+/// acceptable answer; a non-empty one means something wrote a Service by a
+/// path that does not claim, and that path is a bug rather than a
+/// configuration.
+pub async fn duplicates(storage: &ResourceStorage) -> Vec<(String, Vec<String>)> {
+    let prefix = ResourceStorage::cluster_prefix("services");
+    let Ok((items, _, _)) = storage.list(&prefix, 10_000, None).await else {
+        return Vec::new();
+    };
+    let mut by_ip: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for svc in &items {
+        let Some(ip) = svc["spec"]["clusterIP"].as_str() else {
+            continue;
+        };
+        if ip == "None" || ip.is_empty() {
+            continue;
+        }
+        let ns = svc["metadata"]["namespace"].as_str().unwrap_or("default");
+        let name = svc["metadata"]["name"].as_str().unwrap_or("");
+        by_ip.entry(ip.to_string()).or_default().push(format!("{ns}/{name}"));
+    }
+    by_ip.into_iter().filter(|(_, v)| v.len() > 1).collect()
+}
+
 /// Claim every address an existing Service already holds.
 ///
 /// **Not every Service is created through admission.** Bootstrap objects — the
@@ -173,6 +222,37 @@ pub async fn allocate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    /// The property that matters: an address held by two Services must be
+    /// visible. Every guard in this module is meant to make this impossible,
+    /// and this is the check that says whether they did.
+    #[test]
+    fn duplicate_detection_finds_a_shared_address() {
+        use serde_json::json;
+        let svcs = vec![
+            json!({"metadata":{"namespace":"default","name":"a"},"spec":{"clusterIP":"10.96.0.1"}}),
+            json!({"metadata":{"namespace":"kube-system","name":"b"},"spec":{"clusterIP":"10.96.0.1"}}),
+            json!({"metadata":{"namespace":"default","name":"c"},"spec":{"clusterIP":"10.96.0.9"}}),
+            // Headless services share "None" and are not duplicates.
+            json!({"metadata":{"namespace":"default","name":"d"},"spec":{"clusterIP":"None"}}),
+            json!({"metadata":{"namespace":"default","name":"e"},"spec":{"clusterIP":"None"}}),
+        ];
+        let mut by_ip: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for svc in &svcs {
+            let ip = svc["spec"]["clusterIP"].as_str().unwrap_or("");
+            if ip.is_empty() || ip == "None" {
+                continue;
+            }
+            let ns = svc["metadata"]["namespace"].as_str().unwrap();
+            let name = svc["metadata"]["name"].as_str().unwrap();
+            by_ip.entry(ip.into()).or_default().push(format!("{ns}/{name}"));
+        }
+        let dups: Vec<_> = by_ip.into_iter().filter(|(_, v)| v.len() > 1).collect();
+        assert_eq!(dups.len(), 1, "exactly one address is shared");
+        assert_eq!(dups[0].0, "10.96.0.1");
+        assert_eq!(dups[0].1, vec!["default/a", "kube-system/b"]);
+    }
 
     #[test]
     fn a_cidr_parses_into_a_base_and_a_prefix() {
