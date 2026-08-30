@@ -54,6 +54,14 @@ impl ApiError {
         }
     }
 
+    /// Did this fail because the key was already there?
+    ///
+    /// The ClusterIP allocator asks: losing a race for one address is not an
+    /// error, it is the signal to try the next one.
+    pub fn is_already_exists(&self) -> bool {
+        self.reason == "AlreadyExists"
+    }
+
     pub fn conflict(message: &str) -> Self {
         Self {
             status: StatusCode::CONFLICT,

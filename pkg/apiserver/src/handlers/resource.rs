@@ -502,6 +502,15 @@ pub(crate) async fn perform_delete(
         return state.storage.update(key, obj, prev_rev).await;
     }
 
+    // Give the ClusterIP back before the Service goes.
+    //
+    // A leaked claim is worse than a leaked Service: the Service is visible in
+    // `get svc` and the claim is not, so the range quietly fills with
+    // allocations nothing owns. Released before the delete, because after it
+    // the address is no longer recoverable from the object.
+    if kind == "services" {
+        crate::service_ip::release(&state.storage, &obj).await;
+    }
     state.storage.delete(key, None).await?;
     Ok(delete_success(name, namespace, kind))
 }

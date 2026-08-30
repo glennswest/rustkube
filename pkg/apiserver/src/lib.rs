@@ -19,6 +19,7 @@ pub mod manifests;
 pub mod protobuf_mw;
 pub mod rbac_engine;
 pub mod selector;
+pub mod service_ip;
 pub mod server;
 pub mod storage;
 pub mod table;
