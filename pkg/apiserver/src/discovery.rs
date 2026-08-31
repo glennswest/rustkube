@@ -590,6 +590,18 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
         ("batch", "v1") => vec![("jobs", "Job", true), ("cronjobs", "CronJob", true)],
         ("discovery.k8s.io", "v1") => vec![("endpointslices", "EndpointSlice", true)],
         ("coordination.k8s.io", "v1") => vec![("leases", "Lease", true)],
+        // Mirrors api_gateway_v1_resources below. Absent, the startup
+        // manifest applier — whose resolve() reads this table — refused
+        // every Gateway API document with "not served by this apiserver"
+        // while the runtime handlers served the same objects happily: the
+        // two-lists-that-disagree failure this function's own comment
+        // warns about, found when 85-routes.yaml silently did not apply
+        // and the router booted with an empty table.
+        ("gateway.networking.k8s.io", "v1") => vec![
+            ("gatewayclasses", "GatewayClass", false),
+            ("gateways", "Gateway", true),
+            ("httproutes", "HTTPRoute", true),
+        ],
         ("storage.k8s.io", "v1") => vec![
             ("storageclasses", "StorageClass", false),
             ("csidrivers", "CSIDriver", false),
