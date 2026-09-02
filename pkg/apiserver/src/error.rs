@@ -135,13 +135,30 @@ const MAX_CAUSE: usize = 160;
 
 fn condense(cause: &str) -> String {
     let cause = cause.trim();
-    // Take the first line: a Rust `Debug` dump is one line, but a chained
-    // error may not be, and the first line is the part that names the fault.
+    // A Rust `Debug` dump is one line, but a chained error may not be, and the
+    // first line is the one that names the fault.
     let first = cause.lines().next().unwrap_or(cause);
-    if first.chars().count() <= MAX_CAUSE {
-        return first.to_string();
+
+    // Rust error chains render as `outer: source: inner`, and the actionable
+    // end of one is the innermost cause — which sits at the *end* of the
+    // string. Truncating the head would therefore keep the backend's
+    // structure and throw away the fault: on the message that prompted this,
+    // 160 characters of `SnapshotSignature { last_log_id: … }` survives and
+    // "No space left on device" does not. Take the innermost `source:`
+    // instead, and only fall back to truncation when there is no chain.
+    let core = match first.rfind("source: ") {
+        Some(i) => {
+            let tail = &first[i + "source: ".len()..];
+            // `, backtrace: None` is noise on every one of these.
+            tail.split(", backtrace:").next().unwrap_or(tail).trim().trim_end_matches(',')
+        }
+        None => first,
+    };
+
+    if core.chars().count() <= MAX_CAUSE {
+        return core.to_string();
     }
-    let cut: String = first.chars().take(MAX_CAUSE).collect();
+    let cut: String = core.chars().take(MAX_CAUSE).collect();
     format!("{}…", cut.trim_end())
 }
 
@@ -234,18 +251,31 @@ mod tests {
     }
 
     #[test]
-    fn the_backend_debug_dump_does_not_reach_the_client() {
+    fn the_client_gets_the_fault_not_the_backend_s_internals() {
         let err: ApiError = apimachinery::Error::Unavailable(REAL.into()).into();
-        assert!(err.message.chars().count() <= MAX_CAUSE + 32, "{}", err.message);
-        assert!(!err.message.contains("SnapshotSignature"), "{}", err.message);
         assert!(err.message.starts_with("datastore unavailable: "));
+        // The actionable end of the chain survives...
+        assert!(err.message.contains("No space left on device"), "{}", err.message);
+        // ...and openraft's structure does not.
+        assert!(!err.message.contains("SnapshotSignature"), "{}", err.message);
+        assert!(!err.message.contains("backtrace"), "{}", err.message);
+        assert!(err.message.chars().count() <= MAX_CAUSE + 32, "{}", err.message);
     }
 
     #[test]
-    fn a_short_cause_survives_whole() {
+    fn a_cause_with_no_chain_is_left_alone() {
         assert_eq!(condense("no space left on device"), "no space left on device");
-        // A store error that is genuinely the apiserver's problem still 500s.
+        // A long one with nothing to unwrap is truncated rather than dropped.
+        let long = "x".repeat(400);
+        let out = condense(&long);
+        assert!(out.chars().count() <= MAX_CAUSE + 1, "{}", out.chars().count());
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn a_real_store_error_is_still_the_apiserver_s_problem() {
         let err: ApiError = apimachinery::Error::Store("bad frame".into()).into();
         assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(err.reason, "InternalError");
     }
 }
