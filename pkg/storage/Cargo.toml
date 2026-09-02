@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 apimachinery = { workspace = true }
 etcd-client = { workspace = true }
+tonic = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 serde = { workspace = true }

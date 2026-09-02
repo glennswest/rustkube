@@ -36,6 +36,18 @@ pub enum Error {
     #[error("store: {0}")]
     Store(String),
 
+    /// The datastore is reachable-but-not-serving, or not reachable at all:
+    /// a gRPC `Unavailable`/`DeadlineExceeded`/`ResourceExhausted`, or a
+    /// transport failure.
+    ///
+    /// Distinct from [`Error::Store`] because the two mean opposite things to
+    /// a client. A `Store` error is the apiserver's problem and terminal; this
+    /// one is the backend's, is usually transient or operator-fixable, and
+    /// must reach the client as 503 so `client-go` retries with backoff
+    /// instead of giving up on a 500.
+    #[error("datastore unavailable: {0}")]
+    Unavailable(String),
+
     #[error("raft: {0}")]
     Raft(String),
 

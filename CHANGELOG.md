@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### 2026-09-02 (v0.7.36)
+- **fix(apiserver):** a datastore that cannot serve is **503, not 500** (#57).
+  A gRPC `Unavailable` from fastetcd fell into the catch-all arm of
+  `From<apimachinery::Error> for ApiError` and came back as 500 carrying the
+  backend's raw message. The apiserver was healthy and correct — it was
+  faithfully reporting a full disk underneath it — but 500 reads as "the
+  apiserver is broken", and `client-go`/`kubectl` retry a 503 with backoff
+  while treating 500 as terminal for the call. 503 responses now also carry
+  `Retry-After`.
+- **fix(apiserver):** the backend's internals no longer reach the client.
+  `Status.message` carried ~400 characters of openraft `Debug` output —
+  `SnapshotSignature { last_log_id: Some(LogId { leader_id: … } } }`, a raw
+  u64 node id, `backtrace: None` — with the one useful fact (`No space left on
+  device (os error 28)`) at the far end. The cause is condensed to its first
+  line and capped; the full backend error is logged server-side, where it is
+  searchable and nobody reads it in `kubectl` output.
+- **fix(storage):** classify failures while the gRPC status is still
+  structured. `etcd_err` stringified every `etcd_client::Error` into
+  `Error::Store`, discarding the status code and leaving downstream code
+  nothing to tell "the store is down" from "the store rejected this". gRPC
+  `Unavailable` / `DeadlineExceeded` / `ResourceExhausted`, and transport and
+  IO failures, now map to a new `apimachinery::Error::Unavailable`; genuine
+  store errors still go to `Error::Store` and still 500.
+
 ### 2026-08-28
 - **fix:** taints and tolerations. A not-ready taint was added when a node went
   bad and **never removed when it recovered**, leaving a healthy node

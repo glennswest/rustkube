@@ -76,8 +76,27 @@ impl EtcdStore {
     }
 }
 
+/// Classify a datastore failure while the gRPC status is still structured.
+///
+/// Stringifying first and pattern-matching later is how a backend that is
+/// merely unavailable ends up reported as an apiserver bug. `Unavailable`,
+/// `DeadlineExceeded` and `ResourceExhausted` — and any transport or IO
+/// failure — mean the store cannot serve *right now*; everything else is a
+/// real error from a store that is working.
 fn etcd_err(e: etcd_client::Error) -> Error {
-    Error::Store(e.to_string())
+    use etcd_client::Error as E;
+    match &e {
+        E::GRpcStatus(status) => match status.code() {
+            tonic::Code::Unavailable
+            | tonic::Code::DeadlineExceeded
+            | tonic::Code::ResourceExhausted => Error::Unavailable(status.message().to_string()),
+            _ => Error::Store(e.to_string()),
+        },
+        E::TransportError(_) | E::IoError(_) | E::EndpointError(_) => {
+            Error::Unavailable(e.to_string())
+        }
+        _ => Error::Store(e.to_string()),
+    }
 }
 
 fn io_err(e: std::io::Error) -> Error {
