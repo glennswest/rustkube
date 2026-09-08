@@ -598,6 +598,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
  "uuid",
@@ -1462,6 +1463,7 @@ name = "kube-controller-manager"
 version = "0.7.36"
 dependencies = [
  "anyhow",
+ "apimachinery",
  "clap",
  "controller-manager",
  "tokio",
@@ -1474,6 +1476,7 @@ name = "kube-scheduler"
 version = "0.7.36"
 dependencies = [
  "anyhow",
+ "apimachinery",
  "clap",
  "scheduler",
  "tokio",
@@ -2453,6 +2456,17 @@ name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",
