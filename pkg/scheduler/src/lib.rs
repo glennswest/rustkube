@@ -12,5 +12,6 @@ pub mod preemption;
 pub mod scheduler;
 pub mod score;
 pub mod spread;
+pub mod volumebinding;
 
 pub use scheduler::Scheduler;
