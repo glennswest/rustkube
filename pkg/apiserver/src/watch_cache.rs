@@ -240,14 +240,43 @@ impl WatchCache {
                     };
                     if fresh.snapshot_rev.load(Ordering::SeqCst) < cur_rev {
                         if let Ok((snap, rev)) = seed_snapshot(&store, &prefix_fresh).await {
-                            *fresh.snapshot.lock().unwrap() = snap;
+                            // Did anything actually change?
+                            //
+                            // `store.list` returns the store's *global*
+                            // revision, so a prefix nobody has written looks
+                            // behind the moment anything else is written. On
+                            // an idle cluster that is every empty prefix,
+                            // forever, and each one warned once per stall
+                            // window: over a thousand WARN lines in ten
+                            // minutes, led by
+                            //
+                            //   watch-cache: re-seeded
+                            //   prefix=/registry/horizontalpodautoscalers/…
+                            //
+                            // for resources the cluster does not have a single
+                            // one of. The comment above already said "stalled
+                            // **or long-quiet**", and only the first of those
+                            // is worth a warning: a re-seed that changes
+                            // nothing means the watch missed nothing.
+                            let changed = {
+                                let mut held = fresh.snapshot.lock().unwrap();
+                                let changed = *held != snap;
+                                *held = snap;
+                                changed
+                            };
                             fresh.snapshot_rev.store(rev, Ordering::SeqCst);
                             // Count the re-seed as progress so a persistently
                             // quiet prefix re-seeds at most once per STALL window.
                             *fresh.last_progress.lock().unwrap() = std::time::Instant::now();
-                            tracing::warn!(
-                                "watch-cache: re-seeded prefix={prefix_fresh} to rev={rev} (watch stalled or long-quiet)"
-                            );
+                            if changed {
+                                tracing::warn!(
+                                    "watch-cache: re-seeded prefix={prefix_fresh} to rev={rev} — the watch had missed events"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "watch-cache: prefix={prefix_fresh} caught up to rev={rev}, unchanged"
+                                );
+                            }
                         }
                     }
                 }
