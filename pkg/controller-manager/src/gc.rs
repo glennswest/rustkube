@@ -33,8 +33,23 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-/// Reconcile interval.
+/// How often a full sweep starts.
 const GC_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How long to wait before sweeping again when the last sweep changed
+/// something.
+///
+/// A cascade is a chain — a Deployment holds a ReplicaSet holds Pods — and one
+/// sweep can only advance it by a level, because the next level's state is
+/// whatever the apiserver had when the sweep started. At one level per 30s a
+/// two-deep foreground delete takes a minute and a half to disappear, which
+/// reads as a stuck object. Upstream converges in milliseconds because it
+/// watches; sweeping again straight away is the polling equivalent.
+const GC_SETTLE: Duration = Duration::from_secs(2);
+
+/// Cap on consecutive follow-up sweeps, so a delete that cannot make progress
+/// (a finalizer nobody will ever clear) does not become a busy loop.
+const GC_MAX_FOLLOW_UPS: usize = 6;
 
 /// Events older than this are reaped (upstream default ~1h).
 const EVENT_TTL: chrono::Duration = chrono::Duration::hours(1);
@@ -130,15 +145,23 @@ impl GarbageCollector {
     pub async fn run(&self) {
         info!("Starting garbage collector");
         loop {
-            self.collect().await;
+            // Sweep until a sweep changes nothing: each pass can only advance
+            // a cascade one level, and a level per interval is how an object
+            // sits in Terminating for minutes.
+            let mut follow_ups = 0;
+            while self.collect().await && follow_ups < GC_MAX_FOLLOW_UPS {
+                follow_ups += 1;
+                tokio::time::sleep(GC_SETTLE).await;
+            }
             tokio::time::sleep(GC_INTERVAL).await;
         }
     }
 
-    async fn collect(&self) {
+    /// One sweep. Returns whether it changed anything.
+    async fn collect(&self) -> bool {
         let resources = self.discover().await;
         if resources.is_empty() {
-            return; // apiserver unreachable; a pass over nothing deletes nothing
+            return false; // apiserver unreachable; a pass over nothing deletes nothing
         }
 
         let mut objects: Vec<Object> = Vec::new();
@@ -187,9 +210,10 @@ impl GarbageCollector {
             seen_kinds.len(),
             dependents.len()
         );
-        self.process_finalizers(&objects, &dependents).await;
-        self.background_cascade(&objects, &live, &seen_kinds).await;
+        let mut changed = self.process_finalizers(&objects, &dependents).await;
+        changed |= self.background_cascade(&objects, &live, &seen_kinds).await;
         self.expire_events().await;
+        changed
     }
 
     /// Every listable, deletable resource the apiserver serves — built-ins and
@@ -228,7 +252,8 @@ impl GarbageCollector {
         &self,
         objects: &[Object],
         dependents: &HashMap<String, Vec<usize>>,
-    ) {
+    ) -> bool {
+        let mut changed = false;
         for owner in objects.iter().filter(|o| o.deleting()) {
             let finalizers = owner.finalizers();
             let foreground = finalizers.contains(&FOREGROUND_FINALIZER);
@@ -268,6 +293,7 @@ impl GarbageCollector {
                         owner.name()
                     );
                 }
+                changed = true;
                 continue;
             }
 
@@ -296,6 +322,7 @@ impl GarbageCollector {
                 });
                 match self.api.delete_with_options(&path, &opts).await {
                     Ok(r) if r.status().is_success() || r.status().as_u16() == 404 => {
+                        changed = true;
                         info!(
                             "gc: foreground delete of {} {}/{} (owner {} is going)",
                             child.resource.kind,
@@ -310,6 +337,7 @@ impl GarbageCollector {
             }
             if blocking == 0 {
                 self.remove_finalizer(owner, FOREGROUND_FINALIZER).await;
+                changed = true;
                 debug!(
                     "gc: {}/{} has no blocking dependents left",
                     owner.resource.kind,
@@ -317,6 +345,7 @@ impl GarbageCollector {
                 );
             }
         }
+        changed
     }
 
     /// Background propagation: a child whose controlling owner no longer
@@ -326,7 +355,8 @@ impl GarbageCollector {
         objects: &[Object],
         live: &HashSet<String>,
         seen_kinds: &HashSet<String>,
-    ) {
+    ) -> bool {
+        let mut changed = false;
         for obj in objects {
             if obj.deleting() {
                 continue;
@@ -360,16 +390,20 @@ impl GarbageCollector {
 
             let path = obj.path();
             match self.api.delete(&path).await {
-                Ok(r) if r.status().is_success() || r.status().as_u16() == 404 => info!(
-                    "gc: deleted {} {}/{} — its owner is gone",
-                    obj.resource.kind,
-                    obj.namespace(),
-                    obj.name()
-                ),
+                Ok(r) if r.status().is_success() || r.status().as_u16() == 404 => {
+                    changed = true;
+                    info!(
+                        "gc: deleted {} {}/{} — its owner is gone",
+                        obj.resource.kind,
+                        obj.namespace(),
+                        obj.name()
+                    );
+                }
                 Ok(r) => debug!("gc: delete {path} returned {}", r.status()),
                 Err(e) => warn!("gc: failed to delete {path}: {e}"),
             }
         }
+        changed
     }
 
     /// Remove one owner reference from a dependent. Returns whether the
@@ -384,9 +418,13 @@ impl GarbageCollector {
         if remaining.len() == child.owner_refs().len() {
             return true; // nothing to do
         }
-        // The whole list is sent: a merge patch cannot remove a list entry.
+        // A *merge* patch, not a strategic one: strategic merge keys
+        // ownerReferences by uid, so a shortened list removes nothing and the
+        // dependent stays owned by an object that is about to disappear —
+        // which the background pass then collects, the exact opposite of
+        // orphaning.
         let patch = json!({"metadata": {"ownerReferences": remaining}});
-        match self.api.patch(&child.path(), &patch).await {
+        match self.api.patch_merge(&child.path(), &patch).await {
             Ok(_) => true,
             Err(e) => {
                 warn!("gc: could not orphan {}: {e}", child.path());
@@ -403,7 +441,7 @@ impl GarbageCollector {
             .map(|f| json!(f))
             .collect();
         let patch = json!({"metadata": {"finalizers": remaining}});
-        if let Err(e) = self.api.patch(&obj.path(), &patch).await {
+        if let Err(e) = self.api.patch_merge(&obj.path(), &patch).await {
             warn!("gc: could not clear {finalizer} on {}: {e}", obj.path());
         }
     }

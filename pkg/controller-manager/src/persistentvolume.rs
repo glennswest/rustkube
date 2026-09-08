@@ -622,9 +622,10 @@ impl PersistentVolumeController {
             .into_iter()
             .filter(|f| f.as_str() != Some(finalizer))
             .collect();
-        // A merge patch cannot delete a list entry, so the whole list is sent.
+        // A merge patch, which replaces the list: a strategic merge would
+        // merge it and the finalizer would still be there.
         let patch = json!({"metadata": {"finalizers": finalizers}});
-        self.api.patch(path, &patch).await?;
+        self.api.patch_merge(path, &patch).await?;
         Ok(())
     }
 }
