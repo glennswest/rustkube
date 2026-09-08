@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### 2026-09-08 — release artifacts
+- **build:** static musl binaries and `FROM scratch` images (#50). The
+  Distroless base shipped 20 MB of glibc and 5 MB of documentation per
+  component — 37.2 MB and 1,282 files for an apiserver that is one file. Built
+  for `x86_64-unknown-linux-musl` with no source changes at all, the images
+  are **14 MB / 10 MB / 8.1 MB**, one file each, on no base. That is slab
+  saved on every node in the fleet, because stormcos carries every golden on
+  every node; and a static binary in a golden has one file to be wrong about,
+  where a dynamic one starts only if its loader and libraries are exactly
+  where it expects them.
+- **build:** `deploy/build-release.sh` — the dev-side build, writing tarballs
+  and podman-built scratch images to `$OUT` (default `/build`, so pointing it
+  at a golden's NVMe mount writes them straight there). It **refuses to
+  package a binary that is not statically linked**: that failure works
+  perfectly on the build host and only shows up on a node.
+- **build:** CI builds the same way, and attaches the bare musl binary tarball
+  alongside the image tarball — a golden wants the file, not an image.
+- **docs:** [docs/releasing.md](docs/releasing.md).
+
 ### 2026-09-08 — exec, attach, port-forward
 - **feat(apiserver):** `pods/exec`, `pods/attach` and `pods/portforward`
   (#42) — so `oc exec`, `rsh`, `cp`, `rsync`, `port-forward` and `debug` work,
