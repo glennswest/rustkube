@@ -190,8 +190,11 @@ Cargo.toml → workspace.package.version
 
 ### Phase 2: Production Features (COMPLETE)
 - [x] Status subresource endpoints (GET/PUT/PATCH for all resource types)
-- [ ] TLS listener wiring (config fields exist, listener not connected)
-- [ ] ServiceAccount token generation (JWT signing key ready, SA token creation not wired)
+- [x] TLS listener wiring — rustls serving, x509 client auth, and (v0.8.0) a
+      swappable cert resolver so a renewed certificate is picked up without a
+      restart (#20)
+- [x] ServiceAccount token generation (`/serviceaccounts/{name}/token`, RS256,
+      stable signing keypair across replicas — v0.7.9)
 - [x] Admission webhooks (mutating + validating chains, JSON patch, rule matching)
 - [x] CSI volume support (Identity, Node, Controller traits, Unix socket client)
 - [x] NetworkPolicy enforcement (CIDR matching, iptables rule gen, ingress/egress eval)
@@ -205,6 +208,18 @@ Cargo.toml → workspace.package.version
 - [x] Full scheduler framework (plugins, preemption with priority-based eviction)
 - [x] API aggregation layer (APIService registry, request proxying)
 - [x] Cloud provider controllers (CloudProvider trait, noop provider, controller manager)
+
+### Storage (v0.8.0)
+- [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
+- [x] Attach/detach — `VolumeAttachment` for drivers that require it
+- [x] Volume-aware scheduling — PV `nodeAffinity`, `selected-node`,
+      `CSIStorageCapacity`
+- [ ] Volume expansion (the resizer sidecar wants `status.allocatedResources`
+      and resize conditions)
+- [ ] Snapshots (the external-snapshotter CRDs are cluster-wide components)
+- [ ] `ReadWriteOncePod` enforcement
+- See [docs/storage.md](docs/storage.md) for the contract with stormblock,
+  sbregistry and stormblock-csi. **rustkube provisions nothing itself.**
 
 ### Phase 4: Scale & Conformance
 - [ ] 1000+ node testing
