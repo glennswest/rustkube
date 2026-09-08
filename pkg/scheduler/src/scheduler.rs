@@ -5,6 +5,7 @@
 
 use crate::filter::{self, FilterResult, NodeUsage};
 use crate::score;
+use crate::volumebinding;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::time::{self, Duration};
@@ -148,6 +149,18 @@ impl ApiClient {
         self.client
             .get(format!("{}{}", self.base_url, path))
             .send()
+            .await
+    }
+
+    /// PATCH a resource with a strategic-merge patch.
+    pub async fn patch(&self, path: &str, body: &Value) -> reqwest::Result<Value> {
+        self.client
+            .patch(format!("{}{}", self.base_url, path))
+            .header("content-type", "application/strategic-merge-patch+json")
+            .json(body)
+            .send()
+            .await?
+            .json()
             .await
     }
 
@@ -420,6 +433,14 @@ impl Scheduler {
             }
         }
 
+        // Storage, listed once and only when something actually needs it. A
+        // cluster with no PVCs pays nothing for this.
+        let volumes = if pending.iter().any(|(_, p)| volumebinding::uses_storage(p)) {
+            self.load_volume_state(&pending).await
+        } else {
+            volumebinding::VolumeState::default()
+        };
+
         // PrioritySort: highest priority first, ties broken by creationTimestamp.
         pending.sort_by(|a, b| {
             pod_priority(&b.1)
@@ -429,8 +450,13 @@ impl Scheduler {
 
         for (ns_name, pod) in &pending {
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
-            match self.schedule_pod(ns_name, pod, &nodes, &state).await {
-                Ok(chosen_node) => info!("Scheduled pod {ns_name}/{pod_name} -> {chosen_node}"),
+            match self.schedule_pod(ns_name, pod, &nodes, &state, &volumes).await {
+                Ok(Placement::Bound(node)) => {
+                    info!("Scheduled pod {ns_name}/{pod_name} -> {node}")
+                }
+                Ok(Placement::WaitingForVolumes(node)) => info!(
+                    "Pod {ns_name}/{pod_name} will run on {node} once its volumes bind"
+                ),
                 Err(e) => debug!("Failed to schedule pod {ns_name}/{pod_name}: {e}"),
             }
         }
@@ -444,7 +470,8 @@ impl Scheduler {
         pod: &Value,
         nodes: &[Value],
         state: &ClusterState,
-    ) -> anyhow::Result<String> {
+        volumes: &volumebinding::VolumeState,
+    ) -> anyhow::Result<Placement> {
         let pod_name = pod["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("pod missing name"))?;
@@ -454,7 +481,19 @@ impl Scheduler {
             .iter()
             .filter(|node| {
                 let result = filter::run_filters(pod, node, state.used(node), state, nodes);
-                matches!(result, FilterResult::Pass)
+                if !matches!(result, FilterResult::Pass) {
+                    return false;
+                }
+                // Storage last: it is the filter that needs the extra listing,
+                // and there is no point paying for it on a node that has
+                // already been ruled out on CPU.
+                match volumebinding::filter_node(pod, namespace, node, volumes) {
+                    Ok(()) => true,
+                    Err(reason) => {
+                        debug!("node rejected for {namespace}/{pod_name}: {reason}");
+                        false
+                    }
+                }
             })
             .collect();
 
@@ -480,7 +519,41 @@ impl Scheduler {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("node missing name"))?;
 
-        // Phase 3: Bind — update the pod with the chosen node
+        // Phase 3a: volumes before the pod.
+        //
+        // A `WaitForFirstConsumer` claim is provisioned where the pod is going
+        // to run, so the node has to be recorded on the claim first — and the
+        // pod must *not* be bound until the volume exists, or the kubelet
+        // starts a pod whose mount cannot succeed yet. The next pass binds it.
+        let unbound = volumebinding::unbound_claims(pod, namespace, volumes);
+        if !unbound.is_empty() {
+            for claim in &unbound {
+                let path = format!(
+                    "/api/v1/namespaces/{namespace}/persistentvolumeclaims/{claim}"
+                );
+                let already = volumes
+                    .claim(namespace, claim)
+                    .and_then(|c| {
+                        c["metadata"]["annotations"][volumebinding::ANN_SELECTED_NODE].as_str()
+                    })
+                    .unwrap_or("");
+                if already == chosen_name {
+                    continue;
+                }
+                let patch = json!({"metadata": {"annotations": {
+                    volumebinding::ANN_SELECTED_NODE: chosen_name
+                }}});
+                if let Err(e) = self.api.patch(&path, &patch).await {
+                    return Err(anyhow::anyhow!(
+                        "could not select node {chosen_name} for claim {namespace}/{claim}: {e}"
+                    ));
+                }
+                info!("Claim {namespace}/{claim} will be provisioned on {chosen_name}");
+            }
+            return Ok(Placement::WaitingForVolumes(chosen_name.to_string()));
+        }
+
+        // Phase 3b: Bind — update the pod with the chosen node
         let mut bound_pod = pod.clone();
         bound_pod["spec"]["nodeName"] = json!(chosen_name);
         bound_pod["status"]["phase"] = json!("Pending");
@@ -501,8 +574,83 @@ impl Scheduler {
             )
             .await?;
 
-        Ok(chosen_name.to_string())
+        Ok(Placement::Bound(chosen_name.to_string()))
     }
+
+    /// List everything the volume filter needs, once per pass.
+    async fn load_volume_state(
+        &self,
+        pending: &[(String, Value)],
+    ) -> volumebinding::VolumeState {
+        let mut state = volumebinding::VolumeState::default();
+
+        if let Ok(list) = self.api.list("/api/v1/persistentvolumes").await {
+            for pv in list["items"].as_array().cloned().unwrap_or_default() {
+                if let Some(name) = pv["metadata"]["name"].as_str() {
+                    state.volumes.insert(name.to_string(), pv.clone());
+                }
+            }
+        }
+        if let Ok(list) = self.api.list("/apis/storage.k8s.io/v1/storageclasses").await {
+            for sc in list["items"].as_array().cloned().unwrap_or_default() {
+                if let Some(name) = sc["metadata"]["name"].as_str() {
+                    state.classes.insert(name.to_string(), sc.clone());
+                }
+            }
+        }
+        if let Ok(list) = self.api.list("/apis/storage.k8s.io/v1/csidrivers").await {
+            for d in list["items"].as_array().cloned().unwrap_or_default() {
+                if d["spec"]["storageCapacity"].as_bool() == Some(true) {
+                    if let Some(name) = d["metadata"]["name"].as_str() {
+                        state.capacity_tracking.push(name.to_string());
+                    }
+                }
+            }
+        }
+        if let Ok(list) = self
+            .api
+            .list("/apis/storage.k8s.io/v1/csistoragecapacities")
+            .await
+        {
+            state.capacities = list["items"].as_array().cloned().unwrap_or_default();
+        }
+
+        // Only the namespaces that have a pending pod with storage.
+        let mut namespaces: Vec<&str> = pending
+            .iter()
+            .filter(|(_, p)| volumebinding::uses_storage(p))
+            .map(|(ns, _)| ns.as_str())
+            .collect();
+        namespaces.sort_unstable();
+        namespaces.dedup();
+        for ns in namespaces {
+            if let Ok(list) = self
+                .api
+                .list(&format!(
+                    "/api/v1/namespaces/{ns}/persistentvolumeclaims"
+                ))
+                .await
+            {
+                for pvc in list["items"].as_array().cloned().unwrap_or_default() {
+                    if let Some(name) = pvc["metadata"]["name"].as_str() {
+                        state
+                            .claims
+                            .insert((ns.to_string(), name.to_string()), pvc.clone());
+                    }
+                }
+            }
+        }
+        state
+    }
+}
+
+/// What a scheduling pass decided for one pod.
+enum Placement {
+    /// Bound to this node.
+    Bound(String),
+    /// The node is chosen and written onto the pod's claims, but the pod is
+    /// deliberately not bound until those claims are.
+    WaitingForVolumes(String),
 }
 
 /// Pod scheduling priority (`spec.priority`, resolved from PriorityClass by

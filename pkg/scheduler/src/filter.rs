@@ -357,7 +357,7 @@ fn node_affinity_filter(pod: &Value, node: &Value) -> FilterResult {
     FilterResult::Fail("node does not match required nodeAffinity".into())
 }
 
-fn node_selector_term_matches(
+pub(crate) fn node_selector_term_matches(
     term: &Value,
     labels: Option<&serde_json::Map<String, Value>>,
     node_name: &str,
