@@ -18,6 +18,12 @@ use axum::response::{IntoResponse, Response};
 pub struct AuthorizationRequest {
     pub verb: String,
     pub resource: String,
+    /// The subresource, when the request names one — `exec` in `pods/exec`.
+    ///
+    /// RBAC treats `pods` and `pods/exec` as different resources, and the
+    /// distinction is the difference between "can edit a workload" and "can
+    /// get a shell inside it". A rule granting `pods` must not grant `exec`.
+    pub subresource: Option<String>,
     pub api_group: String,
     pub namespace: Option<String>,
     pub name: Option<String>,
@@ -207,12 +213,23 @@ fn rule_matches(rule: &Value, req: &AuthorizationRequest) -> bool {
         }
     }
 
-    // Check resources
+    // Check resources.
+    //
+    // A subresource is matched as `resource/subresource`, which is how the
+    // rule is written (`pods/exec`, `nodes/status`) and how upstream compares
+    // it. `*` matches anything, and `pods/*` grants every subresource of pods
+    // without granting pods itself.
     let resources = rule["resources"].as_array();
     if let Some(res) = resources {
+        let target = match &req.subresource {
+            Some(sub) => format!("{}/{}", req.resource, sub),
+            None => req.resource.clone(),
+        };
         let matched = res.iter().any(|r| {
             let r = r.as_str().unwrap_or("");
-            r == "*" || r == req.resource
+            r == "*"
+                || r == target
+                || (r.ends_with("/*") && target.starts_with(&r[..r.len() - 1]))
         });
         if !matched {
             return false;
@@ -278,6 +295,26 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
         });
 
     let auth_req = parse_authorization_request(&path, &method);
+
+    // A path under the API that this cannot parse is **denied**, not waved
+    // through.
+    //
+    // It used to be waved through, and that was the whole authorization story
+    // for every subresource: `pods/exec`, `pods/log`, `nodes/status` and every
+    // CRD `/status` fell off the end of the path parser and skipped RBAC
+    // entirely. With exec now served, that is a shell in any pod for anyone
+    // who can reach the port. Failing closed is the only safe default for a
+    // shape the authorizer does not understand — an unknown path is a reason
+    // to refuse, not a reason to stop asking.
+    if auth_req.is_none() && (path.starts_with("/api/") || path.starts_with("/apis/")) {
+        return Err(crate::error::ApiError {
+            status: StatusCode::FORBIDDEN,
+            reason: "Forbidden".into(),
+            message: format!("{} cannot be authorized for {path}: unrecognized API path", user.username),
+        }
+        .into_response());
+    }
+
     if let Some(auth_req) = auth_req {
         if let Some(rbac) = request.extensions().get::<Arc<RbacEngine>>() {
             let rbac = rbac.clone();
@@ -289,7 +326,10 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
                         "{} is not allowed to {} {} in the namespace \"{}\"",
                         user.username,
                         auth_req.verb,
-                        auth_req.resource,
+                        match &auth_req.subresource {
+                            Some(sub) => format!("{}/{sub}", auth_req.resource),
+                            None => auth_req.resource.clone(),
+                        },
                         auth_req.namespace.as_deref().unwrap_or(""),
                     ),
                 };
@@ -324,7 +364,7 @@ fn parse_authorization_request(
 ) -> Option<AuthorizationRequest> {
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
-    let (api_group, resource, namespace, name) = parse_path_segments(&segments)?;
+    let (api_group, resource, namespace, name, subresource) = parse_path_segments(&segments)?;
 
     let verb = match method.as_str() {
         "GET" => {
@@ -344,6 +384,7 @@ fn parse_authorization_request(
     Some(AuthorizationRequest {
         verb: verb.to_string(),
         resource,
+        subresource,
         api_group,
         namespace,
         name,
@@ -351,43 +392,89 @@ fn parse_authorization_request(
 }
 
 /// Parse path segments into (api_group, resource, namespace, name).
+#[allow(clippy::type_complexity)]
 fn parse_path_segments(
     segments: &[&str],
-) -> Option<(String, String, Option<String>, Option<String>)> {
+) -> Option<(
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)> {
     match segments {
         // /api/v1/{resource}
-        ["api", "v1", resource] => Some(("".into(), resource.to_string(), None, None)),
+        ["api", "v1", resource] => Some(("".into(), resource.to_string(), None, None, None)),
         // /api/v1/{resource}/{name}
-        ["api", "v1", resource, name] => {
-            Some(("".into(), resource.to_string(), None, Some(name.to_string())))
-        }
+        ["api", "v1", resource, name] => Some((
+            "".into(),
+            resource.to_string(),
+            None,
+            Some(name.to_string()),
+            None,
+        )),
+        // /api/v1/{resource}/{name}/{subresource}
+        ["api", "v1", resource, name, sub] => Some((
+            "".into(),
+            resource.to_string(),
+            None,
+            Some(name.to_string()),
+            Some(sub.to_string()),
+        )),
         // /api/v1/namespaces/{ns}/{resource}
-        ["api", "v1", "namespaces", ns, resource] => {
-            Some(("".into(), resource.to_string(), Some(ns.to_string()), None))
-        }
+        ["api", "v1", "namespaces", ns, resource] => Some((
+            "".into(),
+            resource.to_string(),
+            Some(ns.to_string()),
+            None,
+            None,
+        )),
         // /api/v1/namespaces/{ns}/{resource}/{name}
         ["api", "v1", "namespaces", ns, resource, name] => Some((
             "".into(),
             resource.to_string(),
             Some(ns.to_string()),
             Some(name.to_string()),
+            None,
+        )),
+        // /api/v1/namespaces/{ns}/{resource}/{name}/{subresource}
+        ["api", "v1", "namespaces", ns, resource, name, sub] => Some((
+            "".into(),
+            resource.to_string(),
+            Some(ns.to_string()),
+            Some(name.to_string()),
+            Some(sub.to_string()),
         )),
         // /apis/{group}/{version}/{resource}
-        ["apis", group, _version, resource] => {
-            Some((group.to_string(), resource.to_string(), None, None))
-        }
+        ["apis", group, _version, resource] => Some((
+            group.to_string(),
+            resource.to_string(),
+            None,
+            None,
+            None,
+        )),
         // /apis/{group}/{version}/{resource}/{name}
         ["apis", group, _version, resource, name] => Some((
             group.to_string(),
             resource.to_string(),
             None,
             Some(name.to_string()),
+            None,
+        )),
+        // /apis/{group}/{version}/{resource}/{name}/{subresource}
+        ["apis", group, _version, resource, name, sub] => Some((
+            group.to_string(),
+            resource.to_string(),
+            None,
+            Some(name.to_string()),
+            Some(sub.to_string()),
         )),
         // /apis/{group}/{version}/namespaces/{ns}/{resource}
         ["apis", group, _version, "namespaces", ns, resource] => Some((
             group.to_string(),
             resource.to_string(),
             Some(ns.to_string()),
+            None,
             None,
         )),
         // /apis/{group}/{version}/namespaces/{ns}/{resource}/{name}
@@ -396,7 +483,107 @@ fn parse_path_segments(
             resource.to_string(),
             Some(ns.to_string()),
             Some(name.to_string()),
+            None,
+        )),
+        // /apis/{group}/{version}/namespaces/{ns}/{resource}/{name}/{subresource}
+        ["apis", group, _version, "namespaces", ns, resource, name, sub] => Some((
+            group.to_string(),
+            resource.to_string(),
+            Some(ns.to_string()),
+            Some(name.to_string()),
+            Some(sub.to_string()),
         )),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod subresource_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn req(verb: &str, resource: &str, subresource: Option<&str>) -> AuthorizationRequest {
+        AuthorizationRequest {
+            verb: verb.into(),
+            resource: resource.into(),
+            subresource: subresource.map(str::to_string),
+            api_group: "".into(),
+            namespace: Some("default".into()),
+            name: Some("p1".into()),
+        }
+    }
+
+    #[test]
+    fn a_rule_for_pods_does_not_grant_exec() {
+        // The distinction that matters: "can edit a workload" is not "can get
+        // a shell inside it".
+        let rule = json!({"apiGroups": [""], "resources": ["pods"], "verbs": ["*"]});
+        assert!(rule_matches(&rule, &req("get", "pods", None)));
+        assert!(!rule_matches(&rule, &req("create", "pods", Some("exec"))));
+    }
+
+    #[test]
+    fn a_rule_naming_the_subresource_grants_it() {
+        let rule = json!({"apiGroups": [""], "resources": ["pods/exec"], "verbs": ["create"]});
+        assert!(rule_matches(&rule, &req("create", "pods", Some("exec"))));
+        assert!(!rule_matches(&rule, &req("create", "pods", Some("attach"))));
+        assert!(!rule_matches(&rule, &req("get", "pods", None)));
+    }
+
+    #[test]
+    fn wildcards_still_grant_everything() {
+        let rule = json!({"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]});
+        assert!(rule_matches(&rule, &req("create", "pods", Some("exec"))));
+        let subs = json!({"apiGroups": [""], "resources": ["pods/*"], "verbs": ["*"]});
+        assert!(rule_matches(&subs, &req("create", "pods", Some("exec"))));
+        assert!(rule_matches(&subs, &req("get", "pods", Some("log"))));
+        assert!(
+            !rule_matches(&subs, &req("delete", "pods", None)),
+            "pods/* is every subresource of pods, not pods itself"
+        );
+    }
+
+    #[test]
+    fn subresource_paths_are_parsed_rather_than_falling_off_the_end() {
+        let exec = parse_authorization_request(
+            "/api/v1/namespaces/kube-system/pods/cilium-abc/exec",
+            &axum::http::Method::POST,
+        )
+        .expect("exec path must parse — an unparsed path used to skip RBAC entirely");
+        assert_eq!(exec.resource, "pods");
+        assert_eq!(exec.subresource.as_deref(), Some("exec"));
+        assert_eq!(exec.verb, "create");
+        assert_eq!(exec.namespace.as_deref(), Some("kube-system"));
+
+        let status = parse_authorization_request(
+            "/api/v1/nodes/node-a/status",
+            &axum::http::Method::PUT,
+        )
+        .expect("cluster-scoped subresource must parse");
+        assert_eq!(status.resource, "nodes");
+        assert_eq!(status.subresource.as_deref(), Some("status"));
+        assert_eq!(status.verb, "update");
+
+        let crd = parse_authorization_request(
+            "/apis/cilium.io/v2/namespaces/default/ciliumnetworkpolicies/p/status",
+            &axum::http::Method::PATCH,
+        )
+        .expect("grouped namespaced subresource must parse");
+        assert_eq!(crd.api_group, "cilium.io");
+        assert_eq!(crd.resource, "ciliumnetworkpolicies");
+        assert_eq!(crd.subresource.as_deref(), Some("status"));
+    }
+
+    #[test]
+    fn a_websocket_exec_is_a_get_on_the_same_subresource() {
+        // Newer clients open exec with GET (WebSocket) rather than POST
+        // (SPDY); both must land on pods/exec.
+        let ws = parse_authorization_request(
+            "/api/v1/namespaces/default/pods/p1/exec",
+            &axum::http::Method::GET,
+        )
+        .unwrap();
+        assert_eq!(ws.subresource.as_deref(), Some("exec"));
+        assert_eq!(ws.verb, "get");
     }
 }
