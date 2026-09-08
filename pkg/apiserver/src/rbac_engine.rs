@@ -413,14 +413,6 @@ fn parse_path_segments(
             Some(name.to_string()),
             None,
         )),
-        // /api/v1/{resource}/{name}/{subresource}
-        ["api", "v1", resource, name, sub] => Some((
-            "".into(),
-            resource.to_string(),
-            None,
-            Some(name.to_string()),
-            Some(sub.to_string()),
-        )),
         // /api/v1/namespaces/{name}/{status|finalize} — the two subresources
         // of a Namespace, which have the same shape as a namespaced resource
         // list and would otherwise be read as one ("can you list finalizes in
@@ -454,6 +446,18 @@ fn parse_path_segments(
             "".into(),
             resource.to_string(),
             Some(ns.to_string()),
+            Some(name.to_string()),
+            Some(sub.to_string()),
+        )),
+        // /api/v1/{resource}/{name}/{subresource} — cluster-scoped, e.g.
+        // `nodes/node-a/status`. **After** the namespaces arms above: this has
+        // the same five-segment shape as `namespaces/{ns}/{resource}`, and
+        // whichever is written first wins, so a listing of pods in a namespace
+        // would otherwise be read as a subresource of a namespace.
+        ["api", "v1", resource, name, sub] => Some((
+            "".into(),
+            resource.to_string(),
+            None,
             Some(name.to_string()),
             Some(sub.to_string()),
         )),
