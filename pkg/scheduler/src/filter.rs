@@ -235,37 +235,12 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: NodeUsage) -> FilterResu
 
 /// Parse Kubernetes CPU notation to millicores.
 pub fn parse_cpu_millis(s: &str) -> u64 {
-    if let Some(stripped) = s.strip_suffix('m') {
-        stripped.parse().unwrap_or(0)
-    } else {
-        // Whole cores
-        let cores: f64 = s.parse().unwrap_or(0.0);
-        (cores * 1000.0) as u64
-    }
+    apimachinery::quantity::parse_cpu_millis(s)
 }
 
 /// Parse Kubernetes memory notation to bytes.
 pub fn parse_memory_bytes(s: &str) -> u64 {
-    let s = s.trim();
-    if let Some(stripped) = s.strip_suffix("Ki") {
-        stripped.parse::<u64>().unwrap_or(0) * 1024
-    } else if let Some(stripped) = s.strip_suffix("Mi") {
-        stripped.parse::<u64>().unwrap_or(0) * 1024 * 1024
-    } else if let Some(stripped) = s.strip_suffix("Gi") {
-        stripped.parse::<u64>().unwrap_or(0) * 1024 * 1024 * 1024
-    } else if let Some(stripped) = s.strip_suffix("Ti") {
-        stripped.parse::<u64>().unwrap_or(0) * 1024 * 1024 * 1024 * 1024
-    } else if let Some(stripped) = s.strip_suffix('K') {
-        stripped.parse::<u64>().unwrap_or(0) * 1000
-    } else if let Some(stripped) = s.strip_suffix('M') {
-        stripped.parse::<u64>().unwrap_or(0) * 1_000_000
-    } else if let Some(stripped) = s.strip_suffix('G') {
-        stripped.parse::<u64>().unwrap_or(0) * 1_000_000_000
-    } else if let Some(stripped) = s.strip_suffix('T') {
-        stripped.parse::<u64>().unwrap_or(0) * 1_000_000_000_000
-    } else {
-        s.parse().unwrap_or(0)
-    }
+    apimachinery::quantity::parse_bytes(s)
 }
 
 #[cfg(test)]

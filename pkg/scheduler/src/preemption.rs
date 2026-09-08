@@ -175,37 +175,12 @@ fn requested_memory(pod: &Value) -> i64 {
 
 /// Parse CPU string (e.g. "100m", "1") into millicores.
 fn parse_cpu_millicores(s: &str) -> Option<i64> {
-    if let Some(m) = s.strip_suffix('m') {
-        m.parse().ok()
-    } else {
-        s.parse::<i64>().ok().map(|v| v * 1000)
-    }
+    Some(apimachinery::quantity::parse_cpu_millis(s) as i64)
 }
 
 /// Parse memory string (e.g. "128Mi", "1Gi") into bytes.
 fn parse_memory_bytes(s: &str) -> Option<i64> {
-    let (num_str, suffix) = if let Some(pos) = s.chars().position(|c| c.is_alphabetic()) {
-        (&s[..pos], &s[pos..])
-    } else {
-        (s, "")
-    };
-
-    let num: i64 = num_str.parse().ok()?;
-
-    let multiplier = match suffix {
-        "" => 1,
-        "Ki" => 1024,
-        "Mi" => 1024 * 1024,
-        "Gi" => 1024 * 1024 * 1024,
-        "Ti" => 1024 * 1024 * 1024 * 1024,
-        "K" | "k" => 1000,
-        "M" => 1000 * 1000,
-        "G" => 1000 * 1000 * 1000,
-        "T" => 1000 * 1000 * 1000 * 1000,
-        _ => return None,
-    };
-
-    Some(num * multiplier)
+    Some(apimachinery::quantity::parse_bytes(s) as i64)
 }
 
 #[cfg(test)]

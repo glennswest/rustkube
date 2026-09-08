@@ -152,25 +152,11 @@ fn node_affinity_score(pod: &Value, node: &Value) -> i64 {
 }
 
 fn parse_cpu_millis(s: &str) -> u64 {
-    if let Some(stripped) = s.strip_suffix('m') {
-        stripped.parse().unwrap_or(0)
-    } else {
-        let cores: f64 = s.parse().unwrap_or(0.0);
-        (cores * 1000.0) as u64
-    }
+    apimachinery::quantity::parse_cpu_millis(s)
 }
 
 fn parse_memory_bytes(s: &str) -> u64 {
-    let s = s.trim();
-    if let Some(stripped) = s.strip_suffix("Ki") {
-        stripped.parse::<u64>().unwrap_or(0) * 1024
-    } else if let Some(stripped) = s.strip_suffix("Mi") {
-        stripped.parse::<u64>().unwrap_or(0) * 1024 * 1024
-    } else if let Some(stripped) = s.strip_suffix("Gi") {
-        stripped.parse::<u64>().unwrap_or(0) * 1024 * 1024 * 1024
-    } else {
-        s.parse().unwrap_or(0)
-    }
+    apimachinery::quantity::parse_bytes(s)
 }
 
 #[cfg(test)]

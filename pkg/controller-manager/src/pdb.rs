@@ -101,19 +101,10 @@ impl PdbController {
     }
 }
 
-/// matchLabels-only selector match; an empty selector matches everything.
+/// Selector match, including `matchExpressions` — see
+/// [`apimachinery::selector`].
 fn selector_matches(selector: &Value, labels: &Value) -> bool {
-    let ml = match selector.get("matchLabels").and_then(Value::as_object) {
-        Some(m) => m,
-        None => return selector.is_object(),
-    };
-    let pod_labels = labels.as_object();
-    ml.iter().all(|(k, v)| {
-        pod_labels
-            .and_then(|pl| pl.get(k))
-            .map(|pv| pv == v)
-            .unwrap_or(false)
-    })
+    apimachinery::selector::matches(selector, labels)
 }
 
 fn intstr_to_count(v: &Value, total: i64) -> Option<i64> {
