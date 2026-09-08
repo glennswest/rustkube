@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### 2026-09-08 — metrics
+- **feat:** every component exposes the upstream metric names (#51). The names
+  are the point: a Kubernetes dashboard, recording rule or alert should work
+  here unchanged. `apiserver_request_total` and
+  `apiserver_request_duration_seconds` now carry upstream's full label set
+  (`verb,group,version,resource,scope[,code]`) with the **Kubernetes** verb
+  rather than the HTTP method — a GET of a collection is a `list`, a GET with
+  `?watch=true` is a `watch` — and the labels are derived from the path's
+  shape rather than a table of known resource names, so custom resources stop
+  landing in `other`. `apiserver_current_inflight_requests` gains
+  `request_kind`. New: `etcd_request_duration_seconds{operation,type}` around
+  every datastore call, and `apiserver_storage_objects`,
+  `apiserver_watch_events_total`, `watch_cache_capacity` from the watch cache,
+  which already had the numbers.
+- **feat:** the `process_*` family — CPU, RSS, virtual size, start time, open
+  and max fds — read from `/proc/self` at scrape time. Upstream gets these
+  free from the Prometheus Go client, so every Kubernetes dashboard assumes
+  them and nothing in Rust provides them. Absent (not zero) on a non-Linux
+  build.
+- **feat:** `leader_election_master_status{name}` on the controller manager
+  and the scheduler, replacing `controller_manager_leader`, which no dashboard
+  looks for. It is 1 on the holder, so two instances both reporting 1 is
+  visible immediately rather than when they start fighting.
+- **feat:** `scheduler_pending_pods`, `scheduler_e2e_scheduling_duration_seconds`
+  and honest `scheduler_schedule_attempts_total` results.
+- **refactor:** one exporter (`apimachinery::metrics`) instead of three copies
+  of the same thirty lines that had already drifted.
+- **docs:** [docs/metrics.md](docs/metrics.md), including what is deliberately
+  *not* exported: no `workqueue_*`, because these controllers are poll loops
+  with no queue and a constant-zero depth is a number that reads as a fact.
+
 ### 2026-09-08 — release artifacts
 - **build:** static musl binaries and `FROM scratch` images (#50). The
   Distroless base shipped 20 MB of glibc and 5 MB of documentation per
