@@ -767,11 +767,14 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         crd_registry,
             service_cidr: config.service_cidr.clone(),
 };
-    // Prometheus metrics recorder + /metrics endpoint (scraped by ironprom).
-    let prom = metrics_exporter_prometheus::PrometheusBuilder::new()
-        .install_recorder()
-        .map_err(|e| anyhow::anyhow!("prometheus recorder: {e}"))?;
-    metrics::gauge!("apiserver_build_info", "version" => apimachinery::VERSION).set(1.0);
+    // Prometheus recorder + /metrics, shared with the other components
+    // (apimachinery::metrics) so the `process_*` family and the build-info
+    // gauge are the same everywhere. Unlike the scheduler and the controller
+    // manager, the apiserver serves /metrics on its own API listener rather
+    // than a second port — that is where upstream serves it, and where a
+    // scrape config expects it.
+    let prom = apimachinery::metrics::install("kube-apiserver")
+        .ok_or_else(|| anyhow::anyhow!("prometheus recorder could not be installed"))?;
 
     let app = build_router(state, signing_keys, rbac, config.anonymous_auth)
         .route(
@@ -780,7 +783,10 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
                 let h = prom.clone();
                 move || {
                     let h = h.clone();
-                    async move { h.render() }
+                    async move {
+                        apimachinery::metrics::refresh_process_metrics();
+                        h.render()
+                    }
                 }
             }),
         )
@@ -1327,38 +1333,6 @@ async fn bootstrap_rbac(
     }
 }
 
-/// Derive the `resource` label from a request path, mirroring the labels
-/// upstream kube-apiserver attaches (`pods`, `namespaces`, `leases`, …). Keeps
-/// cardinality bounded: object names and namespaces are collapsed away, so the
-/// label set is the finite list of resource types, not one series per object.
-fn resource_label(path: &str) -> &'static str {
-    // Known resources appear right after `.../v1/` or `.../{namespace}/`.
-    const RESOURCES: &[&str] = &[
-        "namespaces", "nodes", "pods", "services", "endpoints", "endpointslices",
-        "configmaps", "secrets", "serviceaccounts", "events", "persistentvolumes",
-        "persistentvolumeclaims", "deployments", "replicasets", "statefulsets",
-        "daemonsets", "jobs", "cronjobs", "leases", "customresourcedefinitions",
-        "clusterroles", "clusterrolebindings", "roles", "rolebindings",
-        "horizontalpodautoscalers", "storageclasses", "csidrivers", "csinodes",
-        "volumeattachments", "csistoragecapacities", "certificatesigningrequests",
-        "poddisruptionbudgets", "priorityclasses",
-    ];
-    for seg in path.split('/') {
-        if let Some(r) = RESOURCES.iter().find(|r| **r == seg) {
-            return r;
-        }
-    }
-    if path.starts_with("/openapi") {
-        "openapi"
-    } else if path == "/api" || path.starts_with("/apis") || path == "/version" {
-        "discovery"
-    } else if path.starts_with("/healthz") || path.starts_with("/livez") || path.starts_with("/readyz") {
-        "health"
-    } else {
-        "other"
-    }
-}
-
 /// Records the metrics real dashboards/alerts need (#13): request rate by
 /// verb/resource/code, request latency histogram, and in-flight requests —
 /// bringing the apiserver exporter to the bar the CM/scheduler exporters set.
@@ -1366,36 +1340,153 @@ async fn metrics_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let method = req.method().as_str().to_string();
-    let resource = resource_label(req.uri().path());
+    let path = req.uri().path().to_string();
+    let query = req.uri().query().unwrap_or("").to_string();
+    let method = req.method().clone();
+    let attrs = RequestAttributes::of(&path, &query, &method);
 
-    metrics::gauge!("apiserver_current_inflight_requests").increment(1.0);
+    // Upstream splits in-flight by mutating vs read-only, because they are
+    // limited separately and a burst of one says something different from a
+    // burst of the other.
+    let kind = if attrs.mutating { "mutating" } else { "readOnly" };
+    metrics::gauge!("apiserver_current_inflight_requests", "request_kind" => kind).increment(1.0);
     let started = std::time::Instant::now();
 
     let response = next.run(req).await;
 
     let elapsed = started.elapsed().as_secs_f64();
     let code = response.status().as_u16().to_string();
-    metrics::gauge!("apiserver_current_inflight_requests").decrement(1.0);
+    metrics::gauge!("apiserver_current_inflight_requests", "request_kind" => kind).decrement(1.0);
 
-    // Backwards-compatible total (kept for existing scrapes) plus the richer,
-    // fully-labeled total and the latency histogram.
-    metrics::counter!("apiserver_request_total", "method" => method.clone()).increment(1);
+    // The upstream label set, exactly: verb, group, version, resource, scope,
+    // code. A dashboard written for Kubernetes reads these names and no
+    // others, which is the entire reason for matching them.
     metrics::counter!(
-        "apiserver_request_total_by_labels",
-        "verb" => method.clone(),
-        "resource" => resource,
+        "apiserver_request_total",
+        "verb" => attrs.verb,
+        "group" => attrs.group.clone(),
+        "version" => attrs.version.clone(),
+        "resource" => attrs.resource.clone(),
+        "scope" => attrs.scope,
         "code" => code,
     )
     .increment(1);
     metrics::histogram!(
         "apiserver_request_duration_seconds",
-        "verb" => method,
-        "resource" => resource,
+        "verb" => attrs.verb,
+        "group" => attrs.group,
+        "version" => attrs.version,
+        "resource" => attrs.resource,
+        "scope" => attrs.scope,
     )
     .record(elapsed);
 
     response
+}
+
+/// What upstream labels a request with.
+struct RequestAttributes {
+    /// The **Kubernetes** verb, not the HTTP method: a GET of a collection is
+    /// a `list`, a GET with `?watch=true` is a `watch`, and a dashboard that
+    /// asks "how many lists are we serving" is asking about the first.
+    verb: &'static str,
+    group: String,
+    version: String,
+    resource: String,
+    /// `cluster`, `namespace` or `resource` — how much the request covers.
+    scope: &'static str,
+    mutating: bool,
+}
+
+impl RequestAttributes {
+    fn of(path: &str, query: &str, method: &axum::http::Method) -> Self {
+        let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        let watching = query.split('&').any(|p| p == "watch=true" || p == "watch=1");
+
+        let (group, version, rest): (String, String, &[&str]) = match segments.as_slice() {
+            ["api", version, rest @ ..] => ("".into(), (*version).to_string(), rest),
+            ["apis", group, version, rest @ ..] => {
+                ((*group).to_string(), (*version).to_string(), rest)
+            }
+            _ => ("".into(), "".into(), &[][..]),
+        };
+
+        // Inside the group/version: either `{resource}[/{name}[/{sub}]]` or
+        // `namespaces/{ns}/{resource}[/{name}[/{sub}]]`.
+        let (namespaced, tail): (bool, &[&str]) = match rest {
+            ["namespaces", _ns, tail @ ..] if !tail.is_empty() => (true, tail),
+            other => (false, other),
+        };
+        let resource = tail.first().copied().unwrap_or("").to_string();
+        let named = tail.len() >= 2;
+        let subresource = tail.get(2).copied();
+
+        let scope = if resource.is_empty() {
+            "cluster"
+        } else if named {
+            "resource"
+        } else if namespaced {
+            "namespace"
+        } else {
+            "cluster"
+        };
+
+        let verb = match method.as_str() {
+            "GET" | "HEAD" => {
+                if watching {
+                    "watch"
+                } else if named {
+                    "get"
+                } else {
+                    "list"
+                }
+            }
+            "POST" => "create",
+            "PUT" => "update",
+            "PATCH" => "patch",
+            "DELETE" => {
+                if named {
+                    "delete"
+                } else {
+                    "deletecollection"
+                }
+            }
+            _ => "other",
+        };
+
+        let resource = match (resource.as_str(), subresource) {
+            ("", _) => non_resource_label(path).to_string(),
+            (r, Some(sub)) => format!("{r}/{sub}"),
+            (r, None) => r.to_string(),
+        };
+
+        Self {
+            verb,
+            group,
+            version,
+            resource,
+            scope,
+            mutating: matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE"),
+        }
+    }
+}
+
+/// A label for the paths that are not resources at all.
+fn non_resource_label(path: &str) -> &'static str {
+    if path.starts_with("/openapi") {
+        "openapi"
+    } else if path == "/api" || path.starts_with("/apis") || path == "/version" {
+        "discovery"
+    } else if path.starts_with("/healthz")
+        || path.starts_with("/livez")
+        || path.starts_with("/readyz")
+    {
+        "health"
+    } else if path == "/metrics" {
+        "metrics"
+    } else {
+        "other"
+    }
 }
 
 #[cfg(test)]
@@ -1416,5 +1507,90 @@ mod tests {
         );
         assert!(first_service_ip("not-a-cidr").is_none());
         assert!(first_service_ip("10.96.0.0").is_none());
+    }
+}
+
+#[cfg(test)]
+mod metrics_label_tests {
+    use super::RequestAttributes;
+    use axum::http::Method;
+
+    fn attrs(path: &str, query: &str, method: Method) -> RequestAttributes {
+        RequestAttributes::of(path, query, &method)
+    }
+
+    #[test]
+    fn a_get_of_a_collection_is_a_list_not_a_get() {
+        // The distinction upstream draws, and the one a dashboard asks about:
+        // "how many lists are we serving" is a question about load.
+        let a = attrs("/api/v1/namespaces/default/pods", "", Method::GET);
+        assert_eq!(a.verb, "list");
+        assert_eq!(a.resource, "pods");
+        assert_eq!(a.scope, "namespace");
+        assert_eq!(a.group, "");
+        assert_eq!(a.version, "v1");
+
+        let b = attrs("/api/v1/namespaces/default/pods/web", "", Method::GET);
+        assert_eq!(b.verb, "get");
+        assert_eq!(b.scope, "resource");
+    }
+
+    #[test]
+    fn a_watch_is_its_own_verb() {
+        let a = attrs("/api/v1/pods", "watch=true", Method::GET);
+        assert_eq!(a.verb, "watch");
+        assert_eq!(a.scope, "cluster");
+    }
+
+    #[test]
+    fn grouped_resources_carry_their_group_and_version() {
+        let a = attrs(
+            "/apis/apps/v1/namespaces/kube-system/deployments/coredns",
+            "",
+            Method::PATCH,
+        );
+        assert_eq!(a.group, "apps");
+        assert_eq!(a.version, "v1");
+        assert_eq!(a.resource, "deployments");
+        assert_eq!(a.verb, "patch");
+        assert!(a.mutating);
+    }
+
+    #[test]
+    fn a_subresource_is_labelled_as_one() {
+        let a = attrs("/api/v1/namespaces/default/pods/web/exec", "", Method::POST);
+        assert_eq!(a.resource, "pods/exec");
+        assert_eq!(a.verb, "create");
+
+        let b = attrs("/api/v1/nodes/node-a/status", "", Method::PUT);
+        assert_eq!(b.resource, "nodes/status");
+        assert_eq!(b.scope, "resource");
+    }
+
+    #[test]
+    fn a_collection_delete_is_deletecollection() {
+        let a = attrs("/api/v1/namespaces/default/pods", "", Method::DELETE);
+        assert_eq!(a.verb, "deletecollection");
+    }
+
+    #[test]
+    fn custom_resources_need_no_table_of_known_names() {
+        // The old label function matched a hardcoded list and reported "other"
+        // for everything else, so every CRD request was invisible.
+        let a = attrs(
+            "/apis/cilium.io/v2/namespaces/kube-system/ciliumnetworkpolicies",
+            "",
+            Method::GET,
+        );
+        assert_eq!(a.group, "cilium.io");
+        assert_eq!(a.resource, "ciliumnetworkpolicies");
+        assert_eq!(a.verb, "list");
+    }
+
+    #[test]
+    fn non_resource_paths_are_labelled_not_blank() {
+        assert_eq!(attrs("/healthz", "", Method::GET).resource, "health");
+        assert_eq!(attrs("/metrics", "", Method::GET).resource, "metrics");
+        assert_eq!(attrs("/openapi/v3", "", Method::GET).resource, "openapi");
     }
 }
