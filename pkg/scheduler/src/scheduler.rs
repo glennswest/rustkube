@@ -342,6 +342,7 @@ impl Scheduler {
 
         if !self.leader_elect {
             info!("Scheduler started (leader election disabled)");
+            crate::metrics_server::set_leader(true);
             return self.scheduling_loop().await;
         }
 
@@ -355,15 +356,18 @@ impl Scheduler {
             "Scheduler leader election enabled (identity={})",
             self.identity
         );
+        crate::metrics_server::set_leader(false);
         loop {
             elector.acquire().await;
             info!("Became leader; scheduling pods");
+            crate::metrics_server::set_leader(true);
             let mut interval = time::interval(Duration::from_secs(1));
             loop {
                 interval.tick().await;
                 // Renew before each pass; step down immediately if we lost it.
                 if !elector.try_acquire_or_renew().await {
                     warn!("Lost leadership; pausing scheduling");
+                    crate::metrics_server::set_leader(false);
                     break;
                 }
                 if let Err(e) = self.schedule_pending_pods().await {
@@ -448,16 +452,31 @@ impl Scheduler {
                 .then_with(|| creation_ts(&a.1).cmp(&creation_ts(&b.1)))
         });
 
+        crate::metrics_server::set_pending_pods(pending.len());
+
         for (ns_name, pod) in &pending {
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
+            let started = std::time::Instant::now();
             match self.schedule_pod(ns_name, pod, &nodes, &state, &volumes).await {
                 Ok(Placement::Bound(node)) => {
+                    crate::metrics_server::record_attempt("scheduled");
+                    crate::metrics_server::record_e2e_latency(
+                        started.elapsed().as_secs_f64(),
+                        "scheduled",
+                    );
                     info!("Scheduled pod {ns_name}/{pod_name} -> {node}")
                 }
-                Ok(Placement::WaitingForVolumes(node)) => info!(
-                    "Pod {ns_name}/{pod_name} will run on {node} once its volumes bind"
-                ),
-                Err(e) => debug!("Failed to schedule pod {ns_name}/{pod_name}: {e}"),
+                Ok(Placement::WaitingForVolumes(node)) => {
+                    // Not an attempt that failed and not one that succeeded:
+                    // the pod is placed and waiting on storage, which upstream
+                    // counts as unschedulable until the volume binds.
+                    crate::metrics_server::record_attempt("unschedulable");
+                    info!("Pod {ns_name}/{pod_name} will run on {node} once its volumes bind")
+                }
+                Err(e) => {
+                    crate::metrics_server::record_attempt("unschedulable");
+                    debug!("Failed to schedule pod {ns_name}/{pod_name}: {e}")
+                }
             }
         }
 

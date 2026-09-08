@@ -1,47 +1,36 @@
-//! Metrics + health HTTP server for the controller manager.
+//! The controller manager's `/metrics` (upstream port 10257).
 //!
-//! Upstream kube-controller-manager exposes `/metrics` and `/healthz` (on
-//! :10257). We serve the Prometheus exposition format so ironprom can scrape it.
+//! The exporter itself is [`apimachinery::metrics`], shared with the scheduler
+//! and the apiserver — this file is what is specific to the controller
+//! manager, which is one gauge and the port number.
 
-use axum::routing::get;
-use axum::Router;
-use metrics_exporter_prometheus::PrometheusHandle;
-
-/// Install the Prometheus recorder and spawn a `/metrics` + `/healthz` server on
-/// `port`. Call once at startup. Returns the handle (also captured by the route).
-pub fn spawn(port: u16) -> Option<PrometheusHandle> {
-    let handle = match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::warn!("metrics recorder install failed: {e}");
-            return None;
-        }
-    };
-    metrics::gauge!("controller_manager_build_info", "version" => apimachinery::VERSION).set(1.0);
-
-    let h = handle.clone();
-    tokio::spawn(async move {
-        let app = Router::new()
-            .route("/healthz", get(|| async { "ok" }))
-            .route(
-                "/metrics",
-                get(move || {
-                    let h = h.clone();
-                    async move { h.render() }
-                }),
-            );
-        match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
-            Ok(listener) => {
-                tracing::info!("controller-manager metrics on :{port}/metrics");
-                let _ = axum::serve(listener, app).await;
-            }
-            Err(e) => tracing::warn!("metrics server bind :{port} failed: {e}"),
-        }
-    });
+/// Install the recorder and serve `/metrics` + `/healthz` on `port`.
+pub fn spawn(port: u16) -> Option<metrics_exporter_prometheus::PrometheusHandle> {
+    let handle = apimachinery::metrics::install("kube-controller-manager")?;
+    apimachinery::metrics::serve(port, handle.clone(), "controller-manager");
     Some(handle)
 }
 
-/// Record whether this instance currently holds leadership (1) or not (0).
+/// Record whether this instance currently holds leadership.
+///
+/// Under upstream's name (`leader_election_master_status{name}`), not the
+/// `controller_manager_leader` this used to export, which nothing looks for.
+/// It is the metric that shows two instances both believing they lead.
 pub fn set_leader(is_leader: bool) {
-    metrics::gauge!("controller_manager_leader").set(if is_leader { 1.0 } else { 0.0 });
+    apimachinery::metrics::set_leader("kube-controller-manager", is_leader);
+}
+
+/// How long one controller's reconcile pass took, and whether it failed.
+///
+/// Deliberately **not** `workqueue_*`: these controllers are poll loops with
+/// no queue, and exporting `workqueue_depth` as a constant zero would be a
+/// number that reads as a fact. The shape differs from upstream, so the name
+/// does too.
+pub fn record_reconcile(controller: &'static str, seconds: f64, ok: bool) {
+    metrics::histogram!("controller_reconcile_duration_seconds", "controller" => controller)
+        .record(seconds);
+    if !ok {
+        metrics::counter!("controller_reconcile_errors_total", "controller" => controller)
+            .increment(1);
+    }
 }

@@ -11,6 +11,7 @@ pub mod rbac;
 pub mod certs;
 pub mod cron;
 pub mod taint;
+pub mod metrics;
 pub mod protobuf;
 pub mod quantity;
 pub mod selector;

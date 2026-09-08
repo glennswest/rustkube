@@ -28,6 +28,10 @@ thiserror = { workspace = true }
 # Observability
 tracing = { workspace = true }
 metrics = { workspace = true }
+# The exporter and the HTTP server live here because every component serves the
+# same /metrics endpoint, and three copies of it had already drifted (#51).
+metrics-exporter-prometheus = { workspace = true }
+axum = { workspace = true }
 
 # Utilities
 chrono = { workspace = true }
