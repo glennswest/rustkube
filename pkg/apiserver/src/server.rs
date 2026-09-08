@@ -839,7 +839,23 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             if let Some(ca) = &client_ca {
                 report_cert_expiry("client-ca", ca);
             }
-            let cfg = crate::tls::server_config(&cert, &key, client_ca.as_deref())?;
+            let (cfg, resolver) =
+                crate::tls::server_config(&cert, &key, client_ca.as_deref())?;
+            // Renewal takes effect without a restart (#20). Only for a cert
+            // that came from a file: an auto-generated one has nowhere to be
+            // renewed from, and watching a path nobody writes is a task that
+            // does nothing forever.
+            if let (Some(cert_path), Some(key_path)) = (&config.tls_cert, &config.tls_key) {
+                crate::tls::watch_cert_files(
+                    resolver,
+                    cert_path.clone(),
+                    key_path.clone(),
+                );
+                info!(
+                    "watching {} for a renewed serving certificate",
+                    cert_path.display()
+                );
+            }
             crate::tls::serve(listener, app, cfg).await?;
         }
         None => {
@@ -870,7 +886,7 @@ const CERT_EXPIRY_WARN_DAYS: i64 = 30;
 /// Publish a cert's expiry as `apiserver_certificate_expiration_seconds{name}`
 /// (a unix timestamp — alerting rules compute `value - time()`) and log a
 /// warning if it expires within `CERT_EXPIRY_WARN_DAYS` (#20).
-fn report_cert_expiry(name: &'static str, cert_pem: &[u8]) {
+pub(crate) fn report_cert_expiry(name: &'static str, cert_pem: &[u8]) {
     let Some(not_after) = apimachinery::certs::cert_not_after_unix(cert_pem) else {
         tracing::warn!("could not parse {name} certificate to determine expiry");
         return;
