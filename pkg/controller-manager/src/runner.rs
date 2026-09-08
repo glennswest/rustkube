@@ -1,6 +1,9 @@
 //! Controller manager — runs all controllers concurrently.
 
-use crate::{cronjob, daemonset, deployment, gateway, hpa, job, migration, namespace, node, pdb, replicaset, service, statefulset};
+use crate::{
+    cronjob, daemonset, deployment, gateway, hpa, job, migration, namespace, node, pdb,
+    persistentvolume, replicaset, service, statefulset,
+};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
@@ -349,6 +352,11 @@ impl ControllerManager {
 
         let api = self.api.clone();
         tasks.spawn(async move {
+            persistentvolume::PersistentVolumeController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
             crate::gc::GarbageCollector::new(api).run().await;
         });
 
@@ -358,7 +366,7 @@ impl ControllerManager {
             crate::csr::CsrController::new(api, ca).run().await;
         });
 
-        info!("All controllers started (14 controllers)");
+        info!("All controllers started (15 controllers)");
         tasks
     }
 
