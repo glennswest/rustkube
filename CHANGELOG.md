@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+<!-- New unreleased changes go here -->
+
+## [v0.8.0] — 2026-09-08
+
 ### 2026-09-08 — certificates
 - **feat(apiserver):** the serving certificate reloads **without a restart**
   (#20 phase 1). rustls asks a resolver for the certificate on every
