@@ -181,6 +181,12 @@ impl GarbageCollector {
             }
         }
 
+        debug!(
+            "gc: {} objects across {} kinds, {} with dependents",
+            objects.len(),
+            seen_kinds.len(),
+            dependents.len()
+        );
         self.process_finalizers(&objects, &dependents).await;
         self.background_cascade(&objects, &live, &seen_kinds).await;
         self.expire_events().await;
@@ -227,6 +233,13 @@ impl GarbageCollector {
             let finalizers = owner.finalizers();
             let foreground = finalizers.contains(&FOREGROUND_FINALIZER);
             let orphan = finalizers.contains(&ORPHAN_FINALIZER);
+            debug!(
+                "gc: {} {}/{} is terminating with finalizers {:?}",
+                owner.resource.kind,
+                owner.namespace(),
+                owner.name(),
+                finalizers
+            );
             if !foreground && !orphan {
                 continue;
             }
