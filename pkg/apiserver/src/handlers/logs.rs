@@ -18,7 +18,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// `GET /api/v1/namespaces/{namespace}/pods/{name}/log`
 pub async fn pod_logs(
