@@ -5,6 +5,7 @@
 
 pub mod logs;
 pub mod resource;
+pub mod streaming;
 pub mod token;
 
 use crate::crd::CrdRegistry;

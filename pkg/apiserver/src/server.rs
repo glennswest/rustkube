@@ -353,6 +353,24 @@ fn build_router(
             "/api/v1/namespaces/{namespace}/pods/{name}/log",
             get(crate::handlers::logs::pod_logs),
         )
+        // exec / attach / portforward — the streaming subresources, proxied to
+        // the kubelet as a transparent connection upgrade (#42). GET and POST
+        // both: SPDY clients POST, WebSocket clients GET.
+        .route(
+            "/api/v1/namespaces/{namespace}/pods/{name}/exec",
+            get(crate::handlers::streaming::pod_exec)
+                .post(crate::handlers::streaming::pod_exec),
+        )
+        .route(
+            "/api/v1/namespaces/{namespace}/pods/{name}/attach",
+            get(crate::handlers::streaming::pod_attach)
+                .post(crate::handlers::streaming::pod_attach),
+        )
+        .route(
+            "/api/v1/namespaces/{namespace}/pods/{name}/portforward",
+            get(crate::handlers::streaming::pod_portforward)
+                .post(crate::handlers::streaming::pod_portforward),
+        )
         // Status subresource routes — core v1 namespace-scoped
         .route(
             "/api/v1/namespaces/{namespace}/{resource}/{name}/status",
