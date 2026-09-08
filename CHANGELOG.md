@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### 2026-09-08 — garbage collection
+- **feat(controller-manager):** foreground and orphan deletion (#43). The
+  apiserver has set `foregroundDeletion` and `orphan` finalizers since v0.7.30
+  and nothing ever removed them, so `kubectl delete --cascade=foreground` and
+  `--cascade=orphan` left the object in `Terminating` forever. Foreground now
+  deletes the dependents first (propagating the policy, so a two-level cascade
+  stays foreground all the way down) and clears the finalizer once nothing
+  with `blockOwnerDeletion` remains; orphan strips the dead owner from each
+  dependent's `ownerReferences` and then lets the owner go.
+- **fix(controller-manager):** the collector discovers its kinds instead of
+  carrying a hardcoded table of eight. It could not see custom resources, and
+  a child whose owner is a kind the collector cannot see is indistinguishable
+  from a child whose owner is gone — a KubeVirt `VirtualMachineInstance` owns
+  its launcher pod, and every pass would have deleted that pod. Ownership is
+  now only acted on for kinds actually observed, and an unknown owner means
+  leave the child alone.
+- **fix(controller-manager):** removals are sent as RFC-7386 merge patches.
+  Strategic merge keys `ownerReferences` by `uid`, so orphaning by sending a
+  shortened list removed nothing at all — the reference survived, the owner
+  went, and the background pass then collected the dependent that had just
+  been orphaned.
+- **perf(controller-manager):** the collector sweeps again while a sweep is
+  still changing things, instead of advancing one level of a cascade per
+  30-second interval. A two-level foreground delete took a minute and a half
+  and now takes seconds.
+
 ### 2026-09-08 — storage
 - **feat(controller-manager):** the PV/PVC binder (#56). The API served both
   objects and nothing ever acted on them: a claim stayed `Pending` forever and
