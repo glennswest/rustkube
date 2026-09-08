@@ -2,9 +2,11 @@
 //! ReplicaSet, Service, Namespace, Node, Job, CronJob, StatefulSet, DaemonSet,
 //! HPA, ...) against the API server. Drop-in upstream process name.
 
+use apimachinery::startup;
 use clap::Parser;
 use controller_manager::{ClientConfig, ControllerManager};
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -49,6 +51,12 @@ struct Cli {
     /// Cluster CA private key (PEM) used to sign approved CSRs.
     #[arg(long = "cluster-signing-key-file")]
     signing_key: Option<std::path::PathBuf>,
+
+    /// Seconds to wait for a credential file to be written, and for the
+    /// apiserver to start serving, before giving up. The whole control plane
+    /// starts at once, so these are normally races, not failures.
+    #[arg(long = "startup-timeout", env = "STARTUP_TIMEOUT", default_value_t = 120)]
+    startup_timeout: u64,
 }
 
 #[tokio::main]
@@ -59,14 +67,27 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    if let Err(e) = run().await {
+        // Say the last words through tracing too: the supervisor captures
+        // stderr, but an exit whose reason is only in `Error:` on the way out
+        // reads as an unexplained status 1 in the console.
+        tracing::error!("kube-controller-manager exiting: {e:#}");
+        return Err(e);
+    }
+    Ok(())
+}
+
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     tracing::info!("kube-controller-manager starting — apiserver={}", cli.apiserver);
+    let wait = Duration::from_secs(cli.startup_timeout);
 
     // Load the cluster signing CA (cert + key) for the CSR controller, if given.
+    // Like every other credential here it may still be being written.
     let signing_ca = match (&cli.signing_cert, &cli.signing_key) {
         (Some(c), Some(k)) => Some((
-            std::fs::read_to_string(c)?,
-            std::fs::read_to_string(k)?,
+            startup::pem_file_string(c, "cluster signing certificate", wait).await?,
+            startup::pem_file_string(k, "cluster signing key", wait).await?,
         )),
         _ => None,
     };
@@ -80,15 +101,19 @@ async fn main() -> anyhow::Result<()> {
         || cli.insecure;
 
     let mut cm = if needs_config {
+        // Credentials are written by whatever bootstraps the node, often while
+        // this process is already running: wait for each file to exist and be
+        // complete rather than exiting and being restarted into working.
         let token = match (cli.token, &cli.token_file) {
             (Some(t), _) => Some(t),
-            (None, Some(f)) => Some(std::fs::read_to_string(f)?.trim().to_string()),
+            (None, Some(f)) => Some(startup::token_file(f, "apiserver bearer token", wait).await?),
             _ => None,
         };
         let cfg = ClientConfig {
-            ca_pem: cli.ca.map(std::fs::read).transpose()?,
-            client_cert_pem: cli.client_cert.map(std::fs::read).transpose()?,
-            client_key_pem: cli.client_key.map(std::fs::read).transpose()?,
+            ca_pem: read_pem(cli.ca.as_deref(), "apiserver CA bundle", wait).await?,
+            client_cert_pem: read_pem(cli.client_cert.as_deref(), "client certificate", wait)
+                .await?,
+            client_key_pem: read_pem(cli.client_key.as_deref(), "client key", wait).await?,
             token,
             insecure: cli.insecure,
         };
@@ -96,7 +121,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         ControllerManager::new(&cli.apiserver)
     }
-    .with_leader_election(cli.leader_elect);
+    .with_leader_election(cli.leader_elect)
+    .with_startup_timeout(wait);
 
     if let Some((cert, key)) = signing_ca {
         cm = cm.with_signing_ca(cert, key);
@@ -106,4 +132,16 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("controller-manager failed: {e}");
     }
     Ok(())
+}
+
+/// Read an optional PEM file, waiting for it to be written.
+async fn read_pem(
+    path: Option<&std::path::Path>,
+    what: &str,
+    wait: Duration,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    match path {
+        Some(p) => Ok(Some(startup::pem_file(p, what, wait).await?)),
+        None => Ok(None),
+    }
 }

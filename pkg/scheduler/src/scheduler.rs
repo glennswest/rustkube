@@ -68,6 +68,62 @@ impl ApiClient {
         })
     }
 
+    /// Block until the apiserver answers, so a process started alongside it
+    /// waits for it instead of failing.
+    ///
+    /// Returns as soon as `/readyz` is served. A connection that is refused is
+    /// the apiserver not listening *yet*; a response that is not 2xx is an
+    /// apiserver that is listening but not ready. Neither is fatal — after
+    /// `timeout` this gives up waiting and returns anyway, leaving the caller's
+    /// own retry loop to carry on, because a control-plane process that is up
+    /// and reporting an unreachable apiserver is more useful than one that has
+    /// exited.
+    pub async fn wait_until_serving(&self, timeout: std::time::Duration) {
+        let url = format!("{}/readyz", self.base_url);
+        let start = std::time::Instant::now();
+        let mut waiting = false;
+        let mut last_report = start;
+        loop {
+            let why = match self.client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => {
+                    if waiting {
+                        tracing::info!(
+                            waited_secs = start.elapsed().as_secs_f32(),
+                            "apiserver at {} is serving",
+                            self.base_url,
+                        );
+                    }
+                    return;
+                }
+                Ok(r) => format!("apiserver answered {} — listening, not ready", r.status()),
+                Err(e) => format!("apiserver not reachable: {e}"),
+            };
+            if start.elapsed() >= timeout {
+                tracing::warn!(
+                    waited_secs = start.elapsed().as_secs(),
+                    "{why}; continuing anyway and retrying in the background",
+                );
+                return;
+            }
+            if !waiting {
+                tracing::info!(
+                    url = %self.base_url,
+                    timeout_secs = timeout.as_secs(),
+                    "waiting for the apiserver: {why}",
+                );
+                waiting = true;
+                last_report = std::time::Instant::now();
+            } else if last_report.elapsed() >= std::time::Duration::from_secs(10) {
+                tracing::warn!(
+                    waited_secs = start.elapsed().as_secs(),
+                    "still waiting for the apiserver: {why}",
+                );
+                last_report = std::time::Instant::now();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
     pub async fn list(&self, path: &str) -> reqwest::Result<Value> {
         self.client
             .get(format!("{}{}", self.base_url, path))
@@ -224,6 +280,8 @@ pub struct Scheduler {
     api: Arc<ApiClient>,
     leader_elect: bool,
     identity: String,
+    /// How long to wait for the apiserver to serve before running anyway.
+    startup_timeout: Duration,
 }
 
 impl Scheduler {
@@ -232,6 +290,7 @@ impl Scheduler {
             api: Arc::new(ApiClient::new(api_server_url)),
             leader_elect: true,
             identity: default_identity(),
+            startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
         }
     }
 
@@ -241,6 +300,7 @@ impl Scheduler {
             api: Arc::new(ApiClient::configured(api_server_url, cfg)?),
             leader_elect: true,
             identity: default_identity(),
+            startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
         })
     }
 
@@ -250,11 +310,22 @@ impl Scheduler {
         self
     }
 
+    /// How long to wait for the apiserver to start serving before proceeding
+    /// into the retry loop anyway.
+    pub fn with_startup_timeout(mut self, timeout: Duration) -> Self {
+        self.startup_timeout = timeout;
+        self
+    }
+
     /// Run the scheduler. With leader election, only the elected leader schedules
     /// — so 3 masters can each run a kube-scheduler without double-binding.
     pub async fn run(&self) -> anyhow::Result<()> {
         // Prometheus /metrics + /healthz (scraped by ironprom), upstream :10259.
         crate::metrics_server::spawn(10259);
+
+        // Started alongside the apiserver: wait for it rather than spraying
+        // failed leases until it appears.
+        self.api.wait_until_serving(self.startup_timeout).await;
 
         if !self.leader_elect {
             info!("Scheduler started (leader election disabled)");

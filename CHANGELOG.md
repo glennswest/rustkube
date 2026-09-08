@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### 2026-09-08
+- **fix(controller-manager, scheduler):** a credential that is still being
+  written is "not yet", not a fatal error (#58). Both processes exited with
+  status 1 exactly once on every boot of the R230 and came up on the restart
+  two seconds later, which is the whole diagnosis: nothing in either binary
+  can produce status 1 except a `?` in `main` — the run loops retry forever
+  and a panic would be 101 — and the only failing paths the two share are
+  reading `--certificate-authority` / `--client-certificate` / `--client-key`
+  and parsing them. The control plane starts as one set of processes and the
+  PKI under `/etc/kubernetes/pki` is written alongside them, so the read races
+  the write and loses often enough to be the normal case. Credential files are
+  now waited for — until they exist *and* every PEM `BEGIN` has its `END`, so
+  a file caught mid-write is waited out rather than parsed into a fatal error
+  — with a bounded `--startup-timeout` (default 120s) and a log line naming
+  what is missing. The retry was load-bearing and undocumented; on a slower
+  machine it becomes a crash loop with no better explanation than it had.
+- **fix(controller-manager, scheduler):** wait for the apiserver to serve
+  before starting work, instead of failing leader-election acquires against a
+  socket nobody is listening on. Not reachable within the timeout is a warning
+  and the existing retry loop carries on — a component that is up and saying
+  the apiserver is unreachable is more use than one that has exited.
+- **fix(controller-manager, scheduler):** a fatal startup error is now logged
+  through `tracing` as well as returned from `main`, so the reason is in the
+  console stream next to everything else rather than only in the exit status.
+- **feat(scheduler):** `--token-file`, matching kube-controller-manager.
+
 ### 2026-09-02 (v0.7.36)
 - **fix(apiserver):** a datastore that cannot serve is **503, not 500** (#57).
   A gRPC `Unavailable` from fastetcd fell into the catch-all arm of
