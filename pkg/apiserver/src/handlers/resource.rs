@@ -341,18 +341,44 @@ pub async fn create_namespaced_resource(
     Ok((StatusCode::CREATED, Json(obj)))
 }
 
+/// Persist an updated object — or remove it, when the update was the write
+/// that cleared its last finalizer.
+///
+/// A finalizer is a promise that something has to happen before an object
+/// goes away: the delete sets `deletionTimestamp` and the object stays until
+/// the list is empty. **The write that empties it is the delete.** Without
+/// this half, a controller removes its finalizer and the object lives forever
+/// with a `deletionTimestamp` on it — a PVC that never goes, a PV that never
+/// releases, a namespace stuck Terminating — and every controller that treats
+/// "being deleted" as in-flight waits on it for the life of the cluster.
+pub(crate) async fn persist_or_finalize(
+    state: &AppState,
+    key: &str,
+    obj: Value,
+) -> Result<Value, ApiError> {
+    let terminating = obj["metadata"]["deletionTimestamp"].as_str().is_some();
+    let finalizers_left = obj["metadata"]["finalizers"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    let prev_rev = obj["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|rv| rv.parse::<u64>().ok());
+    if terminating && !finalizers_left {
+        state.storage.delete(key, prev_rev).await?;
+        return Ok(obj);
+    }
+    state.storage.update(key, obj, prev_rev).await
+}
+
 /// PUT — update a cluster-scoped resource.
 pub async fn update_cluster_resource(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let prev_rev = body["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = state.storage.update(&key, body, prev_rev).await?;
+    let obj = persist_or_finalize(&state, &key, body).await?;
     Ok(Json(obj))
 }
 
@@ -362,12 +388,8 @@ pub async fn update_namespaced_resource(
     Path((namespace, resource, name)): Path<(String, String, String)>,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let prev_rev = body["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = state.storage.update(&key, body, prev_rev).await?;
+    let obj = persist_or_finalize(&state, &key, body).await?;
     Ok(Json(obj))
 }
 
@@ -844,17 +866,11 @@ pub(crate) async fn patch_stored_object(
                             c.field, c.manager
                         ))
                     })?;
-            let prev_rev = merged["metadata"]["resourceVersion"]
-                .as_str()
-                .and_then(|rv| rv.parse::<u64>().ok());
-            state.storage.update(key, merged, prev_rev).await
+            persist_or_finalize(state, key, merged).await
         }
         Ok(mut existing) => {
             apply_patch_body(&mut existing, content_type, body)?;
-            let prev_rev = existing["metadata"]["resourceVersion"]
-                .as_str()
-                .and_then(|rv| rv.parse::<u64>().ok());
-            state.storage.update(key, existing, prev_rev).await
+            persist_or_finalize(state, key, existing).await
         }
         // Server-side apply is an upsert (KEP-555): applying to a missing object
         // CREATES it with the requester as the field manager. (Merge/JSON/
