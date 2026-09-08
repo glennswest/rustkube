@@ -22,6 +22,28 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 
+/// The resource name inside a store prefix (`/registry/pods/` -> `pods`), for
+/// the metric labels.
+fn resource_of_prefix(prefix: &str) -> String {
+    prefix
+        .trim_start_matches('/')
+        .split('/')
+        .nth(1)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// The watch event kind, as upstream labels it.
+fn event_kind(ev: &WatchEvent) -> &'static str {
+    match ev {
+        WatchEvent::Added { .. } => "ADDED",
+        WatchEvent::Modified { .. } => "MODIFIED",
+        WatchEvent::Deleted { .. } => "DELETED",
+        WatchEvent::Bookmark { .. } => "BOOKMARK",
+    }
+}
+
 /// Page size used to seed the snapshot from the store.
 const SEED_PAGE: usize = 1000;
 /// How often the freshness task re-checks the snapshot against the store. Bounds
@@ -133,6 +155,7 @@ impl WatchCache {
         let pump = cache.clone();
         let caches = self.caches.clone();
         let prefix_owned = prefix.to_string();
+        let prefix_metric = prefix.to_string();
         tokio::spawn(async move {
             while let Some(ev) = stream.recv().await {
                 let seq = pump.next_seq.fetch_add(1, Ordering::SeqCst);
@@ -152,6 +175,22 @@ impl WatchCache {
                 }
                 pump.snapshot_rev.store(ev.revision(), Ordering::SeqCst);
                 *pump.last_progress.lock().unwrap() = std::time::Instant::now();
+
+                // What the cache holds, under upstream's names. These are
+                // free here — the numbers already exist — and they are the
+                // ones that answer "is the cache keeping up" and "how much is
+                // in this cluster", which otherwise take a LIST to find out.
+                let resource = resource_of_prefix(&prefix_metric);
+                metrics::counter!(
+                    "apiserver_watch_events_total",
+                    "resource" => resource.clone(),
+                    "kind" => event_kind(&ev),
+                )
+                .increment(1);
+                metrics::gauge!("apiserver_storage_objects", "resource" => resource.clone())
+                    .set(pump.snapshot.lock().unwrap().len() as f64);
+                metrics::gauge!("watch_cache_capacity", "resource" => resource)
+                    .set(RING_CAPACITY as f64);
                 {
                     let mut ring = pump.ring.lock().unwrap();
                     if ring.len() == RING_CAPACITY {
