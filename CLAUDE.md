@@ -229,11 +229,17 @@ Known state on 2026-08-28:
       `/containerLogs`, with TokenReview so anything can authenticate to a
       kubelet at all (#54). `container`, `tailLines`, `previous` work;
       `timestamps`/`sinceSeconds`/`sinceTime` are inert because stormpump logs
-      are raw by design; `follow` is not implemented.
-- [ ] `oc exec`, `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` —
-      **none built.** They share the log proxy's plumbing: node-address
-      lookup, a token minted for the hop, and a kubelet route. That part is
-      done once and already is; each verb is then its own streaming endpoint.
+      are raw by design. `follow` streams as of 2026-09-08 (the body used to be
+      read to a String, which waits for an end a followed log does not have).
+- [x] `oc exec`, `attach`, `port-forward` — and therefore `rsh`, `cp`, `rsync`
+      and `debug`, which are those three plus argument handling (#42). Proxied
+      to the kubelet as a **transparent connection upgrade**: nothing parses
+      SPDY or WebSocket frames, the client's headers go up verbatim and the
+      kubelet's 101 comes back verbatim, so both protocols work from one
+      implementation. The one translation is the query — `stdin/stdout/stderr`
+      here are `input/output/error` on the kubelet.
+      Cilium's CLI links client-go's `FallbackExecutor` (WebSocket first, SPDY
+      second); both paths are tested.
 - [ ] `oc adm` — largely unexamined.
 - [ ] Routes, DeploymentConfig, ImageStream, BuildConfig, SCC — the
       genuinely OpenShift-only half. Whether these are in scope at all is a
