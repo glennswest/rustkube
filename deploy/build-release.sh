@@ -45,16 +45,17 @@ for target in ${TARGETS//,/ }; do
     # `cross` for anything that is not this machine's own architecture: it
     # carries the target's C toolchain, which `ring` needs and which dev does
     # not have installed for aarch64.
+    pkgs=()
+    for c in "${COMPONENTS[@]}"; do pkgs+=(-p "$c"); done
+
     if [ "$target" = "$NATIVE" ]; then
-        cargo build --release --target "$target" \
-            "${COMPONENTS[@]/#/-p }" 2>&1 | tail -3
+        cargo build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
     else
         command -v cross >/dev/null || {
             echo "cross is not installed and $target is not native — see the header" >&2
             exit 1
         }
-        cross build --release --target "$target" \
-            "${COMPONENTS[@]/#/-p }" 2>&1 | tail -3
+        cross build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
     fi
 
     bindir="$CARGO_TARGET_DIR/$target/release"
