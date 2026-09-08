@@ -421,6 +421,18 @@ fn parse_path_segments(
             Some(name.to_string()),
             Some(sub.to_string()),
         )),
+        // /api/v1/namespaces/{name}/{status|finalize} — the two subresources
+        // of a Namespace, which have the same shape as a namespaced resource
+        // list and would otherwise be read as one ("can you list finalizes in
+        // namespace kube-system"). Only these two names are ambiguous, because
+        // only these two exist.
+        ["api", "v1", "namespaces", name, sub @ ("status" | "finalize")] => Some((
+            "".into(),
+            "namespaces".into(),
+            None,
+            Some(name.to_string()),
+            Some(sub.to_string()),
+        )),
         // /api/v1/namespaces/{ns}/{resource}
         ["api", "v1", "namespaces", ns, resource] => Some((
             "".into(),
@@ -585,5 +597,34 @@ mod subresource_tests {
         .unwrap();
         assert_eq!(ws.subresource.as_deref(), Some("exec"));
         assert_eq!(ws.verb, "get");
+    }
+}
+
+#[cfg(test)]
+mod namespace_subresource_tests {
+    use super::*;
+
+    #[test]
+    fn a_namespace_subresource_is_not_a_resource_list() {
+        // `/api/v1/namespaces/kube-system/finalize` has the same shape as
+        // `/api/v1/namespaces/kube-system/pods`, and reading it as the latter
+        // asks whether the caller may list "finalizes".
+        let fin = parse_authorization_request(
+            "/api/v1/namespaces/kube-system/finalize",
+            &axum::http::Method::PUT,
+        )
+        .unwrap();
+        assert_eq!(fin.resource, "namespaces");
+        assert_eq!(fin.subresource.as_deref(), Some("finalize"));
+        assert_eq!(fin.name.as_deref(), Some("kube-system"));
+
+        let pods = parse_authorization_request(
+            "/api/v1/namespaces/kube-system/pods",
+            &axum::http::Method::GET,
+        )
+        .unwrap();
+        assert_eq!(pods.resource, "pods");
+        assert_eq!(pods.subresource, None);
+        assert_eq!(pods.namespace.as_deref(), Some("kube-system"));
     }
 }
