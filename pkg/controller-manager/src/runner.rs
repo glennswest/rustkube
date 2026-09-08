@@ -219,6 +219,26 @@ impl ApiClient {
             .send()
             .await
     }
+
+    /// DELETE a resource, carrying `meta/v1` DeleteOptions.
+    ///
+    /// The options are the difference between "delete this" and "delete this
+    /// and everything under it, in order" — a DELETE without a body takes the
+    /// server's default policy, which is Background, and a foreground cascade
+    /// that propagates as Background stops being a foreground cascade one
+    /// level down.
+    pub async fn delete_with_options(
+        &self,
+        path: &str,
+        options: &serde_json::Value,
+    ) -> reqwest::Result<reqwest::Response> {
+        self.client
+            .delete(format!("{}{}", self.base_url, path))
+            .header("content-type", "application/json")
+            .json(options)
+            .send()
+            .await
+    }
 }
 
 /// Controller manager — runs all controllers.
