@@ -49,3 +49,8 @@ deploy/terragrunt/tclusters/*/*.kubeconfig
 deploy/terragrunt/tclusters/*/.terragrunt-cache/
 deploy/terragrunt/tclusters/*/.terraform*
 deploy/terragrunt/tclusters/*/terraform.tfstate*
+
+# Per-tool local settings. Not the project's, and an untracked directory here
+# stops the stormcos image build, which refuses a source tree with
+# uncommitted changes.
+.claude/
