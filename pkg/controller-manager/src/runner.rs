@@ -220,6 +220,29 @@ impl ApiClient {
             .await
     }
 
+    /// PATCH with an RFC-7386 merge patch, which **replaces** lists rather
+    /// than merging them by key.
+    ///
+    /// The difference matters for removal. A strategic merge patch merges
+    /// `ownerReferences` by `uid` and `containers` by `name`, so sending a
+    /// shorter list adds nothing and removes nothing — orphaning a dependent
+    /// by strategic-merging its reference list away silently does nothing at
+    /// all. Sending the intended list as a merge patch replaces it.
+    pub async fn patch_merge(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> reqwest::Result<serde_json::Value> {
+        self.client
+            .patch(format!("{}{}", self.base_url, path))
+            .header("content-type", "application/merge-patch+json")
+            .json(body)
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
     /// DELETE a resource, carrying `meta/v1` DeleteOptions.
     ///
     /// The options are the difference between "delete this" and "delete this
