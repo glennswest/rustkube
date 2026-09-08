@@ -6,7 +6,6 @@
 
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};

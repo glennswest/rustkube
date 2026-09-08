@@ -357,6 +357,11 @@ impl ControllerManager {
 
         let api = self.api.clone();
         tasks.spawn(async move {
+            crate::attachdetach::AttachDetachController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        tasks.spawn(async move {
             crate::gc::GarbageCollector::new(api).run().await;
         });
 
@@ -366,7 +371,7 @@ impl ControllerManager {
             crate::csr::CsrController::new(api, ca).run().await;
         });
 
-        info!("All controllers started (15 controllers)");
+        info!("All controllers started (16 controllers)");
         tasks
     }
 
