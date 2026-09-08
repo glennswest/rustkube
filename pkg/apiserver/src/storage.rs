@@ -24,7 +24,22 @@ impl ResourceStorage {
         Self { store, watch_cache }
     }
 
-    /// Build the store key for a cluster-scoped resource.
+    /// The resource name inside a store key or prefix, for the `type` label on
+/// `etcd_request_duration_seconds`.
+///
+/// Keys are `/registry/{resource}/...`, so this is the second segment; an
+/// unrecognisable key is labelled `unknown` rather than dropped, because a
+/// slow call is worth seeing even when we cannot say what it was for.
+fn resource_of(key: &str) -> String {
+    key.trim_start_matches('/')
+        .split('/')
+        .nth(1)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// Build the store key for a cluster-scoped resource.
     pub fn cluster_key(resource: &str, name: &str) -> String {
         format!("{REGISTRY_PREFIX}/{resource}/{name}")
     }
@@ -51,6 +66,7 @@ impl ResourceStorage {
 
     /// Get a single resource by key.
     pub async fn get(&self, key: &str) -> Result<Value, ApiError> {
+        let _timer = apimachinery::metrics::StoreTimer::new("get", resource_of(key));
         match self.store.get(key).await.map_err(ApiError::from)? {
             Some((bytes, rev)) => {
                 let mut obj: Value = serde_json::from_slice(&bytes)
@@ -74,6 +90,7 @@ impl ResourceStorage {
         limit: usize,
         continue_token: Option<&str>,
     ) -> Result<(Vec<Value>, Option<String>, u64), ApiError> {
+        let _timer = apimachinery::metrics::StoreTimer::new("list", resource_of(prefix));
         // Served from the shared watch cache's in-memory snapshot (seeded once
         // from the store), so relist storms don't fan out to fastetcd.
         let (raw, continue_token, revision) = self
@@ -94,6 +111,7 @@ impl ResourceStorage {
 
     /// Create a resource (fails if it already exists).
     pub async fn create(&self, key: &str, mut obj: Value) -> Result<Value, ApiError> {
+        let _timer = apimachinery::metrics::StoreTimer::new("create", resource_of(key));
         // Never persist resourceVersion in the stored bytes — it is derived from
         // the store's mod_revision on read (#33). Baking it in makes later reads
         // return a stale RV.
@@ -124,6 +142,7 @@ impl ResourceStorage {
         mut obj: Value,
         prev_revision: Option<u64>,
     ) -> Result<Value, ApiError> {
+        let _timer = apimachinery::metrics::StoreTimer::new("update", resource_of(key));
         // Strip the client-supplied resourceVersion from the stored bytes: it is
         // used for the CAS (prev_revision) but must not be baked into storage, or
         // the next read returns a stale RV and optimistic concurrency breaks (#33).
@@ -142,6 +161,7 @@ impl ResourceStorage {
 
     /// Delete a resource by key.
     pub async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<(), ApiError> {
+        let _timer = apimachinery::metrics::StoreTimer::new("delete", resource_of(key));
         self.store
             .delete(key, prev_revision)
             .await
