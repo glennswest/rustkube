@@ -120,10 +120,14 @@ pub async fn pod_logs(
     // and IP; upstream verifies it against the cluster CA. Until certificates
     // are issued (rustkube#20) the connection is not verified, which is stated
     // here rather than left for a reader to infer from a builder flag.
-    let client = match reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
+    // No overall timeout when following: `-f` is open-ended by design, and a
+    // 30-second cap on it would look like the log simply stopping.
+    let following = params.get("follow").map(|v| v == "true" || v == "1").unwrap_or(false);
+    let mut builder = reqwest::Client::builder().danger_accept_invalid_certs(true);
+    if !following {
+        builder = builder.timeout(std::time::Duration::from_secs(30));
+    }
+    let client = match builder.build()
     {
         Ok(c) => c,
         Err(e) => {
@@ -150,18 +154,42 @@ pub async fn pod_logs(
         Ok(resp) => {
             let status = StatusCode::from_u16(resp.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-            match resp.text().await {
-                Ok(body) => (status, body).into_response(),
-                Err(e) => ApiError::internal(&format!("reading kubelet response: {e}"))
-                    .into_response(),
-            }
+            // Streamed, not buffered.
+            //
+            // `kubectl logs -f` is an open-ended response: reading it to a
+            // String waits for an end that never comes, so `follow` hung until
+            // the request timed out and then printed everything at once. The
+            // body is passed through chunk by chunk instead, which is also
+            // what keeps a large log off this process's heap.
+            axum::body::Body::from_stream(resp.bytes_stream())
+                .pipe_with_status(status)
         }
         Err(e) => ApiError::internal(&format!("reaching kubelet at {addr}: {e}")).into_response(),
     }
 }
 
+/// Small helper so the streaming response reads as one expression above.
+trait PipeWithStatus {
+    fn pipe_with_status(self, status: StatusCode) -> Response;
+}
+
+impl PipeWithStatus for axum::body::Body {
+    fn pipe_with_status(self, status: StatusCode) -> Response {
+        Response::builder()
+            .status(status)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(self)
+            .unwrap_or_else(|e| {
+                ApiError::internal(&format!("building log response: {e}")).into_response()
+            })
+    }
+}
+
 /// A node's address, preferring InternalIP as upstream does.
-async fn node_address(storage: &ResourceStorage, node_name: &str) -> Option<String> {
+pub(crate) async fn node_address(
+    storage: &ResourceStorage,
+    node_name: &str,
+) -> Option<String> {
     let node: Value = storage
         .get(&ResourceStorage::cluster_key("nodes", node_name))
         .await
