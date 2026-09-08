@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### 2026-09-08 — storage
+- **feat(controller-manager):** the PV/PVC binder (#56). The API served both
+  objects and nothing ever acted on them: a claim stayed `Pending` forever and
+  every pod that mounted one hung. `persistentvolume.rs` is upstream's
+  `pv_controller` — default StorageClass resolution (written back, so
+  tomorrow's default cannot silently become an existing claim's class),
+  matching on class, capacity, access modes, volume mode and selector, the
+  smallest volume that fits rather than the first, pre-bound volumes winning
+  outright, `kubernetes.io/pvc-protection` and `pv-protection` finalizers,
+  `Bound`/`Available`/`Released`/`Lost` phases, the claim's real capacity in
+  its status, and Events for each decision.
+- **feat(controller-manager):** the hand-off to external provisioners. A claim
+  under a class with a real provisioner gets
+  `volume.kubernetes.io/storage-provisioner` (and the beta spelling), which is
+  the *only* signal the upstream `external-provisioner` sidecar acts on —
+  without it `stormblock-csi`, or any OpenShift/vendor CSI driver, provisions
+  nothing. `WaitForFirstConsumer` holds the hand-off until the scheduler has
+  chosen a node, because a StormBlock PVC is a CoW clone of a blank filesystem
+  template made local to that node. rustkube provisions nothing itself and
+  deletes no backing volume; see [docs/storage.md](docs/storage.md).
+- **feat(controller-manager):** attach/detach (`attachdetach.rs`).
+  `csi.stormblock.io` declares `attachRequired: true`, and the only thing that
+  asks a CSI driver to attach is the existence of a `VolumeAttachment` object,
+  which nothing created. Named exactly as upstream names it (`csi-` + SHA-256
+  of handle+driver+node), created for every live pod-to-bound-CSI-volume pair,
+  deleted when the last pod on that node lets go.
+- **feat(scheduler):** volume-aware placement (`volumebinding.rs`). A bound
+  volume's `nodeAffinity` now keeps a pod on the node its storage is on; a
+  claim that already selected a node is not re-placed; `CSIStorageCapacity` is
+  honoured for drivers that publish it, so a pod is not placed where the
+  driver has no headroom. A pod with unbound claims has its node written onto
+  the claims and is **not** bound until they are.
+- **fix(apiserver):** the write that clears the last finalizer is the delete.
+  An object with a `deletionTimestamp` was kept until its finalizers emptied —
+  and then kept anyway, because nothing removed it when the list became empty.
+  Every finalizer in the system was therefore a permanent one: a PVC that
+  never went away, a PV that never released. PUT and PATCH (including
+  server-side apply) now remove the object on the write that empties the list.
+- **refactor(apimachinery):** one quantity parser (`apimachinery::quantity`)
+  and one label-selector matcher (`apimachinery::selector`), replacing three
+  drifted copies of `parse_memory_bytes` in the scheduler and a
+  matchLabels-only selector in the PDB controller that ignored
+  `matchExpressions` — which silently guarded a wider set of pods than it
+  named.
+
 ### 2026-09-08
 - **fix(controller-manager, scheduler):** a credential that is still being
   written is "not yet", not a fatal error (#58). Both processes exited with
