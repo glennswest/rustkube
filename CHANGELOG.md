@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### 2026-09-08 — exec, attach, port-forward
+- **feat(apiserver):** `pods/exec`, `pods/attach` and `pods/portforward`
+  (#42) — so `oc exec`, `rsh`, `cp`, `rsync`, `port-forward` and `debug` work,
+  and so the Cilium CLI can talk to its agent. Proxied to the kubelet as a
+  transparent connection upgrade: nothing here parses SPDY or WebSocket
+  frames, the client's headers (including `Sec-WebSocket-Key`, so the accept
+  value is the client's) go up verbatim and the kubelet's `101` comes back
+  verbatim, which is one implementation for both protocols. Cilium links
+  client-go's `FallbackExecutor` — WebSocket first, SPDY second — and both
+  paths are verified end to end against a fake kubelet on dev.
+- **fix(apiserver):** the exec query is translated, not forwarded. `kubectl`
+  speaks `stdin`/`stdout`/`stderr`; the kubelet's endpoint reads
+  `input`/`output`/`error`, and a session opened with no streams attached
+  hangs rather than fails. `command` is passed through in order (it is argv)
+  and `ports=8080,9090` becomes `port=8080&port=9090`.
+- **fix(apiserver):** `kubectl logs -f` streams. The body was read to a String,
+  which waits for an end that a followed log does not have, so `follow` hung
+  until the client timed out and then printed everything at once.
+- **SECURITY(apiserver):** subresource requests were **not authorized at
+  all**. `parse_authorization_request` could not parse a path with a
+  subresource — `pods/log`, `nodes/status`, every CRD `/status` — and an
+  unparsed path skipped the RBAC check entirely. With exec now served that is
+  a shell in any pod for anyone who can reach the port. Subresources are now
+  parsed and matched as `resource/subresource` (so a rule granting `pods` does
+  not grant `pods/exec`, `pods/*` grants every subresource of pods, and `*`
+  still grants everything), and **an API path the authorizer cannot parse is
+  denied rather than waved through**. Verified: a Role granting `pods` gets
+  403 on exec and on log; adding `pods/exec` lets exec through.
+
 ### 2026-09-08 — garbage collection
 - **feat(controller-manager):** foreground and orphan deletion (#43). The
   apiserver has set `foregroundDeletion` and `orphan` finalizers since v0.7.30
