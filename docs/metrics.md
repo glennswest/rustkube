@@ -104,7 +104,7 @@ not be asked to hold. A scrape endpoint computes on request and keeps nothing.
 
 The kubelet's two families — cAdvisor-shaped container metrics at
 `/metrics/cadvisor` and the kubelet's own at `/metrics` — belong to the
-`rustkube-node` repo and are tracked there (rustkube-node#26). Container
+`rustkube-node` repo and are tracked there (rustkube-node#36). Container
 restart counts are **not** a kubelet metric upstream:
 `kube_pod_container_status_restarts_total` comes from kube-state-metrics,
 derived from `pod.status.containerStatuses[].restartCount`. Whatever plays that
