@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### 2026-09-08 — certificates
+- **feat(apiserver):** the serving certificate reloads **without a restart**
+  (#20 phase 1). rustls asks a resolver for the certificate on every
+  handshake, so the apiserver now watches `--tls-cert-file` /
+  `--tls-private-key-file` (by content, every 30s) and swaps what the resolver
+  hands out. This was the blocker the issue named: the components read their
+  certificate once at startup, so a renewed cert on disk did nothing until the
+  process restarted — which meant the only way to rotate a ten-year PKI was to
+  redeploy the control plane, which is why nobody would. A cert file that is
+  unreadable or half-written is kept, not applied: the running certificate is
+  known good, and a parse failure would take TLS down at exactly the moment
+  someone is touching the PKI. `apiserver_certificate_expiration_seconds` is
+  refreshed on reload.
+- **feat:** `deploy/renew-certs.sh` — renew the control-plane leaves from the
+  cluster CA, in place, for anything expiring within `DAYS_LEFT` (30 by
+  default). It preserves the **subject** of a client cert (the subject is the
+  identity RBAC binds to, so re-deriving it by hand is how a renewal quietly
+  locks a component out) and the **SANs** of a serving cert, and swaps key and
+  certificate together, because a moment with the new key and the old
+  certificate is a moment where nothing works.
+- **fix:** generated certificates have a real lifetime — a year for a leaf,
+  ten for a CA. rcgen's default `notAfter` is the year 4096, which made the
+  apiserver's own startup line read "valid for 755801 more day(s)": not a
+  lifetime, the absence of one, and a rotation path never exercised until it
+  is needed in anger. `notBefore` is backdated five minutes, so a cert minted
+  on one machine and used on another with a slightly slow clock is not "not
+  yet valid".
+- **docs:** [docs/certificates.md](docs/certificates.md), including what is
+  still missing: CA rotation (a dual-CA trust-bundle rollover), SA signing key
+  rotation, an automatic renewer, and cert-manager CRDs.
+
 ### 2026-09-08 — metrics
 - **feat:** every component exposes the upstream metric names (#51). The names
   are the point: a Kubernetes dashboard, recording rule or alert should work
