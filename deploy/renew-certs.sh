@@ -81,9 +81,15 @@ renew_serving() {
         echo "  $base: valid until $(expires "$base.crt")"
         return
     fi
+    # openssl *prints* SANs as `IP Address:10.0.0.1` and *accepts* them as
+    # `IP:10.0.0.1`. Feeding back what it printed makes `openssl x509 -req`
+    # fail on the extension file — which, before the translation below, aborted
+    # the whole run after renewing nothing, on exactly the certificates that
+    # have an IP SAN. Every apiserver cert has one.
     local sans
     sans="$(openssl x509 -in "$base.crt" -noout -ext subjectAltName 2>/dev/null \
-            | tail -n +2 | tr -d ' ' | tr '\n' ',' | sed 's/,$//')"
+            | tail -n +2 | tr -d ' ' | tr '\n' ',' | sed 's/,$//' \
+            | sed 's/IPAddress:/IP:/g')"
     if [ -z "$sans" ]; then
         sans="DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:localhost,IP:127.0.0.1,IP:$KUBE_SVC_IP"
         echo "  $base: no SANs found on the old cert, using the defaults" >&2
@@ -109,16 +115,32 @@ if ! openssl x509 -in ca.crt -noout -checkend $((365 * 86400)) >/dev/null 2>&1; 
     echo "  trust-bundle rollover, not a file swap — see docs/certificates.md." >&2
 fi
 
+# A failure on one certificate must not abort the run: the next one may be the
+# one that is actually about to expire, and a rotation that stops silently in
+# the middle is worse than one that reports what it could not do.
+FAILED=0
+
 echo "serving certificates:"
 for crt in apiserver*.crt; do
     [ -e "$crt" ] || continue
-    renew_serving "${crt%.crt}"
+    renew_serving "${crt%.crt}" || {
+        echo "  ${crt%.crt}: RENEWAL FAILED — the old certificate is untouched" >&2
+        FAILED=$((FAILED + 1))
+    }
 done
 
 echo "client certificates:"
 for base in admin controller-manager scheduler bootstrap; do
-    renew_client "$base"
+    renew_client "$base" || {
+        echo "  $base: RENEWAL FAILED — the old certificate is untouched" >&2
+        FAILED=$((FAILED + 1))
+    }
 done
+
+if [ "$FAILED" -gt 0 ]; then
+    echo
+    echo "$FAILED certificate(s) could not be renewed — see above." >&2
+fi
 
 if [ -n "$RESTART_NEEDED" ]; then
     echo
@@ -127,3 +149,5 @@ if [ -n "$RESTART_NEEDED" ]; then
     echo "    systemctl restart kube-controller-manager kube-scheduler"
     echo "  (or, under stormd, restart the processes it supervises)"
 fi
+
+exit $((FAILED > 0 ? 1 : 0))
