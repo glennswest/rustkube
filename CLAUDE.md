@@ -61,7 +61,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.7.36`
+## Current Version: `v0.8.0`
 
 ## Work Plan
 
@@ -250,6 +250,7 @@ Known state on 2026-08-28:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.8.0 | 2026-09-08 | Storage: PV/PVC binding, attach/detach, volume-aware scheduling (#56). GC: foreground + orphan propagation, discovery-driven (#43). exec/attach/port-forward (#42) and the RBAC subresource hole they exposed. Static musl + `FROM scratch` images (#50). Upstream metric names everywhere (#51). Serving-cert hot reload + renewal (#20). Credential waiting instead of exit-1 at boot (#58) |
 | v0.7.35 | 2026-07-21 | Add [profile.release] — opt3 + thin LTO + codegen-units=1, strip debuginfo but keep line tables for symbolicated panics (#49) |
 | v0.7.34 | 2026-07-21 | Serve events.k8s.io/v1 (translated to/from stored core/v1 Event) (#48); versioned control-plane container images CI (#46) |
 | v0.7.33 | 2026-07-20 | Strategic-merge-patch honors patchMergeKey — node status.conditions upsert by type (not replaced), so nodes keep Ready after Cilium sets NetworkUnavailable (#47) |

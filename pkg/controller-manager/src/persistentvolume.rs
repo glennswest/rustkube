@@ -212,7 +212,7 @@ impl PersistentVolumeController {
         let class = class_name.as_ref().and_then(|c| classes.get(c));
         if let Some(pv) = pick_volume(pvs, pvc, namespace, &name, class_name.as_deref()) {
             let pv_name = pv["metadata"]["name"].as_str().unwrap_or("").to_string();
-            self.bind(namespace, &name, pvc, &pv).await?;
+            self.bind(namespace, &name, pvc, pv).await?;
             // Keep the in-memory list honest so two claims in the same pass
             // cannot both take the same volume.
             if let Some(slot) = pvs
