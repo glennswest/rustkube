@@ -1,10 +1,12 @@
 //! kube-scheduler — watches unscheduled pods and binds them to nodes
 //! (filter/score plugin framework). Drop-in upstream process name.
 
+use apimachinery::startup;
 use clap::Parser;
 use scheduler::scheduler::ClientConfig;
 use scheduler::Scheduler;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -34,9 +36,19 @@ struct Cli {
     #[arg(long, env = "APISERVER_TOKEN")]
     token: Option<String>,
 
+    /// File containing a bearer token.
+    #[arg(long)]
+    token_file: Option<PathBuf>,
+
     /// Skip apiserver certificate verification.
     #[arg(long = "insecure-skip-tls-verify")]
     insecure: bool,
+
+    /// Seconds to wait for a credential file to be written, and for the
+    /// apiserver to start serving, before giving up. The whole control plane
+    /// starts at once, so these are normally races, not failures.
+    #[arg(long = "startup-timeout", env = "STARTUP_TIMEOUT", default_value_t = 120)]
+    startup_timeout: u64,
 }
 
 #[tokio::main]
@@ -47,32 +59,69 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    if let Err(e) = run().await {
+        // Say the last words through tracing too: the supervisor captures
+        // stderr, but an exit whose reason is only in `Error:` on the way out
+        // reads as an unexplained status 1 in the console.
+        tracing::error!("kube-scheduler exiting: {e:#}");
+        return Err(e);
+    }
+    Ok(())
+}
+
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     tracing::info!("kube-scheduler starting — apiserver={}", cli.apiserver);
+    let wait = Duration::from_secs(cli.startup_timeout);
 
     // Use a TLS/auth client when the server is HTTPS or any auth flag is set.
     let needs_config = cli.apiserver.starts_with("https://")
         || cli.token.is_some()
+        || cli.token_file.is_some()
         || cli.ca.is_some()
         || cli.client_cert.is_some()
         || cli.insecure;
 
     let sched = if needs_config {
+        // Credentials are written by whatever bootstraps the node, often while
+        // this process is already running: wait for each file to exist and be
+        // complete rather than exiting and being restarted into working.
+        let token = match (cli.token, &cli.token_file) {
+            (Some(t), _) => Some(t),
+            (None, Some(f)) => {
+                Some(startup::token_file(f, "apiserver bearer token", wait).await?)
+            }
+            _ => None,
+        };
         let cfg = ClientConfig {
-            ca_pem: cli.ca.map(std::fs::read).transpose()?,
-            client_cert_pem: cli.client_cert.map(std::fs::read).transpose()?,
-            client_key_pem: cli.client_key.map(std::fs::read).transpose()?,
-            token: cli.token,
+            ca_pem: read_pem(cli.ca.as_deref(), "apiserver CA bundle", wait).await?,
+            client_cert_pem: read_pem(cli.client_cert.as_deref(), "client certificate", wait)
+                .await?,
+            client_key_pem: read_pem(cli.client_key.as_deref(), "client key", wait).await?,
+            token,
             insecure: cli.insecure,
         };
         Scheduler::connect(&cli.apiserver, cfg)?
     } else {
         Scheduler::new(&cli.apiserver)
     }
-    .with_leader_election(cli.leader_elect);
+    .with_leader_election(cli.leader_elect)
+    .with_startup_timeout(wait);
 
     if let Err(e) = sched.run().await {
         anyhow::bail!("scheduler failed: {e}");
     }
     Ok(())
+}
+
+/// Read an optional PEM file, waiting for it to be written.
+async fn read_pem(
+    path: Option<&std::path::Path>,
+    what: &str,
+    wait: Duration,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    match path {
+        Some(p) => Ok(Some(startup::pem_file(p, what, wait).await?)),
+        None => Ok(None),
+    }
 }

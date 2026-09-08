@@ -12,6 +12,7 @@ pub mod certs;
 pub mod cron;
 pub mod taint;
 pub mod protobuf;
+pub mod startup;
 
 pub use error::{Error, Result};
 

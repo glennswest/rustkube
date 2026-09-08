@@ -11,6 +11,7 @@ name = "kube-scheduler"
 path = "src/main.rs"
 
 [dependencies]
+apimachinery = { workspace = true }
 scheduler = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

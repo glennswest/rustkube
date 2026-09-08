@@ -11,6 +11,7 @@ name = "kube-controller-manager"
 path = "src/main.rs"
 
 [dependencies]
+apimachinery = { workspace = true }
 controller-manager = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
