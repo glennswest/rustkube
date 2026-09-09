@@ -2,7 +2,15 @@
 
 ## [Unreleased]
 
-<!-- New unreleased changes go here -->
+### 2026-09-09
+- **fix(apiserver):** **security** — an RBAC rule that names no `apiGroups` or
+  no `resources` no longer grants every resource request. The bootstrap
+  `system:discovery` ClusterRole is a single `nonResourceURLs` rule and
+  `system:anonymous` is bound to it, so with `--anonymous-auth=true` anyone
+  who could reach the port could GET any resource in the cluster, secrets
+  included — which is exactly what the #16 hardening in v0.7.17 was meant to
+  prevent. Absent and empty now mean "matches nothing", as upstream does.
+  `cluster-admin` is written with explicit `*` entries and is unaffected.
 
 ## [v0.8.1] — 2026-09-09
 
