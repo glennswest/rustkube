@@ -61,7 +61,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.8.0`
+## Current Version: `v0.8.1`
 
 ## Work Plan
 
@@ -244,8 +244,12 @@ Known state on 2026-08-28:
       `/containerLogs`, with TokenReview so anything can authenticate to a
       kubelet at all (#54). `container`, `tailLines`, `previous` work;
       `timestamps`/`sinceSeconds`/`sinceTime` are inert because stormpump logs
-      are raw by design. `follow` streams as of 2026-09-08 (the body used to be
-      read to a String, which waits for an end a followed log does not have).
+      are raw by design. `follow` streams end to end as of 2026-09-09: the
+      apiserver stopped reading the body to a String (2026-09-08) and the
+      kubelet stopped answering with a snapshot and closing (rustkube-node#34).
+      `limitBytes` is honored on the node. A named container may be an init or
+      ephemeral one — a failed init container's log, and a sidecar's, were
+      refused as "not valid for pod" until v0.8.1 (#55).
 - [x] `oc exec`, `attach`, `port-forward` — and therefore `rsh`, `cp`, `rsync`
       and `debug`, which are those three plus argument handling (#42). Proxied
       to the kubelet as a **transparent connection upgrade**: nothing parses
@@ -265,6 +269,7 @@ Known state on 2026-08-28:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.8.1 | 2026-09-09 | `pods/log` and `pods/exec` accept an init or ephemeral container name — a failed init container's log and a shell in a sidecar were refused as "not valid for pod" (#55, #54) |
 | v0.8.0 | 2026-09-08 | Storage: PV/PVC binding, attach/detach, volume-aware scheduling (#56). GC: foreground + orphan propagation, discovery-driven (#43). exec/attach/port-forward (#42) and the RBAC subresource hole they exposed. Static musl + `FROM scratch` images (#50). Upstream metric names everywhere (#51). Serving-cert hot reload + renewal (#20). Credential waiting instead of exit-1 at boot (#58) |
 | v0.7.35 | 2026-07-21 | Add [profile.release] — opt3 + thin LTO + codegen-units=1, strip debuginfo but keep line tables for symbolicated panics (#49) |
 | v0.7.34 | 2026-07-21 | Serve events.k8s.io/v1 (translated to/from stored core/v1 Event) (#48); versioned control-plane container images CI (#46) |

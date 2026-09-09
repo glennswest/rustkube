@@ -4,6 +4,17 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.8.1] — 2026-09-09
+
+### Fixed
+- **apiserver:** `pods/log` and `pods/exec` accept an init or ephemeral
+  container name, not only one from `spec.containers` (#55, #54). A failed
+  init container's log is the only thing that says why it failed, and a
+  sidecar — an init container with `restartPolicy: Always` since K8s 1.28 —
+  is not in `spec.containers` at all; both were refused with "container X is
+  not valid for pod". The error now lists every valid name. The default when
+  none is given is unchanged.
+
 ## [v0.8.0] — 2026-09-08
 
 ### 2026-09-08 — certificates
