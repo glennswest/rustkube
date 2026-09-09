@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
-### 2026-09-09
+<!-- New unreleased changes go here -->
+
+## [v0.10.0] — 2026-09-09
+
+### Added
 - **feat(apiserver):** serve `subresources.kubevirt.io/v1` — the
   `virtualmachineinstances/console` and `/vnc` doors `virtctl console` and
   `virtctl vnc` resolve through (#61). `oc get vmi` already worked, because
@@ -10,6 +14,8 @@
   subresource that is not stored, which is what these are. The apiserver finds
   the node from `status.nodeName` and proxies the WebSocket upgrade to that
   node's kubelet, which splices it to stormvm on loopback.
+
+### Changed
 - **refactor(apiserver):** the exec/attach/port-forward proxy takes a node and
   an HTTP method rather than a pod, so one mechanism serves pods and VMs. A
   pod carries its node in `spec.nodeName` and a VMI in `status.nodeName`, and
