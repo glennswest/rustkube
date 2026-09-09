@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
-### 2026-09-09
+<!-- New unreleased changes go here -->
+
+## [v0.11.0] — 2026-09-09
+
+### Added
 - **feat(controller-manager):** VirtualMachine controller — one VMI per
   VirtualMachine, named after it and owned by it, created when
   `spec.running`/`spec.runStrategy` says so and deleted when it does not
@@ -16,6 +20,8 @@
   race the controller into making two. `restart` deletes the instance and lets
   the controller make another, as upstream does, and answers 409 on a stopped
   VM rather than doing nothing quietly.
+
+### Fixed
 - **fix(apiserver):** discovery paths are recognised by **shape**, not by a
   hardcoded list of group-versions, so every CRD group's discovery document
   stops answering 403 to everyone — cluster-admin included, since that check
