@@ -5,7 +5,7 @@
 
 use crate::auth::UserInfo;
 use crate::storage::ResourceStorage;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 use axum::extract::Request;
@@ -61,38 +61,181 @@ impl RbacEngine {
 
     /// Check if the user is authorized for the given request.
     pub async fn authorize(&self, user: &UserInfo, req: &AuthorizationRequest) -> bool {
+        self.authorize_with_reason(user, req).await.allowed
+    }
+
+    /// Authorize, and say which binding decided it.
+    ///
+    /// The decision is the same one `authorize` makes — this is the only
+    /// implementation, so a SelfSubjectAccessReview cannot drift from what the
+    /// request path would actually do. The reason exists because "no" without
+    /// a reason sends the reader to guess at bindings, and because
+    /// `kubectl auth can-i` prints it.
+    pub async fn authorize_with_reason(
+        &self,
+        user: &UserInfo,
+        req: &AuthorizationRequest,
+    ) -> Decision {
         // system:masters group always has full access
         if user.groups.iter().any(|g| g == "system:masters") {
-            return true;
+            return Decision::allow("RBAC: allowed by group \"system:masters\"");
         }
 
         // The dev rig's standing grant, decided at startup rather than looked
         // up. See `dev_anonymous_admin`.
         if self.dev_anonymous_admin && user.username == "system:anonymous" {
-            return true;
+            return Decision::allow("RBAC: allowed by --dev-anonymous-admin");
         }
 
         // Check ClusterRoleBindings
-        if self.check_cluster_role_bindings(user, req).await {
-            return true;
+        if let Some(why) = self.check_cluster_role_bindings(user, req).await {
+            return Decision::allow(&why);
         }
 
         // Check namespace-scoped RoleBindings
         if let Some(ns) = &req.namespace {
-            if self.check_role_bindings(user, req, ns).await {
-                return true;
+            if let Some(why) = self.check_role_bindings(user, req, ns).await {
+                return Decision::allow(&why);
             }
         }
 
-        false
+        Decision::deny()
     }
 
-    async fn check_cluster_role_bindings(&self, user: &UserInfo, req: &AuthorizationRequest) -> bool {
+    /// Authorize a non-resource path (`/healthz`, `/metrics`, `/apis/...`).
+    ///
+    /// The request path never reaches this today — the middleware only builds
+    /// an AuthorizationRequest for API paths and waves the rest through — but a
+    /// SelfSubjectAccessReview may ask about one, and answering it from the
+    /// bindings is the only answer that means anything. It uses the same rules
+    /// the middleware would have to use if it started enforcing them.
+    pub async fn authorize_non_resource(&self, user: &UserInfo, path: &str, verb: &str) -> Decision {
+        if user.groups.iter().any(|g| g == "system:masters") {
+            return Decision::allow("RBAC: allowed by group \"system:masters\"");
+        }
+        if self.dev_anonymous_admin && user.username == "system:anonymous" {
+            return Decision::allow("RBAC: allowed by --dev-anonymous-admin");
+        }
+
         let prefix = ResourceStorage::cluster_prefix("clusterrolebindings");
-        let (bindings, _, _) = match self.storage.list(&prefix, 1000, None).await {
-            Ok(r) => r,
-            Err(_) => return false,
+        let Ok((bindings, _, _)) = self.storage.list(&prefix, 1000, None).await else {
+            return Decision::deny();
         };
+        for binding in bindings.iter().filter(|b| subjects_match(b, user)) {
+            if binding["roleRef"]["kind"].as_str() != Some("ClusterRole") {
+                continue;
+            }
+            let role_name = binding["roleRef"]["name"].as_str().unwrap_or("");
+            let Ok(role) = self
+                .storage
+                .get(&ResourceStorage::cluster_key("clusterroles", role_name))
+                .await
+            else {
+                continue;
+            };
+            let matched = role["rules"]
+                .as_array()
+                .map(|rs| rs.iter().any(|r| non_resource_rule_matches(r, path, verb)))
+                .unwrap_or(false);
+            if matched {
+                let binding_name = binding["metadata"]["name"].as_str().unwrap_or("");
+                return Decision::allow(&format!(
+                    "RBAC: allowed by ClusterRoleBinding \"{binding_name}\" of ClusterRole \"{role_name}\""
+                ));
+            }
+        }
+        Decision::deny()
+    }
+
+    /// Every rule that applies to this user, for a SelfSubjectRulesReview.
+    ///
+    /// The cluster-wide bindings always apply; the namespaced ones only in the
+    /// namespace asked about. The rules are returned as written rather than
+    /// merged or minimized — a console wants to know it may `get pods`, and
+    /// upstream returns the same unmerged shape.
+    ///
+    /// `incomplete` is true when the answer cannot be trusted to be the whole
+    /// picture: a datastore listing that failed, or a role a binding refers to
+    /// that is not there. Upstream has the same flag for the same reason, and
+    /// a caller that ignores it will show a user fewer options than they have,
+    /// which is the safe direction to be wrong in.
+    pub async fn rules_for(&self, user: &UserInfo, namespace: Option<&str>) -> RuleSet {
+        let mut set = RuleSet::default();
+
+        // A cluster-admin's answer is the wildcard rule rather than an
+        // enumeration: it is what the binding says, and enumerating every
+        // resource in the cluster would be both wrong and enormous.
+        if user.groups.iter().any(|g| g == "system:masters")
+            || (self.dev_anonymous_admin && user.username == "system:anonymous")
+        {
+            set.resource_rules.push(json!({
+                "verbs": ["*"], "apiGroups": ["*"], "resources": ["*"]
+            }));
+            set.non_resource_rules.push(json!({
+                "verbs": ["*"], "nonResourceURLs": ["*"]
+            }));
+            return set;
+        }
+
+        let prefix = ResourceStorage::cluster_prefix("clusterrolebindings");
+        match self.storage.list(&prefix, 1000, None).await {
+            Ok((bindings, _, _)) => {
+                for binding in bindings.iter().filter(|b| subjects_match(b, user)) {
+                    if binding["roleRef"]["kind"].as_str() != Some("ClusterRole") {
+                        continue;
+                    }
+                    let name = binding["roleRef"]["name"].as_str().unwrap_or("");
+                    match self
+                        .storage
+                        .get(&ResourceStorage::cluster_key("clusterroles", name))
+                        .await
+                    {
+                        Ok(role) => set.absorb(&role),
+                        Err(_) => set.incomplete = true,
+                    }
+                }
+            }
+            Err(_) => set.incomplete = true,
+        }
+
+        let Some(ns) = namespace else { return set };
+        let prefix = ResourceStorage::namespace_prefix("rolebindings", ns);
+        match self.storage.list(&prefix, 1000, None).await {
+            Ok((bindings, _, _)) => {
+                for binding in bindings.iter().filter(|b| subjects_match(b, user)) {
+                    let name = binding["roleRef"]["name"].as_str().unwrap_or("");
+                    let role = match binding["roleRef"]["kind"].as_str() {
+                        Some("ClusterRole") => {
+                            self.storage
+                                .get(&ResourceStorage::cluster_key("clusterroles", name))
+                                .await
+                        }
+                        Some("Role") => {
+                            self.storage
+                                .get(&ResourceStorage::namespaced_key("roles", ns, name))
+                                .await
+                        }
+                        _ => continue,
+                    };
+                    match role {
+                        Ok(role) => set.absorb(&role),
+                        Err(_) => set.incomplete = true,
+                    }
+                }
+            }
+            Err(_) => set.incomplete = true,
+        }
+        set
+    }
+
+    /// The ClusterRoleBinding that grants `req`, if one does.
+    async fn check_cluster_role_bindings(
+        &self,
+        user: &UserInfo,
+        req: &AuthorizationRequest,
+    ) -> Option<String> {
+        let prefix = ResourceStorage::cluster_prefix("clusterrolebindings");
+        let (bindings, _, _) = self.storage.list(&prefix, 1000, None).await.ok()?;
 
         for binding in &bindings {
             if !subjects_match(binding, user) {
@@ -107,25 +250,26 @@ impl RbacEngine {
                     .await
                 {
                     if rules_permit(&role, req) {
-                        return true;
+                        let binding_name = binding["metadata"]["name"].as_str().unwrap_or("");
+                        return Some(format!(
+                            "RBAC: allowed by ClusterRoleBinding \"{binding_name}\" of ClusterRole \"{role_name}\""
+                        ));
                     }
                 }
             }
         }
-        false
+        None
     }
 
+    /// The RoleBinding in `namespace` that grants `req`, if one does.
     async fn check_role_bindings(
         &self,
         user: &UserInfo,
         req: &AuthorizationRequest,
         namespace: &str,
-    ) -> bool {
+    ) -> Option<String> {
         let prefix = ResourceStorage::namespace_prefix("rolebindings", namespace);
-        let (bindings, _, _) = match self.storage.list(&prefix, 1000, None).await {
-            Ok(r) => r,
-            Err(_) => return false,
-        };
+        let (bindings, _, _) = self.storage.list(&prefix, 1000, None).await.ok()?;
 
         for binding in &bindings {
             if !subjects_match(binding, user) {
@@ -152,12 +296,93 @@ impl RbacEngine {
 
             if let Some(role) = role {
                 if rules_permit(&role, req) {
-                    return true;
+                    let binding_name = binding["metadata"]["name"].as_str().unwrap_or("");
+                    return Some(format!(
+                        "RBAC: allowed by RoleBinding \"{namespace}/{binding_name}\" of {role_kind} \"{role_name}\""
+                    ));
                 }
             }
         }
-        false
+        None
     }
+}
+
+/// An authorization answer and why.
+#[derive(Debug, Clone)]
+pub struct Decision {
+    pub allowed: bool,
+    /// Empty when denied — upstream leaves it empty rather than inventing a
+    /// rule that would have granted it.
+    pub reason: String,
+}
+
+impl Decision {
+    fn allow(reason: &str) -> Self {
+        Self { allowed: true, reason: reason.to_string() }
+    }
+    fn deny() -> Self {
+        Self { allowed: false, reason: String::new() }
+    }
+}
+
+/// The rules that apply to a user, split the way SelfSubjectRulesReview wants.
+#[derive(Debug, Default)]
+pub struct RuleSet {
+    pub resource_rules: Vec<Value>,
+    pub non_resource_rules: Vec<Value>,
+    /// Something could not be read, so this may be missing rules.
+    pub incomplete: bool,
+}
+
+impl RuleSet {
+    /// Take a role's rules, sorting each into the resource or non-resource half.
+    ///
+    /// A rule can be both — upstream allows it — so it is tested for each
+    /// rather than matched exclusively.
+    fn absorb(&mut self, role: &Value) {
+        let Some(rules) = role["rules"].as_array() else { return };
+        for rule in rules {
+            let verbs = rule["verbs"].clone();
+            let has = |f: &str| rule[f].as_array().is_some_and(|a| !a.is_empty());
+            if has("resources") {
+                let mut r = json!({
+                    "verbs": verbs,
+                    "apiGroups": rule["apiGroups"].clone(),
+                    "resources": rule["resources"].clone(),
+                });
+                if has("resourceNames") {
+                    r["resourceNames"] = rule["resourceNames"].clone();
+                }
+                self.resource_rules.push(r);
+            }
+            if has("nonResourceURLs") {
+                self.non_resource_rules.push(json!({
+                    "verbs": rule["verbs"].clone(),
+                    "nonResourceURLs": rule["nonResourceURLs"].clone(),
+                }));
+            }
+        }
+    }
+}
+
+/// Does a rule grant `verb` on a non-resource `path`?
+///
+/// Separate from `rule_matches` because the two halves of a rule answer
+/// different questions and conflating them is what let a `nonResourceURLs`
+/// rule grant every resource in the cluster.
+pub fn non_resource_rule_matches(rule: &Value, path: &str, verb: &str) -> bool {
+    let urls = rule["nonResourceURLs"].as_array().map(|v| v.as_slice()).unwrap_or(&[]);
+    let verbs = rule["verbs"].as_array().map(|v| v.as_slice()).unwrap_or(&[]);
+    if urls.is_empty() || verbs.is_empty() {
+        return false;
+    }
+    if !verbs.iter().any(|v| v.as_str() == Some("*") || v.as_str() == Some(verb)) {
+        return false;
+    }
+    urls.iter().any(|u| {
+        let u = u.as_str().unwrap_or("");
+        u == "*" || u == path || (u.ends_with("/*") && path.starts_with(&u[..u.len() - 1]))
+    })
 }
 
 /// Check if any subject in a binding matches the user.
@@ -366,6 +591,7 @@ fn is_discovery_path(path: &str) -> bool {
             | "/apis/rbac.authorization.k8s.io/v1"
             | "/apis/rustkube.io/v1alpha1"
             | "/apis/apiextensions.k8s.io/v1"
+            | "/apis/authorization.k8s.io/v1"
     )
 }
 
@@ -473,30 +699,28 @@ fn parse_path_segments(
             Some(name.to_string()),
             Some(sub.to_string()),
         )),
-        // /apis/{group}/{version}/{resource}
-        ["apis", group, _version, resource] => Some((
-            group.to_string(),
-            resource.to_string(),
-            None,
-            None,
-            None,
-        )),
-        // /apis/{group}/{version}/{resource}/{name}
-        ["apis", group, _version, resource, name] => Some((
-            group.to_string(),
-            resource.to_string(),
-            None,
-            Some(name.to_string()),
-            None,
-        )),
-        // /apis/{group}/{version}/{resource}/{name}/{subresource}
-        ["apis", group, _version, resource, name, sub] => Some((
-            group.to_string(),
-            resource.to_string(),
-            None,
-            Some(name.to_string()),
-            Some(sub.to_string()),
-        )),
+        // **The namespaced arms come first**, for the same reason they do
+        // under /api/v1 and with the same hazard if they do not.
+        //
+        // `/apis/{group}/{version}/namespaces/{ns}/{resource}` is six
+        // segments, and so is `/apis/{group}/{version}/{resource}/{name}/{sub}`.
+        // Match arms are tried in order, so with the generic one written first
+        // every namespaced request in a non-core group was read as a
+        // *subresource of a namespace*: creating a lease in kube-system became
+        // `resource=namespaces, name=kube-system, subresource=leases`, and the
+        // authorizer looked for permission on `namespaces/leases` — which
+        // nothing grants and no ClusterRole would ever name. Cilium's operator
+        // held `coordination.k8s.io/leases` with create, get and update, and
+        // was refused:
+        //
+        //   system:serviceaccount:kube-system:cilium-operator is not allowed
+        //   to create namespaces/leases in the namespace "kube-system"
+        //
+        // It could not take its leader-election lease, so it never installed
+        // Cilium's CRDs, so the agent could not read `CiliumNodeConfig`, so
+        // there was no CNI and coredns stayed Pending. The resource name in
+        // that message was the only evidence, and it reads like a typo in a
+        // role rather than a router that mis-parsed the path.
         // /apis/{group}/{version}/namespaces/{ns}/{resource}
         ["apis", group, _version, "namespaces", ns, resource] => Some((
             group.to_string(),
@@ -521,6 +745,30 @@ fn parse_path_segments(
             Some(name.to_string()),
             Some(sub.to_string()),
         )),
+        // /apis/{group}/{version}/{resource}
+        ["apis", group, _version, resource] => Some((
+            group.to_string(),
+            resource.to_string(),
+            None,
+            None,
+            None,
+        )),
+        // /apis/{group}/{version}/{resource}/{name}
+        ["apis", group, _version, resource, name] => Some((
+            group.to_string(),
+            resource.to_string(),
+            None,
+            Some(name.to_string()),
+            None,
+        )),
+        // /apis/{group}/{version}/{resource}/{name}/{subresource}
+        ["apis", group, _version, resource, name, sub] => Some((
+            group.to_string(),
+            resource.to_string(),
+            None,
+            Some(name.to_string()),
+            Some(sub.to_string()),
+        )),
         _ => None,
     }
 }
@@ -542,6 +790,36 @@ mod subresource_tests {
     }
 
     #[test]
+    #[test]
+    fn a_non_resource_rule_matches_its_paths_and_no_others() {
+        let rule = json!({"nonResourceURLs": ["/healthz", "/apis/*"], "verbs": ["get"]});
+        assert!(non_resource_rule_matches(&rule, "/healthz", "get"));
+        assert!(non_resource_rule_matches(&rule, "/apis/apps/v1", "get"));
+        // A prefix rule does not grant the parent path itself, and a verb the
+        // rule does not name is not granted at all.
+        assert!(!non_resource_rule_matches(&rule, "/metrics", "get"));
+        assert!(!non_resource_rule_matches(&rule, "/healthz", "post"));
+        // The mirror of the resource-side bug: an empty list grants nothing.
+        assert!(!non_resource_rule_matches(&json!({"verbs": ["*"]}), "/healthz", "get"));
+    }
+
+    #[test]
+    fn a_ruleset_splits_a_role_into_its_two_halves() {
+        let mut set = RuleSet::default();
+        set.absorb(&json!({"rules": [
+            {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list"]},
+            {"nonResourceURLs": ["/healthz"], "verbs": ["get"]},
+            {"apiGroups": [""], "resources": ["secrets"], "resourceNames": ["mine"], "verbs": ["get"]}
+        ]}));
+        assert_eq!(set.resource_rules.len(), 2);
+        assert_eq!(set.non_resource_rules.len(), 1);
+        assert_eq!(set.resource_rules[0]["resources"][0], "pods");
+        // resourceNames is carried through — a rule that only grants one object
+        // must not read as granting the type.
+        assert_eq!(set.resource_rules[1]["resourceNames"][0], "mine");
+        assert!(!set.incomplete);
+    }
+
     #[test]
     fn a_non_resource_rule_grants_no_resource() {
         // The real bootstrap `system:discovery` role, which `system:anonymous`
@@ -683,5 +961,51 @@ mod namespace_subresource_tests {
         assert_eq!(pods.resource, "pods");
         assert_eq!(pods.subresource, None);
         assert_eq!(pods.namespace.as_deref(), Some("kube-system"));
+    }
+}
+
+#[cfg(test)]
+mod path_arm_order_tests {
+    use super::*;
+
+    /// A namespaced resource in a non-core group is that resource, not a
+    /// subresource of a namespace.
+    ///
+    /// This is the shape that refused Cilium's operator its leader-election
+    /// lease: six segments, matched by the generic arm because it was written
+    /// first, yielding `namespaces/leases` — a resource no role grants.
+    #[test]
+    fn a_grouped_namespaced_resource_is_not_a_namespace_subresource() {
+        let segs = ["apis", "coordination.k8s.io", "v1", "namespaces", "kube-system", "leases"];
+        let (group, resource, ns, name, sub) = parse_path_segments(&segs).expect("parses");
+        assert_eq!(group, "coordination.k8s.io");
+        assert_eq!(resource, "leases");
+        assert_eq!(ns.as_deref(), Some("kube-system"));
+        assert_eq!(name, None);
+        assert_eq!(sub, None);
+    }
+
+    #[test]
+    fn a_named_grouped_namespaced_resource_keeps_its_name() {
+        let segs = [
+            "apis", "apps", "v1", "namespaces", "kube-system", "deployments", "coredns",
+        ];
+        let (group, resource, ns, name, sub) = parse_path_segments(&segs).expect("parses");
+        assert_eq!((group.as_str(), resource.as_str()), ("apps", "deployments"));
+        assert_eq!(ns.as_deref(), Some("kube-system"));
+        assert_eq!(name.as_deref(), Some("coredns"));
+        assert_eq!(sub, None);
+    }
+
+    /// The genuine cluster-scoped subresource still parses as one, so putting
+    /// the namespaced arms first costs nothing.
+    #[test]
+    fn a_cluster_scoped_subresource_still_parses() {
+        let segs = ["apis", "apps", "v1", "deployments", "coredns", "status"];
+        let (group, resource, ns, name, sub) = parse_path_segments(&segs).expect("parses");
+        assert_eq!((group.as_str(), resource.as_str()), ("apps", "deployments"));
+        assert_eq!(ns, None);
+        assert_eq!(name.as_deref(), Some("coredns"));
+        assert_eq!(sub.as_deref(), Some("status"));
     }
 }

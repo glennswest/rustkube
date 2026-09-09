@@ -102,6 +102,11 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "storage.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "authorization.k8s.io",
+            "versions": [{"groupVersion": "authorization.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "authorization.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "policy",
             "versions": [{"groupVersion": "policy/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "policy/v1", "version": "v1"}
@@ -659,6 +664,35 @@ pub async fn api_policy_v1_resources() -> impl IntoResponse {
                 "group": "policy",
                 "version": "v1",
                 "kind": "Eviction",
+                "verbs": ["create"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/authorization.k8s.io/v1 — the self-review virtual resources (#59).
+///
+/// `create` is the only verb: these are questions, not objects. A client that
+/// cannot find them here will not try them at all, which is why the group has
+/// to be in discovery and not merely routed.
+pub async fn api_authorization_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "authorization.k8s.io/v1",
+        "resources": [
+            {
+                "name": "selfsubjectaccessreviews",
+                "singularName": "selfsubjectaccessreview",
+                "namespaced": false,
+                "kind": "SelfSubjectAccessReview",
+                "verbs": ["create"]
+            },
+            {
+                "name": "selfsubjectrulesreviews",
+                "singularName": "selfsubjectrulesreview",
+                "namespaced": false,
+                "kind": "SelfSubjectRulesReview",
                 "verbs": ["create"]
             }
         ]
