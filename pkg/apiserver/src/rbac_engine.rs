@@ -201,39 +201,51 @@ fn rules_permit(role: &Value, req: &AuthorizationRequest) -> bool {
 
 /// Check if a single rule matches the request.
 fn rule_matches(rule: &Value, req: &AuthorizationRequest) -> bool {
-    // Check apiGroups
-    let api_groups = rule["apiGroups"].as_array();
-    if let Some(groups) = api_groups {
-        let matched = groups.iter().any(|g| {
-            let g = g.as_str().unwrap_or("");
-            g == "*" || g == req.api_group
-        });
-        if !matched {
-            return false;
-        }
+    let list = |field: &str| -> &[Value] {
+        rule[field].as_array().map(|v| v.as_slice()).unwrap_or(&[])
+    };
+    let api_groups = list("apiGroups");
+    let resources = list("resources");
+
+    // A rule that names no apiGroups or no resources does not grant a resource
+    // request — it is a non-resource rule (`nonResourceURLs`), or nothing.
+    //
+    // These two checks used to be skipped when the field was absent, on the
+    // reading that an absent list means "unconstrained". It means the
+    // opposite: upstream matches a request against the listed groups and
+    // resources, and an empty list matches none of them. The leniency made the
+    // bootstrap `system:discovery` role — whose only rule is
+    // `{nonResourceURLs: [...], verbs: ["get"]}` — match *every* resource GET,
+    // and `system:anonymous` is bound to it. So with `--anonymous-auth=true`,
+    // which the #16 hardening was supposed to make safe on its own, anyone who
+    // could reach the port could read any resource in the cluster, secrets
+    // included. Absent is now empty, and empty grants nothing.
+    if api_groups.is_empty() || resources.is_empty() {
+        return false;
     }
 
-    // Check resources.
-    //
+    if !api_groups.iter().any(|g| {
+        let g = g.as_str().unwrap_or("");
+        g == "*" || g == req.api_group
+    }) {
+        return false;
+    }
+
     // A subresource is matched as `resource/subresource`, which is how the
     // rule is written (`pods/exec`, `nodes/status`) and how upstream compares
     // it. `*` matches anything, and `pods/*` grants every subresource of pods
     // without granting pods itself.
-    let resources = rule["resources"].as_array();
-    if let Some(res) = resources {
-        let target = match &req.subresource {
-            Some(sub) => format!("{}/{}", req.resource, sub),
-            None => req.resource.clone(),
-        };
-        let matched = res.iter().any(|r| {
-            let r = r.as_str().unwrap_or("");
-            r == "*"
-                || r == target
-                || (r.ends_with("/*") && target.starts_with(&r[..r.len() - 1]))
-        });
-        if !matched {
-            return false;
-        }
+    let target = match &req.subresource {
+        Some(sub) => format!("{}/{}", req.resource, sub),
+        None => req.resource.clone(),
+    };
+    if !resources.iter().any(|r| {
+        let r = r.as_str().unwrap_or("");
+        r == "*"
+            || r == target
+            || (r.ends_with("/*") && target.starts_with(&r[..r.len() - 1]))
+    }) {
+        return false;
     }
 
     // Check verbs
@@ -527,6 +539,47 @@ mod subresource_tests {
             namespace: Some("default".into()),
             name: Some("p1".into()),
         }
+    }
+
+    #[test]
+    #[test]
+    fn a_non_resource_rule_grants_no_resource() {
+        // The real bootstrap `system:discovery` role, which `system:anonymous`
+        // is bound to. Its only rule lists nonResourceURLs, so it must not
+        // grant a resource GET — this used to return true for every resource
+        // in the cluster, secrets included.
+        let role = json!({"rules": [{
+            "nonResourceURLs": ["/api", "/apis", "/api/*", "/apis/*", "/healthz", "/version"],
+            "verbs": ["get"]
+        }]});
+        for resource in ["secrets", "pods", "nodes"] {
+            let r = AuthorizationRequest {
+                verb: "get".into(),
+                resource: resource.into(),
+                subresource: None,
+                api_group: "".into(),
+                namespace: Some("kube-system".into()),
+                name: None,
+            };
+            assert!(!rules_permit(&role, &r), "{resource} was granted by a non-resource rule");
+        }
+    }
+
+    #[test]
+    fn an_empty_resource_list_grants_nothing() {
+        // Absent and empty are the same thing, and neither is a wildcard.
+        let role = json!({"rules": [{"apiGroups": ["*"], "resources": [], "verbs": ["*"]}]});
+        assert!(!rules_permit(&role, &req("get", "pods", None)));
+        let role = json!({"rules": [{"resources": ["*"], "verbs": ["*"]}]});
+        assert!(!rules_permit(&role, &req("get", "pods", None)));
+    }
+
+    #[test]
+    fn an_explicit_wildcard_still_grants_everything() {
+        // cluster-admin is written with real "*" entries and must be unaffected.
+        let role = json!({"rules": [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}]});
+        assert!(rules_permit(&role, &req("get", "secrets", None)));
+        assert!(rules_permit(&role, &req("create", "pods", Some("exec"))));
     }
 
     #[test]
