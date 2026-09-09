@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
-### 2026-09-09
+<!-- New unreleased changes go here -->
+
+## [v0.12.0] — 2026-09-09
+
+### Fixed
 - **fix(controller-manager):** **data loss** — `ApiClient::list` follows the
   `continue` token instead of reading one page (#66). The apiserver answers an
   unbounded list with the first 500 objects and a token; the client ignored
@@ -15,6 +19,8 @@
   the same way and creates duplicates, which is the #27 runaway by a second
   route. Found by measuring at 3000 objects, where controller CPU stopped
   rising with the object count.
+
+### Added
 - **feat(apiserver):** `SubjectAccessReview` and `LocalSubjectAccessReview` —
   asking what *another* identity may do (#69). Deferred when the self-reviews
   landed (#59) because they are a different question: a self-review reveals
@@ -24,6 +30,8 @@
   admission webhook that needs to know whether the requesting user may do a
   thing. The Local variant takes its namespace from the path and refuses a
   body that names a different one.
+
+### Changed
 - **docs:** the work plan's open items now carry issue numbers (#63–#70). The
   storage, Phase 4 and `oc` gaps existed only as unchecked boxes in
   `CLAUDE.md`, so nothing tracked them and they could not be picked up — a
