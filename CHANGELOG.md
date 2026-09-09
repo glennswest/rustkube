@@ -2,7 +2,16 @@
 
 ## [Unreleased]
 
-<!-- New unreleased changes go here -->
+### 2026-09-09
+- **docs:** correct what the release profile actually keeps. The v0.7.35 entry
+  and the `Cargo.toml` comment both said `strip = "debuginfo"` keeps line
+  tables for symbolicated panics; it does not — `strip = "debuginfo"` removes
+  the line tables that `debug = "line-tables-only"` asks for. Measured on
+  `kube-apiserver`: the only debug section left is `.debug_gdb_scripts`, while
+  `.symtab` survives with 12,611 function symbols. So a panic backtrace names
+  functions, not file and line. The settings are unchanged — only the claim
+  was wrong — and dropping the `strip` is what would buy file:line, at the
+  cost of carrying the DWARF onto every node.
 
 ## [v0.9.1] — 2026-09-09
 
