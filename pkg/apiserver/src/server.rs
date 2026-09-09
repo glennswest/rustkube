@@ -227,6 +227,10 @@ fn build_router(
             get(discovery::api_authorization_v1_resources),
         )
         .route(
+            "/apis/subresources.kubevirt.io/v1",
+            get(discovery::api_kubevirt_subresources_v1_resources),
+        )
+        .route(
             "/apis/policy/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
         )
@@ -359,6 +363,18 @@ fn build_router(
         .route(
             "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
             axum::routing::post(crate::handlers::authorization::create_self_subject_rules_review),
+        )
+        // subresources.kubevirt.io — the console doors `virtctl` resolves
+        // through (#61). Not CRD subresources: a CRD gets `/status` and
+        // `/scale`, and these are a WebSocket proxied to the node running the
+        // guest. GET only, because a WebSocket handshake is a GET.
+        .route(
+            "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances/{name}/console",
+            get(crate::handlers::kubevirt::vmi_console),
+        )
+        .route(
+            "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances/{name}/vnc",
+            get(crate::handlers::kubevirt::vmi_vnc),
         )
         // pods/log — what `kubectl logs` actually calls. Registered before the
         // generic {resource}/{name}/status route so the more specific path

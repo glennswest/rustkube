@@ -4,6 +4,7 @@
 //! plus specific route builders for core/v1 and apps/v1 resources.
 
 pub mod authorization;
+pub mod kubevirt;
 pub mod logs;
 pub mod resource;
 pub mod streaming;

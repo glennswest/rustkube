@@ -107,6 +107,16 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "authorization.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            // The KubeVirt subresource API. `kubevirt.io/v1` itself is not
+            // here and is not meant to be: VirtualMachineInstance arrives as
+            // an ordinary CRD from stormpump's manifests, and a client
+            // discovers it that way. What a CRD cannot carry is a subresource
+            // that is not stored, which is what this group is for (#61).
+            "name": "subresources.kubevirt.io",
+            "versions": [{"groupVersion": "subresources.kubevirt.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "subresources.kubevirt.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "policy",
             "versions": [{"groupVersion": "policy/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "policy/v1", "version": "v1"}
@@ -694,6 +704,41 @@ pub async fn api_authorization_v1_resources() -> impl IntoResponse {
                 "namespaced": false,
                 "kind": "SelfSubjectRulesReview",
                 "verbs": ["create"]
+            }
+        ]
+    }))
+}
+
+/// GET /apis/subresources.kubevirt.io/v1 — the VM console doors (#61).
+///
+/// `virtctl` looks the group up here before it opens anything, so a group that
+/// is routed but not discoverable is one the client will not try.
+///
+/// Only the two doors are listed. KubeVirt's other subresources — `pause`,
+/// `unpause`, `freeze`, `softreboot`, and the VirtualMachine verbs `start`,
+/// `stop`, `restart`, `migrate` — are deliberately absent rather than stubbed:
+/// stormvm serves no such endpoints today, and advertising a verb that answers
+/// 404 is worse for a client than not advertising it, because `virtctl` will
+/// report the VM refused rather than the feature being missing.
+pub async fn api_kubevirt_subresources_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "subresources.kubevirt.io/v1",
+        "resources": [
+            {
+                "name": "virtualmachineinstances/console",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "VirtualMachineInstance",
+                "verbs": ["get"]
+            },
+            {
+                "name": "virtualmachineinstances/vnc",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "VirtualMachineInstance",
+                "verbs": ["get"]
             }
         ]
     }))
