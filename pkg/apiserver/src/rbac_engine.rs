@@ -592,6 +592,7 @@ fn is_discovery_path(path: &str) -> bool {
             | "/apis/rustkube.io/v1alpha1"
             | "/apis/apiextensions.k8s.io/v1"
             | "/apis/authorization.k8s.io/v1"
+            | "/apis/subresources.kubevirt.io/v1"
     )
 }
 

@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### 2026-09-09
+- **feat(apiserver):** serve `subresources.kubevirt.io/v1` — the
+  `virtualmachineinstances/console` and `/vnc` doors `virtctl console` and
+  `virtctl vnc` resolve through (#61). `oc get vmi` already worked, because
+  VirtualMachineInstance is an ordinary CRD; what a CRD cannot carry is a
+  subresource that is not stored, which is what these are. The apiserver finds
+  the node from `status.nodeName` and proxies the WebSocket upgrade to that
+  node's kubelet, which splices it to stormvm on loopback.
+- **refactor(apiserver):** the exec/attach/port-forward proxy takes a node and
+  an HTTP method rather than a pod, so one mechanism serves pods and VMs. A
+  pod carries its node in `spec.nodeName` and a VMI in `status.nodeName`, and
+  the splice in the middle does not care which; the method matters because a
+  WebSocket handshake must be a GET where SPDY exec is a POST.
 - **docs:** correct what the release profile actually keeps. The v0.7.35 entry
   and the `Cargo.toml` comment both said `strip = "debuginfo"` keeps line
   tables for symbolicated panics; it does not — `strip = "debuginfo"` removes

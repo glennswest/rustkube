@@ -60,7 +60,11 @@ pub async fn pod_exec(
         Err(e) => return e.into_response(),
     };
     let path = format!("/exec/{namespace}/{name}/{container}");
-    proxy(state, keys, &pod, &namespace, &name, path, stream_query(&query, true), req).await
+    let node = match pod_node(&pod, &namespace, &name) {
+        Ok(n) => n,
+        Err(e) => return e.into_response(),
+    };
+    proxy_to_node(state, keys, &node, "POST", path, stream_query(&query, true), req).await
 }
 
 /// `POST|GET /api/v1/namespaces/{namespace}/pods/{name}/attach`
@@ -81,7 +85,11 @@ pub async fn pod_attach(
         Err(e) => return e.into_response(),
     };
     let path = format!("/attach/{namespace}/{name}/{container}");
-    proxy(state, keys, &pod, &namespace, &name, path, stream_query(&query, false), req).await
+    let node = match pod_node(&pod, &namespace, &name) {
+        Ok(n) => n,
+        Err(e) => return e.into_response(),
+    };
+    proxy_to_node(state, keys, &node, "POST", path, stream_query(&query, false), req).await
 }
 
 /// `POST|GET /api/v1/namespaces/{namespace}/pods/{name}/portforward`
@@ -98,7 +106,24 @@ pub async fn pod_portforward(
         Err(e) => return e.into_response(),
     };
     let path = format!("/portForward/{namespace}/{name}");
-    proxy(state, keys, &pod, &namespace, &name, path, portforward_query(&query), req).await
+    let node = match pod_node(&pod, &namespace, &name) {
+        Ok(n) => n,
+        Err(e) => return e.into_response(),
+    };
+    proxy_to_node(state, keys, &node, "POST", path, portforward_query(&query), req).await
+}
+
+/// The node a pod is on, or the error a client should see if it is on none.
+fn pod_node(pod: &Value, namespace: &str, name: &str) -> Result<String, ApiError> {
+    pod["spec"]["nodeName"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            reason: "BadRequest".into(),
+            message: format!("pod {namespace}/{name} is not assigned to a node yet"),
+        })
 }
 
 async fn load_pod(state: &AppState, namespace: &str, name: &str) -> Result<Value, ApiError> {
@@ -166,24 +191,22 @@ fn urlencode(s: &str) -> String {
 
 /// Open the same upgrade to the pod's kubelet and splice the two connections.
 #[allow(clippy::too_many_arguments)]
-async fn proxy(
+/// Proxy an upgrade to a node's kubelet.
+///
+/// Takes the node rather than the object it came from: a pod carries it in
+/// `spec.nodeName` and a VirtualMachineInstance in `status.nodeName`, and the
+/// splice in the middle does not care which. `method` because the two
+/// protocols differ on it — SPDY exec is a POST, and a WebSocket handshake
+/// must be a GET or the server is entitled to refuse it (RFC 6455).
+pub(crate) async fn proxy_to_node(
     state: AppState,
     keys: crate::auth::SigningKeys,
-    pod: &Value,
-    namespace: &str,
-    name: &str,
+    node_name: &str,
+    method: &str,
     path: String,
     query: String,
     req: Request,
 ) -> Response {
-    let Some(node_name) = pod["spec"]["nodeName"].as_str().filter(|s| !s.is_empty()) else {
-        return ApiError {
-            status: StatusCode::BAD_REQUEST,
-            reason: "BadRequest".into(),
-            message: format!("pod {namespace}/{name} is not assigned to a node yet"),
-        }
-        .into_response();
-    };
     let Some(addr) = crate::handlers::logs::node_address(&state.storage, node_name).await else {
         return ApiError::internal(&format!("no usable address for node {node_name}"))
             .into_response();
@@ -196,7 +219,7 @@ async fn proxy(
         .create_token("system:kube-apiserver", &["system:masters".to_string()])
         .unwrap_or_default();
 
-    match open_upstream(&addr, &path, &query, &bearer, req.headers()).await {
+    match open_upstream(&addr, method, &path, &query, &bearer, req.headers()).await {
         Ok(Upstream::Upgraded {
             headers,
             leftover,
@@ -269,6 +292,7 @@ enum Upstream {
 /// Send the upgrade request to the kubelet and read its response head.
 async fn open_upstream(
     addr: &str,
+    method: &str,
     path: &str,
     query: &str,
     bearer: &str,
@@ -285,9 +309,14 @@ async fn open_upstream(
         format!("{path}?{query}")
     };
     let mut head = format!(
-        "POST {url} HTTP/1.1\r\nHost: {target}\r\nAuthorization: Bearer {bearer}\r\n\
-         Content-Length: 0\r\n"
+        "{method} {url} HTTP/1.1\r\nHost: {target}\r\nAuthorization: Bearer {bearer}\r\n"
     );
+    // A body length belongs only on the method that can carry one; sending
+    // `Content-Length: 0` on a GET is legal but noise, and some servers treat
+    // a framed GET as a request they must read a body from.
+    if method != "GET" {
+        head.push_str("Content-Length: 0\r\n");
+    }
     // The client's own headers carry the protocol negotiation: `Connection`,
     // `Upgrade`, `X-Stream-Protocol-Version`, and for WebSocket the key whose
     // accept value the client will check. Forwarded verbatim.
