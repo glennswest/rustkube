@@ -15,8 +15,20 @@ members = [
 # Release profile (#49). These binaries ship as images sealed into the read-only
 # node store, so whatever they carry, every node carries forever. Optimize for
 # the on-request-path control plane (opt 3 + thin LTO + one codegen unit) and
-# strip debuginfo — but keep line tables so apiserver/controller-manager/
-# scheduler panics stay symbolicated (matches fastetcd, the co-located static pod).
+# drop the DWARF, keeping the symbol table.
+#
+# What that buys, precisely: an apiserver/controller-manager/scheduler panic
+# names the functions in its backtrace instead of printing addresses. It does
+# **not** give file and line. `strip = "debuginfo"` removes the line tables
+# that `debug = "line-tables-only"` asks for, so the two settings do not
+# combine the way the name suggests — measured on kube-apiserver, the only
+# debug section left is `.debug_gdb_scripts`. Dropping the `strip` is what
+# would buy file:line, at the cost of carrying the DWARF onto every node.
+#
+# `debug` is kept anyway so that removing the strip is a one-line change.
+# Matches fastetcd, the co-located static pod. Measured: 13.5 MiB as built,
+# 11.4 MiB with the symbols stripped too — 2.1 MiB for a readable backtrace on
+# a machine nobody can attach a debugger to.
 [profile.release]
 opt-level = 3
 lto = "thin"
