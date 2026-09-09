@@ -111,54 +111,15 @@ async fn load_pod(state: &AppState, namespace: &str, name: &str) -> Result<Value
 
 /// Which container the session is for.
 ///
-/// Upstream requires the name when a pod has more than one and lists the
-/// choices in the error, which is the difference between a usable message and
-/// a puzzle.
+/// The rule is the log subresource's rule — including that an init or
+/// ephemeral container is a valid name, which for exec is how you get a shell
+/// in a sidecar (an init container with `restartPolicy: Always` since K8s
+/// 1.28) or in the container `kubectl debug` just added.
 fn pick_container(pod: &Value, query: &str, pod_name: &str) -> Result<String, ApiError> {
-    let containers: Vec<String> = pod["spec"]["containers"]
-        .as_array()
-        .map(|v| v.as_slice())
-        .unwrap_or(&[])
-        .iter()
-        .filter_map(|c| c["name"].as_str().map(str::to_string))
-        .collect();
     let asked = form_urlencoded::parse(query.as_bytes())
         .find(|(k, _)| k == "container")
-        .map(|(_, v)| v.to_string())
-        .filter(|c| !c.is_empty());
-    match asked {
-        Some(c) => {
-            // Ephemeral debug containers are real targets for exec — `kubectl
-            // debug` attaches to one — so they count as valid names.
-            let ephemeral: Vec<String> = pod["spec"]["ephemeralContainers"]
-                .as_array()
-                .map(|v| v.as_slice())
-                .unwrap_or(&[])
-                .iter()
-                .filter_map(|c| c["name"].as_str().map(str::to_string))
-                .collect();
-            if !containers.contains(&c) && !ephemeral.contains(&c) {
-                return Err(ApiError {
-                    status: StatusCode::BAD_REQUEST,
-                    reason: "BadRequest".into(),
-                    message: format!(
-                        "container {c} is not valid for pod {pod_name}; choose one of [{}]",
-                        containers.join(", ")
-                    ),
-                });
-            }
-            Ok(c)
-        }
-        None if containers.len() == 1 => Ok(containers[0].clone()),
-        None => Err(ApiError {
-            status: StatusCode::BAD_REQUEST,
-            reason: "BadRequest".into(),
-            message: format!(
-                "a container name must be specified for pod {pod_name}, choose one of: [{}]",
-                containers.join(", ")
-            ),
-        }),
-    }
+        .map(|(_, v)| v.to_string());
+    crate::handlers::logs::pick_container(pod, asked.as_deref(), pod_name)
 }
 
 /// Translate the apiserver's stream options into the kubelet's spelling.

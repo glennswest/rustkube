@@ -35,43 +35,9 @@ pub async fn pod_logs(
         Err(_) => return ApiError::not_found("pods", &name).into_response(),
     };
 
-    // Which container. Upstream requires the name when a pod has more than
-    // one, and lists them in the error — which is the difference between a
-    // usable message and a puzzle.
-    let containers: Vec<String> = pod["spec"]["containers"]
-        .as_array()
-        .map(|v| v.as_slice())
-        .unwrap_or(&[])
-        .iter()
-        .filter_map(|c| c["name"].as_str().map(str::to_string))
-        .collect();
-    let container = match params.get("container") {
-        Some(c) => {
-            if !containers.iter().any(|x| x == c) {
-                return ApiError {
-                    status: StatusCode::BAD_REQUEST,
-                    reason: "BadRequest".into(),
-                    message: format!(
-                        "container {c} is not valid for pod {name}; choose one of [{}]",
-                        containers.join(", ")
-                    ),
-                }
-                .into_response();
-            }
-            c.clone()
-        }
-        None if containers.len() == 1 => containers[0].clone(),
-        None => {
-            return ApiError {
-                status: StatusCode::BAD_REQUEST,
-                reason: "BadRequest".into(),
-                message: format!(
-                    "a container name must be specified for pod {name}, choose one of: [{}]",
-                    containers.join(", ")
-                ),
-            }
-            .into_response()
-        }
+    let container = match pick_container(&pod, params.get("container").map(String::as_str), &name) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
     };
 
     let Some(node_name) = pod["spec"]["nodeName"].as_str().filter(|s| !s.is_empty()) else {
@@ -184,6 +150,65 @@ impl PipeWithStatus for axum::body::Body {
     }
 }
 
+/// Which container the caller meant.
+///
+/// Upstream requires the name when a pod has more than one and lists the
+/// choices in the error, which is the difference between a usable message and
+/// a puzzle.
+///
+/// A named container may be an init or an ephemeral one. That is not a
+/// nicety: since sidecars became init containers with `restartPolicy: Always`
+/// (K8s 1.28), `kubectl logs pod -c <sidecar>` names something that is not in
+/// `spec.containers` at all, and a failed init container is the case where its
+/// log is the only thing worth reading. Refusing those names answered the two
+/// commonest debugging requests with "not valid for pod".
+///
+/// The *default* when no name is given stays `spec.containers` alone — an init
+/// container that has already finished is not what `kubectl logs pod` means.
+pub(crate) fn pick_container(
+    pod: &Value,
+    asked: Option<&str>,
+    pod_name: &str,
+) -> Result<String, ApiError> {
+    let names = |field: &str| -> Vec<String> {
+        pod["spec"][field]
+            .as_array()
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|c| c["name"].as_str().map(str::to_string))
+            .collect()
+    };
+    let containers = names("containers");
+    match asked.filter(|c| !c.is_empty()) {
+        Some(c) => {
+            let mut all = containers.clone();
+            all.extend(names("initContainers"));
+            all.extend(names("ephemeralContainers"));
+            if !all.iter().any(|x| x == c) {
+                return Err(ApiError {
+                    status: StatusCode::BAD_REQUEST,
+                    reason: "BadRequest".into(),
+                    message: format!(
+                        "container {c} is not valid for pod {pod_name}; choose one of [{}]",
+                        all.join(", ")
+                    ),
+                });
+            }
+            Ok(c.to_string())
+        }
+        None if containers.len() == 1 => Ok(containers[0].clone()),
+        None => Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            reason: "BadRequest".into(),
+            message: format!(
+                "a container name must be specified for pod {pod_name}, choose one of: [{}]",
+                containers.join(", ")
+            ),
+        }),
+    }
+}
+
 /// A node's address, preferring InternalIP as upstream does.
 pub(crate) async fn node_address(
     storage: &ResourceStorage,
@@ -210,6 +235,44 @@ pub(crate) async fn node_address(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_init_or_ephemeral_container_is_a_valid_name() {
+        // A sidecar is an init container with restartPolicy: Always (K8s 1.28),
+        // and a failed init container's log is the one worth reading — both
+        // used to come back "not valid for pod".
+        let pod = json!({"spec": {
+            "containers": [{"name": "app"}],
+            "initContainers": [{"name": "setup"}, {"name": "sidecar"}],
+            "ephemeralContainers": [{"name": "debugger"}]}});
+        assert_eq!(pick_container(&pod, Some("setup"), "p").unwrap(), "setup");
+        assert_eq!(pick_container(&pod, Some("sidecar"), "p").unwrap(), "sidecar");
+        assert_eq!(pick_container(&pod, Some("debugger"), "p").unwrap(), "debugger");
+        // The default is still the one real container: an init container that
+        // has already finished is not what `kubectl logs pod` means.
+        assert_eq!(pick_container(&pod, None, "p").unwrap(), "app");
+    }
+
+    #[test]
+    fn an_unknown_container_lists_every_choice() {
+        let pod = json!({"spec": {
+            "containers": [{"name": "app"}],
+            "initContainers": [{"name": "setup"}]}});
+        let err = pick_container(&pod, Some("nope"), "p").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        // The init container is in the list, so the reader can see the name
+        // they should have used rather than concluding it does not exist.
+        assert!(err.message.contains("app"), "{}", err.message);
+        assert!(err.message.contains("setup"), "{}", err.message);
+    }
+
+    #[test]
+    fn the_container_is_required_when_there_is_more_than_one() {
+        let pod = json!({"spec": {"containers": [{"name": "a"}, {"name": "b"}]}});
+        let err = pick_container(&pod, None, "p").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("a, b"), "{}", err.message);
+    }
 
     #[test]
     fn internal_ip_is_preferred_over_hostname() {
