@@ -1416,6 +1416,35 @@ async fn bootstrap_rbac(
             &format!("clusterrolebindings {}", "system:anonymous-admin"),
         )
         .await;
+    } else {
+        // The grant is not in effect, so the binding must not survive from a
+        // boot when it was (#60).
+        //
+        // Not creating it is not enough: the binding is a stored object, the
+        // authorizer reads stored bindings, and the in-memory flag has no say
+        // over one that is already there. An apiserver brought up once with
+        // `--dev-anonymous-admin true` and later restarted without it kept
+        // answering every anonymous request as cluster-admin — which is how a
+        // dev rig gets promoted to something real while the flag that was
+        // removed reads as though it did something.
+        //
+        // Deleting is safe because the object is the server's own: it is
+        // written at bootstrap and named by the server, so removing it cannot
+        // discard anything an operator wrote.
+        let key = ResourceStorage::cluster_key("clusterrolebindings", "system:anonymous-admin");
+        if storage.get(&key).await.is_ok() {
+            match storage.delete(&key, None).await {
+                Ok(()) => tracing::warn!(
+                    "bootstrap: removed clusterrolebindings/system:anonymous-admin left by an \
+                     earlier --dev-anonymous-admin boot — anonymous no longer has cluster-admin"
+                ),
+                Err(e) => tracing::error!(
+                    "bootstrap: clusterrolebindings/system:anonymous-admin is present and could \
+                     not be removed ({}) — ANONYMOUS STILL HAS CLUSTER-ADMIN",
+                    e.message
+                ),
+            }
+        }
     }
 }
 
