@@ -704,6 +704,20 @@ pub async fn api_authorization_v1_resources() -> impl IntoResponse {
                 "namespaced": false,
                 "kind": "SelfSubjectRulesReview",
                 "verbs": ["create"]
+            },
+            {
+                "name": "subjectaccessreviews",
+                "singularName": "subjectaccessreview",
+                "namespaced": false,
+                "kind": "SubjectAccessReview",
+                "verbs": ["create"]
+            },
+            {
+                "name": "localsubjectaccessreviews",
+                "singularName": "localsubjectaccessreview",
+                "namespaced": true,
+                "kind": "LocalSubjectAccessReview",
+                "verbs": ["create"]
             }
         ]
     }))

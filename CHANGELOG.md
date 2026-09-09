@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### 2026-09-09
+- **feat(apiserver):** `SubjectAccessReview` and `LocalSubjectAccessReview` —
+  asking what *another* identity may do (#69). Deferred when the self-reviews
+  landed (#59) because they are a different question: a self-review reveals
+  nothing the asker could not learn by trying, while these report on somebody
+  else and so are governed by ordinary RBAC, which no bootstrap role grants
+  except cluster-admin. `oc adm policy who-can` is what asks them, as does any
+  admission webhook that needs to know whether the requesting user may do a
+  thing. The Local variant takes its namespace from the path and refuses a
+  body that names a different one.
 - **docs:** the work plan's open items now carry issue numbers (#63–#70). The
   storage, Phase 4 and `oc` gaps existed only as unchecked boxes in
   `CLAUDE.md`, so nothing tracked them and they could not be picked up — a
