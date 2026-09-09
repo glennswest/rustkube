@@ -214,18 +214,18 @@ Cargo.toml → workspace.package.version
 - [x] Attach/detach — `VolumeAttachment` for drivers that require it
 - [x] Volume-aware scheduling — PV `nodeAffinity`, `selected-node`,
       `CSIStorageCapacity`
-- [ ] Volume expansion (the resizer sidecar wants `status.allocatedResources`
-      and resize conditions)
-- [ ] Snapshots (the external-snapshotter CRDs are cluster-wide components)
-- [ ] `ReadWriteOncePod` enforcement
+- [ ] Volume expansion — `status.allocatedResources` + resize conditions (#63)
+- [ ] Snapshots — the external-snapshotter CRDs and controller (#64)
+- [ ] `ReadWriteOncePod` enforcement (#65)
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
   sbregistry and stormblock-csi. **rustkube provisions nothing itself.**
 
 ### Phase 4: Scale & Conformance
-- [ ] 1000+ node testing
-- [ ] K8s conformance test suite
-- [ ] ARM64 cross-compile verification
-- [ ] MikroTik minimal build verification
+- [ ] 1000+ node testing (#66) — the controllers list everything every tick,
+      which is what will break first
+- [ ] K8s conformance test suite (#67)
+- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — one
+      question: CI builds x86_64 musl only, so nothing knows if ARM64 compiles
 
 ### `oc` compatibility — the surface that drives completeness
 
@@ -259,10 +259,14 @@ Known state on 2026-08-28:
       here are `input/output/error` on the kubelet.
       Cilium's CLI links client-go's `FallbackExecutor` (WebSocket first, SPDY
       second); both paths are tested.
-- [ ] `oc adm` — largely unexamined.
+- [ ] `oc adm` — largely unexamined (#69). Most of it is object edits that
+      should already work; the known holes are `SubjectAccessReview` (the
+      privileged sibling of #59), CSR `/approval`, and `metrics.k8s.io`.
 - [ ] Routes, DeploymentConfig, ImageStream, BuildConfig, SCC — the
       genuinely OpenShift-only half. Whether these are in scope at all is a
-      decision nobody has made; `oc` without them is `kubectl` with better
+      decision nobody has made (#70), and `route.openshift.io/v1` is already
+      *served* with nothing routing for it, which is the inconsistency that
+      forces the question; `oc` without them is `kubectl` with better
       ergonomics, which may be the right target.
 
 ## Release History

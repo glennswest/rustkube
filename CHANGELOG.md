@@ -2,7 +2,12 @@
 
 ## [Unreleased]
 
-<!-- New unreleased changes go here -->
+### 2026-09-09
+- **docs:** the work plan's open items now carry issue numbers (#63–#70). The
+  storage, Phase 4 and `oc` gaps existed only as unchecked boxes in
+  `CLAUDE.md`, so nothing tracked them and they could not be picked up — a
+  checklist that disagrees with the tracker understates the work as surely as
+  a stale plan overstates it.
 
 ## [v0.11.0] — 2026-09-09
 
