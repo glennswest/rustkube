@@ -30,6 +30,25 @@ pub struct ClientConfig {
     pub insecure: bool,
 }
 
+/// Percent-encode a `continue` token for a query string.
+///
+/// The tokens are base64 and can carry `+`, `/` and `=`; `+` in a query means
+/// a space, so an unencoded token comes back to the server altered and the
+/// list restarts from the beginning — an infinite loop that looks like a
+/// controller doing nothing (#7.6 fixed the decode side of this same trap).
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 impl ApiClient {
     pub fn new(base_url: &str) -> Self {
         Self {
@@ -131,13 +150,72 @@ impl ApiClient {
     }
 
     /// LIST resources (returns JSON body).
+    /// List every object, following the `continue` token to the end.
+    ///
+    /// **Paging is not an optimisation here, it is correctness.** The
+    /// apiserver answers an unbounded list with the first 500 objects and a
+    /// `continue` token; a client that ignores the token gets a *truncated
+    /// view it cannot tell from a complete one*.
+    ///
+    /// Every controller reads through this, and each one misreads a truncated
+    /// list differently. The ReplicaSet controller counts the pods it owns and
+    /// creates more when it is short, so past 500 pods in a namespace it makes
+    /// duplicates forever — the runaway of #27, arriving by a second route.
+    /// The garbage collector is worse: it decides an object is garbage when
+    /// every owner is absent from the list it just read, so an owner beyond
+    /// the first page reads as deleted and the collector **deletes live
+    /// objects**. Its existing guard is per-kind — an owner of a kind it
+    /// cannot see is left alone — and truncation defeats exactly that, because
+    /// the kind *was* seen; only that owner was not.
+    ///
+    /// Found by measuring, not by reading: at 3000 pods the controller CPU
+    /// stopped rising with the object count, which is what a silent cap looks
+    /// like from outside (#66).
     pub async fn list(&self, path: &str) -> reqwest::Result<serde_json::Value> {
-        self.client
-            .get(format!("{}{}", self.base_url, path))
-            .send()
-            .await?
-            .json()
-            .await
+        let sep = if path.contains('?') { '&' } else { '?' };
+        let mut merged: Option<serde_json::Value> = None;
+        let mut items: Vec<serde_json::Value> = Vec::new();
+        let mut token: Option<String> = None;
+
+        loop {
+            let url = match &token {
+                Some(c) => format!(
+                    "{}{}{sep}limit=500&continue={}",
+                    self.base_url,
+                    path,
+                    percent_encode(c)
+                ),
+                None => format!("{}{}{sep}limit=500", self.base_url, path),
+            };
+            let page: serde_json::Value =
+                self.client.get(url).send().await?.json().await?;
+
+            if let Some(page_items) = page["items"].as_array() {
+                items.extend(page_items.iter().cloned());
+            }
+            token = page["metadata"]["continue"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            merged = Some(page);
+            // A page that carries no token is the last one. A response that is
+            // not a list at all (an error Status) has none either, and falls
+            // out here with whatever it said intact for the caller to see.
+            if token.is_none() {
+                break;
+            }
+        }
+
+        let mut out = merged.unwrap_or_else(|| serde_json::json!({}));
+        if out["items"].is_array() {
+            out["items"] = serde_json::Value::Array(items);
+            // The token described the page, not the whole. Leaving it would
+            // tell a caller there is more when there is not.
+            if let Some(meta) = out["metadata"].as_object_mut() {
+                meta.remove("continue");
+            }
+        }
+        Ok(out)
     }
 
     /// POST (create) a resource.
@@ -470,5 +548,22 @@ impl ControllerManager {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::percent_encode;
+
+    #[test]
+    fn a_continue_token_survives_the_query_string() {
+        // Tokens are base64 and carry +, / and =. A `+` in a query means a
+        // space, so an unencoded token reaches the server altered, the list
+        // restarts, and the loop never ends — a controller that appears to be
+        // doing nothing while making requests forever.
+        assert_eq!(percent_encode("ab+cd/ef=="), "ab%2Bcd%2Fef%3D%3D");
+        // Unreserved characters are left alone, so an ordinary token is
+        // unchanged and readable in a log.
+        assert_eq!(percent_encode("plain-token_1.2~3"), "plain-token_1.2~3");
     }
 }
