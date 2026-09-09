@@ -2,8 +2,28 @@
 
 ## [Unreleased]
 
-### 2026-09-09
-- **fix(apiserver):** **security** — an RBAC rule that names no `apiGroups` or
+<!-- New unreleased changes go here -->
+
+## [v0.9.0] — 2026-09-09
+
+### Added
+- **feat(apiserver):** `authorization.k8s.io/v1` — `SelfSubjectAccessReview`
+  ("may I do X on Y?") and `SelfSubjectRulesReview` ("what may I do in
+  namespace N?") (#59). Write-only virtual resources answered by the same RBAC
+  engine that decides the real request, so a review cannot drift from what the
+  request path would do; the access review reports which binding granted it.
+  Without them a console had to infer a viewer's access by probing — one list
+  per namespace, as them, reading the status code — which is 200 requests per
+  viewer on a 200-namespace cluster and answers a question next to the one
+  asked.
+- **feat(apiserver):** every authenticated identity now carries the
+  `system:authenticated` group, and `system:basic-user` is bootstrapped and
+  bound to it, so any authenticated user may ask about themselves — as
+  upstream does. Bindings written against `system:authenticated` previously
+  matched nobody.
+
+### Fixed
+- **apiserver:** **security** — an RBAC rule that names no `apiGroups` or
   no `resources` no longer grants every resource request. The bootstrap
   `system:discovery` ClusterRole is a single `nonResourceURLs` rule and
   `system:anonymous` is bound to it, so with `--anonymous-auth=true` anyone
@@ -11,6 +31,12 @@
   included — which is exactly what the #16 hardening in v0.7.17 was meant to
   prevent. Absent and empty now mean "matches nothing", as upstream does.
   `cluster-admin` is written with explicit `*` entries and is unaffected.
+- **apiserver:** `/apis/{group}/{version}/namespaces/{ns}/{resource}` is no
+  longer parsed as a subresource of a namespace — it has the same six-segment
+  shape as `{resource}/{name}/{sub}` and the generic arm was tried first, so
+  every namespaced request in a non-core group asked the authorizer about
+  `namespaces/{resource}`, which nothing grants. This is what refused
+  cilium-operator its leader-election lease.
 
 ## [v0.8.1] — 2026-09-09
 
