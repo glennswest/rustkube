@@ -223,6 +223,10 @@ fn build_router(
             get(discovery::api_policy_v1_resources),
         )
         .route(
+            "/apis/authorization.k8s.io/v1",
+            get(discovery::api_authorization_v1_resources),
+        )
+        .route(
             "/apis/policy/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
         )
@@ -344,6 +348,17 @@ fn build_router(
         .route(
             "/apis/authentication.k8s.io/v1/tokenreviews",
             axum::routing::post(crate::handlers::token::create_token_review),
+        )
+        // authorization.k8s.io — "may I?" and "what may I?", answered by the
+        // same engine that decides the real request (#59). Write-only virtual
+        // resources: nothing is stored.
+        .route(
+            "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+            axum::routing::post(crate::handlers::authorization::create_self_subject_access_review),
+        )
+        .route(
+            "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
+            axum::routing::post(crate::handlers::authorization::create_self_subject_rules_review),
         )
         // pods/log — what `kubectl logs` actually calls. Registered before the
         // generic {resource}/{name}/status route so the more specific path
@@ -1264,6 +1279,61 @@ async fn bootstrap_rbac(
         )
         .await;
     }
+
+    // ClusterRole: system:basic-user — what any authenticated user may do
+    // about *themselves* (#59).
+    //
+    // Asking "may I?" reveals nothing the asker could not learn by trying the
+    // action, so upstream grants it to everyone who authenticated at all, and
+    // a console depends on it: without this binding every viewer's first
+    // question is answered 403 and the console falls back to probing.
+    let basic_user_role = json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRole",
+        "metadata": {
+            "name": "system:basic-user",
+            "uid": uuid::Uuid::new_v4().to_string(),
+            "creationTimestamp": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        },
+        "rules": [{
+            "apiGroups": ["authorization.k8s.io"],
+            "resources": ["selfsubjectaccessreviews", "selfsubjectrulesreviews"],
+            "verbs": ["create"]
+        }]
+    });
+    create_bootstrap(
+        storage,
+        &ResourceStorage::cluster_key("clusterroles", "system:basic-user"),
+        basic_user_role,
+        "clusterroles system:basic-user",
+    )
+    .await;
+    let basic_user_binding = json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRoleBinding",
+        "metadata": {
+            "name": "system:basic-user",
+            "uid": uuid::Uuid::new_v4().to_string(),
+            "creationTimestamp": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        },
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:basic-user"
+        },
+        "subjects": [{
+            "kind": "Group",
+            "name": "system:authenticated",
+            "apiGroup": "rbac.authorization.k8s.io"
+        }]
+    });
+    create_bootstrap(
+        storage,
+        &ResourceStorage::cluster_key("clusterrolebindings", "system:basic-user"),
+        basic_user_binding,
+        "clusterrolebindings system:basic-user",
+    )
+    .await;
 
     // ClusterRole: system:discovery — GET on discovery endpoints
     let discovery_role = json!({

@@ -117,6 +117,22 @@ impl SigningKeys {
 
 /// Authentication middleware — extracts UserInfo from the request.
 ///
+/// Every authenticated identity is in `system:authenticated`, whatever else it
+/// is in.
+///
+/// Upstream adds this group to any successfully authenticated request, and
+/// bindings in the wild are written against it — `system:basic-user`, which is
+/// what lets a user ask a SelfSubjectAccessReview about themselves (#59), is
+/// bound to it and nothing else. Without the group here that binding matches
+/// nobody, and a manifest that grants `system:authenticated` anything would
+/// silently grant it to no one.
+fn with_authenticated(mut groups: Vec<String>) -> Vec<String> {
+    if !groups.iter().any(|g| g == "system:authenticated") {
+        groups.push("system:authenticated".into());
+    }
+    groups
+}
+
 /// Checks for Bearer token in Authorization header. Falls back to anonymous.
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, StatusCode> {
     // Resolve an *authenticated* identity, or None if no valid credentials.
@@ -125,7 +141,7 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
         if let Some(Some(id)) = request.extensions().get::<Option<X509Identity>>() {
             Some(UserInfo {
                 username: id.username.clone(),
-                groups: id.groups.clone(),
+                groups: with_authenticated(id.groups.clone()),
             })
         } else if let Some(auth_header) = request.headers().get("authorization") {
             // 2. Bearer token, validated against the SA/JWT signing keys.
@@ -141,7 +157,7 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
                 })
                 .map(|td| UserInfo {
                     username: td.claims.sub,
-                    groups: td.claims.groups,
+                    groups: with_authenticated(td.claims.groups),
                 })
         } else {
             None
