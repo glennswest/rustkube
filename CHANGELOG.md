@@ -4,6 +4,19 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.9.1] — 2026-09-09
+
+### Fixed
+- **apiserver:** **security** — bootstrap now *removes*
+  `clusterrolebindings/system:anonymous-admin` when the dev grant is not in
+  effect, instead of merely not creating it (#60). The binding is a stored
+  object and the authorizer reads stored bindings, so an apiserver brought up
+  once with `--dev-anonymous-admin true` and later restarted without it kept
+  answering every anonymous request as cluster-admin — the removed flag read
+  as though it had done something. A warning names the binding when it is
+  removed; a failure to remove it is logged as an error that says anonymous
+  still has cluster-admin.
+
 ## [v0.9.0] — 2026-09-09
 
 ### Added
