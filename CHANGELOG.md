@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### 2026-09-09
+- **fix(controller-manager):** **data loss** — `ApiClient::list` follows the
+  `continue` token instead of reading one page (#66). The apiserver answers an
+  unbounded list with the first 500 objects and a token; the client ignored
+  the token, so every controller worked from a truncated view it could not
+  tell from a complete one. The garbage collector decides an object is garbage
+  when every owner is absent from the list it just read, so past 500 objects
+  of a kind an owner beyond the first page read as deleted and **the collector
+  deleted live objects** — its per-kind guard does not help, because the kind
+  was seen and only that owner was not. The ReplicaSet controller under-counts
+  the same way and creates duplicates, which is the #27 runaway by a second
+  route. Found by measuring at 3000 objects, where controller CPU stopped
+  rising with the object count.
 - **feat(apiserver):** `SubjectAccessReview` and `LocalSubjectAccessReview` —
   asking what *another* identity may do (#69). Deferred when the self-reviews
   landed (#59) because they are a different question: a self-review reveals
