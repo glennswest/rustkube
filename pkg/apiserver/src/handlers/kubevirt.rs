@@ -111,6 +111,106 @@ async fn door(
     .await
 }
 
+/// `PUT /apis/subresources.kubevirt.io/v1/namespaces/{ns}/virtualmachines/{name}/start`
+pub async fn vm_start(state: State<AppState>, path: Path<(String, String)>) -> Response {
+    set_running(state, path, true).await
+}
+
+/// `PUT .../virtualmachines/{name}/stop`
+pub async fn vm_stop(state: State<AppState>, path: Path<(String, String)>) -> Response {
+    set_running(state, path, false).await
+}
+
+/// `PUT .../virtualmachines/{name}/restart`
+///
+/// Deletes the instance and leaves the VirtualMachine controller to make
+/// another. Upstream does the same thing, and for the same reason: a restart
+/// that stopped and started would have to hold state across two requests to
+/// know it owed a start, and a controller-manager restart in between would
+/// leave the machine off.
+pub async fn vm_restart(
+    State(state): State<AppState>,
+    Path((namespace, name)): Path<(String, String)>,
+) -> Response {
+    let vm = match load_vm(&state, &namespace, &name).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    if !apimachinery::kubevirt::wants_running(&vm) {
+        return ApiError {
+            status: StatusCode::CONFLICT,
+            reason: "Conflict".into(),
+            message: format!("VirtualMachine {namespace}/{name} is not running"),
+        }
+        .into_response();
+    }
+    let key = ResourceStorage::namespaced_key("virtualmachineinstances", &namespace, &name);
+    match state.storage.delete(&key, None).await {
+        // Already gone is success: the controller will create one, which is
+        // the state the caller asked for.
+        Ok(()) => ok(&namespace, &name, "restart"),
+        Err(e) if e.status == StatusCode::NOT_FOUND => ok(&namespace, &name, "restart"),
+        Err(e) => e.into_response(),
+    }
+}
+
+/// Set `spec.running`, which is all `start` and `stop` do.
+///
+/// The verbs do no work themselves — that is the point of the object. They
+/// state intent, and the VirtualMachine controller reconciles it (#62). A
+/// `start` that created the VMI here would race the controller into creating
+/// two.
+async fn set_running(
+    State(state): State<AppState>,
+    Path((namespace, name)): Path<(String, String)>,
+    running: bool,
+) -> Response {
+    let mut vm = match load_vm(&state, &namespace, &name).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    // A `runStrategy` of Halted or Always contradicts the boolean, and
+    // silently leaving it would make the verb appear to do nothing. Upstream
+    // rejects the combination; this clears it, because the caller has just
+    // said plainly what they want.
+    if vm["spec"]["runStrategy"].is_string() {
+        if let Some(spec) = vm["spec"].as_object_mut() {
+            spec.remove("runStrategy");
+        }
+    }
+    vm["spec"]["running"] = Value::Bool(running);
+
+    let key = ResourceStorage::namespaced_key("virtualmachines", &namespace, &name);
+    match state.storage.update(&key, vm, None).await {
+        Ok(_) => ok(&namespace, &name, if running { "start" } else { "stop" }),
+        Err(e) => e.into_response(),
+    }
+}
+
+async fn load_vm(state: &AppState, namespace: &str, name: &str) -> Result<Value, ApiError> {
+    state
+        .storage
+        .get(&ResourceStorage::namespaced_key(
+            "virtualmachines",
+            namespace,
+            name,
+        ))
+        .await
+        .map_err(|_| ApiError::not_found("virtualmachines", name))
+}
+
+/// What KubeVirt's subresource verbs answer with: a plain `Status` success.
+fn ok(namespace: &str, name: &str, what: &str) -> Response {
+    axum::Json(serde_json::json!({
+        "kind": "Status",
+        "apiVersion": "v1",
+        "metadata": {},
+        "status": "Success",
+        "message": format!("{what} requested for VirtualMachine {namespace}/{name}"),
+    }))
+    .into_response()
+}
+
 /// Which node runs this VMI.
 ///
 /// `status.nodeName` first, because that is where the machine actually is.

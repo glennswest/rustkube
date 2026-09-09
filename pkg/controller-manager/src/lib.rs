@@ -26,6 +26,7 @@ pub mod replicaset;
 pub mod rollout;
 pub mod runner;
 pub mod service;
+pub mod virtualmachine;
 pub mod statefulset;
 
 pub use runner::{ClientConfig, ControllerManager};

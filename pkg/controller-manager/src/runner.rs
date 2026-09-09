@@ -2,7 +2,7 @@
 
 use crate::{
     cronjob, daemonset, deployment, gateway, hpa, job, migration, namespace, node, pdb,
-    persistentvolume, replicaset, service, statefulset,
+    persistentvolume, replicaset, service, statefulset, virtualmachine,
 };
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -336,6 +336,12 @@ impl ControllerManager {
         let api = self.api.clone();
         tasks.spawn(async move {
             replicaset::ReplicaSetController::new(api).run().await;
+        });
+
+        let api = self.api.clone();
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            virtualmachine::VirtualMachineController::new(api).run().await;
         });
 
         let api = self.api.clone();
