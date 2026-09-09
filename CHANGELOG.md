@@ -2,7 +2,26 @@
 
 ## [Unreleased]
 
-<!-- New unreleased changes go here -->
+### 2026-09-09
+- **feat(controller-manager):** VirtualMachine controller — one VMI per
+  VirtualMachine, named after it and owned by it, created when
+  `spec.running`/`spec.runStrategy` says so and deleted when it does not
+  (#62). stormpump applies both CRDs and its own comment said an instance is
+  applied directly *until a controller exists*; until now `spec.running` was
+  decoration and deleting a VM left its guest running. Writes
+  `status.created`, `ready` and `printableStatus`, and only when they change.
+- **feat(apiserver):** `virtualmachines/start|stop|restart` under
+  `subresources.kubevirt.io/v1` (#62). `start` and `stop` set `spec.running`
+  and let the controller reconcile — a start that created the VMI itself would
+  race the controller into making two. `restart` deletes the instance and lets
+  the controller make another, as upstream does, and answers 409 on a stopped
+  VM rather than doing nothing quietly.
+- **fix(apiserver):** discovery paths are recognised by **shape**, not by a
+  hardcoded list of group-versions, so every CRD group's discovery document
+  stops answering 403 to everyone — cluster-admin included, since that check
+  runs before authorization. The garbage collector is discovery-driven, so it
+  could not see a single custom resource and never collected a custom
+  dependent; that is why a deleted VirtualMachine left its instance running.
 
 ## [v0.10.0] — 2026-09-09
 
