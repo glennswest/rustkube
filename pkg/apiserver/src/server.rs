@@ -364,6 +364,19 @@ fn build_router(
             "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
             axum::routing::post(crate::handlers::authorization::create_self_subject_rules_review),
         )
+        // The privileged siblings: asking about *another* identity. Ordinary
+        // RBAC governs them — no bootstrap role grants them but cluster-admin
+        // — which is what `oc adm policy who-can` needs (#69).
+        .route(
+            "/apis/authorization.k8s.io/v1/subjectaccessreviews",
+            axum::routing::post(crate::handlers::authorization::create_subject_access_review),
+        )
+        .route(
+            "/apis/authorization.k8s.io/v1/namespaces/{namespace}/localsubjectaccessreviews",
+            axum::routing::post(
+                crate::handlers::authorization::create_local_subject_access_review,
+            ),
+        )
         // subresources.kubevirt.io — the console doors `virtctl` resolves
         // through (#61). Not CRD subresources: a CRD gets `/status` and
         // `/scale`, and these are a WebSocket proxied to the node running the
