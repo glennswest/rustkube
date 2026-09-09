@@ -10,6 +10,7 @@ pub mod meta;
 pub mod rbac;
 pub mod certs;
 pub mod cron;
+pub mod kubevirt;
 pub mod taint;
 pub mod metrics;
 pub mod protobuf;

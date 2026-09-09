@@ -582,18 +582,29 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
 
 /// Check if a path is an API discovery path (no resource component).
 fn is_discovery_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/api/v1"
-            | "/apis/apps/v1"
-            | "/apis/batch/v1"
-            | "/apis/coordination.k8s.io/v1"
-            | "/apis/rbac.authorization.k8s.io/v1"
-            | "/apis/rustkube.io/v1alpha1"
-            | "/apis/apiextensions.k8s.io/v1"
-            | "/apis/authorization.k8s.io/v1"
-            | "/apis/subresources.kubevirt.io/v1"
-    )
+    // By shape, not by a list of names.
+    //
+    // A list could only ever name the built-in groups, so every group a CRD
+    // registered — `kubevirt.io/v1`, every Cilium group — fell through to the
+    // "unrecognized API path" denial below and answered 403 to *everyone*,
+    // cluster-admin included, because that check runs before authorization.
+    //
+    // The visible damage was the garbage collector, which discovers what to
+    // walk by reading these documents: it could not see a single custom
+    // resource, so a deleted owner never took its custom dependents with it —
+    // a deleted VirtualMachine left its VirtualMachineInstance running
+    // (#62). Any client enumerating a CRD group hit the same wall.
+    //
+    // The shape is unambiguous: `/api/v1`, `/apis/{group}`, and
+    // `/apis/{group}/{version}`. One more segment is a resource list, which is
+    // a real request and stays authorized.
+    if path == "/api/v1" {
+        return true;
+    }
+    let Some(rest) = path.strip_prefix("/apis/") else {
+        return false;
+    };
+    !rest.is_empty() && rest.split('/').count() <= 2 && !rest.ends_with('/')
 }
 
 /// Parse an authorization request from the HTTP path and method.
@@ -791,6 +802,28 @@ mod subresource_tests {
     }
 
     #[test]
+    #[test]
+    fn discovery_is_recognised_by_shape_so_crd_groups_work() {
+        // The failure this replaces: a hardcoded list could only name the
+        // built-in groups, so every CRD group's discovery document answered
+        // 403 to everyone — and the garbage collector, which reads exactly
+        // these documents to learn what to walk, could not see a custom
+        // resource at all.
+        assert!(is_discovery_path("/api/v1"));
+        assert!(is_discovery_path("/apis/apps/v1"));
+        assert!(is_discovery_path("/apis/kubevirt.io/v1"));
+        assert!(is_discovery_path("/apis/cilium.io/v2"));
+        assert!(is_discovery_path("/apis/kubevirt.io"));
+
+        // One segment further is a resource list — a real request that must
+        // still be authorized, or this would wave through every read.
+        assert!(!is_discovery_path("/apis/kubevirt.io/v1/virtualmachineinstances"));
+        assert!(!is_discovery_path("/api/v1/secrets"));
+        assert!(!is_discovery_path("/apis/apps/v1/namespaces/kube-system/deployments"));
+        assert!(!is_discovery_path("/apis/"));
+        assert!(!is_discovery_path("/healthz"));
+    }
+
     #[test]
     fn a_non_resource_rule_matches_its_paths_and_no_others() {
         let rule = json!({"nonResourceURLs": ["/healthz", "/apis/*"], "verbs": ["get"]});

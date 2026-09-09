@@ -376,6 +376,21 @@ fn build_router(
             "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances/{name}/vnc",
             get(crate::handlers::kubevirt::vmi_vnc),
         )
+        // virtualmachines/start|stop|restart (#62). Writes to a stored
+        // object rather than a proxy: the verbs state intent and the
+        // VirtualMachine controller reconciles it. PUT is what virtctl sends.
+        .route(
+            "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachines/{name}/start",
+            axum::routing::put(crate::handlers::kubevirt::vm_start),
+        )
+        .route(
+            "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachines/{name}/stop",
+            axum::routing::put(crate::handlers::kubevirt::vm_stop),
+        )
+        .route(
+            "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachines/{name}/restart",
+            axum::routing::put(crate::handlers::kubevirt::vm_restart),
+        )
         // pods/log — what `kubectl logs` actually calls. Registered before the
         // generic {resource}/{name}/status route so the more specific path
         // wins, and separate from it because a log is proxied to the node

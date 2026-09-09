@@ -714,12 +714,14 @@ pub async fn api_authorization_v1_resources() -> impl IntoResponse {
 /// `virtctl` looks the group up here before it opens anything, so a group that
 /// is routed but not discoverable is one the client will not try.
 ///
-/// Only the two doors are listed. KubeVirt's other subresources — `pause`,
-/// `unpause`, `freeze`, `softreboot`, and the VirtualMachine verbs `start`,
-/// `stop`, `restart`, `migrate` — are deliberately absent rather than stubbed:
-/// stormvm serves no such endpoints today, and advertising a verb that answers
-/// 404 is worse for a client than not advertising it, because `virtctl` will
-/// report the VM refused rather than the feature being missing.
+/// The two console doors and the three VirtualMachine lifecycle verbs.
+///
+/// Still absent, deliberately rather than stubbed: `pause`, `unpause`,
+/// `freeze` and `softreboot` need a QMP client stormvm does not have
+/// (stormvm#9), and `migrate` needs a migration object and a controller
+/// (rustkube-node#40). Advertising a verb that answers 404 is worse for a
+/// client than not advertising it, because `virtctl` reports the VM as
+/// refusing rather than the feature as missing.
 pub async fn api_kubevirt_subresources_v1_resources() -> impl IntoResponse {
     Json(json!({
         "kind": "APIResourceList",
@@ -739,6 +741,27 @@ pub async fn api_kubevirt_subresources_v1_resources() -> impl IntoResponse {
                 "namespaced": true,
                 "kind": "VirtualMachineInstance",
                 "verbs": ["get"]
+            },
+            {
+                "name": "virtualmachines/start",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "VirtualMachine",
+                "verbs": ["update"]
+            },
+            {
+                "name": "virtualmachines/stop",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "VirtualMachine",
+                "verbs": ["update"]
+            },
+            {
+                "name": "virtualmachines/restart",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "VirtualMachine",
+                "verbs": ["update"]
             }
         ]
     }))
