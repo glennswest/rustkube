@@ -5,6 +5,7 @@
 
 use crate::filter::{self, FilterResult, NodeUsage};
 use crate::score;
+use crate::virtualmachine;
 use crate::volumebinding;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -157,6 +158,24 @@ impl ApiClient {
         self.client
             .patch(format!("{}{}", self.base_url, path))
             .header("content-type", "application/strategic-merge-patch+json")
+            .json(body)
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
+    /// PATCH with a **merge** patch (RFC 7386).
+    ///
+    /// Separate from `patch` because a CustomResourceDefinition does not
+    /// accept a strategic-merge patch — strategic merge needs the Go struct
+    /// tags that built-in types have and a CRD has not. rustkube-node's
+    /// kubelet already patches a VMI's status this way; the scheduler writes
+    /// to the same subresource and has to speak the same content type.
+    pub async fn patch_merge(&self, path: &str, body: &Value) -> reqwest::Result<Value> {
+        self.client
+            .patch(format!("{}{}", self.base_url, path))
+            .header("content-type", "application/merge-patch+json")
             .json(body)
             .send()
             .await?
@@ -437,6 +456,16 @@ impl Scheduler {
             }
         }
 
+        // Virtual machines, listed once for the whole cluster.
+        //
+        // **Before the pods are placed, not after.** A VM's memory is a hard
+        // promise the hypervisor has already taken, so a node running two
+        // 8 GiB guests has 16 GiB less to offer — and until now nothing in
+        // this pass knew that, so pods were scheduled onto capacity a VM was
+        // already holding. Folding them into the same `ClusterState` fixes
+        // that in the same stroke as placing them.
+        let pending_vms = self.collect_virtual_machines(&mut state).await;
+
         // Storage, listed once and only when something actually needs it. A
         // cluster with no PVCs pays nothing for this.
         let volumes = if pending.iter().any(|(_, p)| volumebinding::uses_storage(p)) {
@@ -480,7 +509,180 @@ impl Scheduler {
             }
         }
 
+        // Machines last, and each one charged to its node as it is placed.
+        //
+        // Pods in this pass do not see each other's placements — the next
+        // pass re-reads from the apiserver a second later and corrects it,
+        // and a pod that briefly overcommits a node is recoverable. A VM is
+        // not: two 8 GiB guests placed on a node with 12 GiB free in the same
+        // pass both get a node, and the second one fails to start with no
+        // memory. So `state` is updated here between machines, which costs
+        // nothing and is the difference between a VM that runs and one that
+        // is scheduled onto a node that cannot hold it.
+        let mut state = state;
+        for vmi in &pending_vms {
+            self.schedule_virtual_machine(vmi, &nodes, &mut state).await;
+        }
+
         Ok(())
+    }
+
+    /// Every VMI in the cluster: the placed ones charged to their nodes, the
+    /// unplaced ones returned to be scheduled.
+    ///
+    /// A cluster with no kubevirt CRD answers 404 here, which is not an error
+    /// — it is a cluster with no VMs. Pod scheduling must not stop because of
+    /// it, so the failure is logged once at debug and the pass carries on.
+    async fn collect_virtual_machines(&self, state: &mut ClusterState) -> Vec<Value> {
+        let list: Value = match self.api.list(virtualmachine::LIST_PATH).await {
+            Ok(v) => v,
+            Err(e) => {
+                debug!("no virtualmachineinstances to schedule: {e}");
+                return Vec::new();
+            }
+        };
+        let mut pending = Vec::new();
+        for vmi in list["items"].as_array().cloned().unwrap_or_default() {
+            if virtualmachine::is_terminal(&vmi) {
+                continue;
+            }
+            match virtualmachine::node_of(&vmi) {
+                Some(node) => {
+                    let (cpu, mem) = virtualmachine::requests(&vmi);
+                    let e = state.usage.entry(node.to_string()).or_default();
+                    e.cpu_milli += cpu;
+                    e.mem_bytes += mem;
+                    // As a shim, so inter-pod affinity and topology spread see
+                    // a running VM the way they see a running pod — a pod that
+                    // must not share a node with this VM has no way to say so
+                    // otherwise.
+                    state
+                        .placed
+                        .push((node.to_string(), virtualmachine::scheduling_shim(&vmi)));
+                }
+                None => pending.push(vmi),
+            }
+        }
+        crate::metrics_server::set_pending_virtual_machines(pending.len());
+        pending
+    }
+
+    /// Place one VM, or say why it cannot be placed.
+    ///
+    /// Takes the state by mutable reference so a machine it places is charged
+    /// to its node before the next machine is considered.
+    async fn schedule_virtual_machine(
+        &self,
+        vmi: &Value,
+        nodes: &[Value],
+        state: &mut ClusterState,
+    ) {
+        let name = vmi["metadata"]["name"].as_str().unwrap_or("");
+        let ns = vmi["metadata"]["namespace"].as_str().unwrap_or("default");
+        if name.is_empty() {
+            warn!("a VirtualMachineInstance with no name cannot be scheduled");
+            return;
+        }
+        let shim = virtualmachine::scheduling_shim(vmi);
+
+        // The same filters and the same scores a pod gets. That is the whole
+        // point of the shim: taints, selectors, affinity, spread and resource
+        // fit apply to a VM the day they are written, rather than being
+        // reimplemented for machines and drifting from the pod path.
+        let mut refused: Vec<String> = Vec::new();
+        let feasible: Vec<&Value> = nodes
+            .iter()
+            .filter(|node| {
+                match filter::run_filters(&shim, node, state.used(node), state, nodes) {
+                    FilterResult::Pass => true,
+                    FilterResult::Fail(reason) => {
+                        let n = node["metadata"]["name"].as_str().unwrap_or("?");
+                        refused.push(format!("{n}: {reason}"));
+                        false
+                    }
+                }
+            })
+            .collect();
+
+        if feasible.is_empty() {
+            // Said where somebody will see it. A VM that never starts and
+            // never explains itself is the half of this bug that made it hard
+            // to find: `kubectl get vmi` showed no node, no phase and no
+            // reason, and the only trace was the absence of one.
+            let why = if refused.is_empty() {
+                "no nodes are registered".to_string()
+            } else {
+                refused.join("; ")
+            };
+            self.report_unschedulable(ns, name, vmi, &why).await;
+            crate::metrics_server::record_attempt("unschedulable");
+            debug!("No node can run VirtualMachineInstance {ns}/{name}: {why}");
+            return;
+        }
+
+        let mut scored: Vec<(&Value, i64)> = feasible
+            .iter()
+            .map(|node| (*node, score::score_node(&shim, node, state.used(node), state, nodes)))
+            .collect();
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        let chosen = scored[0].0["metadata"]["name"].as_str().unwrap_or("");
+        if chosen.is_empty() {
+            warn!("the chosen node for {ns}/{name} has no name");
+            return;
+        }
+
+        // `status.nodeName`, through the status subresource. Writing
+        // `spec.nodeName` instead would be editing what the user declared,
+        // and the kubelet reads status first for exactly that reason.
+        let mut status = json!({"nodeName": chosen});
+        // Phase only when there is nothing there yet: an unplaced VM cannot
+        // be Running, but stamping Pending over whatever the kubelet may have
+        // written is not this component's business.
+        match vmi["status"]["phase"].as_str() {
+            None | Some("") => status["phase"] = json!("Pending"),
+            _ => {}
+        }
+        let body = json!({"status": status});
+        match self.api.patch_merge(&virtualmachine::status_path(ns, name), &body).await {
+            Ok(_) => {
+                // Charged now, not next pass: the machine after this one must
+                // see the memory this one just took.
+                let (cpu, mem) = virtualmachine::requests(vmi);
+                let e = state.usage.entry(chosen.to_string()).or_default();
+                e.cpu_milli += cpu;
+                e.mem_bytes += mem;
+                state.placed.push((chosen.to_string(), shim));
+                crate::metrics_server::record_attempt("scheduled");
+                info!("Scheduled VirtualMachineInstance {ns}/{name} -> {chosen}");
+            }
+            Err(e) => {
+                crate::metrics_server::record_attempt("error");
+                error!("Could not place {ns}/{name} on {chosen}: {e}");
+            }
+        }
+    }
+
+    /// Record why a VM could not be placed, without rewriting it every second.
+    ///
+    /// The loop runs at 1 Hz. A VM that cannot be scheduled stays that way
+    /// for as long as the cluster is full, and patching it on every pass
+    /// would be a write per second per stuck VM for hours — so the message is
+    /// only sent when it differs from the one already there.
+    async fn report_unschedulable(&self, ns: &str, name: &str, vmi: &Value, why: &str) {
+        let message = format!("no node can run this VM: {why}");
+        let unchanged = vmi["status"]["message"].as_str() == Some(message.as_str())
+            && vmi["status"]["reason"].as_str() == Some("Unschedulable");
+        if unchanged {
+            return;
+        }
+        let body = json!({"status": {
+            "phase": "Pending",
+            "reason": "Unschedulable",
+            "message": message,
+        }});
+        if let Err(e) = self.api.patch_merge(&virtualmachine::status_path(ns, name), &body).await {
+            debug!("could not report that {ns}/{name} is unschedulable: {e}");
+        }
     }
 
     async fn schedule_pod(

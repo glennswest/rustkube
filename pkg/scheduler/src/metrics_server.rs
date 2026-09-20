@@ -32,6 +32,16 @@ pub fn set_pending_pods(count: usize) {
     metrics::gauge!("scheduler_pending_pods", "queue" => "active").set(count as f64);
 }
 
+/// Virtual machines waiting for a node.
+///
+/// Its own gauge rather than folded into `scheduler_pending_pods`: that is an
+/// upstream metric name with an upstream meaning, and a dashboard that reads
+/// it expects pods. A VM stuck for want of memory and a pod stuck for want of
+/// memory are also different problems to go and look at.
+pub fn set_pending_virtual_machines(count: usize) {
+    metrics::gauge!("scheduler_pending_virtualmachines", "queue" => "active").set(count as f64);
+}
+
 /// Whether this instance holds the scheduler lease.
 pub fn set_leader(is_leader: bool) {
     apimachinery::metrics::set_leader("kube-scheduler", is_leader);

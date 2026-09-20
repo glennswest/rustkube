@@ -2,7 +2,55 @@
 
 ## [Unreleased]
 
-<!-- New unreleased changes go here -->
+### 2026-09-20
+- **feat(scheduler):** VirtualMachineInstances are scheduled (#72). Nothing
+  placed one. `rk-scheduler` watched pods, and rustkube-node's kubelet refuses
+  to touch a VMI that names no node — correctly, because a kubelet that
+  claimed unassigned work would start the machine on every node at once. Its
+  comment named the component that was missing: "`status.nodeName` first,
+  **because that is what the scheduler writes**". So a VM only ever ran if
+  somebody set `spec.nodeName` by hand, and one created from the console never
+  started and never said why.
+  **A VMI is scheduled as the pod it would have been.** Upstream KubeVirt does
+  not schedule VMIs either — it creates a virt-launcher pod and lets the
+  ordinary scheduler place that. There is no launcher pod here, so the faithful
+  analogue is to build the pod that would have existed, use it to choose a
+  node, and throw it away. That keeps taints, node selectors, node affinity,
+  inter-pod affinity, topology spread and resource fit working on a VM the day
+  they are written for a pod, instead of being reimplemented for machines and
+  drifting. It is also what finally reads `nodeSelector` and `tolerations` on a
+  VMI, which the spec converter has always said were "the scheduler's" and
+  which nothing read.
+  Placement is written to **`status.nodeName`** through the status subresource,
+  by merge patch — a pod is bound by writing `spec.nodeName`, a VMI is not, and
+  the kubelet reads status first for exactly that reason. `spec.nodeName` stays
+  the manual override and a VM pinned that way is left alone.
+- **feat(scheduler):** what a VM costs is not what a pod costs. Memory counts
+  in full — a guest's memory is allocated by the hypervisor and is not given
+  back — while vCPUs are timeshared and reserve nothing unless
+  `dedicatedCpuPlacement` pins them or the object states a CPU request
+  outright. Charging four whole cores for a four-core VM would make a node look
+  full while it idles.
+- **fix(scheduler):** a running VM is charged to its node. Nothing in the pass
+  knew a node was holding guest memory, so pods were scheduled onto capacity a
+  VM had already taken. Placed VMIs now fold into the same `ClusterState` as
+  placed pods — usage *and* `placed`, so inter-pod affinity and topology spread
+  see a running VM the way they see a running pod. Machines are also charged as
+  they are placed rather than at the next pass, because two 8 GiB guests
+  scheduled onto a node with 12 GiB free in one pass both get a node and the
+  second one fails to start.
+- **feat(scheduler):** a VM that cannot be placed says so. `status.phase:
+  Pending`, `reason: Unschedulable` and a message naming each node and why it
+  was refused — the silence was half the bug, since `kubectl get vmi` showed no
+  node, no phase and no reason, and the only trace was the absence of one.
+  Written only when the message changes, because the loop runs at 1 Hz and a
+  VM stuck on a full cluster would otherwise be a write per second for hours.
+- **feat(scheduler):** `scheduler_pending_virtualmachines` — its own gauge, not
+  folded into `scheduler_pending_pods`, which is an upstream metric name with
+  an upstream meaning.
+- A cluster with no kubevirt CRD answers 404 to the VMI listing, which is not
+  an error: it is a cluster with no VMs, logged once at debug, and pod
+  scheduling carries on.
 
 ## [v0.13.0] — 2026-09-20
 
