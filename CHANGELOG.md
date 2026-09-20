@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+<!-- New unreleased changes go here -->
+
+## [v0.13.0] — 2026-09-20
+
 ### 2026-09-20
 - **feat(controller-manager):** a provisioner for the in-kubelet stormblock
   PVC path (#71). The kubelet has served stormblock claims directly for a

@@ -61,7 +61,7 @@ Cargo.toml → workspace.package.version
 - hickory-dns 0.25 (cluster DNS)
 - etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
 
-## Current Version: `v0.12.0`
+## Current Version: `v0.13.0`
 
 ## Work Plan
 
@@ -216,7 +216,8 @@ Cargo.toml → workspace.package.version
       `CSIStorageCapacity`
 - [ ] Volume expansion — `status.allocatedResources` + resize conditions (#63)
 - [ ] Snapshots — the external-snapshotter CRDs and controller (#64)
-- [ ] `ReadWriteOncePod` enforcement (#65)
+- [x] `ReadWriteOncePod` enforcement — scheduler + admission (#65); the
+      kubelet's mount refusal is rustkube-node#42
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
   sbregistry and stormblock-csi. **rustkube provisions nothing itself.**
 
@@ -273,6 +274,7 @@ Known state on 2026-08-28:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.13.0 | 2026-09-20 | Provisioner for the in-kubelet stormblock PVC path — a claim backing a running pod no longer reads `Pending` forever (#71). `ReadWriteOncePod` enforced (#65) |
 | v0.12.0 | 2026-09-09 | **Data loss fix**: controller list follows the `continue` token — past 500 objects of a kind the GC was deleting live objects whose owner fell beyond the first page (#66). `SubjectAccessReview` for `oc adm policy who-can` (#69) |
 | v0.11.0 | 2026-09-09 | VirtualMachine controller + `start`/`stop`/`restart` verbs (#62). Fix: discovery paths matched by shape, so CRD groups stop 403-ing and the GC can finally see custom resources |
 | v0.10.0 | 2026-09-09 | Serve `subresources.kubevirt.io/v1` console/vnc doors so `virtctl console` resolves — proxied node-ward through the kubelet, because stormvm mints only on loopback (#61) |
