@@ -495,6 +495,18 @@ impl Scheduler {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("pod missing name"))?;
 
+        // Phase 0: a ReadWriteOncePod claim somebody else holds.
+        //
+        // Before any node is looked at, because it is not a property of nodes:
+        // if another pod holds the claim then no node will do, and running the
+        // per-node filters first would report "no node was suitable" for a pod
+        // that was never placeable anywhere (#65).
+        if let Some(reason) =
+            volumebinding::rwop_conflict(pod, namespace, volumes, &state.placed)
+        {
+            return Err(anyhow::anyhow!("{reason}"));
+        }
+
         // Phase 1: Filter — find nodes that can run this pod
         let feasible: Vec<&Value> = nodes
             .iter()

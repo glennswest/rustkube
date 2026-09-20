@@ -93,6 +93,70 @@ pub fn unbound_claims(pod: &Value, namespace: &str, state: &VolumeState) -> Vec<
         .collect()
 }
 
+/// Is a claim this pod wants already spoken for?
+///
+/// `ReadWriteOncePod` means **exactly one pod**, as against `ReadWriteOnce`,
+/// which means one *node* and has always let several pods on that node share
+/// the volume. The distinction exists because "one writer" is what a database
+/// needs and `ReadWriteOnce` never actually promised it.
+///
+/// Checked before any node is considered, because this is not a property of
+/// nodes: if another pod holds the claim, no node will do, and running the
+/// per-node filters first would report "no node was suitable" for a pod that
+/// was never placeable anywhere.
+///
+/// The reason names the pod holding it. "Volume in use" without a name sends
+/// somebody to read the wrong logs.
+pub fn rwop_conflict(
+    pod: &Value,
+    namespace: &str,
+    state: &VolumeState,
+    placed: &[(String, Value)],
+) -> Option<String> {
+    let me = pod["metadata"]["name"].as_str().unwrap_or("");
+    let wanted: Vec<String> = pod_claims(pod)
+        .into_iter()
+        .filter(|c| {
+            state
+                .claim(namespace, c)
+                .map(|pvc| {
+                    pvc["spec"]["accessModes"]
+                        .as_array()
+                        .map(|m| m.iter().any(|v| v.as_str() == Some("ReadWriteOncePod")))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    if wanted.is_empty() {
+        return None;
+    }
+
+    for (_node, other) in placed {
+        // Same namespace only: claims are namespaced, and two pods of one name
+        // in different namespaces use different volumes.
+        if other["metadata"]["namespace"].as_str().unwrap_or("default") != namespace {
+            continue;
+        }
+        let other_name = other["metadata"]["name"].as_str().unwrap_or("");
+        // Not a conflict with itself — a pod being rescheduled would otherwise
+        // block its own placement forever.
+        if other_name == me {
+            continue;
+        }
+        let held = pod_claims(other);
+        for want in &wanted {
+            if held.contains(want) {
+                return Some(format!(
+                    "persistentvolumeclaim {namespace}/{want} is ReadWriteOncePod and is already \
+                     used by pod {other_name}"
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// Can this node host this pod's volumes?
 pub fn filter_node(pod: &Value, namespace: &str, node: &Value, state: &VolumeState) -> Result<(), String> {
     let labels = node["metadata"]["labels"].as_object();

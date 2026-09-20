@@ -55,6 +55,35 @@ pub async fn admit_create(
     if resource == "cronjobs" {
         cronjob_schedule(obj)?;
     }
+
+    if resource == "persistentvolumeclaims" {
+        access_modes(obj)?;
+    }
+    Ok(())
+}
+
+/// `ReadWriteOncePod` may not be combined with any other access mode.
+///
+/// Upstream forbids it, and the reason is that the two halves contradict each
+/// other: RWOP promises exactly one pod, every other mode permits more than
+/// one. A claim asking for both is asking for exclusivity and sharing at once,
+/// and whichever the binder honoured would be the wrong answer half the time —
+/// so it is refused at the door rather than resolved by precedence.
+fn access_modes(obj: &Value) -> Result<(), ApiError> {
+    let modes: Vec<&str> = obj["spec"]["accessModes"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if modes.contains(&"ReadWriteOncePod") && modes.len() > 1 {
+        return Err(ApiError {
+            status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            reason: "Invalid".into(),
+            message: format!(
+                "spec.accessModes: ReadWriteOncePod may not be combined with other modes (got [{}])",
+                modes.join(", ")
+            ),
+        });
+    }
     Ok(())
 }
 
@@ -254,6 +283,26 @@ fn default_service_ports(obj: &mut Value) {
 #[cfg(test)]
 mod service_defaults_tests {
     use super::*;
+
+    #[test]
+    fn read_write_once_pod_may_not_be_combined() {
+        // Exclusivity and sharing at once is not something a binder can
+        // honour, so it is refused rather than resolved by precedence.
+        let both = json!({"spec": {"accessModes": ["ReadWriteOncePod", "ReadWriteOnce"]}});
+        let e = access_modes(&both).unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(e.message.contains("ReadWriteOncePod"), "{}", e.message);
+
+        // Alone is the whole point of the mode.
+        assert!(access_modes(&json!({"spec": {"accessModes": ["ReadWriteOncePod"]}})).is_ok());
+        // Everything else combines as it always could.
+        assert!(access_modes(
+            &json!({"spec": {"accessModes": ["ReadWriteOnce", "ReadOnlyMany"]}})
+        )
+        .is_ok());
+        // A claim naming no modes is somebody else's error, not this one's.
+        assert!(access_modes(&json!({"spec": {}})).is_ok());
+    }
 
     /// A Service written the way nearly every Service is written — no
     /// protocol — must come out with one, or it matches no endpoint.

@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
-<!-- New unreleased changes go here -->
+### 2026-09-20
+- **fix(scheduler, apiserver):** enforce `ReadWriteOncePod` (#65). The mode
+  means exactly one *pod*, where `ReadWriteOnce` means one *node* and has
+  always let several pods on that node share a volume. Binding already matched
+  the mode, so a claim asking for exclusivity bound correctly and then meant
+  nothing. The scheduler now refuses to place a second pod against an RWOP
+  claim, naming the pod that holds it, and the check runs before any node is
+  considered because it is not a property of nodes — running the per-node
+  filters first would report "no node was suitable" for a pod that was never
+  placeable anywhere. Admission additionally rejects `ReadWriteOncePod`
+  combined with other modes, as upstream does.
 
 ## [v0.12.0] — 2026-09-09
 
