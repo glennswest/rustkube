@@ -61,12 +61,49 @@ A pod asks for 20Gi under the default `stormblock` class
    is, because deleting the API object here would strand the clone on the
    array.
 
+## The `stormblock` class is the exception, and it is deliberate
+
+Everything above describes a **foreign** class, and it is still exactly right
+for one. The `stormblock` class does not work that way, and pretending
+otherwise is worse than the special case.
+
+On this cluster a PVC of that class is served by the kubelet directly
+(`rustkube-node`, `pkg/kubelet/src/storage.rs`): the claim is rounded up to a
+size class, the sealed `pvc-<class>` blank is CoW-cloned through stormblock's
+own API, attached over ublk, and handed to stormpump with `fstype: ext4` for
+the container to mount in its own namespace. No CSI driver, no sidecars, and
+no host-side mount to propagate.
+
+That is a choice rather than an omission. `external-provisioner` exists
+because upstream Kubernetes refuses to know about any particular storage
+vendor; rustkube is our control plane and that constraint does not apply.
+Adopting it would mean shipping a Go sidecar as a golden in every stormcos
+image, and pulling anything at join time is the first entry under what would
+destroy the cluster-formation budget (`stormcos/docs/CLUSTER.md`).
+
+So the split for that one class is:
+
+| | |
+|---|---|
+| clone, attach, mount | the kubelet, at pod start |
+| the `PersistentVolume`, binding, phases | `controller-manager/src/stormblock.rs` (#71) |
+| **the name that joins them** | `pvc-<ns>-<claim>`, derived on both sides |
+
+Both orders converge: the kubelet may provision before the controller writes
+the object or after it, and neither is an error.
+
+**Deleting the backing clone is not done yet.** stormblock's management API is
+loopback, so only the node holding a volume can delete it; the control plane
+reports the leak on a `Released` PV rather than removing the object and hiding
+it (rustkube-node#46).
+
 ## What rustkube deliberately does not do
 
-- **It never provisions.** There is no in-tree provisioner and there should not
-  be one. A class with `kubernetes.io/no-provisioner` binds statically against
-  PVs an administrator created; everything else is handed to the driver named
-  by the class.
+- **It provisions nothing but the `stormblock` class.** A class with
+  `kubernetes.io/no-provisioner` binds statically against PVs an administrator
+  created; everything else is handed to the driver named by the class. The
+  kubelet draws the same line, on the same class name, so the two cannot both
+  think they own a claim (rustkube-node#44).
 - **It never deletes a backing volume.** A `Delete` PV with no
   `pv.kubernetes.io/provisioned-by` gets a `VolumeFailedDelete` warning and
   stays `Released`, which is the truth, rather than a phase that implies

@@ -3,6 +3,27 @@
 ## [Unreleased]
 
 ### 2026-09-20
+- **feat(controller-manager):** a provisioner for the in-kubelet stormblock
+  PVC path (#71). The kubelet has served stormblock claims directly for a
+  while — clone, attach, mount, no CSI — but it provisions at pod start from
+  the PVC alone and never told the control plane, so a claim backing a healthy
+  running pod read `Pending` for the life of that pod and everything gating on
+  `Bound` saw a cluster stuck when it was not. The controller writes the
+  `PersistentVolume`, pre-bound to the claim that caused it, with
+  `nodeAffinity` where the node is known — a ublk clone lives on one node, and
+  saying so is what stops a later pod being placed where the data is not. Both
+  orders converge: the kubelet may provision before the object exists or
+  after.
+- **docs:** `docs/storage.md` said rustkube "never provisions", which stopped
+  being true when the kubelet took over stormblock claims. The reasoning is
+  kept for foreign classes, where it is still right, and the `stormblock`
+  class is now described as the exception it is.
+- **known gap:** `reclaimPolicy: Delete` does not yet delete the clone.
+  stormblock's API is loopback, so only the node holding a volume can remove
+  it (rustkube-node#46). The PV is left `Released` with a `VolumeNotDeleted`
+  warning rather than deleted — removing the object without the volume behind
+  it turns a visible leak into an invisible one, and the name is claim-derived,
+  so a later claim of that name would silently adopt the old contents.
 - **fix(scheduler, apiserver):** enforce `ReadWriteOncePod` (#65). The mode
   means exactly one *pod*, where `ReadWriteOnce` means one *node* and has
   always let several pods on that node share a volume. Binding already matched
