@@ -412,6 +412,7 @@ pub async fn crd_update_ns(
         .and_then(|rv| rv.parse::<u64>().ok());
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
     let obj = state.storage.update(&key, body, prev_rev).await?;
+    let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }
 
@@ -431,6 +432,7 @@ pub async fn crd_patch_ns(
         query.as_deref().unwrap_or(""), &body,
     )
     .await?;
+    let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }
 
@@ -534,6 +536,7 @@ pub async fn crd_patch_cluster(
         &state, &key, &resource, &name, None, &headers, query.as_deref().unwrap_or(""), &body,
     )
     .await?;
+    let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }
 
@@ -633,6 +636,63 @@ pub async fn crd_list_cluster(
 }
 
 /// POST — create cluster-scoped CRD instance.
+/// Keep the dynamic API in step with a CRD object that has just been written.
+///
+/// POST did this inline and every other write path did not, so a CRD created
+/// by server-side apply — which is how an operator installs its own at
+/// startup — was **stored but never registered**: `kubectl get crds` listed
+/// it and every request for its CRs returned
+///
+///     resource "cloudimages" not found: NotFound … code: 404
+///
+/// forever, or until the apiserver restarted, because `load_existing_crds`
+/// re-reads storage at boot. That last part is what made it read as a
+/// cold-start race rather than a missing call, and it cost a VM create that
+/// failed with no explanation anyone could act on (#74).
+///
+/// It matters on update as much as on create: a CRD whose spec is changed by
+/// apply — a new version served, different printer columns — would otherwise
+/// leave the registry holding whatever it was given at create time.
+///
+/// Registration is idempotent, so calling it on every write is correct rather
+/// than merely harmless.
+async fn register_if_crd(state: &AppState, resource: &str, obj: &Value) -> Value {
+    if resource != "customresourcedefinitions" {
+        return obj.clone();
+    }
+    // Establish it if nothing has, then register.
+    //
+    // POST establishes before storing. Apply upserts a *missing* CRD through
+    // the shared patch path, which knows nothing about CRDs, so one installed
+    // that way arrived with no status at all — and a client that waits for
+    // `Established=True` before using its own resource waits for ever.
+    let mut out = obj.clone();
+    let established = out["status"]["conditions"]
+        .as_array()
+        .map(|cs| {
+            cs.iter().any(|c| {
+                c["type"].as_str() == Some("Established") && c["status"].as_str() == Some("True")
+            })
+        })
+        .unwrap_or(false);
+    if !established {
+        establish_crd_status(&mut out);
+        let name = out["metadata"]["name"].as_str().unwrap_or("").to_string();
+        if !name.is_empty() {
+            let key = ResourceStorage::cluster_key(resource, &name);
+            // Best effort: the registration below is what makes the CRs
+            // reachable, and failing to persist a status condition must not
+            // undo that. A status written on the next apply is a smaller
+            // problem than a resource that 404s.
+            if let Ok(stored) = state.storage.update(&key, out.clone(), None).await {
+                out = stored;
+            }
+        }
+    }
+    state.crd_registry.register(&out).await;
+    out
+}
+
 pub async fn crd_create_cluster(
     State(state): State<AppState>,
     Path((group, version, resource)): Path<(String, String, String)>,
@@ -683,6 +743,7 @@ pub async fn crd_update_cluster(
         .and_then(|rv| rv.parse::<u64>().ok());
     let key = ResourceStorage::cluster_key(&resource, &name);
     let obj = state.storage.update(&key, body, prev_rev).await?;
+    let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }
 

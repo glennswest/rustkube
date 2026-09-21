@@ -665,3 +665,19 @@
   - virtiofs volume sharing, guest agent exec, SSH fallback
   - Runtime selection: `--runtime=native|vm|cri --vmm=auto|cloud-hypervisor|qemu|firecracker`
 - Initial repository setup — Cargo workspace with 10 member crates
+
+### 2026-09-20
+- **fix:** a CRD created by server-side apply was stored but never registered,
+  so its custom resources returned 404 until the apiserver restarted (#74).
+  POST registered inline; PATCH and PUT — cluster-scoped and namespaced — did
+  not, and apply is how an operator installs its own CRDs at startup. The
+  restart-fixes-it behaviour (`load_existing_crds` re-reads storage at boot)
+  is what made it read as a cold-start race rather than a missing call. It
+  cost a VM create that failed with `resource "cloudimages" not found`.
+- A CRD upserted by apply is also **established** now. POST establishes before
+  storing; the shared patch path knows nothing about CRDs, so one installed
+  that way arrived with no status, and a client waiting for `Established=True`
+  before using its own resource waited for ever. Registration happens on every
+  write rather than only at create, because a CRD whose spec is changed by
+  apply — a new served version, different printer columns — would otherwise
+  leave the registry holding what it got at create time.
