@@ -643,7 +643,9 @@ pub async fn crd_list_cluster(
 /// startup — was **stored but never registered**: `kubectl get crds` listed
 /// it and every request for its CRs returned
 ///
-///     resource "cloudimages" not found: NotFound … code: 404
+/// ```text
+/// resource "cloudimages" not found: NotFound … code: 404
+/// ```
 ///
 /// forever, or until the apiserver restarted, because `load_existing_crds`
 /// re-reads storage at boot. That last part is what made it read as a
