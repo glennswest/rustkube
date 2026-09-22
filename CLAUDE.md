@@ -221,6 +221,19 @@ Cargo.toml → workspace.package.version
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
   sbregistry and stormblock-csi. **rustkube provisions nothing itself.**
 
+### Custom resource keyspace (#76) — in progress 2026-09-22
+- [x] #74 verified on dev (apply-created CRD serves its CRs without restart); closed
+- [ ] CR keys become `/registry/{group}/{plural}/...` (upstream layout); the CRD
+      objects themselves and all built-ins keep their keys
+- [ ] Boot-time migration of old `/registry/{plural}/...` CR keys, split by the
+      object's `apiVersion` group so a colliding plural (or a built-in plural)
+      is never moved into the wrong keyspace
+- [ ] Callers that key CRs directly: `handlers/kubevirt.rs` (VM/VMI),
+      `manifests.rs` (custom kinds)
+- [ ] A CRD group without a dot is refused (upstream rule) — it is what keeps
+      `/registry/{group}/` from ever shadowing a built-in `/registry/{plural}/`
+- [ ] e2e on dev: two CRDs with the same plural, and migration of old keys
+
 ### Phase 4: Scale & Conformance
 - [ ] 1000+ node testing (#66) — the controllers list everything every tick,
       which is what will break first
