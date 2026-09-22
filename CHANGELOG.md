@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+<!-- New unreleased changes go here -->
+
+## [v0.14.0] — 2026-09-22
+
 ### 2026-09-22
 - **fix(crd):** custom resources are stored under their API group,
   `/registry/{group}/{plural}/...`, which is upstream's layout (#76). They were
