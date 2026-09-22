@@ -4,6 +4,11 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-22
+- **build:** `Cross.toml` passes `PROTOC` into `cross` builds, which
+  `pkg/apimachinery/build.rs` needs; it existed only in a dev checkout.
+  `.protoc/` (a downloaded protoc) is ignored.
+
 ## [v0.14.0] — 2026-09-22
 
 ### 2026-09-22

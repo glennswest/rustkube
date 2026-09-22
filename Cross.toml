@@ -1,0 +1,4 @@
+# `cross` builds (the ARM64 path, #68) run cargo in a container. build.rs in
+# pkg/apimachinery runs protoc, so the host's PROTOC has to reach it.
+[build.env]
+passthrough = ["PROTOC"]

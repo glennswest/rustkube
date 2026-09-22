@@ -54,3 +54,6 @@ deploy/terragrunt/tclusters/*/terraform.tfstate*
 # stops the stormcos image build, which refuses a source tree with
 # uncommitted changes.
 .claude/
+
+# Downloaded protoc toolchain (pointed at by PROTOC for cross builds)
+.protoc/
