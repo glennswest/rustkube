@@ -25,13 +25,7 @@ use tokio::sync::mpsc;
 /// The resource name inside a store prefix (`/registry/pods/` -> `pods`), for
 /// the metric labels.
 fn resource_of_prefix(prefix: &str) -> String {
-    prefix
-        .trim_start_matches('/')
-        .split('/')
-        .nth(1)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unknown")
-        .to_string()
+    crate::storage::metric_resource(prefix)
 }
 
 /// The watch event kind, as upstream labels it.

@@ -38,6 +38,10 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 
+/// VirtualMachines and their instances are custom resources of this group, and
+/// are stored under it (#76).
+const KUBEVIRT: &str = "kubevirt.io";
+
 /// `GET /apis/subresources.kubevirt.io/v1/namespaces/{ns}/virtualmachineinstances/{name}/console`
 pub async fn vmi_console(
     state: State<AppState>,
@@ -72,7 +76,7 @@ async fn door(
     let vmi = match state
         .storage
         .get(&ResourceStorage::namespaced_key(
-            "virtualmachineinstances",
+            &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachineinstances"),
             &namespace,
             &name,
         ))
@@ -144,7 +148,11 @@ pub async fn vm_restart(
         }
         .into_response();
     }
-    let key = ResourceStorage::namespaced_key("virtualmachineinstances", &namespace, &name);
+    let key = ResourceStorage::namespaced_key(
+        &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachineinstances"),
+        &namespace,
+        &name,
+    );
     match state.storage.delete(&key, None).await {
         // Already gone is success: the controller will create one, which is
         // the state the caller asked for.
@@ -180,7 +188,11 @@ async fn set_running(
     }
     vm["spec"]["running"] = Value::Bool(running);
 
-    let key = ResourceStorage::namespaced_key("virtualmachines", &namespace, &name);
+    let key = ResourceStorage::namespaced_key(
+        &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachines"),
+        &namespace,
+        &name,
+    );
     match state.storage.update(&key, vm, None).await {
         Ok(_) => ok(&namespace, &name, if running { "start" } else { "stop" }),
         Err(e) => e.into_response(),
@@ -191,7 +203,7 @@ async fn load_vm(state: &AppState, namespace: &str, name: &str) -> Result<Value,
     state
         .storage
         .get(&ResourceStorage::namespaced_key(
-            "virtualmachines",
+            &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachines"),
             namespace,
             name,
         ))

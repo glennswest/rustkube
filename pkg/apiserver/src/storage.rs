@@ -12,6 +12,26 @@ use std::sync::Arc;
 /// Key prefix for all resources in the store.
 const REGISTRY_PREFIX: &str = "/registry";
 
+/// The resource a store key or prefix belongs to, for metric labels.
+///
+/// Built-ins are `/registry/{resource}/...`, so it is the second segment.
+/// Custom resources are `/registry/{group}/{plural}/...` (#76), recognisable
+/// by the dot every CRD group has, and are labelled `{plural}.{group}` — the
+/// CRD's own name, which is how upstream labels them. An unrecognisable key
+/// is labelled `unknown` rather than dropped, because a slow call is worth
+/// seeing even when we cannot say what it was for.
+pub(crate) fn metric_resource(key: &str) -> String {
+    let mut segs = key.trim_start_matches('/').split('/').skip(1);
+    match segs.next().filter(|s| !s.is_empty()) {
+        Some(group) if group.contains('.') => match segs.next().filter(|s| !s.is_empty()) {
+            Some(plural) => format!("{plural}.{group}"),
+            None => group.to_string(),
+        },
+        Some(resource) => resource.to_string(),
+        None => "unknown".to_string(),
+    }
+}
+
 /// Generic resource storage — handles any K8s resource type.
 pub struct ResourceStorage {
     store: Arc<dyn KvStore>,
@@ -25,21 +45,29 @@ impl ResourceStorage {
     }
 
     /// The resource name inside a store key or prefix, for the `type` label on
-/// `etcd_request_duration_seconds`.
-///
-/// Keys are `/registry/{resource}/...`, so this is the second segment; an
-/// unrecognisable key is labelled `unknown` rather than dropped, because a
-/// slow call is worth seeing even when we cannot say what it was for.
-fn resource_of(key: &str) -> String {
-    key.trim_start_matches('/')
-        .split('/')
-        .nth(1)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unknown")
-        .to_string()
-}
+    /// `etcd_request_duration_seconds`.
+    fn resource_of(key: &str) -> String {
+        metric_resource(key)
+    }
 
-/// Build the store key for a cluster-scoped resource.
+    /// The key segment a custom resource is stored under: `{group}/{plural}`.
+    ///
+    /// Plurals are unique only *within* a group, so a plural alone is not a
+    /// keyspace. Keyed by plural, `baremetalhosts.metal3.io` and
+    /// `baremetalhosts.metal.storm.io` read and wrote the same keys: a list of
+    /// one returned the other's objects under the wrong kind, and the second
+    /// object of a name was refused as AlreadyExists (#76). This is upstream's
+    /// layout, `/registry/{group}/{plural}/...`.
+    ///
+    /// It cannot shadow a built-in either: a CRD group always contains a dot
+    /// and a built-in plural never does, so `/registry/{group}/` and
+    /// `/registry/{plural}/` are disjoint. Pass the result anywhere a resource
+    /// name goes — `cluster_key`, `namespaced_key` and the prefixes.
+    pub fn custom_resource(group: &str, plural: &str) -> String {
+        format!("{group}/{plural}")
+    }
+
+    /// Build the store key for a cluster-scoped resource.
     pub fn cluster_key(resource: &str, name: &str) -> String {
         format!("{REGISTRY_PREFIX}/{resource}/{name}")
     }
@@ -228,5 +256,24 @@ mod tests {
         let mut obj = serde_json::json!({ "kind": "Lease" });
         inject_resource_version(&mut obj, 5);
         assert_eq!(obj["metadata"]["resourceVersion"], "5");
+    }
+
+    /// Custom resources are keyed by group, and labelled by CRD name (#76).
+    #[test]
+    fn custom_resource_keys_carry_the_group() {
+        let a = ResourceStorage::custom_resource("metal3.io", "baremetalhosts");
+        let b = ResourceStorage::custom_resource("metal.storm.io", "baremetalhosts");
+        assert_eq!(
+            ResourceStorage::namespaced_key(&a, "ns", "h1"),
+            "/registry/metal3.io/baremetalhosts/ns/h1"
+        );
+        // Same plural, different group: disjoint prefixes.
+        let (pa, pb) = (ResourceStorage::cluster_prefix(&a), ResourceStorage::cluster_prefix(&b));
+        assert!(!pa.starts_with(&pb) && !pb.starts_with(&pa));
+
+        assert_eq!(metric_resource("/registry/metal3.io/baremetalhosts/ns/h1"), "baremetalhosts.metal3.io");
+        assert_eq!(metric_resource("/registry/metal3.io/baremetalhosts/"), "baremetalhosts.metal3.io");
+        assert_eq!(metric_resource("/registry/pods/default/p"), "pods");
+        assert_eq!(metric_resource("/registry/"), "unknown");
     }
 }

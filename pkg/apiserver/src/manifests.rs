@@ -108,7 +108,7 @@ pub fn group_version(api_version: &str) -> (String, String) {
     }
 }
 
-/// The storage path and scope for a manifest's kind.
+/// The storage resource (the key segment) and scope for a manifest's kind.
 ///
 /// Built-in kinds come from the discovery table, so there is one list of what
 /// this apiserver serves rather than two that can disagree. Custom kinds come
@@ -131,8 +131,10 @@ async fn resolve(
     {
         return Ok((plural.to_string(), namespaced));
     }
+    // A custom kind is stored under its group, as the CRD handlers store it
+    // (#76).
     if let Some((plural, namespaced)) = crds.resource_for_kind(&group, &version, kind).await {
-        return Ok((plural, namespaced));
+        return Ok((ResourceStorage::custom_resource(&group, &plural), namespaced));
     }
     Err(format!("{api_version} {kind} is not served by this apiserver"))
 }
@@ -143,7 +145,7 @@ pub async fn apply_one(
     crds: &CrdRegistry,
     mut obj: Value,
 ) -> Outcome {
-    let (plural, namespaced) = match resolve(&obj, crds).await {
+    let (resource, namespaced) = match resolve(&obj, crds).await {
         Ok(r) => r,
         Err(e) => return Outcome::Failed(e),
     };
@@ -158,9 +160,9 @@ pub async fn apply_one(
         .unwrap_or("default")
         .to_string();
     let key = if namespaced {
-        ResourceStorage::namespaced_key(&plural, &namespace, &name)
+        ResourceStorage::namespaced_key(&resource, &namespace, &name)
     } else {
-        ResourceStorage::cluster_key(&plural, &name)
+        ResourceStorage::cluster_key(&resource, &name)
     };
 
     let mode = Mode::of(&obj);

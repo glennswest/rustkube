@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### 2026-09-22
+- **fix(crd):** custom resources are stored under their API group,
+  `/registry/{group}/{plural}/...`, which is upstream's layout (#76). They were
+  keyed by plural alone, and a plural is unique only within its group, so
+  `baremetalhosts.metal3.io` and `baremetalhosts.metal.storm.io` shared one
+  keyspace: a list of one returned the other's objects under the wrong kind,
+  and the second object of a name was refused as AlreadyExists. A CRD whose
+  plural matched a built-in's (`events`, `leases`) shared the built-in's keys
+  the same way. The CRDs themselves and every built-in keep their keys.
+- **fix(crd):** existing custom resources move to the new keys at apiserver
+  boot. What moves is decided per object by the group in its own
+  `apiVersion`, never by the prefix it was found under, so plurals that
+  collided separate correctly and a built-in is never swept into a CRD's
+  keyspace. Idempotent and safe across HA replicas: created at the new key
+  before the old is deleted, and a new key already holding the same `uid` just
+  has the stale copy removed. A *different* object at the new key is logged
+  and left alone rather than overwritten. A replica still on the old code
+  writes old keys during a rolling upgrade; the next upgraded boot moves them.
+- **BREAKING (pre-1.0):** a CRD whose `spec.group` has no dot is refused (422),
+  as upstream refuses it, and one already stored is no longer served. The dot
+  is what keeps `/registry/{group}/` disjoint from a built-in's
+  `/registry/{plural}/`.
+- **fix(crd):** the `type` label on store metrics names a custom resource by
+  its CRD name (`baremetalhosts.metal3.io`), not by the first key segment.
+- **chore:** #74 verified end to end on dev and closed — a CRD created only by
+  server-side apply is Established and serves its custom resources without a
+  restart.
+
 ### 2026-09-20
 - **feat(scheduler):** VirtualMachineInstances are scheduled (#72). Nothing
   placed one. `rk-scheduler` watched pods, and rustkube-node's kubelet refuses
