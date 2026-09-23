@@ -33,12 +33,14 @@
   (#77). Every PATCH — built-in objects and their `/status`, custom resources
   and their `/status`, `events.k8s.io` — now runs as upstream's
   `GuaranteedUpdate`: read, apply, compare-and-swap against the revision read,
-  and on losing the swap read again and re-apply (bounded at 16). Two writers
-  patching one object lost roughly a third of their writes to 409, which no
-  client retries for a merge patch. A `resourceVersion` in the patch body is
-  still a precondition and still 409s when stale; a server-side-apply field
-  conflict still 409s; an apply-create that loses a create race applies to
-  the winner's object.
+  and on losing the swap read again and re-apply, after a random pause whose
+  window doubles from 10 ms to 200 ms, for up to 30 s. Two writers patching one
+  object lost roughly a third of their writes to 409, which no client retries
+  for a merge patch. Retrying with no pause was not enough: the loser re-read in
+  lockstep with the other writer and lost every swap. A `resourceVersion` in
+  the patch body is still a precondition and still 409s when stale; a
+  server-side-apply field conflict still 409s; an apply-create that loses a
+  create race applies to the winner's object.
 
 <!-- New unreleased changes go here -->
 

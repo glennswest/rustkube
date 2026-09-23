@@ -830,10 +830,28 @@ fn normalize_json_patch(target: &Value, ops: &mut Value) {
     }
 }
 
-/// How many times a patch is re-read and re-applied after losing a CAS race
-/// before the 409 is let through. Upstream does not bound it at all; a bound
-/// keeps a pathological hot key from pinning a request forever.
-const PATCH_RETRIES: usize = 16;
+/// How long a patch keeps re-reading and re-applying after losing CAS races
+/// before the 409 is let through. Upstream does not bound it at all; this keeps
+/// a pathologically hot key from pinning a request forever, and is well inside
+/// the minute a client waits for a response.
+const PATCH_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The pause before retry `attempt`: random, in a window that doubles from
+/// 10 ms to a 200 ms ceiling.
+///
+/// **A retry with no pause starves.** The first version retried at once, 16
+/// times, and lost all 16 to a writer patching the same object in a loop: each
+/// re-read lands just after the other writer's commit, both swap against the
+/// same revision, and the other one's swap is ahead in the queue — every time,
+/// in lockstep, for as long as it keeps writing. Measured on dev with two curl
+/// loops, the first patch of each loop still 409'd after all 16. Random delay
+/// breaks the lockstep; the window grows so a busy key sheds load rather than
+/// piling retries onto it.
+fn patch_retry_pause(attempt: u32) -> std::time::Duration {
+    let window_ms = (10u64 << attempt.clamp(1, 6).saturating_sub(1)).min(200);
+    let jitter = (uuid::Uuid::new_v4().as_u128() as u64) % window_ms;
+    std::time::Duration::from_millis(jitter)
+}
 
 /// The `resourceVersion` a patch body names, if it names one.
 ///
@@ -878,6 +896,7 @@ where
     F: FnMut(Value) -> Result<Value, ApiError>,
 {
     let precondition = patch_precondition(content_type, body);
+    let started = std::time::Instant::now();
     let mut attempt = 0;
     loop {
         let fresh = state.storage.get(key).await?;
@@ -898,7 +917,10 @@ where
         // Swap against what was read, whatever the patch did to the field.
         obj["metadata"]["resourceVersion"] = Value::String(read_rv);
         match persist_or_finalize(state, key, obj).await {
-            Err(e) if e.reason == "Conflict" && attempt < PATCH_RETRIES => attempt += 1,
+            Err(e) if e.reason == "Conflict" && started.elapsed() < PATCH_RETRY_BUDGET => {
+                attempt += 1;
+                tokio::time::sleep(patch_retry_pause(attempt)).await;
+            }
             result => return result,
         }
     }
@@ -967,7 +989,7 @@ pub(crate) async fn patch_stored_object(
                 match state.storage.create(key, obj).await {
                     // Somebody created it between the read and the create:
                     // apply to theirs, as the next attempt will.
-                    Err(e) if e.reason == "AlreadyExists" && attempt < PATCH_RETRIES => attempt += 1,
+                    Err(e) if e.reason == "AlreadyExists" && attempt < 3 => attempt += 1,
                     result => return result,
                 }
             }
@@ -1625,6 +1647,16 @@ mod patch_precondition_tests {
     fn a_json_patch_states_its_conditions_as_tests() {
         let body = br#"[{"op":"test","path":"/metadata/resourceVersion","value":"3"}]"#;
         assert_eq!(patch_precondition("application/json-patch+json", body), None);
+    }
+
+    #[test]
+    fn retry_pauses_stay_inside_a_doubling_window_capped_at_200ms() {
+        use super::patch_retry_pause;
+        for (attempt, window) in [(1, 10), (2, 20), (3, 40), (4, 80), (5, 160), (6, 200), (40, 200)] {
+            for _ in 0..200 {
+                assert!(patch_retry_pause(attempt).as_millis() < window, "attempt {attempt}");
+            }
+        }
     }
 
     #[test]
