@@ -858,7 +858,7 @@ mod priority_tests {
 
 #[cfg(test)]
 mod accounting_tests {
-    use super::*;
+    use crate::filter::pod_requests;
     use serde_json::json;
 
     #[test]
@@ -870,7 +870,7 @@ mod accounting_tests {
             "spec":{"containers":[{"resources":{"requests":{"cpu":"500m"}}}]},
             "status":{"containerStatuses":[
                 {"resources":{"requests":{"cpu":"2"}}}]}});
-        let (cpu, _) = crate::filter::pod_requests(&pod);
+        let (cpu, _) = pod_requests(&pod);
         assert_eq!(cpu, 2000, "must account the actuated size, not the desired one");
     }
 
@@ -882,7 +882,7 @@ mod accounting_tests {
             "spec":{"resources":{"requests":{"cpu":"1","memory":"1Gi"}},
                     "containers":[{"resources":{"requests":{"cpu":"500m"}}},
                                   {"resources":{"requests":{"cpu":"500m"}}}]}});
-        let (cpu, _) = crate::filter::pod_requests(&pod);
+        let (cpu, _) = pod_requests(&pod);
         assert_eq!(cpu, 1000, "pod-level wins; 2000 would be double counting");
     }
 
@@ -895,7 +895,7 @@ mod accounting_tests {
             "containers":[{"resources":{"requests":{"cpu":"100m"}}}],
             "initContainers":[{"resources":{"requests":{"cpu":"400m"}}},
                               {"resources":{"requests":{"cpu":"300m"}}}]}});
-        let (cpu, _) = crate::filter::pod_requests(&pod);
+        let (cpu, _) = pod_requests(&pod);
         assert_eq!(cpu, 400, "the largest init container, not 700m");
     }
 }
