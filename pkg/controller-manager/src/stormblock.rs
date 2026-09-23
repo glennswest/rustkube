@@ -135,6 +135,16 @@ impl StormblockProvisioner {
         claim: &str,
         pvc: &Value,
     ) -> anyhow::Result<()> {
+        // **WaitForFirstConsumer, honoured.** A stormblock clone is made by, and
+        // lives on, the node that runs the first pod using it, and until the
+        // scheduler has picked that node there is nowhere to say the volume
+        // is. This created the PV as soon as the claim existed, with no node
+        // and no volume source, and the binder bound it at once — so the
+        // scheduler never saw an unbound claim, never chose a node for it, and
+        // the claim read Bound to a volume that existed nowhere.
+        let Some(node) = pvc["metadata"]["annotations"][ANN_NODE].as_str() else {
+            return Ok(());
+        };
         let pv_name = volume_name(namespace, claim);
         let path = format!("/api/v1/persistentvolumes/{pv_name}");
         if self.api.get(&path).await.map(|r| r.status().is_success()).unwrap_or(false) {
@@ -166,6 +176,10 @@ impl StormblockProvisioner {
                 "accessModes": if modes.is_null() { json!(["ReadWriteOnce"]) } else { modes },
                 "persistentVolumeReclaimPolicy": reclaim,
                 "storageClassName": STORAGE_CLASS,
+                // The volume behind it: the name the node clones to. The
+                // kubelet resolves a bound claim through this handle, and the
+                // node's own PV for the claim (same name) carries the same one.
+                "csi": { "driver": "stormblock.storm.io", "volumeHandle": pv_name },
                 // Pre-bound to the claim that caused it, so no other claim can
                 // take it between this write and the binder's next pass.
                 "claimRef": {
@@ -183,17 +197,15 @@ impl StormblockProvisioner {
         // is only reachable there. Saying so in `nodeAffinity` is what stops
         // the scheduler placing a later pod somewhere the data is not — the
         // volume-aware filters already read it (#56).
-        if let Some(node) = pvc["metadata"]["annotations"][ANN_NODE].as_str() {
-            pv["spec"]["nodeAffinity"] = json!({
-                "required": { "nodeSelectorTerms": [{
-                    "matchExpressions": [{
-                        "key": "kubernetes.io/hostname",
-                        "operator": "In",
-                        "values": [node],
-                    }]
-                }]}
-            });
-        }
+        pv["spec"]["nodeAffinity"] = json!({
+            "required": { "nodeSelectorTerms": [{
+                "matchExpressions": [{
+                    "key": "kubernetes.io/hostname",
+                    "operator": "In",
+                    "values": [node],
+                }]
+            }]}
+        });
 
         self.api.create("/api/v1/persistentvolumes", &pv).await?;
         info!("stormblock: created PV {pv_name} for claim {namespace}/{claim}");
@@ -256,13 +268,12 @@ impl StormblockProvisioner {
                     self.events
                         .event(
                             &pv,
-                            "Warning",
-                            "VolumeNotDeleted",
+                            "Normal",
+                            "VolumeReclaiming",
                             &format!(
-                                "Released with reclaimPolicy: Delete, but the stormblock \
-                                 volume {name} is still allocated: deleting it needs the node \
-                                 that holds it (rustkube-node#46). The PV is kept so the \
-                                 volume stays accounted for."
+                                "Released with reclaimPolicy: Delete: the node holding \
+                                 stormblock volume {name} deletes it and then this PV \
+                                 (rustkube-node reclaim_released)."
                             ),
                         )
                         .await;

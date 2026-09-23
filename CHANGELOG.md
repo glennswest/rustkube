@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### 2026-09-23 (PVCs)
+- **fix(stormblock provisioner):** `WaitForFirstConsumer` is honoured. The PV
+  is created only once the scheduler has written `selected-node`, with the
+  node's affinity and the CSI handle the kubelet clones to. It used to be
+  created as soon as the claim existed, with no node and no source, so the
+  binder bound it at once and the scheduler never placed the claim.
+- **change(stormblock provisioner):** reclaim with policy Delete is done by the
+  node that holds the volume (rustkube-node `reclaim_released`); this reports
+  it instead of warning that nothing would.
+
 <!-- New unreleased changes go here -->
 
 ### 2026-09-22
