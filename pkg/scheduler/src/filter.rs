@@ -397,6 +397,53 @@ mod tests {
             FilterResult::Fail(_)
         ));
     }
+
+    fn full_node() -> Value {
+        json!({
+            "metadata": {"name": "n1"},
+            "status": {
+                "conditions": [{"type": "Ready", "status": "True"}],
+                "allocatable": {"cpu": "8", "memory": "4Gi"}
+            }
+        })
+    }
+
+    #[test]
+    fn pod_level_requests_are_refused_by_a_node_that_cannot_hold_them() {
+        // #73: bare containers, the whole request at pod level. Resource fit
+        // read this as requesting nothing and passed it on a full node.
+        let pod = json!({"spec": {
+            "resources": {"requests": {"memory": "8Gi"}},
+            "containers": [{"name": "app"}]
+        }});
+        assert!(matches!(
+            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
+            FilterResult::Fail(_)
+        ));
+        // And it fits once the node has room, so it is the size being read.
+        let small = json!({"spec": {
+            "resources": {"requests": {"memory": "1Gi"}},
+            "containers": [{"name": "app"}]
+        }});
+        assert!(matches!(
+            resource_fit_filter(&small, &full_node(), NodeUsage::default()),
+            FilterResult::Pass
+        ));
+    }
+
+    #[test]
+    fn resource_fit_counts_an_init_container_larger_than_the_app() {
+        // The filter summed app containers only; the accounting takes the
+        // larger of that and the biggest init container. Same rule now.
+        let pod = json!({"spec": {
+            "initContainers": [{"name": "i", "resources": {"requests": {"memory": "6Gi"}}}],
+            "containers": [{"name": "app", "resources": {"requests": {"memory": "1Gi"}}}]
+        }});
+        assert!(matches!(
+            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
+            FilterResult::Fail(_)
+        ));
+    }
 }
 
 /// Enforce `requiredDuringSchedulingIgnoredDuringExecution` nodeAffinity: the
@@ -497,52 +544,6 @@ fn node_name_filter(pod: &Value, node: &Value) -> FilterResult {
         FilterResult::Fail(format!("pod is bound to node {want}"))
     }
 
-    fn full_node() -> Value {
-        json!({
-            "metadata": {"name": "n1"},
-            "status": {
-                "conditions": [{"type": "Ready", "status": "True"}],
-                "allocatable": {"cpu": "8", "memory": "4Gi"}
-            }
-        })
-    }
-
-    #[test]
-    fn pod_level_requests_are_refused_by_a_node_that_cannot_hold_them() {
-        // #73: bare containers, the whole request at pod level. Resource fit
-        // read this as requesting nothing and passed it on a full node.
-        let pod = json!({"spec": {
-            "resources": {"requests": {"memory": "8Gi"}},
-            "containers": [{"name": "app"}]
-        }});
-        assert!(matches!(
-            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
-            FilterResult::Fail(_)
-        ));
-        // And it fits once the node has room, so it is the size being read.
-        let small = json!({"spec": {
-            "resources": {"requests": {"memory": "1Gi"}},
-            "containers": [{"name": "app"}]
-        }});
-        assert!(matches!(
-            resource_fit_filter(&small, &full_node(), NodeUsage::default()),
-            FilterResult::Pass
-        ));
-    }
-
-    #[test]
-    fn resource_fit_counts_an_init_container_larger_than_the_app() {
-        // The filter summed app containers only; the accounting takes the
-        // larger of that and the biggest init container. Same rule now.
-        let pod = json!({"spec": {
-            "initContainers": [{"name": "i", "resources": {"requests": {"memory": "6Gi"}}}],
-            "containers": [{"name": "app", "resources": {"requests": {"memory": "1Gi"}}}]
-        }});
-        assert!(matches!(
-            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
-            FilterResult::Fail(_)
-        ));
-    }
 }
 
 #[cfg(test)]
