@@ -830,6 +830,80 @@ fn normalize_json_patch(target: &Value, ops: &mut Value) {
     }
 }
 
+/// How many times a patch is re-read and re-applied after losing a CAS race
+/// before the 409 is let through. Upstream does not bound it at all; a bound
+/// keeps a pathological hot key from pinning a request forever.
+const PATCH_RETRIES: usize = 16;
+
+/// The `resourceVersion` a patch body names, if it names one.
+///
+/// This is the only thing that makes a PATCH conditional. A JSON Patch states
+/// its conditions as `test` operations, which are evaluated against each
+/// re-read like the rest of the patch, so it has none here.
+fn patch_precondition(content_type: &str, body: &[u8]) -> Option<String> {
+    let doc: Value = match content_type.split(';').next().unwrap_or("").trim() {
+        "application/json-patch+json" => return None,
+        "application/apply-patch+yaml" => serde_yaml::from_slice(body).ok()?,
+        _ => serde_json::from_slice(body).ok()?,
+    };
+    doc["metadata"]["resourceVersion"]
+        .as_str()
+        .filter(|rv| !rv.is_empty())
+        .map(str::to_owned)
+}
+
+/// Apply a patch the way upstream's `GuaranteedUpdate` does (#77): read, apply,
+/// compare-and-swap against the revision just read, and on losing the swap
+/// read again and re-apply.
+///
+/// **A PATCH that names no resourceVersion never conflicts.** A merge patch
+/// says "set these fields", not "set these fields on the version I saw", and
+/// clients are written to that contract — client-go, kube-rs and kubectl do not
+/// retry a merge patch. Returning the CAS miss as 409 lost writes at random: a
+/// `spec.online` flip from one client vanished while a controller was writing
+/// `/status` every few seconds. Only a patch that carries a resourceVersion
+/// gets a 409, and only when that version is no longer current.
+///
+/// `mutate` gets the freshly read object and returns what to store; an error
+/// from it (a bad patch, a server-side-apply field conflict) is final and not
+/// retried — only the store's CAS miss is.
+pub(crate) async fn guaranteed_patch<F>(
+    state: &AppState,
+    key: &str,
+    content_type: &str,
+    body: &[u8],
+    mut mutate: F,
+) -> Result<Value, ApiError>
+where
+    F: FnMut(Value) -> Result<Value, ApiError>,
+{
+    let precondition = patch_precondition(content_type, body);
+    let mut attempt = 0;
+    loop {
+        let fresh = state.storage.get(key).await?;
+        let read_rv = fresh["metadata"]["resourceVersion"].as_str().unwrap_or("").to_string();
+        if let Some(want) = &precondition {
+            if *want != read_rv {
+                let name = fresh["metadata"]["name"].as_str().unwrap_or("");
+                return Err(ApiError::conflict(&format!(
+                    "Operation cannot be fulfilled on \"{name}\": the object has been modified; \
+                     please apply your changes to the latest version and try again"
+                )));
+            }
+        }
+        let mut obj = mutate(fresh)?;
+        if !obj["metadata"].is_object() {
+            return Err(ApiError::invalid("metadata must be an object"));
+        }
+        // Swap against what was read, whatever the patch did to the field.
+        obj["metadata"]["resourceVersion"] = Value::String(read_rv);
+        match persist_or_finalize(state, key, obj).await {
+            Err(e) if e.reason == "Conflict" && attempt < PATCH_RETRIES => attempt += 1,
+            result => return result,
+        }
+    }
+}
+
 /// Read-modify-write a stored object through `apply_patch_body`, preserving the
 /// object's identity (name/namespace can't be patched away).
 pub(crate) async fn patch_stored_object(
@@ -851,46 +925,54 @@ pub(crate) async fn patch_stored_object(
     let (field_manager, force) = apply_params(query);
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    match state.storage.get(key).await {
-        Ok(existing) if is_apply => {
+    let mut attempt = 0;
+    loop {
+        let patched = guaranteed_patch(state, key, content_type, body, |existing| {
+            if !is_apply {
+                let mut existing = existing;
+                apply_patch_body(&mut existing, content_type, body)?;
+                return Ok(existing);
+            }
             // Server-side apply: merge the intent, track field ownership in
             // managedFields, and reject a foreign-owned change unless forced.
             let applied: Value = serde_yaml::from_slice(body)
                 .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
-            let merged =
-                crate::apply::server_side_apply(existing, &applied, &field_manager, &now, force)
-                    .map_err(|c| {
-                        ApiError::conflict(&format!(
-                            "Apply failed with 1 conflict: field \"{}\" is managed by \"{}\" \
-                             (set fieldManager force to override)",
-                            c.field, c.manager
-                        ))
-                    })?;
-            persist_or_finalize(state, key, merged).await
-        }
-        Ok(mut existing) => {
-            apply_patch_body(&mut existing, content_type, body)?;
-            persist_or_finalize(state, key, existing).await
-        }
-        // Server-side apply is an upsert (KEP-555): applying to a missing object
-        // CREATES it with the requester as the field manager. (Merge/JSON/
-        // strategic patches still 404 a missing object.)
-        Err(e) if is_apply && e.status == StatusCode::NOT_FOUND => {
-            let applied: Value = serde_yaml::from_slice(body)
-                .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
-            // No existing owners on a create, so this never conflicts.
-            let mut obj = crate::apply::server_side_apply(json!({}), &applied, &field_manager, &now, true)
-                .expect("create apply cannot conflict");
-            ensure_metadata(&mut obj, name, namespace);
-            if let Some(ns) = namespace {
-                crate::builtin_admission::admit_create(
-                    &state.storage, resource, Some(ns), &mut obj, &state.service_cidr,
-                )
-                    .await?;
+            crate::apply::server_side_apply(existing, &applied, &field_manager, &now, force)
+                .map_err(|c| {
+                    ApiError::conflict(&format!(
+                        "Apply failed with 1 conflict: field \"{}\" is managed by \"{}\" \
+                         (set fieldManager force to override)",
+                        c.field, c.manager
+                    ))
+                })
+        })
+        .await;
+        match patched {
+            // Server-side apply is an upsert (KEP-555): applying to a missing
+            // object CREATES it with the requester as the field manager.
+            // (Merge/JSON/strategic patches still 404 a missing object.)
+            Err(e) if is_apply && e.status == StatusCode::NOT_FOUND => {
+                let applied: Value = serde_yaml::from_slice(body)
+                    .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
+                // No existing owners on a create, so this never conflicts.
+                let mut obj = crate::apply::server_side_apply(json!({}), &applied, &field_manager, &now, true)
+                    .expect("create apply cannot conflict");
+                ensure_metadata(&mut obj, name, namespace);
+                if let Some(ns) = namespace {
+                    crate::builtin_admission::admit_create(
+                        &state.storage, resource, Some(ns), &mut obj, &state.service_cidr,
+                    )
+                        .await?;
+                }
+                match state.storage.create(key, obj).await {
+                    // Somebody created it between the read and the create:
+                    // apply to theirs, as the next attempt will.
+                    Err(e) if e.reason == "AlreadyExists" && attempt < PATCH_RETRIES => attempt += 1,
+                    result => return result,
+                }
             }
-            state.storage.create(key, obj).await
+            result => return result,
         }
-        Err(e) => Err(e),
     }
 }
 
@@ -948,18 +1030,15 @@ pub async fn patch_cluster_status(
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let mut existing = state.storage.get(&key).await?;
-
     let ct = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    apply_status_patch(&mut existing, ct, &body)?;
-
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    let obj = guaranteed_patch(&state, &key, ct, &body, |mut existing| {
+        apply_status_patch(&mut existing, ct, &body)?;
+        Ok(existing)
+    })
+    .await?;
     Ok(Json(obj))
 }
 
@@ -1001,18 +1080,15 @@ pub async fn patch_namespaced_status(
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let mut existing = state.storage.get(&key).await?;
-
     let ct = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    apply_status_patch(&mut existing, ct, &body)?;
-
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    let obj = guaranteed_patch(&state, &key, ct, &body, |mut existing| {
+        apply_status_patch(&mut existing, ct, &body)?;
+        Ok(existing)
+    })
+    .await?;
     Ok(Json(obj))
 }
 
@@ -1507,5 +1583,52 @@ mod list_kind_tests {
             "CSIStorageCapacityList"
         );
         assert_eq!(resource_to_list_kind("endpointslices"), "EndpointSliceList");
+    }
+}
+
+#[cfg(test)]
+mod patch_precondition_tests {
+    use super::patch_precondition;
+
+    const MERGE: &str = "application/merge-patch+json";
+
+    #[test]
+    fn a_merge_patch_without_a_resource_version_is_unconditional() {
+        // #77: the common case, and the one that was 409ing under a race.
+        assert_eq!(patch_precondition(MERGE, br#"{"metadata":{"labels":{"t":"v"}}}"#), None);
+        assert_eq!(patch_precondition(MERGE, br#"{"status":{"x":1}}"#), None);
+    }
+
+    #[test]
+    fn a_resource_version_in_the_body_is_the_precondition() {
+        let body = br#"{"metadata":{"resourceVersion":"42"},"spec":{"online":true}}"#;
+        assert_eq!(patch_precondition(MERGE, body).as_deref(), Some("42"));
+        assert_eq!(
+            patch_precondition("application/strategic-merge-patch+json; charset=utf-8", body)
+                .as_deref(),
+            Some("42")
+        );
+    }
+
+    #[test]
+    fn server_side_apply_reads_its_yaml_body() {
+        let body = b"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n  resourceVersion: \"7\"\n";
+        assert_eq!(
+            patch_precondition("application/apply-patch+yaml", body).as_deref(),
+            Some("7")
+        );
+        let body = b"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n";
+        assert_eq!(patch_precondition("application/apply-patch+yaml", body), None);
+    }
+
+    #[test]
+    fn a_json_patch_states_its_conditions_as_tests() {
+        let body = br#"[{"op":"test","path":"/metadata/resourceVersion","value":"3"}]"#;
+        assert_eq!(patch_precondition("application/json-patch+json", body), None);
+    }
+
+    #[test]
+    fn an_empty_resource_version_is_no_precondition() {
+        assert_eq!(patch_precondition(MERGE, br#"{"metadata":{"resourceVersion":""}}"#), None);
     }
 }

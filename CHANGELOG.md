@@ -28,6 +28,18 @@
   neither Active nor Terminating. Namespaces already stored without them are
   backfilled once at boot (CAS per object; terminating ones left alone).
 
+### 2026-09-23 (PATCH)
+- **fix(patch):** a PATCH that names no `resourceVersion` never returns 409
+  (#77). Every PATCH — built-in objects and their `/status`, custom resources
+  and their `/status`, `events.k8s.io` — now runs as upstream's
+  `GuaranteedUpdate`: read, apply, compare-and-swap against the revision read,
+  and on losing the swap read again and re-apply (bounded at 16). Two writers
+  patching one object lost roughly a third of their writes to 409, which no
+  client retries for a merge patch. A `resourceVersion` in the patch body is
+  still a precondition and still 409s when stale; a server-side-apply field
+  conflict still 409s; an apply-create that loses a create race applies to
+  the winner's object.
+
 <!-- New unreleased changes go here -->
 
 ### 2026-09-22

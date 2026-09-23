@@ -633,20 +633,20 @@ async fn patch_cr_status(
     headers: &axum::http::HeaderMap,
     body: &[u8],
 ) -> Result<Value, ApiError> {
-    let mut existing = state.storage.get(key).await?;
     let ct = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    // Apply to a copy, then take only its status back — so a patch body that
-    // touches other fields can't sneak spec changes through /status.
-    let mut scratch = existing.clone();
-    crate::handlers::resource::apply_patch_body(&mut scratch, ct, body)?;
-    existing["status"] = scratch["status"].clone();
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    state.storage.update(key, existing, prev_rev).await
+    // Re-read and re-applied on a lost CAS, like every PATCH (#77).
+    crate::handlers::resource::guaranteed_patch(state, key, ct, body, |mut existing| {
+        // Apply to a copy, then take only its status back — so a patch body
+        // that touches other fields can't sneak spec changes through /status.
+        let mut scratch = existing.clone();
+        crate::handlers::resource::apply_patch_body(&mut scratch, ct, body)?;
+        existing["status"] = scratch["status"].clone();
+        Ok(existing)
+    })
+    .await
 }
 
 /// PATCH a cluster-scoped CRD instance.

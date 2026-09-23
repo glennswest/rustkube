@@ -226,15 +226,17 @@ pub async fn patch(
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(RESOURCE, &namespace, &name);
-    let mut as_events = core_to_events(state.storage.get(&key).await?);
     let ct = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    apply_patch_body(&mut as_events, ct, &body)?;
-    let core = events_to_core(as_events);
-    let prev_rev = core["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse::<u64>().ok());
-    let stored = state.storage.update(&key, core, prev_rev).await?;
+    // Re-read and re-applied on a lost CAS, like every PATCH (#77).
+    let stored = crate::handlers::resource::guaranteed_patch(&state, &key, ct, &body, |core| {
+        let mut as_events = core_to_events(core);
+        apply_patch_body(&mut as_events, ct, &body)?;
+        Ok(events_to_core(as_events))
+    })
+    .await?;
     Ok(Json(core_to_events(stored)))
 }
 
