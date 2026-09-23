@@ -20,6 +20,14 @@
   oversubscribed the node it landed on. Preemption's victim check reads the
   same function; there is now one definition, `filter::pod_requests`.
 
+### 2026-09-23 (namespaces)
+- **fix(namespaces):** a namespace created through the API — or from a startup
+  manifest — is stored with `status.phase: Active` and the `kubernetes`
+  finalizer, as upstream's namespace strategy sets on create (#75). Only the
+  four bootstrap namespaces had them; the rest printed a blank STATUS and were
+  neither Active nor Terminating. Namespaces already stored without them are
+  backfilled once at boot (CAS per object; terminating ones left alone).
+
 <!-- New unreleased changes go here -->
 
 ### 2026-09-22

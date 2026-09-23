@@ -695,6 +695,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     bootstrap_namespace(&storage, "kube-system").await;
     bootstrap_namespace(&storage, "kube-public").await;
     bootstrap_namespace(&storage, "kube-node-lease").await;
+    backfill_namespace_defaults(&storage).await;
 
     // Bootstrap RBAC resources
     bootstrap_rbac(&storage, config.anonymous_auth, config.dev_anonymous_admin).await;
@@ -1065,6 +1066,47 @@ async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
         }
     });
     create_bootstrap(storage, &key, ns, &format!("namespace {name}")).await;
+}
+
+/// Give namespaces stored before #75 the phase and finalizer they were
+/// created without.
+///
+/// Idempotent and safe under HA: each write is a CAS on the revision it read,
+/// so two replicas booting together write once and the loser's Conflict is the
+/// state it wanted. A namespace already terminating is left alone.
+async fn backfill_namespace_defaults(storage: &ResourceStorage) {
+    let prefix = ResourceStorage::cluster_prefix("namespaces");
+    let mut token: Option<String> = None;
+    let mut fixed = 0usize;
+    loop {
+        let (items, next, _) = match storage.list(&prefix, 500, token.as_deref()).await {
+            Ok(page) => page,
+            Err(e) => {
+                tracing::warn!("namespace backfill: list failed: {}", e.message);
+                return;
+            }
+        };
+        for mut ns in items {
+            if !crate::builtin_admission::namespace_defaults(&mut ns) {
+                continue;
+            }
+            let name = ns["metadata"]["name"].as_str().unwrap_or_default().to_string();
+            let rev = ns["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
+            let key = ResourceStorage::cluster_key("namespaces", &name);
+            match storage.update(&key, ns, rev).await {
+                Ok(_) => fixed += 1,
+                Err(e) if e.reason == "Conflict" => {}
+                Err(e) => tracing::warn!("namespace backfill: {name}: {}", e.message),
+            }
+        }
+        match next {
+            Some(t) => token = Some(t),
+            None => break,
+        }
+    }
+    if fixed > 0 {
+        tracing::info!("namespace backfill: {fixed} namespace(s) given phase Active and the kubernetes finalizer");
+    }
 }
 
 /// First usable address of a service CIDR (`10.96.0.0/12` → `10.96.0.1`), which

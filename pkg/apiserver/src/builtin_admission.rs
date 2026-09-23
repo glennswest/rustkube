@@ -7,6 +7,8 @@
 //!   `default`.
 //! - **DefaultTolerationSeconds** (mutating): add the not-ready/unreachable
 //!   NoExecute tolerations (300s) to Pods that lack them.
+//! - **Namespace defaults** (mutating): `status.phase: Active` and the
+//!   `kubernetes` finalizer, as upstream's namespace strategy sets on create.
 
 use crate::error::ApiError;
 use crate::storage::ResourceStorage;
@@ -32,6 +34,10 @@ pub async fn admit_create(
     } else {
         None
     };
+
+    if resource == "namespaces" {
+        namespace_defaults(obj);
+    }
 
     if resource == "services" {
         default_service_ports(obj);
@@ -60,6 +66,37 @@ pub async fn admit_create(
         access_modes(obj)?;
     }
     Ok(())
+}
+
+/// What a namespace is given on create: `status.phase: Active` and the
+/// `kubernetes` finalizer in `spec.finalizers` (#75).
+///
+/// Upstream's namespace strategy does both in `PrepareForCreate`: the status a
+/// client sends is replaced, not merged, and the finalizer is added alongside
+/// any the client named. Only bootstrap set them here, so every namespace made
+/// through the API was neither Active nor Terminating — `kubectl wait` and
+/// anything else gating on the phase had a value outside the enum to reason
+/// about. Deletion adds the finalizer too, but a namespace should carry it from
+/// the moment it is stored, as it does upstream.
+///
+/// Returns whether anything changed, for the boot-time backfill.
+pub fn namespace_defaults(obj: &mut Value) -> bool {
+    let before = (obj["status"].clone(), obj["spec"]["finalizers"].clone());
+    // A namespace that is already terminating keeps its phase: this also runs
+    // over stored objects, and one mid-deletion must not be revived.
+    let terminating = obj["metadata"]["deletionTimestamp"].is_string();
+    if !terminating {
+        obj["status"] = json!({"phase": "Active"});
+    }
+    if !obj["spec"].is_object() {
+        obj["spec"] = json!({});
+    }
+    let mut finalizers = obj["spec"]["finalizers"].as_array().cloned().unwrap_or_default();
+    if !terminating && !finalizers.iter().any(|f| f.as_str() == Some("kubernetes")) {
+        finalizers.push(Value::String("kubernetes".into()));
+    }
+    obj["spec"]["finalizers"] = Value::Array(finalizers);
+    (obj["status"].clone(), obj["spec"]["finalizers"].clone()) != before
 }
 
 /// `ReadWriteOncePod` may not be combined with any other access mode.
@@ -320,5 +357,53 @@ mod service_defaults_tests {
         let mut tp = json!({"spec": {"ports": [{"port": 80, "targetPort": 8080}]}});
         default_service_ports(&mut tp);
         assert_eq!(tp["spec"]["ports"][0]["targetPort"], 8080);
+    }
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::namespace_defaults;
+    use serde_json::json;
+
+    #[test]
+    fn a_namespace_created_through_the_api_is_active_with_the_kubernetes_finalizer() {
+        // #75: `kubectl create ns anything` stored neither field.
+        let mut ns = json!({"metadata": {"name": "anything"}});
+        assert!(namespace_defaults(&mut ns));
+        assert_eq!(ns["status"], json!({"phase": "Active"}));
+        assert_eq!(ns["spec"]["finalizers"], json!(["kubernetes"]));
+    }
+
+    #[test]
+    fn client_status_is_replaced_and_client_finalizers_are_kept() {
+        let mut ns = json!({
+            "metadata": {"name": "x"},
+            "spec": {"finalizers": ["example.com/hold"]},
+            "status": {"phase": "Terminating"}
+        });
+        namespace_defaults(&mut ns);
+        assert_eq!(ns["status"], json!({"phase": "Active"}));
+        assert_eq!(ns["spec"]["finalizers"], json!(["example.com/hold", "kubernetes"]));
+    }
+
+    #[test]
+    fn a_defaulted_namespace_is_unchanged_the_second_time() {
+        let mut ns = json!({"metadata": {"name": "x"}});
+        namespace_defaults(&mut ns);
+        assert!(!namespace_defaults(&mut ns), "the backfill must be idempotent");
+    }
+
+    #[test]
+    fn a_terminating_namespace_is_not_revived() {
+        // The backfill runs over stored objects; one whose finalizers the
+        // controller has cleared must not get them back, or it never goes.
+        let mut ns = json!({
+            "metadata": {"name": "x", "deletionTimestamp": "2026-09-23T00:00:00Z"},
+            "spec": {"finalizers": []},
+            "status": {"phase": "Terminating"}
+        });
+        assert!(!namespace_defaults(&mut ns));
+        assert_eq!(ns["status"]["phase"], "Terminating");
+        assert_eq!(ns["spec"]["finalizers"], json!([]));
     }
 }

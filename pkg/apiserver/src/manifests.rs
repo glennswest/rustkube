@@ -194,6 +194,11 @@ pub async fn apply_one(
             if obj["kind"].as_str() == Some("Service") {
                 crate::service_ip::claim_for(storage, &obj).await;
             }
+            // Same reason: a namespace from a manifest is Active and carries
+            // the `kubernetes` finalizer like one created through the API (#75).
+            if obj["kind"].as_str() == Some("Namespace") {
+                crate::builtin_admission::namespace_defaults(&mut obj);
+            }
             match storage.create(&key, obj.clone()).await {
                 Ok(_) => {
                     if is_crd {
