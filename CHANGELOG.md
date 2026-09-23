@@ -12,6 +12,14 @@
   node that holds the volume (rustkube-node `reclaim_released`); this reports
   it instead of warning that nothing would.
 
+### 2026-09-23 (scheduler)
+- **fix(scheduler):** resource fit reads a pod's requests by the same rule the
+  node accounting charges it by — pod-level `spec.resources.requests` in place
+  of the container sum, init containers as the largest single one (#73). A pod
+  that stated its requests at pod level passed as requesting nothing and then
+  oversubscribed the node it landed on. Preemption's victim check reads the
+  same function; there is now one definition, `filter::pod_requests`.
+
 <!-- New unreleased changes go here -->
 
 ### 2026-09-22

@@ -176,26 +176,12 @@ fn node_selector_filter(pod: &Value, node: &Value) -> FilterResult {
 
 /// Check that node has sufficient resources for the pod.
 fn resource_fit_filter(pod: &Value, node: &Value, used: NodeUsage) -> FilterResult {
-    // Extract pod resource requests
-    let containers = pod["spec"]["containers"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    // The same rule the node accounting charges by (#73). Reading only the
+    // container sum here let a pod that states its requests at pod level pass
+    // as requesting nothing, and then be charged its real size once bound.
+    let (total_cpu_milli, total_mem_bytes) = pod_requests(pod);
 
-    let mut total_cpu_milli: u64 = 0;
-    let mut total_mem_bytes: u64 = 0;
-
-    for container in &containers {
-        let requests = &container["resources"]["requests"];
-        if let Some(cpu) = requests["cpu"].as_str() {
-            total_cpu_milli += parse_cpu_millis(cpu);
-        }
-        if let Some(mem) = requests["memory"].as_str() {
-            total_mem_bytes += parse_memory_bytes(mem);
-        }
-    }
-
-    // If no resource requests, the pod fits anywhere
+    // Requests nothing, so it fits anywhere.
     if total_cpu_milli == 0 && total_mem_bytes == 0 {
         return FilterResult::Pass;
     }
@@ -231,6 +217,84 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: NodeUsage) -> FilterResu
     }
 
     FilterResult::Pass
+}
+
+/// A pod's total requests, in milli-CPU and bytes.
+///
+/// Init containers are counted as the *maximum* of any single one rather than
+/// the sum: they run one at a time and are finished before the app containers
+/// start, so summing them would reserve capacity no pod ever holds at once.
+/// This is the upstream rule and it matters on a small node, where summing a
+/// handful of init containers can make a pod unschedulable that would run.
+///
+/// This is the only definition. Resource fit, the per-node accounting and
+/// preemption all read requests through it, because three copies of the rule
+/// drifted apart once already (#73).
+pub fn pod_requests(pod: &Value) -> (u64, u64) {
+    // Pod-level requests win outright when present.
+    //
+    // `spec.resources` on the pod (beta-on since v1.34) is the pod's total, and
+    // upstream uses it in place of the container sum rather than in addition to
+    // it. Summing both would double-count every pod that sets it.
+    let pod_level = &pod["spec"]["resources"]["requests"];
+    if !pod_level.is_null() {
+        let cpu = pod_level["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0);
+        let mem = pod_level["memory"].as_str().map(parse_memory_bytes).unwrap_or(0);
+        if cpu != 0 || mem != 0 {
+            return (cpu, mem);
+        }
+    }
+    let sum = |list: &Value| -> (u64, u64) {
+        let mut cpu = 0u64;
+        let mut mem = 0u64;
+        for c in list.as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
+            let r = &c["resources"]["requests"];
+            if let Some(v) = r["cpu"].as_str() {
+                cpu += parse_cpu_millis(v);
+            }
+            if let Some(v) = r["memory"].as_str() {
+                mem += parse_memory_bytes(v);
+            }
+        }
+        (cpu, mem)
+    };
+    let (mut cpu, mut mem) = sum(&pod["spec"]["containers"]);
+    let mut init_cpu = 0u64;
+    let mut init_mem = 0u64;
+    for c in pod["spec"]["initContainers"].as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
+        let r = &c["resources"]["requests"];
+        init_cpu = init_cpu.max(r["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0));
+        init_mem =
+            init_mem.max(r["memory"].as_str().map(parse_memory_bytes).unwrap_or(0));
+    }
+    cpu = cpu.max(init_cpu);
+    mem = mem.max(init_mem);
+
+    // What the pod actually holds, which is not always what its spec asks for.
+    //
+    // In-place pod resize is GA-locked as of v1.35, so `spec` is a *request to
+    // become* that size and the kubelet actuates it asynchronously. On a shrink
+    // the pod still holds the larger amount until it does, and a scheduler that
+    // believes the spec will hand the difference to somebody else and overcommit
+    // the node. Upstream's rule is the maximum of the desired, the actuated and
+    // the allocated — the pessimistic one, which is the only safe direction when
+    // the three disagree.
+    for (i, cs) in pod["status"]["containerStatuses"]
+        .as_array().map(|v| v.as_slice()).unwrap_or(&[]).iter().enumerate()
+    {
+        let _ = i;
+        for field in ["resources", "allocatedResources"] {
+            let r = &cs[field]["requests"];
+            if r.is_null() {
+                continue;
+            }
+            // Per container, so this is a floor on the total rather than an
+            // exact sum — which is the safe side of the same argument.
+            cpu = cpu.max(r["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0));
+            mem = mem.max(r["memory"].as_str().map(parse_memory_bytes).unwrap_or(0));
+        }
+    }
+    (cpu, mem)
 }
 
 /// Parse Kubernetes CPU notation to millicores.
@@ -431,6 +495,53 @@ fn node_name_filter(pod: &Value, node: &Value) -> FilterResult {
         FilterResult::Pass
     } else {
         FilterResult::Fail(format!("pod is bound to node {want}"))
+    }
+
+    fn full_node() -> Value {
+        json!({
+            "metadata": {"name": "n1"},
+            "status": {
+                "conditions": [{"type": "Ready", "status": "True"}],
+                "allocatable": {"cpu": "8", "memory": "4Gi"}
+            }
+        })
+    }
+
+    #[test]
+    fn pod_level_requests_are_refused_by_a_node_that_cannot_hold_them() {
+        // #73: bare containers, the whole request at pod level. Resource fit
+        // read this as requesting nothing and passed it on a full node.
+        let pod = json!({"spec": {
+            "resources": {"requests": {"memory": "8Gi"}},
+            "containers": [{"name": "app"}]
+        }});
+        assert!(matches!(
+            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
+            FilterResult::Fail(_)
+        ));
+        // And it fits once the node has room, so it is the size being read.
+        let small = json!({"spec": {
+            "resources": {"requests": {"memory": "1Gi"}},
+            "containers": [{"name": "app"}]
+        }});
+        assert!(matches!(
+            resource_fit_filter(&small, &full_node(), NodeUsage::default()),
+            FilterResult::Pass
+        ));
+    }
+
+    #[test]
+    fn resource_fit_counts_an_init_container_larger_than_the_app() {
+        // The filter summed app containers only; the accounting takes the
+        // larger of that and the biggest init container. Same rule now.
+        let pod = json!({"spec": {
+            "initContainers": [{"name": "i", "resources": {"requests": {"memory": "6Gi"}}}],
+            "containers": [{"name": "app", "resources": {"requests": {"memory": "1Gi"}}}]
+        }});
+        assert!(matches!(
+            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
+            FilterResult::Fail(_)
+        ));
     }
 }
 

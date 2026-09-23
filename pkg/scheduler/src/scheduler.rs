@@ -233,80 +233,6 @@ fn node_name_of(node: &Value) -> &str {
     node["metadata"]["name"].as_str().unwrap_or("")
 }
 
-/// A pod's total requests, in milli-CPU and bytes.
-///
-/// Init containers are counted as the *maximum* of any single one rather than
-/// the sum: they run one at a time and are finished before the app containers
-/// start, so summing them would reserve capacity no pod ever holds at once.
-/// This is the upstream rule and it matters on a small node, where summing a
-/// handful of init containers can make a pod unschedulable that would run.
-fn pod_requests(pod: &Value) -> (u64, u64) {
-    // Pod-level requests win outright when present.
-    //
-    // `spec.resources` on the pod (beta-on since v1.34) is the pod's total, and
-    // upstream uses it in place of the container sum rather than in addition to
-    // it. Summing both would double-count every pod that sets it.
-    let pod_level = &pod["spec"]["resources"]["requests"];
-    if !pod_level.is_null() {
-        let cpu = pod_level["cpu"].as_str().map(crate::filter::parse_cpu_millis).unwrap_or(0);
-        let mem = pod_level["memory"].as_str().map(crate::filter::parse_memory_bytes).unwrap_or(0);
-        if cpu != 0 || mem != 0 {
-            return (cpu, mem);
-        }
-    }
-    let sum = |list: &Value| -> (u64, u64) {
-        let mut cpu = 0u64;
-        let mut mem = 0u64;
-        for c in list.as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
-            let r = &c["resources"]["requests"];
-            if let Some(v) = r["cpu"].as_str() {
-                cpu += crate::filter::parse_cpu_millis(v);
-            }
-            if let Some(v) = r["memory"].as_str() {
-                mem += crate::filter::parse_memory_bytes(v);
-            }
-        }
-        (cpu, mem)
-    };
-    let (mut cpu, mut mem) = sum(&pod["spec"]["containers"]);
-    let mut init_cpu = 0u64;
-    let mut init_mem = 0u64;
-    for c in pod["spec"]["initContainers"].as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
-        let r = &c["resources"]["requests"];
-        init_cpu = init_cpu.max(r["cpu"].as_str().map(crate::filter::parse_cpu_millis).unwrap_or(0));
-        init_mem =
-            init_mem.max(r["memory"].as_str().map(crate::filter::parse_memory_bytes).unwrap_or(0));
-    }
-    cpu = cpu.max(init_cpu);
-    mem = mem.max(init_mem);
-
-    // What the pod actually holds, which is not always what its spec asks for.
-    //
-    // In-place pod resize is GA-locked as of v1.35, so `spec` is a *request to
-    // become* that size and the kubelet actuates it asynchronously. On a shrink
-    // the pod still holds the larger amount until it does, and a scheduler that
-    // believes the spec will hand the difference to somebody else and overcommit
-    // the node. Upstream's rule is the maximum of the desired, the actuated and
-    // the allocated — the pessimistic one, which is the only safe direction when
-    // the three disagree.
-    for (i, cs) in pod["status"]["containerStatuses"]
-        .as_array().map(|v| v.as_slice()).unwrap_or(&[]).iter().enumerate()
-    {
-        let _ = i;
-        for field in ["resources", "allocatedResources"] {
-            let r = &cs[field]["requests"];
-            if r.is_null() {
-                continue;
-            }
-            // Per container, so this is a floor on the total rather than an
-            // exact sum — which is the safe side of the same argument.
-            cpu = cpu.max(r["cpu"].as_str().map(crate::filter::parse_cpu_millis).unwrap_or(0));
-            mem = mem.max(r["memory"].as_str().map(crate::filter::parse_memory_bytes).unwrap_or(0));
-        }
-    }
-    (cpu, mem)
-}
-
 /// The scheduler — assigns unscheduled pods to nodes.
 pub struct Scheduler {
     api: Arc<ApiClient>,
@@ -441,7 +367,7 @@ impl Scheduler {
                 if let Some(on) = pod["spec"]["nodeName"].as_str().filter(|s| !s.is_empty()) {
                     // A pod that has finished has given its request back.
                     if !terminal {
-                        let (cpu, mem) = pod_requests(&pod);
+                        let (cpu, mem) = crate::filter::pod_requests(&pod);
                         let e = state.usage.entry(on.to_string()).or_default();
                         e.cpu_milli += cpu;
                         e.mem_bytes += mem;
@@ -944,7 +870,7 @@ mod accounting_tests {
             "spec":{"containers":[{"resources":{"requests":{"cpu":"500m"}}}]},
             "status":{"containerStatuses":[
                 {"resources":{"requests":{"cpu":"2"}}}]}});
-        let (cpu, _) = pod_requests(&pod);
+        let (cpu, _) = crate::filter::pod_requests(&pod);
         assert_eq!(cpu, 2000, "must account the actuated size, not the desired one");
     }
 
@@ -956,7 +882,7 @@ mod accounting_tests {
             "spec":{"resources":{"requests":{"cpu":"1","memory":"1Gi"}},
                     "containers":[{"resources":{"requests":{"cpu":"500m"}}},
                                   {"resources":{"requests":{"cpu":"500m"}}}]}});
-        let (cpu, _) = pod_requests(&pod);
+        let (cpu, _) = crate::filter::pod_requests(&pod);
         assert_eq!(cpu, 1000, "pod-level wins; 2000 would be double counting");
     }
 
@@ -969,7 +895,7 @@ mod accounting_tests {
             "containers":[{"resources":{"requests":{"cpu":"100m"}}}],
             "initContainers":[{"resources":{"requests":{"cpu":"400m"}}},
                               {"resources":{"requests":{"cpu":"300m"}}}]}});
-        let (cpu, _) = pod_requests(&pod);
+        let (cpu, _) = crate::filter::pod_requests(&pod);
         assert_eq!(cpu, 400, "the largest init container, not 700m");
     }
 }

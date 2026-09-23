@@ -134,12 +134,10 @@ pub fn vcpus(vmi: &Value) -> u64 {
 /// - **`nodeSelector`, `affinity`, `tolerations`**, which the spec converter
 ///   deliberately does not translate — "`nodeSelector` and tolerations are the
 ///   scheduler's" — and which nothing has read until now.
-/// - **the requests**, on a single container rather than at pod level. That
-///   is not a style choice: `resource_fit_filter` reads
-///   `spec.containers[].resources.requests` and nothing else, so a shim that
-///   stated its requests at pod level would be read as **requesting nothing**
-///   and would fit on any node however full. One container, named for what it
-///   is, is also the closer analogue — a virt-launcher pod has one too.
+/// - **the requests**, on a single container. Resource fit reads pod-level
+///   requests too since #73 (before that it read only containers, and a
+///   pod-level shim fit on any node however full); one container, named for
+///   what it is, is still the closer analogue — a virt-launcher pod has one.
 pub fn scheduling_shim(vmi: &Value) -> Value {
     let (cpu, mem) = requests(vmi);
     let spec = &vmi["spec"];
@@ -293,7 +291,7 @@ mod tests {
         assert_eq!(shim["spec"]["nodeSelector"]["disk"], "nvme");
         assert_eq!(shim["spec"]["tolerations"][0]["key"], "vm");
         assert!(!shim["spec"]["affinity"].is_null());
-        // On a container, because that is the only place resource fit looks.
+        // On a container, as a virt-launcher pod carries them.
         let req = &shim["spec"]["containers"][0]["resources"]["requests"];
         assert_eq!(req["memory"], "2147483648");
         assert_eq!(req["cpu"], "0m");
@@ -301,11 +299,8 @@ mod tests {
 
     #[test]
     fn the_requests_are_where_the_resource_filter_actually_reads_them() {
-        // The bug this pins: `resource_fit_filter` reads
-        // `spec.containers[].resources.requests` and nothing else. A shim
-        // that stated its requests at pod level -- which is what
-        // `pod_requests` prefers, and what this first did -- reads as
-        // requesting nothing, and an 8 GiB guest fits on a full node.
+        // An 8 GiB guest must not fit a 4 GiB node. This first failed with
+        // the requests at pod level, which resource fit ignored until #73.
         let v = vmi(json!({"domain": {"memory": {"guest": "8Gi"}}}));
         let shim = scheduling_shim(&v);
         let node = json!({

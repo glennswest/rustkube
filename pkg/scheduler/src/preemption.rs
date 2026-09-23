@@ -145,32 +145,14 @@ fn can_fit_after_eviction(pod: &Value, node: &Value, remaining_pods: &[&Value]) 
     pod_cpu <= available_cpu && pod_mem <= available_mem
 }
 
-/// Sum requested CPU from all containers (in millicores).
+/// Requested CPU in millicores, by the scheduler's one rule (#73).
 fn requested_cpu(pod: &Value) -> i64 {
-    let empty = vec![];
-    let containers = pod["spec"]["containers"].as_array().unwrap_or(&empty);
-    containers
-        .iter()
-        .filter_map(|c| {
-            c["resources"]["requests"]["cpu"]
-                .as_str()
-                .and_then(parse_cpu_millicores)
-        })
-        .sum()
+    crate::filter::pod_requests(pod).0 as i64
 }
 
-/// Sum requested memory from all containers (in bytes).
+/// Requested memory in bytes, by the scheduler's one rule (#73).
 fn requested_memory(pod: &Value) -> i64 {
-    let empty = vec![];
-    let containers = pod["spec"]["containers"].as_array().unwrap_or(&empty);
-    containers
-        .iter()
-        .filter_map(|c| {
-            c["resources"]["requests"]["memory"]
-                .as_str()
-                .and_then(parse_memory_bytes)
-        })
-        .sum()
+    crate::filter::pod_requests(pod).1 as i64
 }
 
 /// Parse CPU string (e.g. "100m", "1") into millicores.
