@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+<!-- New unreleased changes go here -->
+
+## [v0.14.1] — 2026-09-23
+
 ### 2026-09-23 (PVCs)
 - **fix(stormblock provisioner):** `WaitForFirstConsumer` is honoured. The PV
   is created only once the scheduler has written `selected-node`, with the
@@ -41,8 +45,6 @@
   the patch body is still a precondition and still 409s when stale; a
   server-side-apply field conflict still 409s; an apply-create that loses a
   create race applies to the winner's object.
-
-<!-- New unreleased changes go here -->
 
 ### 2026-09-22
 - **build:** `Cross.toml` passes `PROTOC` into `cross` builds, which
