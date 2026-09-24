@@ -4,6 +4,42 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-24 (docs from the code, #80)
+- **docs: README rewritten from the code.** It said "Phase 0 — scaffolding",
+  and named kube-rs, CRI, eBPF and a single-binary mode, none of which is in
+  this repo. It now describes what each binary does, every flag with its
+  default and env var, ports and health/metrics endpoints, the build
+  (`sc-build`), and how stormcos ships it (stormd goldens built from source,
+  the flags it passes, the stormcert files it reads).
+- **docs: what is built but not wired is said so.** Admission webhooks
+  (#82), aggregation (#83) and scheduler preemption (#84) exist as modules
+  that nothing calls; HPA reads no metrics and never scales down (#89); the
+  Gateway controller writes status only (#91); `pkg/cloud` is empty. CLAUDE.md
+  had them ticked as complete.
+- **docs: CLAUDE.md** — the Phase 0–3 checklists described the old 10-crate
+  repo (kubelet, proxy, DNS, CNI, stormforce store) and are replaced by a
+  short history; Key Dependencies no longer lists kube-rs, tonic-for-CRI or
+  hickory; `oc exec`/`attach`/`port-forward` are marked as needing the
+  kubelet half (rustkube-node#56).
+- **docs: `docs/`** — the feature inventory (about twenty statuses wrong
+  since July) rewritten; metrics.md says which promised metrics are not
+  emitted, that histograms render as summaries and that `/metrics` is
+  unauthenticated (#90); storage.md corrects who deletes a released clone
+  (the kubelet) and records the `stormblock` class-name collision (#92);
+  certificates.md records that a mismatched key/cert pair is reloaded (#93);
+  releasing.md says stormcos builds from source and that no release since
+  v0.7.30 carries an RPM; terragrunt-deploy.md warns that a fresh provision
+  cannot install a current rustkube for that reason; research docs are
+  marked as research.
+- **docs: module doc comments** corrected where they described behaviour the
+  code does not have — controllers and the scheduler "watch" (they poll),
+  bound tokens (unbound, 24 h), SubjectAccessReview "deliberately not here"
+  (it is), old `rk-*` crate names, and others.
+- **docs: deploy examples** — the packaged env-file examples could not start
+  (no TLS; `http://` URLs); they now show the flags a working setup needs.
+- New issues for what the docs promised and the code does not do: #82–#93,
+  rustkube-node#56.
+
 ### 2026-09-24 (node ssh login)
 - **feat(bootstrap):** the ServiceAccount `kube-system/node-admin` and the
   ClusterRoleBinding `node-admin` → `cluster-admin` are created at boot,

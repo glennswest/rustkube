@@ -2,11 +2,13 @@
 #   nfpm package -f deploy/packaging/nfpm.yaml -p rpm -t dist/
 #   nfpm package -f deploy/packaging/nfpm.yaml -p deb -t dist/
 # Binaries carry EXACT upstream names so the package is a drop-in control
-# plane. Point BIN_DIR at the release build dir (default ./target/release).
+# plane. BIN_DIR must be set to the release build dir (there is no default;
+# build-release.sh writes to $CARGO_TARGET_DIR/<target>/release). Nothing in
+# CI or deploy/ runs this today; the last release with an RPM was v0.7.30.
 name: "kubernetes-rs"
 arch: "${PKG_ARCH}"        # amd64 / arm64 — set in env at build time
 platform: "linux"
-version: "${PKG_VERSION}"  # e.g. 0.3.0
+version: "${PKG_VERSION}"  # e.g. 0.14.1
 section: "admin"
 priority: "optional"
 maintainer: "Glenn West <glennswest@neuralcloudcomputing.com>"

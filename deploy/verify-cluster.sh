@@ -5,6 +5,11 @@
 #   ./verify-cluster.sh plaintext   # verify the HTTP control plane + 3-node fastetcd
 #   ./verify-cluster.sh tls         # enable --tls + x509 on master1, then test HTTPS
 #
+# STALE (2026-09-24, #80): the masters now serve TLS with --anonymous-auth=false
+# from cloud-init, and plain HTTP is refused without --insecure, so `plaintext`
+# cannot pass; `tls` overwrites KUBE_APISERVER_ARGS (and with it the real TLS
+# and SA flags). Use the curl checks in docs/terragrunt-deploy.md instead.
+#
 # Masters: master1/2/3.g8.lo = 192.168.8.51/.52/.53
 set -uo pipefail
 

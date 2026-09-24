@@ -20,8 +20,11 @@ side is made against what the other side actually does.
 
 ## The chain, end to end
 
-A pod asks for 20Gi under the default `stormblock` class
-(`volumeBindingMode: WaitForFirstConsumer`, `provisioner: csi.stormblock.io`):
+A pod asks for 20Gi under a CSI class — stormblock-csi ships one
+(`deploy/02-storageclass.yaml`, `provisioner: csi.stormblock.io`,
+`volumeBindingMode: WaitForFirstConsumer`). That manifest names its class
+`stormblock` too, which collides with the in-kubelet class below; see
+[the name collision](#the-name-stormblock-is-claimed-twice).
 
 1. **The claim is created.** `persistentvolume.rs` gives it the default class,
    adds the `kubernetes.io/pvc-protection` finalizer, and — because the class
@@ -33,6 +36,8 @@ A pod asks for 20Gi under the default `stormblock` class
    on published `CSIStorageCapacity` (the wander operator publishes it, and
    `CSIDriver.spec.storageCapacity: true` is what makes the check apply),
    picks one, and writes `volume.kubernetes.io/selected-node` on the claim.
+   (It does this for any unbound claim the pod uses, not only
+   `WaitForFirstConsumer` ones.)
    **The pod is not bound yet** — binding a pod before its volume exists is
    how a kubelet ends up waiting on a mount that cannot succeed.
 3. **The hand-off.** With a selected node present, `persistentvolume.rs` sets
@@ -54,9 +59,10 @@ A pod asks for 20Gi under the default `stormblock` class
    sidecar turns that into `ControllerPublishVolume`; the kubelet stages and
    publishes; the pod runs.
 7. **Teardown.** Deleting the pod deletes the `VolumeAttachment`, and the
-   sidecar's finalizer holds it until the driver has unpublished. Deleting the
-   claim is refused while a pod still mounts it (`pvc-protection`), then
-   releases the PV. With `reclaimPolicy: Delete` the *driver* deletes the
+   sidecar's finalizer holds it until the driver has unpublished. Deleting a
+   claim a pod still mounts is accepted but held by the `pvc-protection`
+   finalizer (with a `VolumeInUse` event) until the pod is gone; then the PV
+   is released. With `reclaimPolicy: Delete` the *driver* deletes the
    volume — rustkube only marks the PV `Released` and says whose job the rest
    is, because deleting the API object here would strand the clone on the
    array.
@@ -86,24 +92,47 @@ So the split for that one class is:
 | | |
 |---|---|
 | clone, attach, mount | the kubelet, at pod start |
-| the `PersistentVolume`, binding, phases | `controller-manager/src/stormblock.rs` (#71) |
+| the `PersistentVolume`, pre-bound to the claim | `controller-manager/src/stormblock.rs` (#71) |
+| binding and phases | `persistentvolume.rs`, as for any class |
+| delete the clone on a `Released`/`Delete` PV, then the PV | the kubelet on the node holding it (`reclaim_released`, rustkube-node#46) |
 | **the name that joins them** | `pvc-<ns>-<claim>`, derived on both sides |
 
-Both orders converge: the kubelet may provision before the controller writes
-the object or after it, and neither is an error.
+`stormblock.rs` writes the PV only once the scheduler has written
+`volume.kubernetes.io/selected-node` (the claim is `WaitForFirstConsumer`),
+with a hostname `nodeAffinity` for that node, `provisioner`
+`stormblock.storm.io/in-kubelet` and CSI driver `stormblock.storm.io`. Both
+orders converge: the kubelet may provision before the controller writes the
+object or after it, and neither is an error.
 
-**Deleting the backing clone is not done yet.** stormblock's management API is
-loopback, so only the node holding a volume can delete it; the control plane
-reports the leak on a `Released` PV rather than removing the object and hiding
-it (rustkube-node#46).
+This path relies on stormcos shipping `CSIDriver stormblock.storm.io` with
+`attachRequired: false` (`deploy/manifests/46-csidriver.yaml`).
+`attachdetach.rs` treats a driver with no CSIDriver object as needing
+attachment, so without that object every such PV would get a
+`VolumeAttachment` that nothing ever acts on. Until `stormblock.rs` writes the
+PV, `persistentvolume.rs` also sets the storage-provisioner annotation and an
+`ExternalProvisioning` event on the claim; both are transient.
+
+### The name `stormblock` is claimed twice
+
+`stormblock.rs` selects claims by the class **name** `stormblock` and never
+reads the class's provisioner. stormcos's manifest defines `stormblock` with
+provisioner `stormblock.storm.io` (this path); stormblock-csi's defines
+`stormblock` with `csi.stormblock.io` (the CSI path). With the CSI manifest
+applied, both would act on the same claims (#92).
+
+**Deleting the backing clone is the node's job.** stormblock's management API
+is loopback, so only the node holding a volume can delete it: the kubelet's
+`reclaim_released` deletes the clone and then the PV (rustkube-node#46). The
+control plane only reports that the node will.
 
 ## What rustkube deliberately does not do
 
 - **It provisions nothing but the `stormblock` class.** A class with
   `kubernetes.io/no-provisioner` binds statically against PVs an administrator
   created; everything else is handed to the driver named by the class. The
-  kubelet draws the same line, on the same class name, so the two cannot both
-  think they own a claim (rustkube-node#44).
+  kubelet draws the same line, on the same class name. That keeps the kubelet
+  and this controller from both owning a claim, but not this controller and a
+  CSI provisioner whose class is also named `stormblock` (#92).
 - **It never deletes a backing volume.** A `Delete` PV with no
   `pv.kubernetes.io/provisioned-by` gets a `VolumeFailedDelete` warning and
   stays `Released`, which is the truth, rather than a phase that implies
@@ -118,7 +147,7 @@ These are the places where a change on one side silently breaks the other:
 
 | if this changes | check |
 |---|---|
-| the provisioner name in `stormblock-csi/deploy/02-storageclass.yaml` | nothing in rustkube — it reads the class, never a constant |
+| the provisioner name in `stormblock-csi/deploy/02-storageclass.yaml` | nothing in `persistentvolume.rs`, which reads the class; but `stormblock.rs` hard-codes the class name `stormblock`, the provisioner `stormblock.storm.io/in-kubelet` and the driver `stormblock.storm.io` |
 | `attachRequired` on the CSIDriver | `attachdetach.rs` stops creating attachments; the driver must not wait for one |
 | `storageCapacity` on the CSIDriver | the scheduler's capacity filter switches on or off; with it on and nothing published, every node is refused |
 | the `CSIStorageCapacity` topology labels | `volumebinding.rs` matches them as a `LabelSelector` against node labels |

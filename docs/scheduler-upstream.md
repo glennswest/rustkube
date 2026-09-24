@@ -59,13 +59,18 @@ the kubelet will do.
 1. **`max(spec, actuated, allocated)` resource accounting.** In-place pod
    resize is GA-*locked* in v1.35, so accounting from `spec.requests` alone is
    wrong on a shrink — the pod still holds the larger amount until the kubelet
-   actuates. Also pod-level requests (beta-on in v1.34). *Our current
-   accounting reads spec only, so this is unfinished rather than absent.*
+   actuates. Also pod-level requests (beta-on in v1.34). *Done, approximately,
+   in v0.14.1 (#73): `filter::pod_requests` takes pod-level requests when set,
+   and the larger of spec and `status.containerStatuses[].resources` /
+   `allocatedResources` per container.*
 2. **NUMA taints + `TopologyAffinityError` backoff**, per above.
-3. **Topology spread rather than anti-affinity for spreading.** The argument is
+3. **Topology spread rather than anti-affinity for spreading.** *Done
+   (`spread.rs`).* The argument is
    not performance — at our size that is irrelevant — it is that an existing
    pod's *required* anti-affinity taxes every pod scheduled after it, forever.
-4. **VolumeBinding, including capacity scoring.** `StorageCapacityScoring`
+4. **VolumeBinding, including capacity scoring.** *VolumeBinding and a
+   `CSIStorageCapacity` filter exist (`volumebinding.rs`); capacity scoring
+   does not.* `StorageCapacityScoring`
    became default-on beta in v1.37, and this cluster is storage-heavy: it is
    the plugin most likely to matter here and least likely to be missed.
 5. **QueueingHints and the three-queue model, keyed on entities.** The feature

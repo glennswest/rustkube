@@ -29,8 +29,11 @@ until all pods on the node terminate or `--timeout` elapses.
   unhealthy/not-ready pods evictable only when `currentHealthy >= desiredHealthy`)
   or **AlwaysAllow** (unhealthy pods always evictable).
 
-**Implementation:** apiserver serves the Eviction subresource + PDB resource; a
-disruption controller keeps PDB status current; a drain helper cordons
+**Implementation** (built in v0.7.18: `eviction.rs`, `pdb.rs`; the drain
+helper is in rustkube-node. Not built: the 500 for a pod matched by several
+PDBs, `unhealthyPodEvictionPolicy`, the `disruptedPods` map): apiserver serves
+the Eviction subresource + PDB resource; a disruption controller keeps PDB
+status current; a drain helper cordons
 (`node.spec.unschedulable=true`, honored by the scheduler `NodeUnschedulable`
 filter) then evicts, skipping DaemonSet + static/mirror pods.
 
@@ -53,7 +56,9 @@ be named `cluster`**. It deploys a pod-placement controller + webhook.
 **Implication for us:** requires (a) kubelet labeling nodes `kubernetes.io/arch`
 (rustkube-node), (b) apiserver support for **PodSchedulingGates** + admission
 that injects the gate, (c) an operand/webhook that reads image manifest-lists,
-(d) the existing scheduler NodeAffinity plugin. No scheduler-core change.
+(d) the existing scheduler NodeAffinity plugin. No scheduler-core change —
+*except that this scheduler ignores `schedulingGates` today and binds a gated
+pod at once (#87); (d) exists (`filter.rs`), (b) and (c) do not (#8).*
 
 ## OpenShift node placement & descheduler (partly verified)
 

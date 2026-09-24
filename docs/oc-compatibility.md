@@ -6,9 +6,20 @@ completeness — the list is the specification, not a wish.
 
 Nothing in it is implemented on the strength of being listed. Where a verb is
 known to be absent, say so against the verb rather than leaving a reader to
-discover it: today `oc logs` works (#54, 2026-08-28) while `oc exec`, `attach`,
-`rsh`, `cp`, `rsync`, `port-forward` and `debug` share its proxy plumbing and
-none of them are built.
+discover it.
+
+State on 2026-09-24 (#80), from the code:
+- works: `oc logs` (#54); `oc get route` (stored only, nothing routes, #70);
+  `oc policy who-can`, `oc auth can-i --list`; `oc events`;
+  `oc adm certificate approve` (CSR `/approval`).
+- proxied by the apiserver but not answered by the kubelet: `oc exec`,
+  `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` (#42 here,
+  rustkube-node#56 there).
+- not served: `oc scale` (no `/scale`, #86); `oc adm top` (no
+  `metrics.k8s.io`, #83); `oc adm node-logs` (no `nodes/{name}/proxy`);
+  `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
+  `user.openshift.io` or SelfSubjectReview); `oc get project`/`new-project`,
+  `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
 
 # `oc` Command Reference & StromCOS Verification Runbook

@@ -2,49 +2,63 @@
 
 ## Project Overview
 
-RustKube is a complete, K8s API-compatible container orchestrator in Rust. Wire-compatible with kubectl, helm, and existing YAML manifests. Target scale: 100–1000+ nodes.
+RustKube is a Kubernetes **control plane** in Rust — `kube-apiserver`,
+`kube-controller-manager`, `kube-scheduler` — wire-compatible with kubectl,
+oc, helm and client-go. Target scale: 100–1000+ nodes (largest run: a
+synthetic 250 nodes, #66). **README.md describes what the code does; read it
+first.** It was rewritten from the code on 2026-09-24 (#80) — keep it that way:
+a behaviour change updates the README in the same commit.
 
-**Key architectural decision:** RustKube uses the **kube architecture** — the API
-server talks to an *external* datastore over the etcd v3 gRPC wire protocol, exactly
-like upstream `kube-apiserver` → etcd. The datastore is **fastetcd** (`../fastetcd`),
-a Rust, wire-compatible etcd v3 replacement.
+**Key architectural decision:** the **kube architecture** — the API server
+talks to an *external* datastore over the etcd v3 gRPC wire protocol, exactly
+like upstream `kube-apiserver` → etcd. The datastore is **fastetcd**
+(`../fastetcd`), a Rust, wire-compatible etcd v3 replacement.
 
-- `storage::EtcdStore` → `KvStore` impl over the `etcd-client` crate (talks to fastetcd)
-- Endpoints are supplied via `--etcd-servers` (required); optional mutual TLS via
+- `storage::EtcdStore` → `KvStore` impl over the `etcd-client` crate
+- Endpoints via `--etcd-servers` (required); optional mutual TLS via
   `--etcd-cacert` / `--etcd-cert` / `--etcd-key`
-- **No embedded store and no stormforce dependency** — the earlier `stormforce-kv`
-  embedded store was removed in favor of external fastetcd.
+- No embedded store and no stormforce dependency.
+
+Node level (kubelet) → `rustkube-node`; kube-proxy is replaced by Cilium.
+Cluster DNS is stormcoredns (from a manifest); rustkube knows nothing of DNS.
+In stormcos each binary is a stormd golden built from source at a pinned
+commit (README, *How it ships*).
 
 ## Build & Test
 
+On the build box only, after pushing — never on a workstation, never as root:
+
 ```bash
-cargo check           # type-check all crates
-cargo build           # debug build
-cargo test            # run all tests
-cargo clippy          # lint
+sc-build                              # cargo build && cargo test at the pushed commit
+sc-build 'cargo test -p apiserver'    # any command
 ```
+
+dev.g8.lo's `/tmp` is not writable by the build user: prefix commands with
+`mkdir -p $HOME/tmp && export TMPDIR=$HOME/tmp &&` (etcd-client's build
+script needs a temp dir). `protoc` is required (`pkg/apimachinery/build.rs`).
 
 ## Workspace Structure
 
-Upstream-shaped: thin `cmd/<component>` binaries over `pkg/<lib>` libraries.
-This repo is the control plane only.
-
 ```
 cmd/
-  kube-apiserver/            binary (main.rs) → apiserver
+  kube-apiserver/            binary → apiserver
   kube-controller-manager/   binary → controller-manager
   kube-scheduler/            binary → scheduler
 pkg/
-  apimachinery/     Shared types (k8s-openapi re-exports), errors, traits, RBAC, cert utils
-  storage/          Datastore client — etcd v3 gRPC (etcd-client) to external fastetcd
-  apiserver/        K8s REST API (axum), auth, admission, watch cache, API groups (lib)
-  scheduler/        Pod scheduling (filter, score, bind)
-  controller-manager/ Built-in controllers (Deployment, ReplicaSet, Service, Namespace, etc.)
-  cloud/            Cloud controller manager framework
+  apimachinery/       errors, KvStore trait, protobuf codec, metrics, quantities, selectors, cron, startup waits
+  storage/            etcd v3 client (etcd-client) — keys are opaque here
+  apiserver/          REST API (axum), auth, RBAC, built-in admission, watch cache, CRDs
+  scheduler/          fixed filter/score functions, volume binding, VMI placement
+  controller-manager/ the built-in controllers (poll + list, no informers)
+  cloud/              EMPTY — a doc comment, no code, nothing depends on it
 ```
 
-Node level (kubelet, kube-proxy, cni) → separate repo `rustkube-node`.
-DNS is external (microdns). Datastore is external (fastetcd).
+Objects are `serde_json::Value` throughout; no k8s-openapi types are used.
+
+**Built but not wired** — modules whose docs used to read as features:
+`apiserver::admission` (webhooks, #82), `apiserver::aggregation` (#83),
+`scheduler::preemption` (#84), `scheduler::plugins` (unused traits),
+`apimachinery::{rbac, meta}` (unused types/helpers).
 
 ## Version Locations
 
@@ -54,160 +68,48 @@ Cargo.toml → workspace.package.version
 
 ## Key Dependencies
 
-- k8s-openapi 0.24 (types); reports K8s 1.36 API posture (#37); kube-rs 0.99
 - axum 0.8, tower 0.5, hyper 1.x
-- rustls 0.23 (no OpenSSL — static musl binaries)
-- tonic 0.12, prost 0.13 (CRI gRPC)
-- hickory-dns 0.25 (cluster DNS)
-- etcd-client 0.14 (external datastore client → fastetcd, etcd v3 wire protocol)
+- rustls 0.23 + ring (no OpenSSL — static musl binaries)
+- etcd-client 0.14 (→ fastetcd); tonic 0.12 only for its error codes
+- prost 0.13 + prost-reflect (client-go protobuf wire codec, from vendored `.proto`)
+- jsonwebtoken 9 (ServiceAccount tokens), rcgen + x509-parser (certs)
+- metrics + metrics-exporter-prometheus 0.16
+- Reports the K8s 1.36 API posture (#37)
+
+`[workspace.dependencies]` still lists crates nothing uses — kube-rs is not
+among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
+and others are left from the 10-crate layout; k8s-openapi is declared and never
+imported.
 
 ## Current Version: `v0.14.1`
 
 ## Work Plan
 
-### Phase 0: Repository Setup (COMPLETE)
-- [x] Git init, GitHub repo, workspace scaffold
-- [x] All 10 crates compiling
-- [x] Stormforce integration (kv, raft, vault, registry, security)
+### History (condensed)
 
-### Phase 1: Minimal Viable Cluster (COMPLETE)
+Phases 0–3 (v0.1.0–v0.3.0, March 2026) scaffolded a 10-crate orchestrator:
+store, apiserver, scheduler, controllers, kubelet, proxy, DNS, CNI, cloud. The
+kubelet/proxy/CNI moved to rustkube-node, DNS went external, the embedded
+stormforce store was replaced by fastetcd, and the crates were renamed to the
+upstream-shaped `cmd/` + `pkg/` layout. The Phase 0–3 checklists described
+that repo and were removed on 2026-09-24 (#80): several of their items were
+never wired (webhooks, aggregation, preemption) or never written (the cloud
+provider). What exists now is in the README; the release history below says
+when each piece landed.
 
-**rk-core — Shared types and utilities**
-- [x] Error types (NotFound, AlreadyExists, Conflict, Gone, Unauthorized, Forbidden, Invalid)
-- [x] KvStore trait definition (get, put, delete, list, watch, lease, compact)
-- [x] WatchEvent types (Added, Modified, Deleted, Bookmark)
-- [x] Metadata helpers (resourceVersion ↔ revision)
-- [x] RBAC types (AuthorizationRequest, AuthorizationDecision)
-- [x] Certificate utilities (rcgen TLS cert generation)
-- [x] VERSION constant
-
-**rk-store — KvStore implementation (stormforce-kv wrapper)**
-- [x] StormforceStore implementing KvStore trait
-- [x] Get, put, delete with revision tracking
-- [x] List with prefix scan and pagination (continue tokens)
-- [x] Watch with historical replay + live streaming
-- [x] Compare-and-swap transactions (optimistic locking)
-- [x] Lease management (grant, keepalive, revoke)
-- [x] Revision compaction
-- [x] Single-node in-process mode for testing
-- [x] 3 integration tests (CRUD, CAS, lease)
-
-**rk-apiserver — K8s REST API server (axum 0.8)**
-- [x] Core v1 resources: namespaces, nodes, pods, services, endpoints, configmaps, secrets, serviceaccounts, events, PVs, PVCs
-- [x] Apps v1 resources: deployments, replicasets, statefulsets, daemonsets
-- [x] Batch v1 resources: jobs, cronjobs
-- [x] Coordination v1: leases
-- [x] RBAC v1: clusterroles, clusterrolebindings, roles, rolebindings
-- [x] apiextensions.k8s.io/v1: customresourcedefinitions (CRD support)
-- [x] RustKube v1alpha1: podmigrations
-- [x] Generic CRUD handlers (GET, LIST, POST, PUT, DELETE) for cluster + namespace scoped
-- [x] Watch streaming (chunked JSON, WatchEvent protocol)
-- [x] Label selectors (=, !=, in, notin, exists, !key)
-- [x] Field selectors (metadata.name, spec.nodeName, status.phase, etc.)
-- [x] Pagination (limit, continue tokens)
-- [x] API discovery (/api, /apis, /version, /healthz, /livez, /readyz, per-group resource lists)
-- [x] Dynamic API discovery (CRD groups included in /apis)
-- [x] JWT bearer token authentication (HMAC-SHA256)
-- [x] RBAC authorization engine (ClusterRole/RoleBindings, rule matching, wildcards)
-- [x] Bootstrap RBAC (cluster-admin, system:masters, dev-mode anonymous admin)
-- [x] Bootstrap namespaces (default, kube-system, kube-public, kube-node-lease)
-- [x] CRD registry (dynamic resource registration, catch-all routes)
-- [x] K8s Status error responses (404, 409, 422, 500, 410, 401, 403)
-- [x] ResourceVersion tracking on all mutations
-- [x] 6 selector unit tests
-
-**rk-scheduler — Pod scheduling**
-- [x] Filter plugins: NodeReady, Unschedulable, TaintToleration, NodeSelector, ResourceFit
-- [x] Score plugins: LeastRequested, ImageLocality, NodeAffinity
-- [x] Scheduling loop (watch unscheduled pods, filter, score, bind)
-- [x] CPU/memory resource parsing (millicores, Ki/Mi/Gi)
-- [x] Plugin trait framework for extensibility
-- [x] 5 unit tests
-
-**rk-controllers — 10 built-in controllers**
-- [x] Deployment controller (ReplicaSet management, rolling updates, template hashing)
-- [x] ReplicaSet controller (pod scaling, owner references, LIFO deletion)
-- [x] Service controller (Endpoints from selector-matched pods)
-- [x] Namespace controller (default ServiceAccount creation)
-- [x] Node lifecycle controller (Lease heartbeat monitoring, NotReady marking)
-- [x] Migration controller (PodMigration CRD state machine)
-- [x] StatefulSet controller (ordered creation/deletion by ordinal, Ready gating)
-- [x] DaemonSet controller (one pod per Ready node, bypasses scheduler)
-- [x] Job controller (completions, parallelism, backoff limits, active deadlines)
-- [x] CronJob controller (5-field cron parser, Allow/Forbid/Replace concurrency, history limits)
-- [x] Controller manager (JoinSet-based concurrent runner)
-- [x] ApiClient (HTTP client for apiserver communication)
-- [x] 4 cron parser unit tests
-
-**rk-kubelet — Node agent**
-- [x] CRI trait definitions (RuntimeService, ImageService) matching K8s CRI v1
-- [x] Pod lifecycle state machine (Pending → Running → Succeeded/Failed)
-- [x] Health probes: HTTP GET, TCP socket, exec, gRPC
-- [x] Node registration and Lease heartbeat reporting
-- [x] System resource reporting (CPU, memory, conditions)
-- [x] Native container runtime (youki libcontainer, OCI spec builder)
-- [x] VM runtime (cloud-hypervisor, QEMU, Firecracker, auto-detection)
-- [x] CRI client (bridges to containerd/CRI-O via crictl)
-- [x] CRIU checkpoint/restore for container migration
-- [x] VM live migration (CH REST API, QEMU QMP, Firecracker snapshots)
-- [x] Migration annotation handling (checkpoint, prepare-target, live-migrate, restore)
-- [x] Node drain helper (PodMigration for all non-DaemonSet pods)
-- [x] Cross-platform stubs for macOS development
-
-**rk-proxy — Service proxy**
-- [x] iptables DNAT for ClusterIP + NodePort
-- [x] Service map (DashMap-based, session affinity)
-- [x] Probabilistic load balancing (iptables statistic module)
-- [x] IP masquerade rules
-- [x] iptables-restore for atomic updates
-- [x] Endpoints syncer (watches Services + Endpoints)
-- [x] Cross-platform stubs for macOS development
-
-**rk-dns — Cluster DNS (hickory-dns 0.25)**
-- [x] A records for ClusterIP services
-- [x] A records for headless services (pod IPs)
-- [x] SRV records for named service ports
-- [x] PTR records for reverse DNS
-- [x] Pod DNS (`<ip-dashed>.namespace.pod.cluster.local`)
-- [x] Hostname-based DNS for stateful pods
-- [x] UDP + TCP listeners
-- [x] Background sync from API server
-- [x] 2 unit tests
-
-**rk-cni — CNI plugins**
-- [x] CNI v1.0 spec types (config, result, error)
-- [x] Host-local IPAM with disk-persisted allocations
-- [x] Bridge plugin (veth pair, netns, IP assignment, routing)
-- [x] VXLAN overlay (VTEP creation, FDB entries, peer routes)
-- [x] IP masquerading
-- [x] Cross-platform stubs for macOS development
-- [x] 2 IPAM unit tests
-
-**rk-cloud — Cloud controller manager**
-- [x] CloudProvider trait (node addresses, zones, load balancers, routes)
-- [x] NoopCloudProvider for bare-metal/dev
-- [x] CloudControllerManager with reconciliation loops
-
-### Phase 2: Production Features (COMPLETE)
-- [x] Status subresource endpoints (GET/PUT/PATCH for all resource types)
-- [x] TLS listener wiring — rustls serving, x509 client auth, and (v0.8.0) a
-      swappable cert resolver so a renewed certificate is picked up without a
-      restart (#20)
-- [x] ServiceAccount token generation (`/serviceaccounts/{name}/token`, RS256,
-      stable signing keypair across replicas — v0.7.9)
-- [x] Admission webhooks (mutating + validating chains, JSON patch, rule matching)
-- [x] CSI volume support (Identity, Node, Controller traits, Unix socket client)
-- [x] NetworkPolicy enforcement (CIDR matching, iptables rule gen, ingress/egress eval)
-
-### Phase 3: Advanced (COMPLETE)
-- [x] eBPF service proxy (BPF map types, service dispatch stubs, feature-gated)
-- [x] eBPF CNI encap/decap (VXLAN overlay, peer management, feature-gated)
-- [x] DNS upstream forwarding (round-robin, UDP, configurable timeout)
-- [x] HPA controller (15s interval, velocity-limited scaling, stabilization window)
-- [x] Gateway API (GatewayClass, Gateway, HTTPRoute controllers)
-- [x] Full scheduler framework (plugins, preemption with priority-based eviction)
-- [x] API aggregation layer (APIService registry, request proxying)
-- [x] Cloud provider controllers (CloudProvider trait, noop provider, controller manager)
+### Found by the docs pass (#80), open
+- [ ] Admission webhooks are never called (#82)
+- [ ] Aggregation proxies nothing (#83)
+- [ ] Scheduler never preempts (#84); ignores `schedulingGates` (#87)
+- [ ] PriorityClass / TokenReview missing from `/apis` (#85)
+- [ ] No `/scale` subresource; `kubectl scale` fails (#86)
+- [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88)
+- [ ] HPA placeholder: no metrics, never scales down (#89)
+- [ ] Metrics: reconcile metrics never emitted, no histogram buckets,
+      unauthenticated apiserver `/metrics` (#90)
+- [ ] Gateway controller: hardcoded address, overwrites foreign classes (#91)
+- [ ] Serving-cert reload applies a mismatched key/cert pair (#93)
+- [ ] `/status` PUT ignores the body's `resourceVersion` (#78)
 
 ### Storage (v0.8.0)
 - [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
@@ -218,8 +120,12 @@ Cargo.toml → workspace.package.version
 - [ ] Snapshots — the external-snapshotter CRDs and controller (#64)
 - [x] `ReadWriteOncePod` enforcement — scheduler + admission (#65); the
       kubelet's mount refusal is rustkube-node#42
+- [x] In-kubelet `stormblock` class: `stormblock.rs` writes the PV once the
+      scheduler picks a node (#71, v0.13.0–v0.14.1)
+- [ ] `stormblock.rs` matches the class by name, which stormblock-csi's
+      class also uses (#92)
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
-  sbregistry and stormblock-csi. **rustkube provisions nothing itself.**
+  sbregistry and stormblock-csi. rustkube creates no volume bytes itself.
 
 ### Custom resource keyspace (#76) — COMPLETE 2026-09-22
 - [x] #74 verified on dev (apply-created CRD serves its CRs without restart); closed
@@ -245,8 +151,9 @@ Cargo.toml → workspace.package.version
 - [ ] 1000+ node testing (#66) — the controllers list everything every tick,
       which is what will break first
 - [ ] K8s conformance test suite (#67)
-- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — one
-      question: CI builds x86_64 musl only, so nothing knows if ARM64 compiles
+- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — CI
+      builds x86_64 musl only; `build-release.sh` can target aarch64 via
+      `cross`, and no such build has been recorded
 
 ### `oc` compatibility — the surface that drives completeness
 
@@ -259,30 +166,25 @@ Work it as a checklist against a live cluster rather than by reading: `oc
 <verb> --help` on the target is authoritative, and the runbook's Part II is a
 verification pass that should collapse into one script with an exit code.
 
-Known state on 2026-08-28:
+Known state on 2026-09-24:
 
 - [x] `oc logs` — apiserver `pods/log` proxying to the kubelet's
       `/containerLogs`, with TokenReview so anything can authenticate to a
       kubelet at all (#54). `container`, `tailLines`, `previous` work;
       `timestamps`/`sinceSeconds`/`sinceTime` are inert because stormpump logs
-      are raw by design. `follow` streams end to end as of 2026-09-09: the
-      apiserver stopped reading the body to a String (2026-09-08) and the
-      kubelet stopped answering with a snapshot and closing (rustkube-node#34).
+      are raw by design. `follow` streams end to end (rustkube-node#34).
       `limitBytes` is honored on the node. A named container may be an init or
-      ephemeral one — a failed init container's log, and a sidecar's, were
-      refused as "not valid for pod" until v0.8.1 (#55).
-- [x] `oc exec`, `attach`, `port-forward` — and therefore `rsh`, `cp`, `rsync`
-      and `debug`, which are those three plus argument handling (#42). Proxied
-      to the kubelet as a **transparent connection upgrade**: nothing parses
-      SPDY or WebSocket frames, the client's headers go up verbatim and the
-      kubelet's 101 comes back verbatim, so both protocols work from one
-      implementation. The one translation is the query — `stdin/stdout/stderr`
-      here are `input/output/error` on the kubelet.
-      Cilium's CLI links client-go's `FallbackExecutor` (WebSocket first, SPDY
-      second); both paths are tested.
-- [ ] `oc adm` — largely unexamined (#69). Most of it is object edits that
-      should already work; the known holes are `SubjectAccessReview` (the
-      privileged sibling of #59), CSR `/approval`, and `metrics.k8s.io`.
+      ephemeral one (#55).
+- [ ] `oc exec`, `attach`, `port-forward` — and therefore `rsh`, `cp`, `rsync`
+      and `debug`. **The apiserver half is done** (#42): proxied to the kubelet
+      as a transparent connection upgrade, so SPDY and WebSocket both pass
+      through; the query's `stdin/stdout/stderr` become the kubelet's
+      `input/output/error`. **The kubelet half does not exist**: rustkube-node
+      serves no `/exec`, `/attach` or `/portForward` (rustkube-node#56).
+- [ ] `oc adm` — largely unexamined (#69). `SubjectAccessReview` (who-can) and
+      CSR `/approval` are served; `oc adm top` needs `metrics.k8s.io`, which
+      needs aggregation (#83); `node-logs` needs `nodes/{name}/proxy`.
+- [ ] `oc scale` — no `/scale` (#86).
 - [ ] Routes, DeploymentConfig, ImageStream, BuildConfig, SCC — the
       genuinely OpenShift-only half. Whether these are in scope at all is a
       decision nobody has made (#70), and `route.openshift.io/v1` is already

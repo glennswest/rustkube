@@ -12,5 +12,5 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 echo "kubernetes-rs installed. Next:"
-echo "  1) set ETCD_SERVERS in /etc/kubernetes/kube-apiserver (your fastetcd)"
+echo "  1) set ETCD_SERVERS and the TLS flags in /etc/kubernetes/kube-apiserver"
 echo "  2) systemctl enable --now kube-apiserver kube-controller-manager kube-scheduler"

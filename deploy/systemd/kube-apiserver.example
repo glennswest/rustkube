@@ -4,7 +4,16 @@
 # Dedicated fastetcd endpoint(s). Resolves --etcd-servers via clap env.
 ETCD_SERVERS=http://127.0.0.1:2379
 
-# Extra flags (bind address, ports, service CIDR, TLS, ...).
+# Extra flags. TLS is REQUIRED: without --tls-cert-file/--tls-private-key-file
+# (or --tls for a throwaway self-signed cert, or --insecure) the apiserver
+# refuses to start. A real cluster also sets the ServiceAccount keypair. e.g.:
+#   --tls-cert-file /etc/kubernetes/pki/apiserver.crt
+#   --tls-private-key-file /etc/kubernetes/pki/apiserver.key
+#   --client-ca-file /etc/kubernetes/pki/ca.crt
+#   --service-account-signing-key-file /etc/kubernetes/pki/sa.key
+#   --service-account-key-file /etc/kubernetes/pki/sa.pub
+#   --anonymous-auth=false
+# Every flag, with its default, is in the README.
 KUBE_APISERVER_ARGS=
 
 # Mutual TLS to a hardened fastetcd (uncomment all three to enable):

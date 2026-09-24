@@ -7,7 +7,8 @@
 | cluster CA | `deploy/gen-pki.sh`, 10 years | manual, and a rollover — see below |
 | apiserver serving cert | `gen-pki.sh` per master, SANs per node | `deploy/renew-certs.sh`, **no restart** |
 | controller-manager / scheduler / admin client certs | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh` + restart |
-| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager approves and signs | the kubelet re-requests |
+| kubelet bootstrap client cert (`CN=kubelet-bootstrap`, `O=system:bootstrappers`) | `gen-pki.sh` | `deploy/renew-certs.sh` |
+| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves the `kubernetes.io/kube-apiserver-client-kubelet` signer, and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file` | the kubelet re-requests |
 | service-account signing key | `gen-pki.sh` | not rotatable yet (see below) |
 
 ## The apiserver reloads its serving certificate
@@ -23,10 +24,17 @@ their certificate once at startup, so a renewed cert on disk did nothing until
 the process restarted — which meant the only way to rotate a ten-year PKI was
 to redeploy the control plane, which is why nobody would.
 
-A cert file that is unreadable or half-written is **kept, not applied**: the
-running certificate is known good, and replacing it with a parse failure would
-take TLS down at exactly the moment someone is touching the PKI. The failure is
-logged and the old certificate keeps serving.
+A cert file that cannot be read or does not parse is **kept, not applied**:
+the running certificate is known good, and replacing it with a parse failure
+would take TLS down at exactly the moment someone is touching the PKI. The
+failure is logged and the old certificate keeps serving.
+
+What is **not** checked is that the new key matches the new certificate. A
+pair caught between the two writes, or a key written without its
+certificate, is applied, and handshakes fail until the next tick puts a
+matching pair in place (#93). Only the serving pair is watched: the client CA
+(`--client-ca-file`) is read once at startup, and a `--tls` certificate is
+never reloaded.
 
 ## Renewing
 
@@ -42,8 +50,12 @@ It preserves what the old certificate said: the **subject** on a client cert
 (the subject *is* the identity RBAC binds to, so re-deriving it by hand is how a
 renewal quietly locks a component out) and the **SANs** on a serving cert (a
 renewal that drops a SAN is a certificate that no longer answers for the name a
-client dialled). Key and certificate are swapped together, because a moment
-with the new key and the old certificate is a moment where nothing works.
+client dialled). It writes the key and then the certificate, with two
+moves, so for a moment the new key sits beside the old certificate; and if
+signing fails after the key has been moved, the pair on disk no longer
+matches although the script reports the old certificate untouched (#93).
+`DAYS` (default 3650) sets the renewed lifetime, `PKI` (default
+`/etc/kubernetes/pki`) where the files are, `KUBE_SVC_IP` the Service IP SAN.
 
 The apiserver picks up its new serving cert within 30 seconds. The controller
 manager and the scheduler build their TLS identity once at startup and need a
@@ -54,7 +66,8 @@ missing.
 ## Knowing before it matters
 
 `apiserver_certificate_expiration_seconds{name="serving"|"client-ca"}` is the
-`notAfter` as a unix timestamp, and is refreshed when a cert is reloaded. The
+`notAfter` as a unix timestamp. `serving` is refreshed when the cert is
+reloaded; `client-ca` is set once at startup. The
 alerting rule:
 
 ```
@@ -71,10 +84,14 @@ in anger.
 
 ## Tokens signed outside the apiserver
 
-The apiserver verifies a bearer token by its RS256 signature against
-`--service-account-key-file`, and nothing else — no ServiceAccount or Secret is
-looked up. Anything holding the matching `--service-account-signing-key-file`
-can therefore mint a token offline. Two things do:
+With both `--service-account-signing-key-file` and
+`--service-account-key-file` set, the apiserver verifies a bearer token by its
+RS256 signature against the public key, and nothing else — no ServiceAccount
+or Secret is looked up. (With either missing, it falls back to an ephemeral
+HS256 key and accepts only tokens it minted itself; a verify-only replica with
+just the public key is not possible.) Anything holding the matching
+`--service-account-signing-key-file` can therefore mint a token offline. Two
+things do:
 
 - `deploy/gen-node-token.sh` — a kubelet's `system:node:<name>` token.
 - stormcert, at a node's first boot — the `kube-system/node-admin` token for

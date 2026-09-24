@@ -13,6 +13,8 @@
 #   admin.crt/.key                      CN=admin,   O=system:masters (kubectl)
 #   controller-manager.crt/.key         CN=system:kube-controller-manager
 #   scheduler.crt/.key                  CN=system:kube-scheduler
+#   bootstrap.crt/.key                  CN=kubelet-bootstrap, O=system:bootstrappers
+#   tokens/<node>                       a kubelet bearer token per node (gen-node-token.sh)
 #
 set -euo pipefail
 

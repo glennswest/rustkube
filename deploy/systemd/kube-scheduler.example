@@ -1,3 +1,8 @@
 # /etc/kubernetes/kube-scheduler — EnvironmentFile for the service.
-APISERVER_URL=http://127.0.0.1:6443
+# The apiserver serves HTTPS only (unless started with --insecure), so this
+# needs an https:// URL and a credential. e.g.:
+#   APISERVER_URL=https://127.0.0.1:6443
+#   KUBE_SCHEDULER_ARGS=--certificate-authority /etc/kubernetes/pki/ca.crt --client-certificate /etc/kubernetes/pki/scheduler.crt --client-key /etc/kubernetes/pki/scheduler.key
+# Every flag, with its default, is in the README.
+APISERVER_URL=https://127.0.0.1:6443
 KUBE_SCHEDULER_ARGS=

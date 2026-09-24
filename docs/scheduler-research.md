@@ -1,5 +1,10 @@
 # kube-scheduler — upstream & OpenShift semantics (research for #3)
 
+> Research on **upstream**, not a description of this scheduler — for what
+> this one does, see the README. It targets 1.32; where it disagrees with
+> [scheduler-upstream.md](scheduler-upstream.md) (e.g. the EBS/GCE/Azure
+> volume-limit plugins, deleted in v1.32), the newer document wins.
+
 Implementation-oriented spec for the Rust `kube-scheduler` replacement, from a
 deep, adversarially-verified research pass (25/25 claims confirmed 3-0 against
 primary sources: kubernetes.io, version-pinned kubernetes/kubernetes source,

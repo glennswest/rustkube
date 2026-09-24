@@ -5,6 +5,13 @@
 mkube retires. PXE/BMH/DNS-orchestration and the other auxiliaries become
 separate containers (Rust, rustkube-API clients).
 
+> **Status, 2026-09-24 (#80):** a plan as of 2026-08-27, kept as written.
+> Since then: rustkube is v0.14.1; the control plane talks to neither
+> stormblock nor sbregistry directly — rustkube-node does, and
+> `stormblock.rs` here only writes PV objects for what the kubelet
+> provisions; cluster DNS in stormcos is stormcoredns (microdns is the site
+> resolver it forwards to); ARM64 is still unverified (#68).
+
 ## What already exists — the gap is smaller than it looks
 
 - **Control plane: done.** rustkube v0.7.35, phases 0–3 complete, proven

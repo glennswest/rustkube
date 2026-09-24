@@ -4,7 +4,8 @@
 # two — the manual equivalent of OpenShift's cluster-etcd-operator member dance:
 #
 #   1. etcd member remove <target>      (from a healthy node)
-#   2. etcd member add    <target>      (register the fresh member as a learner)
+#   2. etcd member add    <target>      (register the fresh member — a voter:
+#                                        `member add` is called without --learner)
 #   3. terragrunt -replace <target> VM  (recreate ONLY that VM, booting fastetcd
 #                                        with ETCD_INITIAL_CLUSTER_STATE=existing
 #                                        so it rejoins + resyncs from the leader)
@@ -13,7 +14,7 @@
 # etcdctl against fastetcd's etcd v3 Cluster API.
 #
 #   Run from deploy/terragrunt/masters, with PROXMOX_API_TOKEN set and etcdctl
-#   on PATH:   ./replace-master.sh master1
+#   on PATH:   ../../replace-master.sh master1
 #
 set -euo pipefail
 
@@ -47,7 +48,7 @@ if [ -n "$ID" ]; then
   etcdctl $EP member remove "$ID"
 fi
 
-# 2. Add the target back as a fresh member (learner → promoted by fastetcd).
+# 2. Add the target back as a fresh (voting) member.
 echo ">> member add $M peer=http://$TARGET_IP:2380"
 etcdctl $EP member add "$M" --peer-urls="http://$TARGET_IP:2380" >/dev/null
 
