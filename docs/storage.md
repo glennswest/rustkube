@@ -67,25 +67,26 @@ A pod asks for 20Gi under a CSI class — stormblock-csi ships one
    is, because deleting the API object here would strand the clone on the
    array.
 
-## The `stormblock` class is the exception, and it is deliberate
+## The `stormblock` class: the built-in PVC driver
 
-Everything above describes a **foreign** class, and it is still exactly right
-for one. The `stormblock` class does not work that way, and pretending
-otherwise is worse than the special case.
+Everything above describes a **foreign** class — a third-party CSI driver —
+and it is still exactly right for one. Our own storage is not a foreign
+class: stormcos has a **built-in PVC driver**, and the `stormblock` class is
+it.
 
-On this cluster a PVC of that class is served by the kubelet directly
+The driver is built on stormblock and sbregistry's **blanks**, for speed: a
+blank is a sealed, pre-formatted volume of a size class (`pvc-<class>`), so
+provisioning a claim is a copy-on-write clone of one — no mkfs, no copying, no
+round trip through a provisioner. The kubelet does it at pod start
 (`rustkube-node`, `pkg/kubelet/src/storage.rs`): the claim is rounded up to a
-size class, the sealed `pvc-<class>` blank is CoW-cloned through stormblock's
-own API, attached over ublk, and handed to stormpump with `fstype: ext4` for
-the container to mount in its own namespace. No CSI driver, no sidecars, and
-no host-side mount to propagate.
+size class, the blank is CoW-cloned through stormblock's own API, attached over
+ublk, and handed to stormpump with `fstype: ext4` for the container to mount
+in its own namespace. No CSI driver, no sidecars, and no host-side mount to
+propagate — so none of the CSI path's overhead.
 
-That is a choice rather than an omission. `external-provisioner` exists
-because upstream Kubernetes refuses to know about any particular storage
-vendor; rustkube is our control plane and that constraint does not apply.
-Adopting it would mean shipping a Go sidecar as a golden in every stormcos
-image, and pulling anything at join time is the first entry under what would
-destroy the cluster-formation budget (`stormcos/docs/CLUSTER.md`).
+CSI support (the rest of this document, the kubelet's CSI node client
+rustkube-node#52, stormpump#35's mount propagation) exists only for
+third-party drivers. It is never on the path of a `stormblock` claim.
 
 So the split for that one class is:
 

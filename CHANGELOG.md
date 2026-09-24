@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### 2026-09-24
+- **docs:** storage.md: the `stormblock` class is stormcos's built-in PVC driver, built on stormblock/sbregistry blanks for speed (a claim is a CoW clone of a sealed, pre-formatted blank); CSI exists only for third-party drivers — not "an exception" to the CSI path
+
 <!-- New unreleased changes go here -->
 
 ### 2026-09-24 (docs from the code, #80)
