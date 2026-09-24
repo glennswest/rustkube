@@ -2,7 +2,8 @@
 //!
 //! The exporter itself is [`apimachinery::metrics`], shared with the scheduler
 //! and the apiserver — this file is what is specific to the controller
-//! manager, which is one gauge and the port number.
+//! manager: the leader gauge, the per-controller reconcile metrics (declared,
+//! but `record_reconcile` has no callers yet, #90), and the port number.
 
 /// Install the recorder and serve `/metrics` + `/healthz` on `port`.
 pub fn spawn(port: u16) -> Option<metrics_exporter_prometheus::PrometheusHandle> {

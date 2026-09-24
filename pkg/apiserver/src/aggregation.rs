@@ -1,7 +1,9 @@
 //! API aggregation layer.
 //!
-//! Allows external API servers to register and serve their APIs
-//! through the main API server via APIService resources.
+//! An APIService registry and a proxy helper, for serving external API
+//! servers' groups through this one. **Not wired in** (#83): APIService
+//! objects are stored, but nothing loads this registry and no request is
+//! proxied.
 
 use serde_json::Value;
 use std::collections::HashMap;

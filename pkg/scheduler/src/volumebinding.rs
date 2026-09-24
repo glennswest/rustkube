@@ -16,9 +16,11 @@
 //! is Bound the pod is *not* bound — binding it first is how a pod ends up
 //! running on a node whose volume creation then fails.
 //!
-//! `stormblock-csi`'s default class is `WaitForFirstConsumer` and its operator
-//! publishes `CSIStorageCapacity`, so both paths are load-bearing here rather
-//! than theoretical.
+//! Both paths are load-bearing here rather than theoretical: the in-kubelet
+//! `stormblock` class is `WaitForFirstConsumer` and its PV is written only once
+//! `selected-node` is set, and `stormblock-csi`'s class is too, with its
+//! operator publishing `CSIStorageCapacity`. `selected-node` is written for
+//! any unbound claim, not only `WaitForFirstConsumer` ones.
 
 use serde_json::Value;
 use std::collections::HashMap;

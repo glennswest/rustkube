@@ -1,15 +1,16 @@
 //! Pod migration controller.
 //!
-//! Watches PodMigration resources and drives the migration state machine:
+//! Periodically lists PodMigration resources and drives the migration state machine:
 //!   Pending → Checkpointing → Transferring → Restoring → Verifying → Completed
 //!
 //! Communication with kubelets uses pod annotations:
 //! - `rustkube.io/migrate-action` — tells kubelet what to do
 //! - `rustkube.io/checkpoint-ref` — checkpoint artifact reference
 //! - `rustkube.io/migration-endpoint` — live migration target endpoint
-//! - `rustkube.io/restore-from` — checkpoint to restore from
+//! - `rustkube.io/restore-target-node` — node the checkpoint is restored on
 //!
-//! Supports per-runtime strategies:
+//! The strategy is chosen from the pod's `runtimeClassName`; the work, and
+//! the downtimes below, are the kubelet's (rustkube-node):
 //! - Checkpoint (CRIU): native containers (~100ms downtime)
 //! - LiveMigrate: QEMU/cloud-hypervisor VMs (~10-50ms downtime)
 //! - Snapshot: Firecracker VMs (~200ms downtime)
@@ -367,7 +368,7 @@ impl MigrationController {
                     .as_str()
                     .unwrap_or("");
 
-                // Set restore-from annotation so target kubelet picks it up
+                // Set restore-target-node so the target kubelet picks it up
                 let _ = self
                     .api
                     .patch(

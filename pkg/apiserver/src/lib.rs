@@ -1,7 +1,9 @@
-//! rk-apiserver: Kubernetes-compatible REST API server.
+//! apiserver: Kubernetes-compatible REST API server.
 //!
-//! Serves the full K8s REST API via axum. Wire-compatible with kubectl,
-//! helm, and existing K8s client libraries.
+//! Serves the Kubernetes REST API (core and built-in groups, CRDs,
+//! subresources) via axum, wire-compatible with kubectl, helm and client-go.
+//! Admission webhooks ([`admission`], #82) and aggregation ([`aggregation`],
+//! #83) are implemented as modules but not wired into the request path.
 
 pub mod admission;
 pub mod aggregation;

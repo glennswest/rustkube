@@ -4,7 +4,8 @@
 //!
 //! We only need the descriptor set (not generated Rust structs), so this shells
 //! out to `protoc --descriptor_set_out` rather than using prost-build. protoc is
-//! already required by the workspace (CRI gRPC via tonic-build).
+//! already required by the workspace (etcd-client builds its gRPC stubs with
+//! tonic-build).
 
 use std::path::Path;
 use std::process::Command;

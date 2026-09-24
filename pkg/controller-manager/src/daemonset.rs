@@ -1,8 +1,9 @@
 //! DaemonSet controller.
 //!
-//! Ensures one pod runs on every Ready node. Pods are named
-//! {ds-name}-{5-char-hash-of-node-name} and placed directly
-//! (bypasses scheduler by setting spec.nodeName).
+//! Ensures one pod runs on every node the DaemonSet is eligible for (its
+//! template's nodeSelector), Ready or not (#44). Pods get a random 5-character
+//! suffix, generateName-style (#38), and are placed directly (bypasses the
+//! scheduler by setting spec.nodeName).
 
 use crate::backoff::CreateBackoff;
 use crate::runner::ApiClient;

@@ -9,6 +9,15 @@
 //!   NoExecute tolerations (300s) to Pods that lack them.
 //! - **Namespace defaults** (mutating): `status.phase: Active` and the
 //!   `kubernetes` finalizer, as upstream's namespace strategy sets on create.
+//! - **Service defaults** (mutating): port `protocol` and `targetPort`, and a
+//!   ClusterIP allocated from `--service-cidr`.
+//! - **Priority** (mutating): a Pod's `spec.priority` from its PriorityClass.
+//! - **PodSecurity** (validating): a subset of baseline/restricted, keyed on
+//!   the namespace's `pod-security.kubernetes.io/enforce` label.
+//! - **CronJob schedule** and **PVC access modes** (validating): a
+//!   `ReadWriteOncePod` claim may not name any other mode.
+//!
+//! That is all the admission there is: webhooks are not called (#82).
 
 use crate::error::ApiError;
 use crate::storage::ResourceStorage;

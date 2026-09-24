@@ -7,10 +7,11 @@
 //! keeps the two pointing at each other, and holds the object alive while
 //! something is still using it.
 //!
-//! **What this deliberately does not do is provision.** In this cluster the
-//! volumes come from StormBlock — a PVC is a CoW clone of a blank filesystem
-//! template on sbregistry — and the code that talks to the engine is the CSI
-//! driver in `stormblock-csi`, driven by the standard
+//! **What this deliberately does not do is provision.** For the `stormblock`
+//! class the kubelet provisions and `stormblock.rs` writes the PV (#71); this
+//! binds it like any other. For every other class the code that talks to the
+//! storage is a CSI driver — `stormblock-csi` for StormBlock — driven by the
+//! standard
 //! `kubernetes-csi/external-provisioner` sidecar. That sidecar is an upstream
 //! Go binary and it acts on exactly one signal: the annotation
 //! `volume.kubernetes.io/storage-provisioner` naming its driver, which the

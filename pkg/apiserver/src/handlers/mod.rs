@@ -1,7 +1,9 @@
 //! HTTP request handlers for K8s resources.
 //!
-//! Provides generic CRUD+Watch handlers that work with any resource type,
-//! plus specific route builders for core/v1 and apps/v1 resources.
+//! Generic CRUD+watch handlers that work with any resource type
+//! (`resource.rs`), plus logs, exec/attach/portforward, token,
+//! `authorization.k8s.io` and kubevirt subresources. Routes are assembled in
+//! `server.rs`.
 
 pub mod authorization;
 pub mod kubevirt;

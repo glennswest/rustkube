@@ -1,4 +1,8 @@
-//! ServiceAccount TokenRequest — mints bound JWT tokens.
+//! ServiceAccount TokenRequest, and TokenReview.
+//!
+//! The tokens are **not bound**: no audience, no `boundObjectRef`, and the
+//! request body is ignored, so `expirationSeconds` is not honoured and every
+//! token lasts `TOKEN_TTL_SECS` (24 h).
 //!
 //! `POST /api/v1/namespaces/{ns}/serviceaccounts/{name}/token` issues a signed
 //! token whose subject is `system:serviceaccount:{ns}:{name}` and whose groups

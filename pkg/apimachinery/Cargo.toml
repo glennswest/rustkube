@@ -1,6 +1,6 @@
 [package]
 name = "apimachinery"
-description = "Shared types, traits, and error handling for RustKube"
+description = "Shared errors, store trait, protobuf codec and metrics for RustKube"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

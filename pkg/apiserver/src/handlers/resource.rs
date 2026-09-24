@@ -700,11 +700,12 @@ pub async fn update_cluster_status(
 ///
 /// - `application/json-patch+json` — RFC 6902 operation list
 /// - `application/merge-patch+json` — RFC 7386 merge
-/// - `application/strategic-merge-patch+json` — treated as a merge; true
-///   strategic merge needs per-field schema metadata we don't carry yet, which
-///   only differs for lists with merge keys
-/// - `application/apply-patch+yaml` — server-side apply, applied as a merge of
-///   the submitted intent (no field-ownership tracking yet)
+/// - `application/strategic-merge-patch+json` — a merge in which the lists
+///   named in `strategic_merge_key` (conditions by `type`, containers by
+///   `name`, …) are merged by that key rather than replaced (#47)
+/// - `application/apply-patch+yaml` — a plain merge here. The built-in object
+///   PATCH handler sends apply to `crate::apply::server_side_apply` instead
+///   (`managedFields` ownership and conflicts); the other callers get this
 ///
 /// An unrecognized/absent Content-Type is treated as a merge patch, matching
 /// what most clients expect.

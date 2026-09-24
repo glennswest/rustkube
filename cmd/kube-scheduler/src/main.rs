@@ -1,5 +1,6 @@
-//! kube-scheduler — watches unscheduled pods and binds them to nodes
-//! (filter/score plugin framework). Drop-in upstream process name.
+//! kube-scheduler — polls for unscheduled pods (and VirtualMachineInstances)
+//! and binds them to nodes with fixed filter and score functions. Drop-in
+//! upstream process name.
 
 use apimachinery::startup;
 use clap::Parser;

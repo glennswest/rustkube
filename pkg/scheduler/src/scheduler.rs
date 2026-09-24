@@ -1,7 +1,8 @@
 //! Core scheduler loop.
 //!
-//! Watches for pods without a nodeName, runs filter and score plugins,
-//! then binds the pod to the best node via the API server.
+//! Once a second, lists pods without a nodeName (and unplaced
+//! VirtualMachineInstances), runs the fixed filter and score functions, then
+//! binds each to the best node via the API server.
 
 use crate::filter::{self, FilterResult, NodeUsage};
 use crate::score;

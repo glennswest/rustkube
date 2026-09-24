@@ -1,8 +1,10 @@
 //! Horizontal Pod Autoscaler (HPA) controller.
 //!
-//! Watches HorizontalPodAutoscaler resources and scales target workloads
-//! (Deployments, ReplicaSets, StatefulSets) based on resource metrics.
-//! Supports CPU and memory utilization targets.
+//! **A placeholder** (#89). Periodically lists HorizontalPodAutoscalers and
+//! scales their targets (Deployments, ReplicaSets, StatefulSets), but reads no
+//! metrics: "utilization" is the fraction of the target's pods that are Ready,
+//! whatever resource the HPA names, and the desired count starts at the
+//! current one and only rises, so it never scales down.
 
 use crate::runner::ApiClient;
 use serde_json::{json, Value};

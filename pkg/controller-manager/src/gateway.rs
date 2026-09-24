@@ -1,12 +1,15 @@
 //! Gateway API controller.
 //!
-//! Implements the Kubernetes Gateway API (gateway.networking.k8s.io/v1).
-//! Watches GatewayClass, Gateway, and HTTPRoute resources to manage
-//! ingress traffic routing and load balancing.
+//! A **status-only** reconciler for the Gateway API
+//! (gateway.networking.k8s.io/v1): it periodically lists GatewayClass,
+//! Gateway and HTTPRoute objects and writes their conditions. It programs no
+//! proxy, so no traffic is routed (#70, #91).
 //!
 //! Reconciles:
-//! - GatewayClass: Validates controller name
-//! - Gateway: Validates GatewayClass reference, assigns addresses, updates listener status
+//! - GatewayClass: Validates controller name — and marks every class owned by
+//!   another controller `Accepted=False` (#91)
+//! - Gateway: Validates GatewayClass reference, writes a hardcoded placeholder
+//!   address (192.168.1.100, #91), updates listener status
 //! - HTTPRoute: Validates parentRefs (Gateway references), resolves backendRefs to Services
 
 use crate::runner::ApiClient;

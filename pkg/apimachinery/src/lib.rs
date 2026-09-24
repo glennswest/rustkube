@@ -1,7 +1,8 @@
-//! apimachinery: Shared types, traits, and error handling (K8s apimachinery-equivalent).
+//! apimachinery: shared pieces every component uses.
 //!
-//! Re-exports k8s-openapi types and defines internal abstractions
-//! for the distributed store, watch events, RBAC, and certificates.
+//! The error type, the `KvStore` trait and watch events, the protobuf wire
+//! codec, metrics, quantities, selectors, taints, cron parsing and startup
+//! waiting. No k8s-openapi types: objects are `serde_json::Value` throughout.
 
 pub mod error;
 pub mod store;

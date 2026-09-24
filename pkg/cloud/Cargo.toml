@@ -1,6 +1,6 @@
 [package]
 name = "cloud"
-description = "Cloud controller manager framework for RustKube"
+description = "Placeholder for a RustKube cloud controller manager — no code yet"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

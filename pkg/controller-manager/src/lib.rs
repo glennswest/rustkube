@@ -1,8 +1,10 @@
-//! rk-controllers: Built-in Kubernetes controllers.
+//! controller-manager: the built-in Kubernetes controllers.
 //!
-//! Reconciliation loops that drive cluster state toward desired state.
-//! Each controller watches resources via the API server and creates/updates/deletes
-//! dependent resources to match the desired spec.
+//! Reconciliation loops that drive cluster state toward desired state. Each
+//! controller **polls**: on a fixed interval it lists the resources it owns
+//! through the API server (following `continue` tokens to the end) and
+//! creates, updates or deletes dependents to match. Nothing uses a watch, an
+//! informer cache or a work queue (#66).
 
 pub mod attachdetach;
 pub mod backoff;

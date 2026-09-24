@@ -1,8 +1,7 @@
-//! Scheduling plugin framework (Phase 3).
+//! Plugin traits — unused.
 //!
-//! Defines the plugin interfaces for the full scheduling framework.
-//! Phase 1 uses hardcoded filter/score functions; this module will
-//! provide the plugin registry for Phase 3.
+//! Nothing implements or calls these. The scheduler calls the fixed functions
+//! in `filter` and `score` directly; there is no plugin registry.
 
 use serde_json::Value;
 

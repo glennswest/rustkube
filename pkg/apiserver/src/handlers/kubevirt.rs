@@ -1,4 +1,6 @@
-//! `subresources.kubevirt.io/v1` — the console doors `virtctl` reaches for.
+//! `subresources.kubevirt.io/v1` — the console doors `virtctl` reaches for,
+//! and the VirtualMachine `start`/`stop`/`restart` subresources, which set
+//! `spec.running`.
 //!
 //! `oc get vmi` already works, because `VirtualMachineInstance` is applied as
 //! an ordinary CRD and a CRD gets its object and `/status`. What a CRD cannot

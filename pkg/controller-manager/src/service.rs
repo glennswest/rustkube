@@ -1,8 +1,9 @@
 //! Service controller.
 //!
-//! Watches Services and Pods, and manages Endpoints objects.
+//! Periodically lists Services and Pods, and manages Endpoints objects.
 //! For each Service with a selector, finds matching pods and creates/updates
-//! the corresponding Endpoints resource with the pod IPs and ports.
+//! the corresponding Endpoints resource with the pod IPs and ports, and the
+//! matching `discovery.k8s.io/v1` EndpointSlice.
 
 use crate::runner::ApiClient;
 use serde_json::{json, Value};

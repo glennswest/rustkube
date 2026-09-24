@@ -1,7 +1,10 @@
-//! rk-scheduler: Pod scheduling framework.
+//! scheduler: pod and VirtualMachineInstance placement.
 //!
-//! Watches for unscheduled pods (empty spec.nodeName) and assigns them
-//! to nodes based on resource availability, taints/tolerations, and scoring.
+//! Once a second, lists pods with an empty `spec.nodeName` (and unplaced
+//! VirtualMachineInstances), runs the fixed filter and score functions in
+//! [`filter`] and [`score`], and binds each to the best node. It does not
+//! preempt ([`preemption`] is not called, #84) and ignores `schedulingGates`
+//! (#87).
 
 pub mod affinity;
 pub mod filter;

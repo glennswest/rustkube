@@ -1,8 +1,9 @@
 //! Authentication middleware.
 //!
-//! Extracts user identity from incoming requests:
-//! 1. Bearer token (JWT) — `Authorization: Bearer <token>`
-//! 2. Anonymous fallback — `system:anonymous`
+//! Extracts user identity from incoming requests, first match wins:
+//! 1. x509 client certificate — CN is the user, each O a group
+//! 2. Bearer token (JWT) — `Authorization: Bearer <token>`
+//! 3. `system:anonymous`, only if `--anonymous-auth`; otherwise 401
 
 use axum::extract::Request;
 use axum::http::StatusCode;

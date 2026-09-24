@@ -1,6 +1,6 @@
 //! ReplicaSet controller.
 //!
-//! Watches ReplicaSets and manages Pods to maintain the desired replica count.
+//! Periodically lists ReplicaSets and manages Pods to maintain the desired replica count.
 //! Creates pods from the template when under-provisioned, deletes excess pods
 //! when over-provisioned.
 

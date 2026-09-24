@@ -1,6 +1,10 @@
-//! Admission webhook support (mutating + validating)
+//! Admission webhook client (mutating + validating).
 //!
-//! Implements K8s admission control chain:
+//! **Not wired into the request path** (#82): webhook configurations are
+//! stored and served, but no handler calls this, so no webhook is ever
+//! called. The only admission that runs is `builtin_admission`.
+//!
+//! What it implements:
 //! 1. Mutating webhooks (can modify objects)
 //! 2. Validating webhooks (can accept/reject)
 //!

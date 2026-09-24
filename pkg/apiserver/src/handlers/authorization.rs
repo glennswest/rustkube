@@ -7,14 +7,17 @@
 //! which is 200 requests per viewer on a 200-namespace cluster and answers a
 //! question next to the one that was asked (#59).
 //!
-//! Both are write-only virtual resources: nothing is stored, the authorizer is
-//! consulted, and the answer comes back in `status`. The identity is the
-//! caller's own, so no impersonation is involved and every authenticated user
-//! may ask about themselves — which is why upstream binds `system:basic-user`
-//! to `system:authenticated` and why this apiserver now does too.
+//! Four write-only virtual resources: nothing is stored, the authorizer is
+//! consulted, and the answer comes back in `status`.
 //!
-//! `SubjectAccessReview` — asking about *another* identity — is the privileged
-//! variant and is deliberately not here.
+//! `SelfSubjectAccessReview` and `SelfSubjectRulesReview` ask about the
+//! caller's own identity, so no impersonation is involved and every
+//! authenticated user may ask — which is why upstream binds `system:basic-user`
+//! to `system:authenticated` and why this apiserver does too.
+//!
+//! `SubjectAccessReview` and `LocalSubjectAccessReview` ask about *another*
+//! identity (`oc adm policy who-can`, #69). They are governed by ordinary
+//! RBAC, so by default only `cluster-admin` may use them.
 
 use crate::auth::UserInfo;
 use crate::error::ApiError;

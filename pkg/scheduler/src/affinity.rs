@@ -1,4 +1,4 @@
-//! Inter-pod affinity, anti-affinity, and topology spread.
+//! Inter-pod affinity and anti-affinity (topology spread is in `spread`).
 //!
 //! These are the plugins that make placement depend on *other pods* rather than
 //! on the node alone: keep these together, keep those apart, and spread this

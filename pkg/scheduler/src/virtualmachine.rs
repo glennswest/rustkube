@@ -1,6 +1,6 @@
 //! Scheduling a VirtualMachineInstance.
 //!
-//! Nothing placed a VMI. `rk-scheduler` watched pods, and rustkube-node's
+//! Nothing placed a VMI. The scheduler looked only at pods, and rustkube-node's
 //! kubelet refuses to touch a VMI that names no node — correctly, because a
 //! kubelet that claimed unassigned work would start the machine on every node
 //! at once. Its comment named the component that was missing:

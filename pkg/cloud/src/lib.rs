@@ -1,4 +1,5 @@
-//! rk-cloud: Cloud controller manager framework.
+//! cloud: placeholder for a cloud controller manager.
 //!
-//! Provides a pluggable interface for cloud providers to implement
-//! node management, load balancer provisioning, and route configuration.
+//! Nothing is implemented here and nothing depends on this crate. There is no
+//! CloudProvider trait, no provider and no controller, so a `LoadBalancer`
+//! Service gets no address from rustkube.

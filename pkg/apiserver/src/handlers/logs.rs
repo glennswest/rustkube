@@ -7,8 +7,8 @@
 //! resource (get pods x)" — a message that names the pod rather than the
 //! subresource, which sends the reader to look at the pod first (#54).
 //!
-//! The same proxy path is what `exec`, `attach` and `portforward` will need, so
-//! the node-address lookup and the client live here rather than in the handler.
+//! `node_address` and `pick_container` live here and are reused by `exec`,
+//! `attach` and `portforward` in `streaming.rs`.
 
 use crate::error::ApiError;
 use crate::handlers::AppState;

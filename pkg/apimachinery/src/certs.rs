@@ -1,7 +1,8 @@
 //! Certificate utilities.
 //!
-//! Wraps rcgen for generating TLS certificates used by the API server,
-//! kubelet, and inter-node communication — quick helpers for bootstrap/dev.
+//! rcgen helpers for the apiserver's self-signed `--tls` serving certificate,
+//! and certificate-expiry parsing for the expiry metric. (The CSR signer in
+//! the controller manager uses rcgen directly.)
 
 use crate::Result;
 

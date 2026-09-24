@@ -12,7 +12,6 @@ pub enum FilterResult {
     Fail(String),
 }
 
-/// Run all filter plugins on a pod-node pair.
 /// What a node has already promised to the pods bound to it.
 ///
 /// Milli-CPU and bytes, summed from the requests of every non-terminal pod
@@ -26,6 +25,7 @@ pub struct NodeUsage {
     pub mem_bytes: u64,
 }
 
+/// Run all filters on a pod-node pair.
 pub fn run_filters(
     pod: &Value,
     node: &Value,

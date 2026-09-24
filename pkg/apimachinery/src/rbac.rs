@@ -1,8 +1,7 @@
-//! RBAC evaluation engine.
+//! RBAC request and decision types — unused.
 //!
-//! Evaluates whether a given user (identified by username and groups)
-//! is authorized to perform a specific verb on a resource, based on
-//! the set of Role/ClusterRole bindings in the cluster.
+//! Nothing references these. The engine that evaluates Roles and bindings,
+//! with its own request type, is `apiserver::rbac_engine`.
 
 /// An RBAC request to evaluate.
 #[derive(Debug, Clone)]

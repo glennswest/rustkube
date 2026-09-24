@@ -239,9 +239,9 @@ impl StormblockProvisioner {
     /// stormblock's management API is loopback by default, which is why the
     /// kubelet talks to `127.0.0.1:9090` and this cannot. The route already
     /// exists in the shape of rustkube#61 — control plane to kubelet, kubelet
-    /// to the loopback service — and needs an endpoint on the node
-    /// (rustkube-node#46). Until that lands this reports the leak on every
-    /// pass rather than hiding it.
+    /// to the loopback service. The node does the deletion itself: the
+    /// kubelet's `reclaim_released` deletes the clone and then the PV
+    /// (rustkube-node#46), and this reports that it will.
     async fn reclaim(&self) -> anyhow::Result<()> {
         let pvs: Value = self.api.list("/api/v1/persistentvolumes").await?;
         for pv in pvs["items"].as_array().cloned().unwrap_or_default() {

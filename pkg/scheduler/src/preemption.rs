@@ -1,6 +1,8 @@
 //! Preemption logic for the scheduler.
 //!
-//! When no node can fit a pod, try to evict lower-priority pods to make room.
+//! Victim selection: when no node can fit a pod, which lower-priority pods
+//! would have to go to make room. **Not wired in** — the scheduling loop does
+//! not call this and never evicts anything (#84).
 
 use serde_json::Value;
 use tracing::{debug, info};
