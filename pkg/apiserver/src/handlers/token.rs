@@ -74,14 +74,14 @@ pub async fn create_token_review(
     let audiences = body["spec"]["audiences"].clone();
 
     let status = match keys.validate_token(token) {
-        Some(data) => serde_json::json!({
-            "authenticated": true,
-            "user": {
-                "username": data.claims.sub,
-                "groups": data.claims.groups,
-            },
-            "audiences": audiences,
-        }),
+        Some(data) => {
+            let (username, groups) = data.claims.identity();
+            serde_json::json!({
+                "authenticated": true,
+                "user": { "username": username, "groups": groups },
+                "audiences": audiences,
+            })
+        }
         None => serde_json::json!({
             "authenticated": false,
             "error": "token is invalid or expired",

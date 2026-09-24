@@ -386,7 +386,7 @@ pub fn non_resource_rule_matches(rule: &Value, path: &str, verb: &str) -> bool {
 }
 
 /// Check if any subject in a binding matches the user.
-fn subjects_match(binding: &Value, user: &UserInfo) -> bool {
+pub(crate) fn subjects_match(binding: &Value, user: &UserInfo) -> bool {
     let subjects = match binding["subjects"].as_array() {
         Some(s) => s,
         None => return false,

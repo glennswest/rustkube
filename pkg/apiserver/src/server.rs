@@ -1222,6 +1222,55 @@ async fn reconcile_kubernetes_service(
     }
 }
 
+/// Name of the ServiceAccount a node's ssh login authenticates as, and of the
+/// ClusterRoleBinding that makes it cluster-admin (#79).
+const NODE_ADMIN: &str = "node-admin";
+
+/// The `kube-system/node-admin` ServiceAccount and its `node-admin` binding to
+/// cluster-admin (#79).
+///
+/// The token is not minted here. stormcert signs one per node with the
+/// ServiceAccount signing key and leaves it where only that node's login
+/// container can read it, so the credential never leaves the node; this only
+/// gives the name it carries something to be.
+///
+/// Tokens are verified by signature alone — the ServiceAccount is not looked
+/// up — so deleting it revokes nothing. Deleting the binding does, until the
+/// next boot re-creates it; revocation that must stick rotates the signing key.
+fn node_admin_objects() -> (serde_json::Value, serde_json::Value) {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let sa = json!({
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {
+            "name": NODE_ADMIN,
+            "namespace": "kube-system",
+            "uid": uuid::Uuid::new_v4().to_string(),
+            "creationTimestamp": now
+        }
+    });
+    let binding = json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRoleBinding",
+        "metadata": {
+            "name": NODE_ADMIN,
+            "uid": uuid::Uuid::new_v4().to_string(),
+            "creationTimestamp": now
+        },
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "cluster-admin"
+        },
+        "subjects": [{
+            "kind": "ServiceAccount",
+            "name": NODE_ADMIN,
+            "namespace": "kube-system"
+        }]
+    });
+    (sa, binding)
+}
+
 /// Bootstrap RBAC resources for initial cluster access.
 async fn bootstrap_rbac(
     storage: &ResourceStorage,
@@ -1310,6 +1359,23 @@ async fn bootstrap_rbac(
         )
         .await;
     }
+
+    // kube-system/node-admin: the identity of a node's ssh login (#79).
+    let (node_admin_sa, node_admin_binding) = node_admin_objects();
+    create_bootstrap(
+        storage,
+        &ResourceStorage::namespaced_key("serviceaccounts", "kube-system", NODE_ADMIN),
+        node_admin_sa,
+        "serviceaccounts kube-system/node-admin",
+    )
+    .await;
+    create_bootstrap(
+        storage,
+        &ResourceStorage::cluster_key("clusterrolebindings", NODE_ADMIN),
+        node_admin_binding,
+        "clusterrolebindings node-admin",
+    )
+    .await;
 
     // Node-join bootstrap: bootstrappers may create CSRs; joined nodes (the
     // system:nodes group) get broad access (tighten to a node role later).
@@ -1708,6 +1774,50 @@ mod tests {
         );
         assert!(first_service_ip("not-a-cidr").is_none());
         assert!(first_service_ip("10.96.0.0").is_none());
+    }
+}
+
+#[cfg(test)]
+mod node_admin_tests {
+    use super::node_admin_objects;
+    use crate::auth::tests::{sign, test_keys};
+    use crate::auth::UserInfo;
+    use crate::rbac_engine::subjects_match;
+
+    fn authenticate(sub: &str) -> UserInfo {
+        let token = sign(serde_json::json!({
+            "sub": sub,
+            "exp": chrono::Utc::now().timestamp() + 3600,
+        }));
+        let (username, groups) = test_keys().validate_token(&token).unwrap().claims.identity();
+        UserInfo { username, groups }
+    }
+
+    #[test]
+    fn the_node_admin_token_is_cluster_admin() {
+        // #79: the token stormcert mints, the ServiceAccount it names and the
+        // binding that gives it standing all meet.
+        let (sa, binding) = node_admin_objects();
+        assert_eq!(sa["kind"], "ServiceAccount");
+        assert_eq!(sa["metadata"]["namespace"], "kube-system");
+        assert_eq!(sa["metadata"]["name"], "node-admin");
+        assert_eq!(binding["roleRef"]["kind"], "ClusterRole");
+        assert_eq!(binding["roleRef"]["name"], "cluster-admin");
+
+        let user = authenticate("system:serviceaccount:kube-system:node-admin");
+        assert!(subjects_match(&binding, &user));
+    }
+
+    #[test]
+    fn the_binding_names_only_node_admin() {
+        let (_, binding) = node_admin_objects();
+        for sub in [
+            "system:serviceaccount:default:node-admin",
+            "system:serviceaccount:kube-system:default",
+            "node-admin",
+        ] {
+            assert!(!subjects_match(&binding, &authenticate(sub)), "{sub} matched");
+        }
     }
 }
 

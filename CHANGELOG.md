@@ -4,6 +4,18 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-24 (node ssh login)
+- **feat(bootstrap):** the ServiceAccount `kube-system/node-admin` and the
+  ClusterRoleBinding `node-admin` → `cluster-admin` are created at boot,
+  idempotently, with the rest of the bootstrap RBAC (#79). stormcert mints
+  that ServiceAccount's token on each node for the ssh login container's `sc`.
+- **change(auth):** a token's `groups` claim is optional, and ignored for a
+  ServiceAccount subject — its groups are `system:serviceaccounts` and
+  `system:serviceaccounts:<ns>`, derived from the name as upstream does. A
+  ServiceAccount token minted outside the apiserver no longer has to spell out
+  its own groups, and cannot claim more. TokenReview answers the same identity.
+  The claims an offline-minted token must carry are in docs/certificates.md.
+
 ## [v0.14.1] — 2026-09-23
 
 ### 2026-09-23 (PVCs)

@@ -233,6 +233,14 @@ Cargo.toml → workspace.package.version
       same fastetcd store — colliding plurals separated, uids kept, second
       boot moved nothing, same name in two groups coexists, VM `start` works
 
+### Node ssh login (#79, part of stormcos#60)
+- [x] Bootstrap `kube-system/node-admin` ServiceAccount + `node-admin`
+      ClusterRoleBinding → `cluster-admin`
+- [x] RS256 token signed offline with the SA signing key authenticates as
+      `system:serviceaccount:kube-system:node-admin`; SA groups derived from
+      `sub`, not the token. Claim contract in docs/certificates.md
+- The token itself is stormcert's (stormcert#5)
+
 ### Phase 4: Scale & Conformance
 - [ ] 1000+ node testing (#66) — the controllers list everything every tick,
       which is what will break first

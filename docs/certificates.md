@@ -69,6 +69,46 @@ made the startup line read "valid for 755801 more day(s)": not a lifetime, the
 absence of one, and a rotation path that is never exercised until it is needed
 in anger.
 
+## Tokens signed outside the apiserver
+
+The apiserver verifies a bearer token by its RS256 signature against
+`--service-account-key-file`, and nothing else — no ServiceAccount or Secret is
+looked up. Anything holding the matching `--service-account-signing-key-file`
+can therefore mint a token offline. Two things do:
+
+- `deploy/gen-node-token.sh` — a kubelet's `system:node:<name>` token.
+- stormcert, at a node's first boot — the `kube-system/node-admin` token for
+  the node's ssh login container (#79; stormcert#5, stormcos#60). The
+  apiserver bootstraps that ServiceAccount and a `node-admin`
+  ClusterRoleBinding to `cluster-admin`, idempotently, like the rest of the
+  bootstrap RBAC.
+
+What such a token must carry:
+
+| Claim | | |
+|---|---|---|
+| header `alg` | required | `RS256` |
+| `sub` | required | the username — `system:serviceaccount:<ns>:<name>` for a ServiceAccount |
+| `exp` | required | seconds since the epoch. There is no non-expiring token: long-lived means a far `exp` (the scripts here use ten years) |
+| `groups` | optional | a user's groups. **Ignored for a ServiceAccount**, whose groups are always `system:serviceaccounts` and `system:serviceaccounts:<ns>`, as upstream derives them |
+| `iat` | optional | informational |
+| `aud` | must be absent | no audiences are configured, so a token that names one is refused |
+
+Every authenticated request is also in `system:authenticated`.
+
+Check a node's token with the node's own CA:
+
+```
+curl --cacert /data/stormcert/ca.crt \
+  -H "Authorization: Bearer $(cat /data/stormcert/node-admin.token)" \
+  https://127.0.0.1:6443/api/v1/nodes
+```
+
+Because verification is by signature alone, a token cannot be revoked by
+deleting its ServiceAccount. Deleting the `node-admin` binding removes its
+standing until the next apiserver boot re-creates it; revoking for good means
+rotating the signing key (below).
+
 ## What is still missing
 
 - **CA rotation** (#20 phase 2). Replacing the CA is a dual-CA trust-bundle
