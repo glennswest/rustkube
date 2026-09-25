@@ -58,14 +58,25 @@ BOB=$(token bob '[]')
 "$FASTETCD" --data-dir "$W/etcd" --listen-client-urls http://127.0.0.1:32379 \
   --listen-peer-urls http://127.0.0.1:32380 --listen-metrics-url 127.0.0.1:32381 \
   >"$W/fastetcd.log" 2>&1 &
+# fastetcd first: an apiserver that outwaits its 60s datastore gate boots
+# into a hole.
+for _ in $(seq 180); do
+  (exec 3<>/dev/tcp/127.0.0.1/32379) 2>/dev/null && break
+  sleep 1
+done
+(exec 3<>/dev/tcp/127.0.0.1/32379) 2>/dev/null || { echo "fastetcd never listened"; tail -40 "$W/fastetcd.log"; exit 100; }
 "$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $PORT --tls \
   --etcd-servers http://127.0.0.1:32379 --anonymous-auth false \
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
   >"$W/apiserver.log" 2>&1 &
-for _ in $(seq 60); do
-  curl -sfk -H "Authorization: Bearer $ADMIN" "$API/readyz" >/dev/null && break
+ready=
+for _ in $(seq 180); do
+  curl -sfk -H "Authorization: Bearer $ADMIN" "$API/readyz" >/dev/null && { ready=1; break; }
   sleep 1
 done
+if [ -z "$ready" ]; then
+  echo "apiserver never became ready"; cat "$W/apiserver.log"; exit 100
+fi
 "$BIN/kube-controller-manager" --apiserver "$API" --token "$ADMIN" \
   --insecure-skip-tls-verify --leader-elect false >"$W/cm.log" 2>&1 &
 
