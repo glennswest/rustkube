@@ -138,14 +138,14 @@ fn validate_name(name: &str) -> Result<(), ApiError> {
     if ok {
         Ok(())
     } else {
-        Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Invalid",
-            &format!(
+        Err(ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            reason: "Invalid".into(),
+            message: format!(
                 "Project \"{name}\" is invalid: metadata.name: must be a lowercase RFC 1123 \
                  label (a-z, 0-9 and '-', starting and ending alphanumeric, at most 63 characters)"
             ),
-        ))
+        })
     }
 }
 
