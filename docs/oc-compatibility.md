@@ -9,7 +9,9 @@ known to be absent, say so against the verb rather than leaving a reader to
 discover it.
 
 State on 2026-09-24 (#80), from the code:
-- works: `oc logs` (#54); `oc get route` (stored only, nothing routes, #70);
+- works: `oc new-project`, `oc projects`, `oc project`, `oc get/delete
+  project`, `oc adm policy add-role-to-user` (#97; `test/e2e/projects.sh`);
+  `oc logs` (#54); `oc get route` (stored only, nothing routes, #70);
   `oc policy who-can`, `oc auth can-i --list`; `oc events`;
   `oc adm certificate approve` (CSR `/approval`).
 - proxied by the apiserver but not answered by the kubelet: `oc exec`,
@@ -18,8 +20,7 @@ State on 2026-09-24 (#80), from the code:
 - not served: `oc scale` (no `/scale`, #86); `oc adm top` (no
   `metrics.k8s.io`, #83); `oc adm node-logs` (no `nodes/{name}/proxy`);
   `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
-  `user.openshift.io` or SelfSubjectReview); `oc get project`/`new-project`,
-  `clusterversion`, `dc`, `scc` (their groups are not served).
+  `user.openshift.io` or SelfSubjectReview); `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
 
 # `oc` Command Reference & StromCOS Verification Runbook

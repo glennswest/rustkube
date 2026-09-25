@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### 2026-09-25 (Projects, #97)
+- **feat: `project.openshift.io/v1` Projects over Namespaces.** `oc
+  new-project` (ProjectRequest) creates the Namespace annotated with its
+  requester, display name and description, and binds the requester to `admin`
+  in it; `oc projects` lists only the namespaces the caller holds a
+  RoleBinding in (everything for a caller who may list namespaces); get,
+  update (display name/description only) and delete of a project are
+  authorized in its own namespace; deleting a project terminates its
+  namespace. Discovery, Table columns (NAME, DISPLAY NAME, STATUS).
+- **feat: bootstrap `admin`, `edit`, `view`, `basic-user` and
+  `self-provisioner` ClusterRoles**, the last two bound to
+  `system:authenticated` (`basic-users`, `self-provisioners`). The roles are
+  reconciled at boot unless annotated `rbac.authorization.kubernetes.io/autoupdate:
+  "false"`; the bindings are created once, so emptying `self-provisioners`
+  turns self-service off for good.
+- **feat: `get namespaces/{name}` is authorized in that namespace**, as
+  upstream does, so a RoleBinding reaches its own Namespace. Writes to a
+  Namespace stay cluster-scoped: there is no RBAC escalation check (#98), and
+  a project admin who bound cluster-admin in their project must not reach its
+  pod-security label.
+- **refactor:** namespace termination is `resource::terminate_namespace`,
+  shared by namespace and project DELETE.
+- **test:** `test/e2e/projects.sh` — apiserver + controller-manager on
+  fastetcd, driven by `oc` as two users and an admin.
+
 ### 2026-09-24
 - **docs:** storage.md: the `stormblock` class is stormcos's built-in PVC driver, built on stormblock/sbregistry blanks for speed (a claim is a CoW clone of a sealed, pre-formatted blank); CSI exists only for third-party drivers — not "an exception" to the CSI path
 

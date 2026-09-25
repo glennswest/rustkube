@@ -57,7 +57,8 @@ to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 conversion), `apiregistration.k8s.io/v1` (APIService objects are stored, but
 nothing is proxied to them, #83),
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
-routes for it, #70), `rustkube.io/v1alpha1` (PodMigration) and
+routes for it, #70), `project.openshift.io/v1` (Projects, below),
+`rustkube.io/v1alpha1` (PodMigration) and
 `subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet).
 
 `scheduling.k8s.io/v1` (PriorityClass) and `authentication.k8s.io/v1`
@@ -102,6 +103,34 @@ ignored. TokenReview is served.
 SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview and
 LocalSubjectAccessReview.
 
+**Projects** (`project.openshift.io/v1`, #97) are Namespaces with owners.
+Nothing is stored as a Project: each is the Namespace of the same name,
+translated on the way out, so deleting a project deletes its namespace and
+the namespace cascade takes everything in it.
+
+- `oc new-project` (a ProjectRequest) is open to every authenticated user
+  through the `self-provisioners` ClusterRoleBinding. It creates the Namespace
+  annotated `openshift.io/requester` (from the authenticated identity, never
+  the request), `openshift.io/display-name` and `openshift.io/description`,
+  and a RoleBinding `admin` giving the requester the `admin` ClusterRole in
+  it. `default`, `openshift` and names starting `kube-` or `openshift-` may
+  not be requested. To turn self-service off, empty the subjects of
+  `self-provisioners` (a boot does not restore them).
+- `oc projects` / `oc get projects` list only the namespaces the caller holds
+  a RoleBinding in — any role — unless the caller may `list namespaces`
+  cluster-wide, who sees all. Watching projects is limited to the latter.
+- `get`, `update` and `delete` of `projects/{name}` are authorized in the
+  project's own namespace, so a project's `admin` can delete it and nobody
+  else's. So is `get namespaces/{name}`, as upstream does. A project update
+  changes only its display name and description; the Namespace's labels
+  (`pod-security.kubernetes.io/enforce` among them) stay cluster-scoped to
+  write, because nothing here stops a project admin binding cluster-admin
+  inside their own project (#98).
+- Sharing is RBAC: `oc adm policy add-role-to-user edit bob -n demo` binds
+  one of `admin` (edit + roles/rolebindings + delete the project), `edit`
+  (write workloads, read secrets, exec/attach/port-forward, VM start/stop)
+  or `view` (read all but secrets).
+
 **Admission**, on create: NamespaceLifecycle, namespace defaults (`Active`,
 the `kubernetes` finalizer), Service port defaults and ClusterIP allocation
 from `--service-cidr`, the pod's default ServiceAccount, the not-ready /
@@ -122,9 +151,14 @@ Bootstrap RBAC: `cluster-admin`; `system:masters`, `system:nodes`,
 `system:kube-controller-manager` and `system:kube-scheduler` bound to it;
 `system:node-bootstrapper` (CSR create) for `system:bootstrappers`;
 `system:basic-user` (self-reviews) for `system:authenticated`;
-`system:discovery` for `system:anonymous`; and the ServiceAccount
+`system:discovery` for `system:anonymous`; the project roles `admin`,
+`edit`, `view`, `basic-user` (list one's projects) and `self-provisioner`,
+the latter two bound to `system:authenticated`; and the ServiceAccount
 `kube-system/node-admin` bound to `cluster-admin` for a node's ssh login
-(#79). With `--dev-anonymous-admin` it also binds `system:anonymous` to
+(#79). The project roles are reconciled at every boot — a stored copy's
+rules are brought up to date unless it is annotated
+`rbac.authorization.kubernetes.io/autoupdate: "false"`; everything else is
+created once. With `--dev-anonymous-admin` it also binds `system:anonymous` to
 `cluster-admin`; without it, a binding left from an earlier boot is removed.
 
 ## What the controller manager runs
