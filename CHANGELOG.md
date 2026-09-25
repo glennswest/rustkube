@@ -22,6 +22,10 @@
   Namespace stay cluster-scoped: there is no RBAC escalation check (#98), and
   a project admin who bound cluster-admin in their project must not reach its
   pod-security label.
+- **fix: `oc get all` / `kubectl get all`** failed with `the server doesn't
+  have a resource type "all"`: no discovered resource carried the `all`
+  category. Pods, Services, Deployments, ReplicaSets, StatefulSets,
+  DaemonSets, Jobs, CronJobs and HPAs now do, as upstream.
 - **refactor:** namespace termination is `resource::terminate_namespace`,
   shared by namespace and project DELETE.
 - **test:** `test/e2e/projects.sh` — apiserver + controller-manager on

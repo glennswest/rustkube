@@ -218,6 +218,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
             },
             {
                 "name": "pods",
+                "categories": ["all"],
                 "singularName": "pod",
                 "namespaced": true,
                 "kind": "Pod",
@@ -240,6 +241,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
             },
             {
                 "name": "services",
+                "categories": ["all"],
                 "singularName": "service",
                 "namespaced": true,
                 "kind": "Service",
@@ -320,6 +322,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
         "resources": [
             {
                 "name": "deployments",
+                "categories": ["all"],
                 "singularName": "deployment",
                 "namespaced": true,
                 "kind": "Deployment",
@@ -344,6 +347,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
             },
             {
                 "name": "replicasets",
+                "categories": ["all"],
                 "singularName": "replicaset",
                 "namespaced": true,
                 "kind": "ReplicaSet",
@@ -352,6 +356,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
             },
             {
                 "name": "statefulsets",
+                "categories": ["all"],
                 "singularName": "statefulset",
                 "namespaced": true,
                 "kind": "StatefulSet",
@@ -367,6 +372,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
             },
             {
                 "name": "daemonsets",
+                "categories": ["all"],
                 "singularName": "daemonset",
                 "namespaced": true,
                 "kind": "DaemonSet",
@@ -392,6 +398,7 @@ pub async fn api_batch_v1_resources() -> impl IntoResponse {
         "resources": [
             {
                 "name": "jobs",
+                "categories": ["all"],
                 "singularName": "job",
                 "namespaced": true,
                 "kind": "Job",
@@ -406,6 +413,7 @@ pub async fn api_batch_v1_resources() -> impl IntoResponse {
             },
             {
                 "name": "cronjobs",
+                "categories": ["all"],
                 "singularName": "cronjob",
                 "namespaced": true,
                 "kind": "CronJob",
@@ -968,6 +976,7 @@ pub async fn api_autoscaling_v2_resources() -> impl IntoResponse {
         "resources": [
             {
                 "name": "horizontalpodautoscalers",
+                "categories": ["all"],
                 "singularName": "horizontalpodautoscaler",
                 "namespaced": true,
                 "kind": "HorizontalPodAutoscaler",
@@ -1259,6 +1268,34 @@ mod tests {
                 "{want} is served but not in /apis: {names:?}"
             );
         }
+    }
+
+    /// `oc get all` expands the `all` category from discovery; with no
+    /// resource in it, it fails with `the server doesn't have a resource type
+    /// "all"` (#97). The members are upstream's.
+    #[tokio::test]
+    async fn get_all_has_a_category_to_expand() {
+        async fn members(r: impl IntoResponse) -> Vec<String> {
+            let body = axum::body::to_bytes(r.into_response().into_body(), usize::MAX).await.unwrap();
+            let v: Value = serde_json::from_slice(&body).unwrap();
+            v["resources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["categories"].as_array().is_some_and(|c| c.iter().any(|c| c == "all")))
+                .map(|r| r["name"].as_str().unwrap().to_string())
+                .collect()
+        }
+        assert_eq!(members(api_v1_resources().await).await, ["pods", "services"]);
+        assert_eq!(
+            members(api_apps_v1_resources().await).await,
+            ["deployments", "replicasets", "statefulsets", "daemonsets"]
+        );
+        assert_eq!(members(api_batch_v1_resources().await).await, ["jobs", "cronjobs"]);
+        assert_eq!(
+            members(api_autoscaling_v2_resources().await).await,
+            ["horizontalpodautoscalers"]
+        );
     }
 
     /// A group whose preferredVersion is not among its versions makes clients
