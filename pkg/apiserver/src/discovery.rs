@@ -149,6 +149,13 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "route.openshift.io/v1", "version": "v1"}
         }),
         json!({
+            // Projects (#97): Namespaces with owners, under OpenShift's group
+            // name so `oc new-project` and `oc projects` find them.
+            "name": "project.openshift.io",
+            "versions": [{"groupVersion": "project.openshift.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "project.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "gateway.networking.k8s.io",
             "versions": [{"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}
@@ -1048,6 +1055,35 @@ pub async fn api_route_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/project.openshift.io/v1 — Projects over Namespaces (#97).
+///
+/// `projects` has no `patch`: a Project's only writable fields are its labels
+/// and annotations, taken by `update`. `projectrequests` is create-only; its
+/// `list` answers whether the caller may request one, as upstream's does.
+pub async fn api_project_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "project.openshift.io/v1",
+        "resources": [
+            {
+                "name": "projects",
+                "singularName": "project",
+                "namespaced": false,
+                "kind": "Project",
+                "verbs": ["create", "delete", "get", "list", "update", "watch"]
+            },
+            {
+                "name": "projectrequests",
+                "singularName": "projectrequest",
+                "namespaced": false,
+                "kind": "ProjectRequest",
+                "verbs": ["create", "list"]
+            }
+        ]
+    }))
+}
+
 /// GET /apis/admissionregistration.k8s.io/v1 — admission webhook resources.
 pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
     Json(json!({
@@ -1215,6 +1251,7 @@ mod tests {
             "admissionregistration.k8s.io",
             "gateway.networking.k8s.io",
             "route.openshift.io",
+            "project.openshift.io",
             "apiregistration.k8s.io",
         ] {
             assert!(

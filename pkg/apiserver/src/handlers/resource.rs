@@ -549,62 +549,76 @@ pub async fn delete_cluster_resource(
     let opts = parse_delete_options(&body);
     check_preconditions(&obj, &opts)?;
 
-    // Namespaces terminate gracefully (#28): instead of a hard delete, mark the
-    // namespace Terminating with a deletionTimestamp and a `kubernetes`
-    // finalizer. The namespace controller then purges every contained resource
-    // and clears the finalizer via /finalize, at which point the object is
-    // actually removed. Admission already blocks new content in Terminating
-    // namespaces (builtin_admission), so this closes the loop.
+    // Namespaces terminate gracefully (#28).
     if resource == "namespaces" {
-        // Dry-run: report the object without starting termination.
-        if opts.dry_run {
-            return Ok(Json(obj));
-        }
-        let finalizers_empty = obj["spec"]["finalizers"]
-            .as_array()
-            .map(|a| a.is_empty())
-            .unwrap_or(true);
-        let already_terminating = obj["metadata"]["deletionTimestamp"].as_str().is_some();
-        if already_terminating && finalizers_empty {
-            // Finalization already complete — actually remove it.
-            state.storage.delete(&key, None).await?;
-            return Ok(Json(obj));
-        }
-
-        let mut ns = obj.clone();
-        if !ns["metadata"].is_object() {
-            ns["metadata"] = json!({});
-        }
-        ns["metadata"]["deletionTimestamp"] = Value::String(
-            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        );
-        if !ns["status"].is_object() {
-            ns["status"] = json!({});
-        }
-        ns["status"]["phase"] = Value::String("Terminating".into());
-        // Ensure the `kubernetes` finalizer is present so the object survives
-        // until the controller finishes purging content.
-        let mut finalizers = ns["spec"]["finalizers"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        if !finalizers.iter().any(|f| f.as_str() == Some("kubernetes")) {
-            finalizers.push(Value::String("kubernetes".into()));
-        }
-        if !ns["spec"].is_object() {
-            ns["spec"] = json!({});
-        }
-        ns["spec"]["finalizers"] = Value::Array(finalizers);
-
-        let prev_rev = ns["metadata"]["resourceVersion"]
-            .as_str()
-            .and_then(|r| r.parse::<u64>().ok());
-        let updated = state.storage.update(&key, ns, prev_rev).await?;
-        return Ok(Json(updated));
+        return Ok(Json(terminate_namespace(&state, &name, obj, &opts).await?));
     }
 
     let out = perform_delete(&state, &key, obj, &opts, &name, None, &resource).await?;
     Ok(Json(out))
+}
+
+/// Start a namespace's graceful deletion — the namespace half of DELETE, and
+/// of deleting the Project that is the same namespace (#97).
+///
+/// Namespaces terminate gracefully (#28): instead of a hard delete, the
+/// namespace is marked Terminating with a deletionTimestamp and a `kubernetes`
+/// finalizer. The namespace controller then purges every contained resource
+/// and clears the finalizer via /finalize, at which point the object is
+/// actually removed. Admission already blocks new content in Terminating
+/// namespaces (builtin_admission), so this closes the loop.
+pub(crate) async fn terminate_namespace(
+    state: &AppState,
+    name: &str,
+    obj: Value,
+    opts: &DeleteOptions,
+) -> Result<Value, ApiError> {
+    let key = ResourceStorage::cluster_key("namespaces", name);
+    check_preconditions(&obj, opts)?;
+    // Dry-run: report the object without starting termination.
+    if opts.dry_run {
+        return Ok(obj);
+    }
+    let finalizers_empty = obj["spec"]["finalizers"]
+        .as_array()
+        .map(|a| a.is_empty())
+        .unwrap_or(true);
+    let already_terminating = obj["metadata"]["deletionTimestamp"].as_str().is_some();
+    if already_terminating && finalizers_empty {
+        // Finalization already complete — actually remove it.
+        state.storage.delete(&key, None).await?;
+        return Ok(obj);
+    }
+
+    let mut ns = obj.clone();
+    if !ns["metadata"].is_object() {
+        ns["metadata"] = json!({});
+    }
+    ns["metadata"]["deletionTimestamp"] = Value::String(
+        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    );
+    if !ns["status"].is_object() {
+        ns["status"] = json!({});
+    }
+    ns["status"]["phase"] = Value::String("Terminating".into());
+    // Ensure the `kubernetes` finalizer is present so the object survives
+    // until the controller finishes purging content.
+    let mut finalizers = ns["spec"]["finalizers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !finalizers.iter().any(|f| f.as_str() == Some("kubernetes")) {
+        finalizers.push(Value::String("kubernetes".into()));
+    }
+    if !ns["spec"].is_object() {
+        ns["spec"] = json!({});
+    }
+    ns["spec"]["finalizers"] = Value::Array(finalizers);
+
+    let prev_rev = ns["metadata"]["resourceVersion"]
+        .as_str()
+        .and_then(|r| r.parse::<u64>().ok());
+    state.storage.update(&key, ns, prev_rev).await
 }
 
 /// PUT /api/v1/namespaces/{name}/finalize — apply the submitted finalizer list.

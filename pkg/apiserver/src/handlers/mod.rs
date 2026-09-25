@@ -2,12 +2,14 @@
 //!
 //! Generic CRUD+watch handlers that work with any resource type
 //! (`resource.rs`), plus logs, exec/attach/portforward, token,
-//! `authorization.k8s.io` and kubevirt subresources. Routes are assembled in
+//! `authorization.k8s.io`, kubevirt subresources and
+//! `project.openshift.io` Projects over Namespaces. Routes are assembled in
 //! `server.rs`.
 
 pub mod authorization;
 pub mod kubevirt;
 pub mod logs;
+pub mod project;
 pub mod resource;
 pub mod streaming;
 pub mod token;

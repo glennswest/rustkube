@@ -219,6 +219,23 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                 ]
             }) as RowFn,
         )),
+        // `oc get projects` — upstream's columns (#97).
+        "projects" => Some((
+            vec![
+                col("Name", "string", 0, "Name of the project"),
+                col("Display Name", "string", 0, "The openshift.io/display-name annotation"),
+                col("Status", "string", 0, "Active or Terminating"),
+            ],
+            (|o: &Value| {
+                vec![
+                    json!(name_of(o)),
+                    json!(o["metadata"]["annotations"]["openshift.io/display-name"]
+                        .as_str()
+                        .unwrap_or("")),
+                    json!(o["status"]["phase"].as_str().unwrap_or("Active")),
+                ]
+            }) as RowFn,
+        )),
         "routes" => Some((
             vec![
                 col("Name", "string", 0, "Name of the route"),

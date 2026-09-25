@@ -425,7 +425,7 @@ fn rules_permit(role: &Value, req: &AuthorizationRequest) -> bool {
 }
 
 /// Check if a single rule matches the request.
-fn rule_matches(rule: &Value, req: &AuthorizationRequest) -> bool {
+pub(crate) fn rule_matches(rule: &Value, req: &AuthorizationRequest) -> bool {
     let list = |field: &str| -> &[Value] {
         rule[field].as_array().map(|v| v.as_slice()).unwrap_or(&[])
     };
@@ -631,6 +631,22 @@ fn parse_authorization_request(
         _ => return None,
     };
 
+    // Only *reading* a Namespace is authorized in the namespace itself.
+    //
+    // Upstream authorizes every verb there, and relies on RBAC escalation
+    // prevention to stop a namespace admin granting themselves `update
+    // namespaces`. This apiserver has no escalation check: anyone who may
+    // write RoleBindings in `demo` — every project's admin — can bind
+    // cluster-admin in `demo`. Were writes authorized in `demo`, that binding
+    // would reach the Namespace object and its `pod-security` labels, which
+    // are what keep privileged pods off the node. So a Namespace's writes stay
+    // cluster-scoped, and a project's owner deletes it as a Project.
+    let namespace = if api_group.is_empty() && resource == "namespaces" && verb != "get" {
+        None
+    } else {
+        namespace
+    };
+
     Some(AuthorizationRequest {
         verb: verb.to_string(),
         resource,
@@ -655,6 +671,20 @@ fn parse_path_segments(
     match segments {
         // /api/v1/{resource}
         ["api", "v1", resource] => Some(("".into(), resource.to_string(), None, None, None)),
+        // /api/v1/namespaces/{name} — a Namespace is read *in itself*, as
+        // upstream's RequestInfo does: a RoleBinding in `demo` that grants
+        // `get namespaces` lets its subject read `demo` and no other. That is
+        // what lets a project's members see their project's namespace (#97)
+        // without a cluster-wide grant that would show them everyone's.
+        // Writes are narrowed back to cluster scope in
+        // `parse_authorization_request`.
+        ["api", "v1", "namespaces", name] => Some((
+            "".into(),
+            "namespaces".into(),
+            Some(name.to_string()),
+            Some(name.to_string()),
+            None,
+        )),
         // /api/v1/{resource}/{name}
         ["api", "v1", resource, name] => Some((
             "".into(),
@@ -763,6 +793,17 @@ fn parse_path_segments(
             resource.to_string(),
             None,
             None,
+            None,
+        )),
+        // /apis/project.openshift.io/v1/projects/{name} — a Project is its
+        // Namespace, and is authorized in it for the same reason (#97): the
+        // `admin` RoleBinding a ProjectRequest makes is what lets the
+        // requester read and delete the project it made.
+        ["apis", group @ "project.openshift.io", _version, "projects", name] => Some((
+            group.to_string(),
+            "projects".into(),
+            Some(name.to_string()),
+            Some(name.to_string()),
             None,
         )),
         // /apis/{group}/{version}/{resource}/{name}
@@ -986,6 +1027,7 @@ mod namespace_subresource_tests {
         assert_eq!(fin.resource, "namespaces");
         assert_eq!(fin.subresource.as_deref(), Some("finalize"));
         assert_eq!(fin.name.as_deref(), Some("kube-system"));
+        assert_eq!(fin.namespace, None);
 
         let pods = parse_authorization_request(
             "/api/v1/namespaces/kube-system/pods",
@@ -995,6 +1037,40 @@ mod namespace_subresource_tests {
         assert_eq!(pods.resource, "pods");
         assert_eq!(pods.subresource, None);
         assert_eq!(pods.namespace.as_deref(), Some("kube-system"));
+    }
+
+    /// Reading a Namespace, and any verb on the Project that is the same
+    /// object, is authorized in the namespace itself — so a RoleBinding in
+    /// `demo` reaches `demo` (#97). Collections stay cluster-scoped.
+    #[test]
+    fn a_namespace_and_its_project_are_authorized_in_themselves() {
+        let get = |p: &str| parse_authorization_request(p, &axum::http::Method::GET).unwrap();
+
+        let ns = get("/api/v1/namespaces/demo");
+        assert_eq!((ns.resource.as_str(), ns.namespace.as_deref()), ("namespaces", Some("demo")));
+        // Writing one is not: see parse_authorization_request.
+        for m in [axum::http::Method::PUT, axum::http::Method::PATCH, axum::http::Method::DELETE] {
+            let w = parse_authorization_request("/api/v1/namespaces/demo", &m).unwrap();
+            assert_eq!(w.namespace, None, "{m} namespaces/demo must be cluster-scoped");
+        }
+        let all = get("/api/v1/namespaces");
+        assert_eq!(all.verb, "list");
+        assert_eq!(all.namespace, None);
+
+        let p = get("/apis/project.openshift.io/v1/projects/demo");
+        assert_eq!(p.api_group, "project.openshift.io");
+        assert_eq!(p.resource, "projects");
+        assert_eq!(p.namespace.as_deref(), Some("demo"));
+        assert_eq!(p.name.as_deref(), Some("demo"));
+        let ps = get("/apis/project.openshift.io/v1/projects");
+        assert_eq!(ps.verb, "list");
+        assert_eq!(ps.namespace, None);
+
+        // Other cluster-scoped objects are not: a node is not a namespace.
+        let node = get("/api/v1/nodes/n1");
+        assert_eq!(node.namespace, None);
+        let crd = get("/apis/example.com/v1/widgets/w1");
+        assert_eq!(crd.namespace, None);
     }
 }
 

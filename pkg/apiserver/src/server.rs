@@ -478,6 +478,28 @@ fn build_router(
             "/apis/autoscaling/v2/{resource}",
             get(resource::list_cluster_resources),
         )
+        // project.openshift.io/v1 — Projects are Namespaces with owners (#97).
+        // Static paths, so they win over the CRD catch-all below.
+        .route(
+            "/apis/project.openshift.io/v1",
+            get(discovery::api_project_v1_resources),
+        )
+        .route(
+            "/apis/project.openshift.io/v1/projects",
+            get(crate::handlers::project::list_projects)
+                .post(crate::handlers::project::create_project),
+        )
+        .route(
+            "/apis/project.openshift.io/v1/projects/{name}",
+            get(crate::handlers::project::get_project)
+                .put(crate::handlers::project::update_project)
+                .delete(crate::handlers::project::delete_project),
+        )
+        .route(
+            "/apis/project.openshift.io/v1/projectrequests",
+            get(crate::handlers::project::list_project_requests)
+                .post(crate::handlers::project::create_project_request),
+        )
         // route.openshift.io/v1 — OpenShift Routes
         .route(
             "/apis/route.openshift.io/v1",
@@ -1271,6 +1293,43 @@ fn node_admin_objects() -> (serde_json::Value, serde_json::Value) {
     (sa, binding)
 }
 
+/// Create a bootstrap ClusterRole, or bring a stored one's rules up to date.
+///
+/// Create-only would freeze a role at whatever this binary first wrote: a
+/// rule added in a later release would never reach a cluster that already
+/// had the role. Upstream reconciles its bootstrap roles at every start for
+/// that reason, and honours the same opt-out — a role annotated
+/// `rbac.authorization.kubernetes.io/autoupdate: "false"` is the operator's,
+/// and is left alone.
+async fn reconcile_bootstrap_role(storage: &ResourceStorage, role: serde_json::Value) {
+    let name = role["metadata"]["name"].as_str().unwrap_or_default().to_string();
+    let key = ResourceStorage::cluster_key("clusterroles", &name);
+    match storage.get(&key).await {
+        Ok(mut stored) => {
+            let pinned = stored["metadata"]["annotations"]
+                ["rbac.authorization.kubernetes.io/autoupdate"]
+                .as_str()
+                == Some("false");
+            if pinned || stored["rules"] == role["rules"] {
+                return;
+            }
+            stored["rules"] = role["rules"].clone();
+            let rev = stored["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
+            match storage.update(&key, stored, rev).await {
+                Ok(_) => tracing::info!("bootstrap: clusterroles {name}: rules updated"),
+                // Another replica reconciled it first.
+                Err(e) if e.reason == "Conflict" => {}
+                Err(e) => tracing::error!("bootstrap: clusterroles {name} not updated: {}", e.message),
+            }
+        }
+        Err(_) => {
+            let mut role = role;
+            crate::handlers::resource::ensure_metadata_pub(&mut role, &name, None);
+            create_bootstrap(storage, &key, role, &format!("clusterroles {name}")).await;
+        }
+    }
+}
+
 /// Bootstrap RBAC resources for initial cluster access.
 async fn bootstrap_rbac(
     storage: &ResourceStorage,
@@ -1486,6 +1545,24 @@ async fn bootstrap_rbac(
         "clusterrolebindings system:basic-user",
     )
     .await;
+
+    // Projects (#97): the roles a project is shared with, and the grants that
+    // let any authenticated user list their projects and request one.
+    for role in crate::handlers::project::bootstrap_cluster_roles() {
+        reconcile_bootstrap_role(storage, role).await;
+    }
+    for binding in crate::handlers::project::bootstrap_cluster_role_bindings() {
+        let name = binding["metadata"]["name"].as_str().unwrap_or_default().to_string();
+        let mut binding = binding;
+        crate::handlers::resource::ensure_metadata_pub(&mut binding, &name, None);
+        create_bootstrap(
+            storage,
+            &ResourceStorage::cluster_key("clusterrolebindings", &name),
+            binding,
+            &format!("clusterrolebindings {name}"),
+        )
+        .await;
+    }
 
     // ClusterRole: system:discovery — GET on discovery endpoints
     let discovery_role = json!({
