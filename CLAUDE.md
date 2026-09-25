@@ -185,16 +185,13 @@ Known state on 2026-09-24:
       CSR `/approval` are served; `oc adm top` needs `metrics.k8s.io`, which
       needs aggregation (#83); `node-logs` needs `nodes/{name}/proxy`.
 - [ ] `oc scale` — no `/scale` (#86).
-- [ ] Projects (#97, in progress): `project.openshift.io/v1` Project +
-      ProjectRequest over Namespaces. Plan: discovery + routes; ProjectRequest
-      creates the Namespace (requester/display-name/description annotations)
-      and a RoleBinding `admin` → requester; Project list filtered to
-      namespaces the user holds a RoleBinding in (all for `list namespaces`
-      cluster-wide); get/delete by name, authorized in the project's own
-      namespace (upstream RequestInfo: `namespaces/{n}`, `projects/{n}` carry
-      namespace n); bootstrap `admin`/`edit`/`view` ClusterRoles and
-      `self-provisioner` bound to `system:authenticated` (disable by emptying
-      the `self-provisioners` binding's subjects).
+- [x] Projects (#97): `project.openshift.io/v1` Project + ProjectRequest over
+      Namespaces, owned by their requester (`admin` RoleBinding), listed only
+      to members; `admin`/`edit`/`view`/`basic-user`/`self-provisioner`
+      bootstrapped. Verified by `test/e2e/projects.sh` (oc 4.22, two users).
+      Namespace *writes* stay cluster-scoped until RBAC escalation
+      prevention exists (#98).
+- [ ] GC deletes a live Deployment's ReplicaSet (#99) — seen in the #97 e2e
 - [ ] Routes, DeploymentConfig, ImageStream, BuildConfig, SCC — the
       genuinely OpenShift-only half. Whether these are in scope at all is a
       decision nobody has made (#70), and `route.openshift.io/v1` is already
