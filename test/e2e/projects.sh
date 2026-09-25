@@ -84,7 +84,10 @@ fi
 # does not switch it for another.
 as() { # <token> <kubeconfig-name> oc-args...
   local t=$1 k=$2; shift 2
-  KUBECONFIG=$W/kc-$k "$OC" --server "$API" --insecure-skip-tls-verify --token "$t" "$@" 2>&1
+  # A cache of its own: oc keeps discovery for hours under ~/.kube/cache,
+  # keyed by host:port, so an earlier run's apiserver would answer for this one.
+  KUBECONFIG=$W/kc-$k "$OC" --cache-dir "$W/cache-$k" --server "$API" \
+    --insecure-skip-tls-verify --token "$t" "$@" 2>&1
 }
 expect_ok() { # <what> <cmd...>
   local what=$1; shift
