@@ -765,6 +765,34 @@ mod tests {
         assert_eq!(back["spec"]["renewTime"], "2026-07-19T12:34:56.123456Z");
     }
 
+    /// `oc adm policy remove-role-from-user` reads RoleBindings as protobuf
+    /// and matches on `roleRef` and `subjects` (#69).
+    #[test]
+    fn rolebinding_list_round_trips_role_ref_and_subjects() {
+        let list = json!({
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "RoleBindingList",
+            "metadata": { "resourceVersion": "42" },
+            "items": [{
+                "metadata": { "name": "edit", "namespace": "work", "uid": "",
+                              "creationTimestamp": null, "generation": 0 },
+                "roleRef": { "apiGroup": "rbac.authorization.k8s.io",
+                             "kind": "ClusterRole", "name": "edit" },
+                "subjects": [{ "apiGroup": "rbac.authorization.k8s.io",
+                               "kind": "User", "name": "alice", "namespace": "" }]
+            }]
+        });
+        let wire = encode_from_json(&list, "rbac.authorization.k8s.io/v1", "RoleBindingList").unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
+        eprintln!("{back:#}");
+        let item = &back["items"][0];
+        assert_eq!(item["metadata"]["name"], "edit");
+        assert_eq!(item["roleRef"]["kind"], "ClusterRole");
+        assert_eq!(item["roleRef"]["name"], "edit");
+        assert_eq!(item["subjects"][0]["kind"], "User");
+        assert_eq!(item["subjects"][0]["name"], "alice");
+    }
+
     #[test]
     fn pod_round_trips_quantity_intorstring_bytes_and_maps() {
         // Core group + the remaining special types: Quantity (resource limits),
