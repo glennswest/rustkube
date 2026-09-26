@@ -260,6 +260,9 @@ impl KvStore for EtcdStore {
                                 EventType::Delete => WatchEvent::Deleted {
                                     key,
                                     revision: kv.mod_revision() as u64,
+                                    // Filled in by the apiserver's watch cache,
+                                    // which holds the last state (#100).
+                                    prev_value: None,
                                 },
                             };
                             if tx.send(watch_event).await.is_err() {

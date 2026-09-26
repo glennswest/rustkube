@@ -205,20 +205,45 @@ fn render_event(
             }
             ("MODIFIED", obj)
         }
-        WatchEvent::Deleted { revision, key, .. } => {
-            // The store doesn't carry the prior value on delete, so we synthesize
-            // the tombstone. It MUST carry apiVersion/kind: client-go refuses to
-            // decode a watch event whose object has no Kind ("unable to decode
-            // watch event: Object 'Kind' is missing"), which kills the informer.
-            let (namespace, name) = split_key(key);
-            let mut meta = json!({"name": name, "resourceVersion": revision.to_string()});
-            if let Some(ns) = namespace {
-                meta["namespace"] = json!(ns);
+        WatchEvent::Deleted { revision, key, prev_value } => {
+            // The object's last state, when the watch cache held it (#100):
+            // what upstream sends, and what selectors are applied to — a
+            // watcher of `app=web` hears about the deletion of a web pod and
+            // not of every other pod. Its resourceVersion is the delete's.
+            if let Some(mut obj) = prev_value
+                .as_deref()
+                .and_then(|b| serde_json::from_slice::<Value>(b).ok())
+                .filter(Value::is_object)
+            {
+                inject_resource_version(&mut obj, *revision);
+                if !selector::matches_selectors(&obj, label_sel, field_sel) {
+                    return None;
+                }
+                if let Some(f) = transform {
+                    obj = f(obj);
+                }
+                if metadata_only {
+                    obj = to_partial_object_metadata(&obj);
+                }
+                ("DELETED", obj)
+            } else {
+                // Nobody held it — a watch opened below the cache's window
+                // reads the store directly — so the tombstone is synthesized
+                // from the key. It MUST carry apiVersion/kind: client-go
+                // refuses to decode a watch event whose object has no Kind
+                // ("unable to decode watch event: Object 'Kind' is missing"),
+                // which kills the informer. Unfiltered, because there is
+                // nothing to match a selector against.
+                let (namespace, name) = split_key(key);
+                let mut meta = json!({"name": name, "resourceVersion": revision.to_string()});
+                if let Some(ns) = namespace {
+                    meta["namespace"] = json!(ns);
+                }
+                return Some(render_line(
+                    "DELETED",
+                    json!({"apiVersion": api_version, "kind": kind, "metadata": meta}),
+                ));
             }
-            return Some(render_line(
-                "DELETED",
-                json!({"apiVersion": api_version, "kind": kind, "metadata": meta}),
-            ));
         }
         WatchEvent::Bookmark { revision } => {
             return Some(render_bookmark(*revision, false, api_version, kind));
@@ -286,18 +311,26 @@ fn render_bookmark(revision: u64, initial_end: bool, api_version: &str, kind: &s
 
 /// Split a registry key into `(namespace, name)`.
 ///
-/// Keys look like `/registry/<resource>/<namespace>/<name>` for namespaced
-/// resources and `/registry/<resource>/<name>` for cluster-scoped ones.
+/// A built-in resource is one segment and a custom resource two — its group
+/// and its plural (#76):
+///
+/// ```text
+/// /registry/<resource>/[<namespace>/]<name>
+/// /registry/<group>/<plural>/[<namespace>/]<name>
+/// ```
+///
+/// A CRD group always contains a dot and a built-in plural never does, so the
+/// segment after `registry` says which. Reading the namespace at a fixed
+/// position instead gave every custom resource's tombstone its plural as a
+/// namespace — `virtualmachineinstances/web-1` for `default/web-1` — and an
+/// informer keyed on namespace/name never dropped the object (#100).
 fn split_key(key: &str) -> (Option<String>, String) {
     let parts: Vec<&str> = key.trim_start_matches('/').split('/').collect();
-    // ["registry", resource, ...rest]
-    match parts.len() {
-        n if n >= 4 => (
-            Some(parts[2].to_string()),
-            parts[n - 1].to_string(),
-        ),
-        n if n >= 1 => (None, parts[n - 1].to_string()),
-        _ => (None, String::new()),
+    let resource_len = if parts.get(1).is_some_and(|seg| seg.contains('.')) { 2 } else { 1 };
+    match parts.get(1 + resource_len..).unwrap_or(&[]) {
+        [namespace, name] => (Some(namespace.to_string()), name.to_string()),
+        [name] => (None, name.to_string()),
+        _ => (None, parts.last().copied().unwrap_or_default().to_string()),
     }
 }
 
@@ -459,5 +492,80 @@ mod tests {
         let hb = super::render_bookmark(5, false, "v1", "Pod");
         let hv: serde_json::Value = serde_json::from_str(hb.trim_end()).unwrap();
         assert!(hv["object"]["metadata"]["annotations"].is_null());
+    }
+
+    /// A DELETED event names the object in the namespace it lived in, for
+    /// built-ins and custom resources of either scope (#100).
+    #[test]
+    fn tombstones_name_the_real_namespace() {
+        use super::split_key;
+        let cases = [
+            ("/registry/pods/default/web-1", Some("default"), "web-1"),
+            ("/registry/nodes/n1", None, "n1"),
+            ("/registry/kubevirt.io/virtualmachineinstances/default/web-1", Some("default"), "web-1"),
+            ("/registry/demo.io/gadgets/g1", None, "g1"),
+            // The CRD object itself: a built-in, whose *name* has dots.
+            ("/registry/customresourcedefinitions/widgets.demo.io", None, "widgets.demo.io"),
+        ];
+        for (key, ns, name) in cases {
+            let (got_ns, got_name) = split_key(key);
+            assert_eq!(got_ns.as_deref(), ns, "{key}");
+            assert_eq!(got_name, name, "{key}");
+        }
+    }
+
+    fn deleted(key: &str, prev: Option<serde_json::Value>) -> apimachinery::watch::WatchEvent {
+        apimachinery::watch::WatchEvent::Deleted {
+            key: key.into(),
+            revision: 35,
+            prev_value: prev.map(|v| serde_json::to_vec(&v).unwrap()),
+        }
+    }
+
+    fn render(ev: &apimachinery::watch::WatchEvent, label: Option<&str>) -> Option<serde_json::Value> {
+        super::render_event(
+            ev,
+            &label.map(str::to_string),
+            &None,
+            "kubevirt.io/v1",
+            "VirtualMachineInstance",
+            false,
+            None,
+        )
+        .map(|line| serde_json::from_str(line.trim()).unwrap())
+    }
+
+    /// The case stormconsole found: a VMI deleted in `default`.
+    #[test]
+    fn a_custom_resource_tombstone_is_droppable() {
+        let ev = deleted("/registry/kubevirt.io/virtualmachineinstances/default/web-1", None);
+        let e = render(&ev, None).unwrap();
+        assert_eq!(e["type"], "DELETED");
+        assert_eq!(e["object"]["kind"], "VirtualMachineInstance");
+        assert_eq!(e["object"]["metadata"]["namespace"], "default");
+        assert_eq!(e["object"]["metadata"]["name"], "web-1");
+        assert_eq!(e["object"]["metadata"]["resourceVersion"], "35");
+    }
+
+    /// With the last state held, DELETED carries the object — at the delete's
+    /// resourceVersion — and selectors apply to it.
+    #[test]
+    fn a_deleted_event_carries_the_last_state() {
+        let last = serde_json::json!({
+            "apiVersion": "kubevirt.io/v1", "kind": "VirtualMachineInstance",
+            "metadata": { "name": "web-1", "namespace": "default", "uid": "u1",
+                          "labels": { "app": "web" }, "finalizers": ["f"] },
+            "status": { "phase": "Running" },
+        });
+        let ev = deleted("/registry/kubevirt.io/virtualmachineinstances/default/web-1", Some(last));
+        let e = render(&ev, None).unwrap();
+        assert_eq!(e["type"], "DELETED");
+        assert_eq!(e["object"]["metadata"]["namespace"], "default");
+        assert_eq!(e["object"]["metadata"]["uid"], "u1");
+        assert_eq!(e["object"]["metadata"]["resourceVersion"], "35");
+        assert_eq!(e["object"]["status"]["phase"], "Running");
+
+        assert!(render(&ev, Some("app=web")).is_some());
+        assert!(render(&ev, Some("app=db")).is_none(), "a watcher of app=db heard about a web VMI");
     }
 }

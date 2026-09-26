@@ -151,18 +151,25 @@ impl WatchCache {
         let prefix_owned = prefix.to_string();
         let prefix_metric = prefix.to_string();
         tokio::spawn(async move {
-            while let Some(ev) = stream.recv().await {
+            while let Some(mut ev) = stream.recv().await {
                 let seq = pump.next_seq.fetch_add(1, Ordering::SeqCst);
                 // Keep the materialized snapshot current.
                 {
                     let mut snap = pump.snapshot.lock().unwrap();
-                    match &ev {
+                    match &mut ev {
                         WatchEvent::Added { key, value, .. }
                         | WatchEvent::Modified { key, value, .. } => {
                             snap.insert(key.clone(), value.clone());
                         }
-                        WatchEvent::Deleted { key, .. } => {
-                            snap.remove(key);
+                        // What is removed is the object's last state: hand it
+                        // to the event, before the ring and the fan-out see
+                        // it, so every watcher's DELETED carries the object
+                        // rather than a name (#100).
+                        WatchEvent::Deleted { key, prev_value, .. } => {
+                            let last = snap.remove(key);
+                            if prev_value.is_none() {
+                                *prev_value = last;
+                            }
                         }
                         WatchEvent::Bookmark { .. } => {}
                     }
