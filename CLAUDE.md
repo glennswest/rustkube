@@ -112,6 +112,24 @@ when each piece landed.
 - [x] `/status` PUT is conditional on the body's `resourceVersion` (#78),
       all four handlers; `test/e2e/status-rv.sh`
 
+### Open, found since the docs pass
+- [ ] GC deletes a live Deployment's ReplicaSet (#99) — seen in the #97 e2e
+- [ ] RBAC escalation prevention (#98); until then Namespace writes stay
+      cluster-scoped (#97)
+- [ ] Secrets: `stringData` not folded into `data` (#101)
+- [ ] PVC `status.phase` not defaulted to `Pending` on create (#102)
+- [ ] No generic ephemeral-volume controller (#94)
+- [ ] Test containers per the stormcos test standard (#96); the e2e scripts
+      in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted) are the
+      start of it
+
+### Docs from the code (#80) — COMPLETE 2026-09-26
+- [x] README, docs/, CLAUDE.md and module docs rewritten from the code
+      (2026-09-24), re-checked against v0.15.2: every flag/env/default,
+      ports, the 19 controllers, crate docs; stormcos/stormcert
+      cross-references checked against their code
+- [x] storage.md intro and CSI `CreateVolume` corrected (#103, #95)
+
 ### Watch DELETED events (#100) — COMPLETE 2026-09-26
 - [x] Tombstone namespace from the key's real shape (CR keys have a group segment)
 - [x] DELETED carries the object's last state from the watch cache's snapshot;
@@ -199,7 +217,6 @@ Known state on 2026-09-24:
       bootstrapped. Verified by `test/e2e/projects.sh` (oc 4.22, two users).
       Namespace *writes* stay cluster-scoped until RBAC escalation
       prevention exists (#98).
-- [ ] GC deletes a live Deployment's ReplicaSet (#99) — seen in the #97 e2e
 - [ ] Routes, DeploymentConfig, ImageStream, BuildConfig, SCC — the
       genuinely OpenShift-only half. Whether these are in scope at all is a
       decision nobody has made (#70), and `route.openshift.io/v1` is already
