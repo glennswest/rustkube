@@ -4,6 +4,8 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.15.2] — 2026-09-26
+
 ### 2026-09-26 (watch DELETED, #100)
 - **fix: a custom resource's DELETED event named its plural as its
   namespace** — `virtualmachineinstances/web-1` for `default/web-1` — so no
@@ -11,7 +13,7 @@
   until a relist. The tombstone read the namespace at a fixed position in the
   key, and a custom resource's key has a group segment (#76). The key's shape
   is now read properly for both scopes.
-- **feat: DELETED carries the object's last state**, as upstream: the watch
+- **fix: DELETED carries the object's last state**, as upstream: the watch
   cache attaches what it removes from its snapshot
   (`WatchEvent::Deleted.prev_value`), at the delete's resourceVersion. Label
   and field selectors now apply to deletions, so a selected watch no longer

@@ -81,7 +81,7 @@ among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
 and others are left from the 10-crate layout; k8s-openapi is declared and never
 imported.
 
-## Current Version: `v0.15.1`
+## Current Version: `v0.15.2`
 
 ## Work Plan
 
@@ -112,14 +112,12 @@ when each piece landed.
 - [x] `/status` PUT is conditional on the body's `resourceVersion` (#78),
       all four handlers; `test/e2e/status-rv.sh`
 
-### Watch DELETED events (#100, in progress)
-- [ ] Tombstone namespace from the key's real shape — a CR key has a group
-      segment (`/registry/{group}/{plural}/…`), so `parts[2]` was the plural
-- [ ] DELETED carries the object's last state, from the watch cache's
-      snapshot (`WatchEvent::Deleted.prev_value`); selectors filter on it;
-      the name-only tombstone is the fallback when no prior state is held
-- [ ] Unit tests + e2e on dev: delete a namespaced and a cluster-scoped CR
-      and a built-in, assert on the DELETED event
+### Watch DELETED events (#100) — COMPLETE 2026-09-26
+- [x] Tombstone namespace from the key's real shape (CR keys have a group segment)
+- [x] DELETED carries the object's last state from the watch cache's snapshot;
+      selectors filter deletions; name-only tombstone only below the cache window
+- [x] A watch from revision 0 ("from now") is served by the cache, not the store
+- [x] `test/e2e/watch-deleted.sh` on dev
 
 ### Storage (v0.8.0)
 - [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
@@ -213,6 +211,7 @@ Known state on 2026-09-24:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.15.2 | 2026-09-26 | Watch DELETED events: a custom resource's names its real namespace, not its plural, so informers drop it; DELETED carries the object's last state and honours selectors; a watch with no resourceVersion is served by the watch cache (#100) |
 | v0.15.1 | 2026-09-26 | `PUT …/status` (and CSR `/approval`) is conditional on the body's `resourceVersion`: a stale status write is a 409 instead of silently overwriting newer status (#78). CronJob status writes chain within a pass |
 | v0.15.0 | 2026-09-25 | Projects: `project.openshift.io/v1` Project + ProjectRequest over Namespaces — `oc new-project` makes the requester its admin, `oc projects` lists only one's own; `admin`/`edit`/`view` roles (#97). `oc get all` works (discovery `all` category). `kube-system/node-admin` SA for node ssh login (#79). README/docs rewritten from the code (#80) |
 | v0.14.1 | 2026-09-23 | PATCH without a resourceVersion no longer 409s under concurrent writes — retried like `GuaranteedUpdate` (#77). API-created namespaces are `Active` with the `kubernetes` finalizer, backfilled at boot (#75). Resource fit honours pod-level requests (#73). Stormblock provisioner honours `WaitForFirstConsumer` |
