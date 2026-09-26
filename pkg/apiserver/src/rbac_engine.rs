@@ -513,6 +513,10 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
         || path == "/version"
         || path == "/api"
         || path == "/apis"
+        // The same documents with a trailing slash, which upstream serves and
+        // the conformance suite's Discovery test asks for (#67).
+        || path == "/api/"
+        || path == "/apis/"
     {
         return Ok(next.run(request).await);
     }
