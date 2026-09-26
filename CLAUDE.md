@@ -112,6 +112,15 @@ when each piece landed.
 - [x] `/status` PUT is conditional on the body's `resourceVersion` (#78),
       all four handlers; `test/e2e/status-rv.sh`
 
+### Watch DELETED events (#100, in progress)
+- [ ] Tombstone namespace from the key's real shape — a CR key has a group
+      segment (`/registry/{group}/{plural}/…`), so `parts[2]` was the plural
+- [ ] DELETED carries the object's last state, from the watch cache's
+      snapshot (`WatchEvent::Deleted.prev_value`); selectors filter on it;
+      the name-only tombstone is the fallback when no prior state is held
+- [ ] Unit tests + e2e on dev: delete a namespaced and a cluster-scoped CR
+      and a built-in, assert on the DELETED event
+
 ### Storage (v0.8.0)
 - [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
 - [x] Attach/detach — `VolumeAttachment` for drivers that require it
