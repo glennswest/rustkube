@@ -535,11 +535,8 @@ pub async fn crd_update_ns(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
-    let prev_rev = body["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
-    let obj = state.storage.update(&key, body, prev_rev).await?;
+    let obj = crate::handlers::resource::put_object(&state, &key, &name, Some(&namespace), body).await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }
@@ -858,12 +855,9 @@ pub async fn crd_update_cluster(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
-    let prev_rev = body["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
     check_crd_write(&resource, Some(&name), Some(&body))?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
-    let obj = state.storage.update(&key, body, prev_rev).await?;
+    let obj = crate::handlers::resource::put_object(&state, &key, &name, None, body).await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }

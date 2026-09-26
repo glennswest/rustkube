@@ -378,8 +378,86 @@ pub async fn update_cluster_resource(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = persist_or_finalize(&state, &key, body).await?;
+    let obj = put_object(&state, &key, &name, None, body).await?;
     Ok(Json(obj))
+}
+
+/// PUT of a whole object: the body replaces the stored one, **except for what
+/// the server owns**.
+///
+/// It used to be stored as sent, which upstream never does:
+/// - a PUT to an object that does not exist created it, where upstream
+///   answers 404 (no built-in resource allows create-on-update);
+/// - a body could rename the object away from its URL, or carry a different
+///   `uid` or `creationTimestamp` — or a zero-valued one, which is what a
+///   protobuf body decodes to — and that is what was stored.
+///
+/// Now `uid` and `creationTimestamp` come from the stored object; a body
+/// that names a different name or namespace is refused (400), and one that
+/// names a different uid is a failed precondition (409), as upstream. The
+/// write is conditional on the body's resourceVersion when it has one.
+pub(crate) async fn put_object(
+    state: &AppState,
+    key: &str,
+    name: &str,
+    namespace: Option<&str>,
+    mut body: Value,
+) -> Result<Value, ApiError> {
+    let existing = state.storage.get(key).await?;
+    if !body.is_object() {
+        return Err(ApiError::invalid("the body of a PUT must be an object"));
+    }
+    if !body["metadata"].is_object() {
+        body["metadata"] = json!({});
+    }
+    let meta = &body["metadata"];
+    let bad_request = |message: String| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        reason: "BadRequest".into(),
+        message,
+    };
+    if let Some(n) = meta["name"].as_str().filter(|n| !n.is_empty() && *n != name) {
+        return Err(bad_request(format!(
+            "the name of the object ({n}) does not match the name on the URL ({name})"
+        )));
+    }
+    if let (Some(ns), Some(want)) = (meta["namespace"].as_str().filter(|n| !n.is_empty()), namespace) {
+        if ns != want {
+            return Err(bad_request(format!(
+                "the namespace of the object ({ns}) does not match the namespace on the URL ({want})"
+            )));
+        }
+    }
+    let stored_uid = existing["metadata"]["uid"].clone();
+    if let Some(u) = meta["uid"].as_str().filter(|u| !u.is_empty()) {
+        if Some(u) != stored_uid.as_str() {
+            return Err(ApiError::conflict(&format!(
+                "Precondition failed: UID in precondition: {}, UID in object meta: {u}",
+                stored_uid.as_str().unwrap_or("")
+            )));
+        }
+    }
+    keep_server_fields(&mut body, &existing, name, namespace);
+    persist_or_finalize(state, key, body).await
+}
+
+/// Carry the fields the server owns from the stored object into its
+/// replacement: identity (name, namespace from the URL), `uid` and
+/// `creationTimestamp`. Shared by PUT and PATCH (#67).
+pub(crate) fn keep_server_fields(obj: &mut Value, stored: &Value, name: &str, namespace: Option<&str>) {
+    if !obj["metadata"].is_object() {
+        obj["metadata"] = json!({});
+    }
+    obj["metadata"]["name"] = json!(name);
+    if let Some(ns) = namespace {
+        obj["metadata"]["namespace"] = json!(ns);
+    }
+    for field in ["uid", "creationTimestamp"] {
+        match stored["metadata"].get(field) {
+            Some(v) if !v.is_null() => obj["metadata"][field] = v.clone(),
+            _ => {}
+        }
+    }
 }
 
 /// PUT — update a namespace-scoped resource.
@@ -389,7 +467,7 @@ pub async fn update_namespaced_resource(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = persist_or_finalize(&state, &key, body).await?;
+    let obj = put_object(&state, &key, &name, Some(&namespace), body).await?;
     Ok(Json(obj))
 }
 
@@ -969,10 +1047,20 @@ where
                 )));
             }
         }
+        let stored_meta = json!({ "metadata": {
+            "uid": fresh["metadata"]["uid"].clone(),
+            "creationTimestamp": fresh["metadata"]["creationTimestamp"].clone(),
+        }});
+        let name = fresh["metadata"]["name"].as_str().unwrap_or_default().to_string();
+        let namespace = fresh["metadata"]["namespace"].as_str().map(str::to_owned);
         let mut obj = mutate(fresh)?;
         if !obj["metadata"].is_object() {
             return Err(ApiError::invalid("metadata must be an object"));
         }
+        // A patch cannot rename the object or rewrite what the server owns —
+        // the conformance suite's own ConfigMap patch sends
+        // `creationTimestamp: null`, which used to delete it (#67).
+        keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
         // Swap against what was read, whatever the patch did to the field.
         obj["metadata"]["resourceVersion"] = Value::String(read_rv);
         match persist_or_finalize(state, key, obj).await {
@@ -1810,6 +1898,59 @@ mod status_put_tests {
         put(body(Some(""), "E")).await.unwrap();
         let stored = state.storage.get(key).await.unwrap();
         assert_eq!(stored["status"]["phase"], "E", "{key}");
+    }
+
+    /// PUT keeps what the server owns, refuses a rename, and 404s a missing
+    /// object rather than creating it (#67).
+    #[tokio::test]
+    async fn put_keeps_server_fields_and_does_not_create() {
+        let s = state();
+        let key = ResourceStorage::namespaced_key("configmaps", "default", "c1");
+        let stored = s.storage.create(&key, json!({
+            "metadata": {"name": "c1", "namespace": "default", "uid": "u1",
+                         "creationTimestamp": "2026-01-01T00:00:00Z"},
+            "data": {"a": "1"}})).await.unwrap();
+        let rv = stored["metadata"]["resourceVersion"].as_str().unwrap().to_string();
+
+        // Zero-valued server fields, as a protobuf body decodes: kept.
+        let body = json!({"metadata": {"name": "c1", "uid": "", "creationTimestamp": null,
+                                       "resourceVersion": rv}, "data": {"a": "2"}});
+        let out = put_object(&s, &key, "c1", Some("default"), body).await.unwrap();
+        assert_eq!(out["metadata"]["uid"], "u1");
+        assert_eq!(out["metadata"]["creationTimestamp"], "2026-01-01T00:00:00Z");
+        assert_eq!(out["data"]["a"], "2");
+
+        let rename = json!({"metadata": {"name": "other"}, "data": {}});
+        let err = put_object(&s, &key, "c1", Some("default"), rename).await.unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+
+        let other_uid = json!({"metadata": {"name": "c1", "uid": "u2"}, "data": {}});
+        let err = put_object(&s, &key, "c1", Some("default"), other_uid).await.unwrap_err();
+        assert_eq!(err.status, StatusCode::CONFLICT);
+
+        let missing = ResourceStorage::namespaced_key("configmaps", "default", "nope");
+        let err = put_object(&s, &missing, "nope", Some("default"), json!({"metadata": {"name": "nope"}}))
+            .await.unwrap_err();
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
+    }
+
+    /// A patch that nulls creationTimestamp — the conformance suite's own
+    /// ConfigMap patch does — leaves it as stored.
+    #[tokio::test]
+    async fn a_patch_cannot_remove_the_creation_timestamp() {
+        let s = state();
+        let key = ResourceStorage::namespaced_key("configmaps", "default", "c1");
+        s.storage.create(&key, json!({
+            "metadata": {"name": "c1", "namespace": "default", "uid": "u1",
+                         "creationTimestamp": "2026-01-01T00:00:00Z"}})).await.unwrap();
+        let body = br#"{"metadata":{"creationTimestamp":null,"labels":{"x":"y"}}}"#;
+        let out = guaranteed_patch(&s, &key, "application/strategic-merge-patch+json", body, |mut o| {
+            apply_patch_body(&mut o, "application/strategic-merge-patch+json", body)?;
+            Ok(o)
+        }).await.unwrap();
+        assert_eq!(out["metadata"]["creationTimestamp"], "2026-01-01T00:00:00Z");
+        assert_eq!(out["metadata"]["uid"], "u1");
+        assert_eq!(out["metadata"]["labels"]["x"], "y");
     }
 
     #[tokio::test]
