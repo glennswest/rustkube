@@ -103,12 +103,18 @@ for f in sorted(glob.glob(sys.argv[1] + "/**/*.xml", recursive=True)):
         skip = tc.find("skipped")
         st = "failed" if (fail is not None or err is not None) else "skipped" if skip is not None else "passed"
         counts[st] = counts.get(st, 0) + 1
+        if st == "skipped":
+            continue
         print(f"RESULT {st} {float(tc.get('time', 0)):.0f} {name}")
         if st == "failed":
             node = fail if fail is not None else err
             msg = ((node.get("message") or "") + "\n" + (node.text or "")).strip()
             lines = [l.strip() for l in msg.splitlines() if l.strip()]
             print("  WHY " + (lines[0][:300] if lines else "(no message)"))
+            # Where it failed and what it was doing: the STEP lines and the
+            # location, which is what a triage needs beyond the message.
+            for l in [l for l in lines[1:] if "STEP" in l or "In [" in l or ".go:" in l][:6]:
+                print("      " + l[:250])
 print("SUMMARY", " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
 PY
 if grep -q "A BeforeSuite node failed" "$W/e2e.log"; then
