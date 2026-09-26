@@ -4,6 +4,25 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-26 (docs re-checked against the code, #80)
+- **docs: README** — the layout block named k8s-openapi types in
+  `apimachinery` (nothing imports it) and put the `KvStore` trait in
+  `storage` (it is in `apimachinery`); "How it ships" names the component
+  golden (`golden-rustkube-*`, the three binaries) and notes that on the
+  `storage` profile the controllers start without a credential and are
+  refused (stormcos#76). Flags, env vars, defaults, ports and the controller
+  list re-checked against the source; the stormcos and stormcert
+  cross-references against their code.
+- **docs: storage.md** — the intro said every PVC is a clone made by a CSI
+  driver; the built-in `stormblock` class is made by the kubelet and CSI is
+  for other classes (#103). stormblock-csi's `CreateVolume` makes an empty
+  volume formatted on first stage, or clones a `dataSource` — it does not
+  clone a blank template (#95). Blanks are `pvc-ext4j-<MiB>m`.
+- **docs: upstream-feature-inventory.md** — current to v0.15.2: Projects
+  served (#97), RBAC partial for want of escalation prevention (#98), the GC
+  bug (#99) on the checklist, #78 and #100 done.
+- **docs: CLAUDE.md** — issues found since the docs pass in the work plan.
+
 ## [v0.15.2] — 2026-09-26
 
 ### 2026-09-26 (watch DELETED, #100)
