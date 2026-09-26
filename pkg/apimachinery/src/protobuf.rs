@@ -459,8 +459,16 @@ fn json_to_message(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMess
     };
 
     for (key, val) in obj {
-        if key == "apiVersion" || key == "kind" || val.is_null() {
-            continue; // envelope TypeMeta, not a proto field
+        // `apiVersion` and `kind` are NOT skipped by name. At the top level they
+        // are the envelope's TypeMeta, and the object's message has no such
+        // fields, so the lookup below ignores them anyway. Nested, they are
+        // real fields — `roleRef.kind`, `subjects[].kind`, every
+        // `ownerReferences[].kind`/`apiVersion` and object reference — and
+        // skipping them by name emptied every one in every protobuf response.
+        // `oc adm policy remove-role-from-user` could never find the binding
+        // it had just added, because every roleRef read back kind-less (#69).
+        if val.is_null() {
+            continue;
         }
         let field = match desc
             .get_field_by_json_name(key)
@@ -766,7 +774,8 @@ mod tests {
     }
 
     /// `oc adm policy remove-role-from-user` reads RoleBindings as protobuf
-    /// and matches on `roleRef` and `subjects` (#69).
+    /// and matches on `roleRef` and `subjects` (#69): a nested `kind` must
+    /// survive the encoder.
     #[test]
     fn rolebinding_list_round_trips_role_ref_and_subjects() {
         let list = json!({
@@ -784,13 +793,30 @@ mod tests {
         });
         let wire = encode_from_json(&list, "rbac.authorization.k8s.io/v1", "RoleBindingList").unwrap();
         let back = decode_to_json(&wire, "", "").unwrap();
-        eprintln!("{back:#}");
         let item = &back["items"][0];
         assert_eq!(item["metadata"]["name"], "edit");
         assert_eq!(item["roleRef"]["kind"], "ClusterRole");
         assert_eq!(item["roleRef"]["name"], "edit");
         assert_eq!(item["subjects"][0]["kind"], "User");
         assert_eq!(item["subjects"][0]["name"], "alice");
+    }
+
+    /// An owner reference names its owner by apiVersion and kind; without
+    /// them a client cannot tell what owns the object.
+    #[test]
+    fn owner_references_keep_api_version_and_kind() {
+        let rs = json!({
+            "apiVersion": "apps/v1", "kind": "ReplicaSet",
+            "metadata": { "name": "web-1", "namespace": "demo", "ownerReferences": [{
+                "apiVersion": "apps/v1", "kind": "Deployment", "name": "web",
+                "uid": "u1", "controller": true }] },
+        });
+        let wire = encode_from_json(&rs, "apps/v1", "ReplicaSet").unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
+        let owner = &back["metadata"]["ownerReferences"][0];
+        assert_eq!(owner["apiVersion"], "apps/v1");
+        assert_eq!(owner["kind"], "Deployment");
+        assert_eq!(owner["uid"], "u1");
     }
 
     #[test]
