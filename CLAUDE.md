@@ -184,7 +184,13 @@ when each piece landed.
 ### Phase 4: Scale & Conformance
 - [ ] 1000+ node testing (#66) — the controllers list everything every tick,
       which is what will break first
-- [ ] K8s conformance test suite (#67)
+- [ ] K8s conformance test suite (#67) — in progress: first run on dev,
+      `test/conformance/run.sh`: e2e.test v1.36.x `[Conformance]` (443) against
+      apiserver + controller-manager + scheduler with two heartbeat-kept
+      stand-in Nodes and no kubelet; pod-dependent tests are expected to
+      fail as "needs a node". Triage every failure into: not implemented /
+      wrong / needs a real node / not applicable → issues. A full-cluster run
+      needs stormcos test machines (rustkube-node#27, #32).
 - [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — CI
       builds x86_64 musl only; `build-release.sh` can target aarch64 via
       `cross`, and no such build has been recorded
