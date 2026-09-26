@@ -109,7 +109,10 @@ when each piece landed.
       unauthenticated apiserver `/metrics` (#90)
 - [ ] Gateway controller: hardcoded address, overwrites foreign classes (#91)
 - [ ] Serving-cert reload applies a mismatched key/cert pair (#93)
-- [ ] `/status` PUT ignores the body's `resourceVersion` (#78)
+- [ ] `/status` PUT ignores the body's `resourceVersion` (#78) — in progress: all four
+      status PUT handlers (core/grouped cluster + namespaced, CR cluster +
+      namespaced; CSR `/approval` shares the cluster one) go through
+      `guaranteed_update` with the body's RV as precondition
 
 ### Storage (v0.8.0)
 - [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
