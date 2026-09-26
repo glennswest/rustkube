@@ -123,6 +123,13 @@ when each piece landed.
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted) are the
       start of it
 
+### Presentation (#81, in progress)
+- [ ] `docs/presentation.md`, Marp: purpose, place in stormcos (stormcentral's
+      graph: → fastetcd, stormcert, stormlb, stormd), how it works, what works
+      today, planned, interfaces, how it ships, status — every claim from the
+      code / README as of v0.15.2
+- [ ] Render check with marp-cli on dev
+
 ### Docs from the code (#80) — COMPLETE 2026-09-26
 - [x] README, docs/, CLAUDE.md and module docs rewritten from the code
       (2026-09-24), re-checked against v0.15.2: every flag/env/default,
