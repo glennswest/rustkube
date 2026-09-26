@@ -4,6 +4,10 @@ theme: default
 paginate: true
 title: rustkube
 description: Purpose and functionality of RustKube, the Kubernetes control plane in Rust
+style: |
+  section { font-size: 24px; }
+  pre { font-size: 0.72em; }
+  table { font-size: 0.85em; }
 ---
 
 <!--
