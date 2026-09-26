@@ -5,29 +5,13 @@
 #
 #   test/e2e/projects.sh            # from the checkout; builds what it runs
 #
-# Needs cargo, git, openssl and curl, and network access to fetch fastetcd
-# and the `oc` client. Ports: 36443 (apiserver), 32379/32380 (fastetcd).
-# Exit status is the number of failed checks.
-set -u
-mkdir -p "$HOME/tmp" && export TMPDIR="$HOME/tmp"
-W=$(mktemp -d)
-cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
-trap cleanup EXIT
-
-REPO=$(pwd)
-PORT=36443
-API=https://127.0.0.1:$PORT
-FAIL=0
-pass() { echo "PASS  $*"; }
-fail() { echo "FAIL  $*"; FAIL=$((FAIL + 1)); }
-
-# --- build ------------------------------------------------------------------
-export CARGO_TARGET_DIR=$HOME/target/rustkube-e2e
-cargo build -q -p kube-apiserver -p kube-controller-manager || exit 100
-BIN=$CARGO_TARGET_DIR/debug
-git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
-(cd "$W/fastetcd" && CARGO_TARGET_DIR=$HOME/target/fastetcd-e2e cargo build -q -p fastetcd-server) || exit 100
-FASTETCD=$(ls "$HOME"/target/fastetcd-e2e/debug/fastetcd* | grep -v '\.d$' | head -1)
+# Setup is lib.sh's; this also fetches the `oc` client. Exit status is the
+# number of failed checks.
+# shellcheck source=lib.sh
+. "$(dirname "$0")/lib.sh"
+start_controller_manager
+ALICE=$(token alice '[]')
+BOB=$(token bob '[]')
 
 if ! command -v oc >/dev/null; then
   curl -sfL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz \
@@ -37,48 +21,6 @@ else
   OC=$(command -v oc)
 fi
 "$OC" version --client | head -1
-
-# --- credentials --------------------------------------------------------------
-openssl genrsa -out "$W/sa.key" 2048 2>/dev/null
-openssl rsa -in "$W/sa.key" -pubout -out "$W/sa.pub" 2>/dev/null
-b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-token() { # <user> <groups-json>
-  local now h p s
-  now=$(date +%s)
-  h=$(printf '{"typ":"JWT","alg":"RS256"}' | b64url)
-  p=$(printf '{"sub":"%s","groups":%s,"iat":%d,"exp":%d}' "$1" "$2" "$now" $((now + 3600)) | b64url)
-  s=$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign "$W/sa.key" -binary | b64url)
-  printf '%s.%s.%s' "$h" "$p" "$s"
-}
-ADMIN=$(token admin '["system:masters"]')
-ALICE=$(token alice '[]')
-BOB=$(token bob '[]')
-
-# --- start --------------------------------------------------------------------
-"$FASTETCD" --data-dir "$W/etcd" --listen-client-urls http://127.0.0.1:32379 \
-  --listen-peer-urls http://127.0.0.1:32380 --listen-metrics-url 127.0.0.1:32381 \
-  >"$W/fastetcd.log" 2>&1 &
-# fastetcd first: an apiserver that outwaits its 60s datastore gate boots
-# into a hole.
-for _ in $(seq 180); do
-  (exec 3<>/dev/tcp/127.0.0.1/32379) 2>/dev/null && break
-  sleep 1
-done
-(exec 3<>/dev/tcp/127.0.0.1/32379) 2>/dev/null || { echo "fastetcd never listened"; tail -40 "$W/fastetcd.log"; exit 100; }
-"$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $PORT --tls \
-  --etcd-servers http://127.0.0.1:32379 --anonymous-auth false \
-  --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
-  >"$W/apiserver.log" 2>&1 &
-ready=
-for _ in $(seq 180); do
-  curl -sfk -H "Authorization: Bearer $ADMIN" "$API/readyz" >/dev/null && { ready=1; break; }
-  sleep 1
-done
-if [ -z "$ready" ]; then
-  echo "apiserver never became ready"; cat "$W/apiserver.log"; exit 100
-fi
-"$BIN/kube-controller-manager" --apiserver "$API" --token "$ADMIN" \
-  --insecure-skip-tls-verify --leader-elect false >"$W/cm.log" 2>&1 &
 
 # One kubeconfig per user, so `oc new-project` switching context for one
 # does not switch it for another.
@@ -160,9 +102,4 @@ got=$(as "$ADMIN" admin get cm,secrets,deployments -n demo -o name 2>&1 | grep -
 expect_ok "admin: empty self-provisioners" as "$ADMIN" admin patch clusterrolebinding.rbac self-provisioners --type=json -p '[{"op":"remove","path":"/subjects"}]'
 expect_denied "alice: new-project refused when self-service is off" as "$ALICE" alice new-project demo2
 
-echo "---- $FAIL failed"
-if [ "$FAIL" -ne 0 ]; then
-  echo "---- apiserver log (tail)"; tail -40 "$W/apiserver.log"
-  echo "---- controller-manager log (tail)"; tail -20 "$W/cm.log"
-fi
-exit "$FAIL"
+report
