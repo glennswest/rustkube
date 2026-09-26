@@ -4,6 +4,14 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-26 (presentation, #81)
+- **docs: `docs/presentation.md`** — a 12-slide Marp deck: what rustkube is,
+  where it sits in stormcos (stormcentral's relationships), how it works,
+  what works today, interfaces, how it ships, how it is tested, what is
+  planned, and the open issues that matter. Drawn from the code and the
+  README as of v0.15.2; each slide names the file to check it against.
+  Linked from the README.
+
 ### 2026-09-26 (docs re-checked against the code, #80)
 - **docs: README** — the layout block named k8s-openapi types in
   `apimachinery` (nothing imports it) and put the `KvStore` trait in

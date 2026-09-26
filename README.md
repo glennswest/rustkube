@@ -326,6 +326,7 @@ apiserver starts: `apiserver.crt`/`.key` (CN `apiserver`; SANs the
 
 | | |
 |---|---|
+| [docs/presentation.md](docs/presentation.md) | a 12-slide overview (Marp): purpose, place in stormcos, what works, what is planned |
 | [docs/certificates.md](docs/certificates.md) | TLS, reload, renewal, offline-minted tokens |
 | [docs/storage.md](docs/storage.md) | who does what to a PVC — rustkube, stormblock, stormblock-csi |
 | [docs/metrics.md](docs/metrics.md) | every metric and what it answers |
