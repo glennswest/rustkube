@@ -34,8 +34,9 @@ pub trait KvStore: Send + Sync + 'static {
     /// Returns the new revision.
     async fn put(&self, key: &str, value: &[u8], prev_revision: Option<u64>) -> Result<u64>;
 
-    /// Delete a key. If `prev_revision` is Some, performs CAS.
-    async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<()>;
+    /// Delete a key. If `prev_revision` is Some, performs CAS. Returns the
+    /// store's revision after the delete, so a reader can wait for it.
+    async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<u64>;
 
     /// List keys with a given prefix, with pagination.
     async fn list(

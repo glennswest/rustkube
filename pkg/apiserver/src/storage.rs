@@ -32,16 +32,48 @@ pub(crate) fn metric_resource(key: &str) -> String {
     }
 }
 
+/// How long this apiserver remembers its own writes, for read-your-writes on
+/// LIST. Far longer than the watch cache takes to apply an event (ms); after
+/// it, a write is assumed seen.
+const RECENT_WRITES_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Generic resource storage — handles any K8s resource type.
 pub struct ResourceStorage {
     store: Arc<dyn KvStore>,
     watch_cache: Arc<WatchCache>,
+    /// This apiserver's writes in the last `RECENT_WRITES_WINDOW`: key and the
+    /// store revision the write produced. See [`ResourceStorage::list`].
+    recent_writes: std::sync::Mutex<std::collections::VecDeque<(std::time::Instant, String, u64)>>,
 }
 
 impl ResourceStorage {
     pub fn new(store: Arc<dyn KvStore>) -> Self {
         let watch_cache = Arc::new(WatchCache::new(store.clone()));
-        Self { store, watch_cache }
+        Self { store, watch_cache, recent_writes: Default::default() }
+    }
+
+    /// Remember a write so a LIST that follows it sees it.
+    fn note_write(&self, key: &str, rev: u64) {
+        let now = std::time::Instant::now();
+        let mut w = self.recent_writes.lock().unwrap();
+        while w.front().is_some_and(|(t, _, _)| now.duration_since(*t) > RECENT_WRITES_WINDOW) {
+            w.pop_front();
+        }
+        w.push_back((now, key.to_string(), rev));
+    }
+
+    /// The newest revision this apiserver wrote under `prefix` recently: what
+    /// a LIST of `prefix` must reflect to include its own writes.
+    fn written_under(&self, prefix: &str) -> u64 {
+        let now = std::time::Instant::now();
+        self.recent_writes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(t, k, _)| now.duration_since(*t) <= RECENT_WRITES_WINDOW && k.starts_with(prefix))
+            .map(|(_, _, r)| *r)
+            .max()
+            .unwrap_or(0)
     }
 
     /// The resource name inside a store key or prefix, for the `type` label on
@@ -120,10 +152,15 @@ impl ResourceStorage {
     ) -> Result<(Vec<Value>, Option<String>, u64), ApiError> {
         let _timer = apimachinery::metrics::StoreTimer::new("list", Self::resource_of(prefix));
         // Served from the shared watch cache's in-memory snapshot (seeded once
-        // from the store), so relist storms don't fan out to fastetcd.
+        // from the store), so relist storms don't fan out to fastetcd — but
+        // never from a snapshot older than this apiserver's own last write
+        // under the prefix. A client that creates and then lists must find
+        // what it created; the cache applying the write a few milliseconds
+        // later is not an excuse the conformance suite accepts (#67).
+        let min_rev = self.written_under(prefix);
         let (raw, continue_token, revision) = self
             .watch_cache
-            .list(prefix, limit, continue_token)
+            .list(prefix, limit, continue_token, min_rev)
             .await
             .map_err(ApiError::from)?;
 
@@ -159,6 +196,7 @@ impl ResourceStorage {
             Err(e) => return Err(ApiError::from(e)),
         };
 
+        self.note_write(key, rev);
         inject_resource_version(&mut obj, rev);
         Ok(obj)
     }
@@ -183,6 +221,7 @@ impl ResourceStorage {
             .await
             .map_err(ApiError::from)?;
 
+        self.note_write(key, rev);
         inject_resource_version(&mut obj, rev);
         Ok(obj)
     }
@@ -190,10 +229,13 @@ impl ResourceStorage {
     /// Delete a resource by key.
     pub async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<(), ApiError> {
         let _timer = apimachinery::metrics::StoreTimer::new("delete", Self::resource_of(key));
-        self.store
+        let rev = self
+            .store
             .delete(key, prev_revision)
             .await
-            .map_err(ApiError::from)
+            .map_err(ApiError::from)?;
+        self.note_write(key, rev);
+        Ok(())
     }
 
     /// Watch resources by prefix, served through the shared watch cache (one

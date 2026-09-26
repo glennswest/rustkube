@@ -144,7 +144,7 @@ impl KvStore for EtcdStore {
         }
     }
 
-    async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<()> {
+    async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<u64> {
         let mut client = self.client.clone();
         match prev_revision {
             Some(expected_rev) => {
@@ -159,12 +159,13 @@ impl KvStore for EtcdStore {
                 if !resp.succeeded() {
                     return Err(Error::Conflict);
                 }
+                Ok(resp.header().map(|h| h.revision() as u64).unwrap_or(0))
             }
             None => {
-                client.delete(key, None).await.map_err(etcd_err)?;
+                let resp = client.delete(key, None).await.map_err(etcd_err)?;
+                Ok(resp.header().map(|h| h.revision() as u64).unwrap_or(0))
             }
         }
-        Ok(())
     }
 
     async fn list(

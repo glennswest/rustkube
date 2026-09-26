@@ -38,7 +38,7 @@ impl KvStore for MemStore {
         Ok(rev)
     }
 
-    async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<()> {
+    async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<u64> {
         let mut g = self.inner.lock().unwrap();
         if let Some(want) = prev_revision {
             if g.1.get(key).map(|(_, r)| *r) != Some(want) {
@@ -47,7 +47,7 @@ impl KvStore for MemStore {
         }
         g.0 += 1;
         g.1.remove(key);
-        Ok(())
+        Ok(g.0)
     }
 
     async fn list(&self, _: &str, _: usize, _: Option<&str>) -> Result<ListResult> {

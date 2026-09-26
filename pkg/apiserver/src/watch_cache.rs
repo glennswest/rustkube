@@ -38,6 +38,9 @@ fn event_kind(ev: &WatchEvent) -> &'static str {
     }
 }
 
+/// How long a LIST waits for the snapshot to reach a revision this apiserver
+/// wrote, before reading the store instead.
+const MIN_REV_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 /// Page size used to seed the snapshot from the store.
 const SEED_PAGE: usize = 1000;
 /// How often the freshness task re-checks the snapshot against the store. Bounds
@@ -296,13 +299,36 @@ impl WatchCache {
     /// last returned key, so all pages are served consistently from the cache —
     /// a relist storm hits the store only once (the seed), not once per client.
     /// Returns `(items, continue_token, revision)`.
+    /// A page of `prefix` from the snapshot, once the snapshot reflects
+    /// revision `min_rev` (0: no requirement).
+    ///
+    /// The pump applies an event milliseconds after the write, so the wait is
+    /// normally a spin or two. If it has not caught up within
+    /// `MIN_REV_WAIT`, the page is read from the store instead: slower, and
+    /// never stale.
     pub async fn list(
         &self,
         prefix: &str,
         limit: usize,
         continue_token: Option<&str>,
+        min_rev: u64,
     ) -> Result<(Vec<Vec<u8>>, Option<String>, u64)> {
         let cache = self.ensure(prefix).await?;
+        if min_rev > 0 && cache.snapshot_rev.load(Ordering::SeqCst) < min_rev {
+            let deadline = std::time::Instant::now() + MIN_REV_WAIT;
+            while cache.snapshot_rev.load(Ordering::SeqCst) < min_rev {
+                if std::time::Instant::now() >= deadline {
+                    tracing::debug!(
+                        "watch-cache: {prefix} not at rev {min_rev} after {MIN_REV_WAIT:?}; \
+                         listing from the store"
+                    );
+                    let page = self.store.list(prefix, limit, continue_token).await?;
+                    let items = page.items.into_iter().map(|(_, v, _)| v).collect();
+                    return Ok((items, page.continue_token, page.revision));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+        }
         let snap = cache.snapshot.lock().unwrap();
         let rev = cache.snapshot_rev.load(Ordering::SeqCst);
 
