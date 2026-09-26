@@ -78,11 +78,9 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
                                                 logs, exec, attach, port-forward
 ```
 
-- Objects are `serde_json::Value` end to end; keys are
-  `/registry/{resource}/[{ns}/]{name}`, custom resources
-  `/registry/{group}/{plural}/…` (`pkg/apiserver/src/storage.rs`).
-- `resourceVersion` is fastetcd's `mod_revision`; every write is a CAS.
-- Controllers and the scheduler are API clients like any other — no informers.
+- Keys `/registry/{resource}/[{ns}/]{name}`, CRs `/registry/{group}/{plural}/…`
+- `resourceVersion` = fastetcd's `mod_revision`; every write is a CAS
+- Controllers and scheduler are plain API clients — no informers
 
 ---
 
