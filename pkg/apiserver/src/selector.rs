@@ -90,15 +90,28 @@ pub fn matches_label_selector(labels: &serde_json::Map<String, Value>, reqs: &[L
 }
 
 /// Check if an object matches all field requirements.
+///
+/// An absent field is compared as its **zero value**, as upstream does: its
+/// field selectors read typed objects, where a field left out of the JSON is
+/// `""` or `false`, not missing. So `spec.nodeName=` matches a pod no one has
+/// scheduled, and `spec.unschedulable=false` matches a node that was never
+/// cordoned — the query every e2e run starts with. Compared as "missing", both
+/// matched nothing, and the conformance suite found no schedulable node in a
+/// cluster that had two (#67).
 pub fn matches_field_selector(obj: &Value, reqs: &[FieldRequirement]) -> bool {
     reqs.iter().all(|req| {
-        let actual = resolve_field(obj, &req.field);
-        if req.negate {
-            actual.as_deref() != Some(req.value.as_str())
-        } else {
-            actual.as_deref() == Some(req.value.as_str())
-        }
+        let actual = resolve_field(obj, &req.field).unwrap_or_else(|| zero_value(&req.field));
+        (actual == req.value) != req.negate
     })
+}
+
+/// The value an absent selectable field has in a typed object: `false` for
+/// the boolean field labels, `""` for every other (all are strings).
+fn zero_value(field: &str) -> String {
+    match field {
+        "spec.unschedulable" => "false".into(),
+        _ => String::new(),
+    }
 }
 
 /// Filter a list of objects by both label and field selectors.
@@ -251,6 +264,23 @@ fn resolve_field(obj: &Value, path: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Absent fields are their zero value (#67).
+    #[test]
+    fn an_absent_field_is_its_zero_value() {
+        let node = json!({"metadata": {"name": "n1"}, "spec": {}});
+        assert!(matches_field_selector(&node, &parse_field_selector("spec.unschedulable=false")));
+        assert!(!matches_field_selector(&node, &parse_field_selector("spec.unschedulable=true")));
+        let cordoned = json!({"metadata": {"name": "n2"}, "spec": {"unschedulable": true}});
+        assert!(!matches_field_selector(&cordoned, &parse_field_selector("spec.unschedulable=false")));
+
+        let pending = json!({"metadata": {"name": "p"}, "spec": {}});
+        assert!(matches_field_selector(&pending, &parse_field_selector("spec.nodeName=")));
+        assert!(!matches_field_selector(&pending, &parse_field_selector("spec.nodeName!=")));
+        let bound = json!({"metadata": {"name": "p"}, "spec": {"nodeName": "n1"}});
+        assert!(matches_field_selector(&bound, &parse_field_selector("spec.nodeName!=")));
+        assert!(matches_field_selector(&bound, &parse_field_selector("spec.nodeName=n1")));
+    }
 
     #[test]
     fn test_label_eq() {
