@@ -212,7 +212,8 @@ Known state on 2026-09-24:
       through; the query's `stdin/stdout/stderr` become the kubelet's
       `input/output/error`. **The kubelet half does not exist**: rustkube-node
       serves no `/exec`, `/attach` or `/portForward` (rustkube-node#56).
-- [ ] `oc adm` — largely unexamined (#69). `SubjectAccessReview` (who-can) and
+- [ ] `oc adm` — in progress (#69): `test/e2e/oc-adm.sh` runs every verb
+      against a live apiserver; the checklist goes in docs/oc-compatibility.md. `SubjectAccessReview` (who-can) and
       CSR `/approval` are served; `oc adm top` needs `metrics.k8s.io`, which
       needs aggregation (#83); `node-logs` needs `nodes/{name}/proxy`.
 - [ ] `oc scale` — no `/scale` (#86).
