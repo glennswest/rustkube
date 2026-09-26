@@ -24,7 +24,7 @@ fail() { echo "FAIL  $*"; FAIL=$((FAIL + 1)); }
 
 # --- build ------------------------------------------------------------------
 export CARGO_TARGET_DIR=$HOME/target/rustkube-e2e
-cargo build -q -p kube-apiserver -p kube-controller-manager || exit 100
+cargo build -q -p kube-apiserver -p kube-controller-manager -p kube-scheduler || exit 100
 BIN=$CARGO_TARGET_DIR/debug
 git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
 (cd "$W/fastetcd" && CARGO_TARGET_DIR=$HOME/target/fastetcd-e2e cargo build -q -p fastetcd-server) || exit 100
@@ -73,6 +73,11 @@ fi
 start_controller_manager() {
   "$BIN/kube-controller-manager" --apiserver "$API" --token "$ADMIN" \
     --insecure-skip-tls-verify --leader-elect false >"$W/cm.log" 2>&1 &
+}
+
+start_scheduler() {
+  "$BIN/kube-scheduler" --apiserver "$API" --token "$ADMIN" \
+    --insecure-skip-tls-verify --leader-elect false >"$W/sched.log" 2>&1 &
 }
 
 # The number of failed checks is the exit status; logs when any failed.
