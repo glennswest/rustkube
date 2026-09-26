@@ -116,4 +116,6 @@ if grep -q "A BeforeSuite node failed" "$W/e2e.log"; then
   echo "---- BeforeSuite failed"
   grep -E -m 40 -i "error|fail|unable|timed out|not ready|forbidden" "$W/e2e.log" | cut -c1-300
 fi
+echo "---- what the first failure was waiting on"
+grep -m1 -B14 "\[FAILED\]" "$W/e2e.log" | grep -E "STEP|Waiting|wait|FAILED" | cut -c1-250
 echo "---- e2e.log (tail)"; tail -15 "$W/e2e.log"
