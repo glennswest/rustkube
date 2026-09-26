@@ -34,8 +34,8 @@ Upstream-shaped: thin `cmd/<component>` binaries over `pkg/<lib>` libraries.
 cmd/kube-apiserver           → pkg/apiserver           REST API (axum), auth, RBAC, admission, watch cache
 cmd/kube-controller-manager  → pkg/controller-manager  the built-in controllers
 cmd/kube-scheduler           → pkg/scheduler           filter / score / bind
-                               pkg/apimachinery        shared types (k8s-openapi), errors, metrics, protobuf codec
-                               pkg/storage             the etcd v3 client (etcd-client) — the KvStore trait
+                               pkg/apimachinery        errors, the KvStore trait, protobuf codec, metrics, quantities, selectors, cron
+                               pkg/storage             the KvStore implementation over etcd v3 (etcd-client)
                                pkg/cloud               empty: a doc comment and no code; nothing depends on it
 ```
 
@@ -297,6 +297,11 @@ builds the binaries **from source** at a pinned commit
 (`cargo build --release --target x86_64-unknown-linux-musl`) rather than from
 a release.
 
+The **component golden** — what `stormcentral component build rustkube`
+produces, `golden-rustkube-<digest>`, and what a stormcos release request
+names — carries the three binaries; the three stormd goldens above are
+assembled around them.
+
 What stormcos passes today:
 
 - **kube-apiserver:** `--etcd-servers http://127.0.0.1:2379` (plaintext,
@@ -309,7 +314,8 @@ What stormcos passes today:
 - **kube-controller-manager, kube-scheduler:**
   `--apiserver https://${NODE_IP}:6443 --certificate-authority /data/stormcert/ca.crt`
   and **no client credential**, so they reach the apiserver as anonymous.
-  That works only where anonymous is `cluster-admin`, i.e. `sno`.
+  That works only where anonymous is `cluster-admin`, i.e. `sno`; on
+  `storage` they start and are refused (stormcos#76).
 
 The files under `/data/stormcert` are written by stormcert before the
 apiserver starts: `apiserver.crt`/`.key` (CN `apiserver`; SANs the

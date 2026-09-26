@@ -1,7 +1,7 @@
 # Upstream Kubernetes feature inventory & gap-check
 
 A checklist of what a **conformant drop-in Kubernetes** must provide, mapped to
-this repo's code as of v0.14.1 (2026-09-24; the apiserver reports the 1.36 API
+this repo's code as of v0.15.2 (2026-09-26; the apiserver reports the 1.36 API
 posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 
 > The living parity backlog; conformance is the CNCF e2e `[Conformance]`
@@ -19,7 +19,7 @@ posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 | `apps/v1` — ControllerRevision; the `/scale` subresource | core | 🔴 | ControllerRevision is not in discovery and nothing writes one; `deployments/scale` is advertised with no route (#86) |
 | `batch/v1` — Job, CronJob | core | ✅ | |
 | `coordination.k8s.io/v1` — Lease | core | ✅ | leader election, node heartbeats |
-| `rbac.authorization.k8s.io/v1` | core | ✅ | `rbac_engine.rs`; no ClusterRole `aggregationRule` |
+| `rbac.authorization.k8s.io/v1` | core | 🟡 | `rbac_engine.rs`; no ClusterRole `aggregationRule`; **no escalation prevention** — whoever may write a RoleBinding may grant any role (#98) |
 | `apiextensions.k8s.io/v1` — CRD | core | 🟡 | served dynamically, keyed by group (#76), `/status` subresource; **no structural-schema validation, no conversion webhooks** |
 | `autoscaling/v2` — HorizontalPodAutoscaler | core | 🟡 | object served; the controller is a placeholder (#89) |
 | `apiregistration.k8s.io/v1` — APIService | core | 🔴 | objects stored; `aggregation.rs` is not wired in, nothing is proxied (#83) |
@@ -36,13 +36,14 @@ posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 | `authentication.k8s.io/v1` — TokenReview; SelfSubjectReview | core | 🟡 | TokenReview served, **not in `/apis`** (#85); no SelfSubjectReview (`kubectl auth whoami`) |
 | `authorization.k8s.io/v1` — SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview, LocalSubjectAccessReview | core | ✅ | v0.9.0 (#59), v0.12.0 (#69) |
 | `metrics.k8s.io` | optional | 🔴 | needs aggregation (#83) and a metrics server |
+| `project.openshift.io/v1` — Project, ProjectRequest | OpenShift | ✅ | Projects over Namespaces, owned by their requester, listed only to members (v0.15.0, #97) |
 
 ## 2. apiserver features
 
 | Feature | Must-have | Status | Note |
 |---|---|---|---|
 | REST CRUD + `/status` | core | ✅ | a PUT to `/status` is conditional on the body's `resourceVersion`, as upstream (#78) |
-| Watch (list+watch, chunked) + watch cache | core | ✅ | |
+| Watch (list+watch, chunked) + watch cache | core | ✅ | DELETED carries the last state, selectors apply to it (v0.15.2, #100) |
 | Watch bookmarks, `sendInitialEvents` | core | ✅ | v0.7.25 (#39) |
 | Label & field selectors, pagination | core | ✅ | |
 | Server-Side Apply (`managedFields`, conflicts) | core | ✅ | v0.7.31–32 (#45) |
@@ -51,7 +52,7 @@ posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 | TLS listener, serving-cert hot reload | core | ✅ | |
 | AuthN: x509 client cert, ServiceAccount/bearer JWT | core | ✅ | |
 | AuthN: OIDC, webhook, bootstrap tokens | core | 🔴 | |
-| AuthZ: RBAC | core | ✅ | |
+| AuthZ: RBAC | core | 🟡 | no escalation prevention (#98) |
 | AuthZ: Node authorizer, webhook authorizer | core | 🔴 | `system:nodes` is bound to `cluster-admin` instead |
 | Admission: webhooks | core | 🔴 | not wired (#82) |
 | Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob and PVC access-mode validation. 🔴 LimitRanger, ResourceQuota; DefaultStorageClass is applied by the PV controller instead |
@@ -117,26 +118,27 @@ VolumeSnapshots (#64).
 - Cluster `defaultNodeSelector` + namespace `openshift.io/node-selector` admission merge — #8 area.
 - Descheduler operator (`KubeDescheduler`) — rebalancing, separate from scheduler.
 - Multiarch Tuning Operator (`ClusterPodPlacementConfig`) — #8, needs #87.
-- Projects, SCC, Routes, OAuth, image streams — whether any is in scope is #70.
+- Projects are in scope and served (#97). SCC, Routes, OAuth, image streams — whether any is in scope is #70.
 
 ## Prioritized parity checklist
 
 Done since the first version of this list: built-in admission (most), x509
 authN, garbage collector, EndpointSlice, PriorityClass, PDB + Eviction, PV/PVC
 binder + StorageClass, Server-Side Apply, watch bookmarks, CSR, OpenAPI v3
-paths.
+paths, `/status` optimistic concurrency (#78), Projects (#97).
 
 **Open, conformance-blocking:**
 1. Admission webhooks (#82), LimitRanger, ResourceQuota.
-2. Node authorizer (nodes are `cluster-admin` today).
+2. Node authorizer (nodes are `cluster-admin` today); RBAC escalation prevention (#98).
 3. Discovery for PriorityClass/TokenReview (#85); `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
 5. Scheduler: preemption (#84), scheduling gates (#87), queue.
+6. The GC deleting a live Deployment's ReplicaSet (#99).
 
 **Then:**
-6. Aggregation (#83) → metrics API → a real HPA (#89).
-7. OpenAPI schemas (`kubectl explain`), CRD schema validation, conversion webhooks.
-8. Informer-based controllers, if scale measurements say so (#66).
-9. API Priority & Fairness, audit, ValidatingAdmissionPolicy.
-10. Ingress/Gateway data plane, Routes (#70, #91), LoadBalancer.
-11. Multi-arch admission (#8), OpenShift extras.
+7. Aggregation (#83) → metrics API → a real HPA (#89).
+8. OpenAPI schemas (`kubectl explain`), CRD schema validation, conversion webhooks.
+9. Informer-based controllers, if scale measurements say so (#66).
+10. API Priority & Fairness, audit, ValidatingAdmissionPolicy.
+11. Ingress/Gateway data plane, Routes (#70, #91), LoadBalancer.
+12. Multi-arch admission (#8), OpenShift extras.

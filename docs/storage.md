@@ -1,10 +1,17 @@
 # Storage — who does what to a PersistentVolumeClaim
 
 RustKube serves the storage API and decides *bindings*. It does not create
-volumes. The bytes come from StormBlock, and the boundary between the two is
-the whole design: a PVC in this cluster is a copy-on-write clone of a blank
-filesystem template on sbregistry, made by a CSI driver that rustkube never
-calls directly.
+volume bytes. Those come from StormBlock, by one of two paths:
+
+- **The `stormblock` class — the built-in driver, and the normal case.** The
+  kubelet (rustkube-node) makes the volume at pod start: a copy-on-write clone
+  of a sealed, pre-formatted blank of the claim's size class, through
+  stormblock's own API, attached over ublk. No CSI driver is involved; the
+  control plane writes the pre-bound PersistentVolume
+  ([below](#the-stormblock-class-the-built-in-pvc-driver)).
+- **A CSI class** — stormblock-csi, or any third-party driver. The control
+  plane hands the claim to the driver's `external-provisioner` sidecar by
+  annotation and never calls the driver itself ([the chain](#the-chain-end-to-end)).
 
 This document is the contract between the four repos, so that a change on one
 side is made against what the other side actually does.
@@ -45,9 +52,12 @@ A pod asks for 20Gi under a CSI class — stormblock-csi ships one
    spelling, which older sidecars still read). That annotation is the *entire*
    signal the upstream `external-provisioner` sidecar acts on. Nothing else in
    rustkube talks to StormBlock.
-4. **The driver provisions.** `stormblock-csi` calls the engine: a CoW clone of
-   the blank filesystem template — a golden formatted once and sealed, so a
-   new PVC costs metadata rather than a `mkfs` — and creates the PV with
+4. **The driver provisions.** stormblock-csi's `CreateVolume` asks the engine
+   for a volume (`POST /v1/volumes`): an **empty** thin volume, which the node
+   plugin formats (`mkfs.<fstype>`) the first time it stages it — or, when the
+   claim has a `dataSource` (a snapshot or another volume), a CoW clone of
+   that source. It does not clone a blank template; that is the in-kubelet
+   path's trick, below. The sidecar then creates the PV with
    `spec.csi.volumeHandle`, `claimRef` pointing back at the claim, and
    `pv.kubernetes.io/provisioned-by`.
 5. **The bind completes.** `persistentvolume.rs` sees the pre-bound PV, fills
@@ -75,7 +85,9 @@ class: stormcos has a **built-in PVC driver**, and the `stormblock` class is
 it.
 
 The driver is built on stormblock and sbregistry's **blanks**, for speed: a
-blank is a sealed, pre-formatted volume of a size class (`pvc-<class>`), so
+blank is a sealed, pre-formatted ext4 volume of a size class, named
+`pvc-ext4j-<MiB>m` (`pvc-ext4j-1m` … `pvc-ext4j-1024m` ship in the stormcos
+image; `template_name` in rustkube-node's `storage.rs`), so
 provisioning a claim is a copy-on-write clone of one — no mkfs, no copying, no
 round trip through a provisioner. The kubelet does it at pod start
 (`rustkube-node`, `pkg/kubelet/src/storage.rs`): the claim is rounded up to a
