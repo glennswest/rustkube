@@ -4,6 +4,8 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.15.3] — 2026-09-26
+
 ### 2026-09-26 (oc adm, #69)
 - **fix(protobuf): nested `kind` and `apiVersion` survive encoding.** The
   encoder skipped both keys at every depth, not just the envelope's, so every

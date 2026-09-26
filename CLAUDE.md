@@ -81,7 +81,7 @@ among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
 and others are left from the 10-crate layout; k8s-openapi is declared and never
 imported.
 
-## Current Version: `v0.15.2`
+## Current Version: `v0.15.3`
 
 ## Work Plan
 
@@ -113,7 +113,10 @@ when each piece landed.
       all four handlers; `test/e2e/status-rv.sh`
 
 ### Open, found since the docs pass
-- [ ] GC deletes a live Deployment's ReplicaSet (#99) — seen in the #97 e2e
+- [x] GC deleted a live Deployment's ReplicaSet (#99): protobuf creates were
+      stored with `uid: ""`; fixed in v0.15.3
+- [ ] NotFound names the store key (#109); unserved resources answer an empty
+      list (#110); LIST items carry no `resourceVersion` (#111)
 - [ ] RBAC escalation prevention (#98); until then Namespace writes stay
       cluster-scoped (#97)
 - [ ] Secrets: `stringData` not folded into `data` (#101)
@@ -212,10 +215,11 @@ Known state on 2026-09-24:
       through; the query's `stdin/stdout/stderr` become the kubelet's
       `input/output/error`. **The kubelet half does not exist**: rustkube-node
       serves no `/exec`, `/attach` or `/portForward` (rustkube-node#56).
-- [ ] `oc adm` — in progress (#69): `test/e2e/oc-adm.sh` runs every verb
-      against a live apiserver; the checklist goes in docs/oc-compatibility.md. `SubjectAccessReview` (who-can) and
-      CSR `/approval` are served; `oc adm top` needs `metrics.k8s.io`, which
-      needs aggregation (#83); `node-logs` needs `nodes/{name}/proxy`.
+- [x] `oc adm` — every verb run against a live apiserver
+      (`test/e2e/oc-adm.sh`); the checklist is in docs/oc-compatibility.md
+      (#69). Open from it: OpenShift authorization reviews for `who-can` and
+      `adm new-project` (#106), aggregated discovery for `inspect` (#107),
+      `nodes/proxy` for `node-logs` (#108); `top` needs #83
 - [ ] `oc scale` — no `/scale` (#86).
 - [x] Projects (#97): `project.openshift.io/v1` Project + ProjectRequest over
       Namespaces, owned by their requester (`admin` RoleBinding), listed only
@@ -234,6 +238,7 @@ Known state on 2026-09-24:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.15.3 | 2026-09-26 | Protobuf responses keep nested `kind`/`apiVersion` (roleRef, subjects, ownerReferences) — `oc adm policy remove-*` works. Objects created over protobuf get a real uid — the GC no longer deletes a new Deployment's ReplicaSet (#99). `oc adm` checklist (#69) |
 | v0.15.2 | 2026-09-26 | Watch DELETED events: a custom resource's names its real namespace, not its plural, so informers drop it; DELETED carries the object's last state and honours selectors; a watch with no resourceVersion is served by the watch cache (#100) |
 | v0.15.1 | 2026-09-26 | `PUT …/status` (and CSR `/approval`) is conditional on the body's `resourceVersion`: a stale status write is a 409 instead of silently overwriting newer status (#78). CronJob status writes chain within a pass |
 | v0.15.0 | 2026-09-25 | Projects: `project.openshift.io/v1` Project + ProjectRequest over Namespaces — `oc new-project` makes the requester its admin, `oc projects` lists only one's own; `admin`/`edit`/`view` roles (#97). `oc get all` works (discovery `all` category). `kube-system/node-admin` SA for node ssh login (#79). README/docs rewritten from the code (#80) |
