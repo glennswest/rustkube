@@ -583,14 +583,8 @@ pub async fn crd_update_status_ns(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
-    let mut existing = state.storage.get(&key).await?;
-    if let Some(status) = body.get("status") {
-        existing["status"] = status.clone();
-    }
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    // Conditional on the body's resourceVersion, as every status PUT is (#78).
+    let obj = crate::handlers::resource::put_status(&state, &key, &body).await?;
     Ok(Json(obj))
 }
 
@@ -688,14 +682,8 @@ pub async fn crd_update_status_cluster(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
-    let mut existing = state.storage.get(&key).await?;
-    if let Some(status) = body.get("status") {
-        existing["status"] = status.clone();
-    }
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    let obj = state.storage.update(&key, existing, prev_rev).await?;
+    // Conditional on the body's resourceVersion, as every status PUT is (#78).
+    let obj = crate::handlers::resource::put_status(&state, &key, &body).await?;
     Ok(Json(obj))
 }
 

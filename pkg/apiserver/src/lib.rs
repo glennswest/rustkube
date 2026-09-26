@@ -25,6 +25,8 @@ pub mod service_ip;
 pub mod server;
 pub mod storage;
 pub mod table;
+#[cfg(test)]
+pub(crate) mod test_store;
 pub mod tls;
 pub mod watch;
 pub mod watch_cache;

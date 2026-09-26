@@ -694,18 +694,42 @@ pub async fn update_cluster_status(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let mut existing = state.storage.get(&key).await?;
+    Ok(Json(put_status(&state, &key, &body).await?))
+}
 
-    // Only update the status field, preserve everything else
-    if let Some(status) = body.get("status") {
-        existing["status"] = status.clone();
-    }
-
-    let prev_rev = existing["metadata"]["resourceVersion"]
+/// PUT of a `/status` subresource: the body's `status` onto the stored
+/// object, everything else left as stored (#78).
+///
+/// **Conditional on the body's `resourceVersion`**, as upstream's PUT always
+/// is. This used to CAS against a fresh read instead, which was wrong both
+/// ways round: a controller writing status from a stale cache overwrote the
+/// newer status it had never seen, and a writer whose version was current
+/// could still get a 409 when another write landed between the read and the
+/// swap. A leader-elected controller relies on that 409 to learn that another
+/// replica wrote.
+///
+/// A body with no resourceVersion is an unconditional update, which upstream
+/// allows for status: it is retried against a fresh read until it lands, like
+/// a PATCH without one (#77).
+///
+/// Shared by every status PUT — core and grouped, cluster-scoped and
+/// namespaced, custom resources, and the CSR `/approval` subresource.
+pub(crate) async fn put_status(
+    state: &AppState,
+    key: &str,
+    body: &Value,
+) -> Result<Value, ApiError> {
+    let precondition = body["metadata"]["resourceVersion"]
         .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    let obj = state.storage.update(&key, existing, prev_rev).await?;
-    Ok(Json(obj))
+        .filter(|rv| !rv.is_empty())
+        .map(str::to_owned);
+    guaranteed_update(state, key, precondition, |mut existing| {
+        if let Some(status) = body.get("status") {
+            existing["status"] = status.clone();
+        }
+        Ok(existing)
+    })
+    .await
 }
 
 /// PATCH status for a cluster-scoped resource.
@@ -905,12 +929,32 @@ pub(crate) async fn guaranteed_patch<F>(
     key: &str,
     content_type: &str,
     body: &[u8],
-    mut mutate: F,
+    mutate: F,
 ) -> Result<Value, ApiError>
 where
     F: FnMut(Value) -> Result<Value, ApiError>,
 {
     let precondition = patch_precondition(content_type, body);
+    guaranteed_update(state, key, precondition, mutate).await
+}
+
+/// The loop under [`guaranteed_patch`], for a caller that already knows its
+/// precondition.
+///
+/// With `precondition` set, the write happens only if the object is still at
+/// that resourceVersion: a stale one is a 409 before anything is written, and
+/// a swap lost to a concurrent writer re-reads, finds the version moved on,
+/// and is a 409 too. Without one, a lost swap is retried against the fresh
+/// read until it lands, within `PATCH_RETRY_BUDGET`.
+pub(crate) async fn guaranteed_update<F>(
+    state: &AppState,
+    key: &str,
+    precondition: Option<String>,
+    mut mutate: F,
+) -> Result<Value, ApiError>
+where
+    F: FnMut(Value) -> Result<Value, ApiError>,
+{
     let started = std::time::Instant::now();
     let mut attempt = 0;
     loop {
@@ -1096,17 +1140,7 @@ pub async fn update_namespaced_status(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let mut existing = state.storage.get(&key).await?;
-
-    if let Some(status) = body.get("status") {
-        existing["status"] = status.clone();
-    }
-
-    let prev_rev = existing["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|rv| rv.parse::<u64>().ok());
-    let obj = state.storage.update(&key, existing, prev_rev).await?;
-    Ok(Json(obj))
+    Ok(Json(put_status(&state, &key, &body).await?))
 }
 
 /// PATCH status for a namespace-scoped resource.
@@ -1677,5 +1711,170 @@ mod patch_precondition_tests {
     #[test]
     fn an_empty_resource_version_is_no_precondition() {
         assert_eq!(patch_precondition(MERGE, br#"{"metadata":{"resourceVersion":""}}"#), None);
+    }
+}
+
+/// PUT of `/status` is conditional on the body's resourceVersion (#78), in
+/// every handler that serves one.
+#[cfg(test)]
+mod status_put_tests {
+    use super::*;
+    use crate::crd::CrdRegistry;
+    use crate::test_store::MemStore;
+    use std::future::Future;
+    use std::sync::Arc;
+
+    fn state() -> AppState {
+        AppState {
+            storage: Arc::new(ResourceStorage::new(Arc::new(MemStore::default()))),
+            crd_registry: Arc::new(CrdRegistry::new()),
+            service_cidr: "10.96.0.0/12".into(),
+        }
+    }
+
+    fn body(rv: Option<&str>, phase: &str) -> Value {
+        let mut b = json!({
+            "metadata": {},
+            // A status PUT carries the whole object; nothing but status may land.
+            "spec": { "x": 999 },
+            "status": { "phase": phase },
+        });
+        if let Some(rv) = rv {
+            b["metadata"]["resourceVersion"] = json!(rv);
+        }
+        b
+    }
+
+    /// One status writer is one version behind another; then the one that is
+    /// current; then one that names no version at all.
+    async fn scenario<F, Fut>(state: &AppState, key: &str, put: F)
+    where
+        F: Fn(Value) -> Fut,
+        Fut: Future<Output = Result<(), ApiError>>,
+    {
+        let seed = json!({
+            "metadata": { "name": "o" }, "spec": { "x": 1 }, "status": { "phase": "A" },
+        });
+        let v1 = state.storage.create(key, seed).await.unwrap();
+        let rv1 = v1["metadata"]["resourceVersion"].as_str().unwrap().to_string();
+
+        // Another writer moves the status on.
+        let mut other = v1.clone();
+        other["status"]["phase"] = json!("B");
+        let v2 = state.storage.update(key, other, rv1.parse().ok()).await.unwrap();
+        let rv2 = v2["metadata"]["resourceVersion"].as_str().unwrap().to_string();
+
+        // Stale: 409, and the newer status survives.
+        let err = put(body(Some(&rv1), "stale")).await.expect_err("a stale status PUT must 409");
+        assert_eq!(err.status, StatusCode::CONFLICT, "{key}: {}", err.message);
+        let stored = state.storage.get(key).await.unwrap();
+        assert_eq!(stored["status"]["phase"], "B", "{key}: the stale write landed");
+
+        // Current: written, and only status.
+        put(body(Some(&rv2), "C")).await.unwrap();
+        let stored = state.storage.get(key).await.unwrap();
+        assert_eq!(stored["status"]["phase"], "C", "{key}");
+        assert_eq!(stored["spec"]["x"], 1, "{key}: a status PUT changed spec");
+
+        // No resourceVersion, or an empty one: unconditional.
+        put(body(None, "D")).await.unwrap();
+        put(body(Some(""), "E")).await.unwrap();
+        let stored = state.storage.get(key).await.unwrap();
+        assert_eq!(stored["status"]["phase"], "E", "{key}");
+    }
+
+    #[tokio::test]
+    async fn core_cluster_scoped() {
+        let s = state();
+        let key = ResourceStorage::cluster_key("nodes", "o");
+        scenario(&s, &key, |b| {
+            let s = s.clone();
+            async move {
+                update_cluster_status(State(s), Path(("nodes".into(), "o".into())), Json(b))
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn core_namespaced() {
+        let s = state();
+        let key = ResourceStorage::namespaced_key("pods", "default", "o");
+        scenario(&s, &key, |b| {
+            let s = s.clone();
+            async move {
+                update_namespaced_status(
+                    State(s),
+                    Path(("default".into(), "pods".into(), "o".into())),
+                    Json(b),
+                )
+                .await
+                .map(|_| ())
+            }
+        })
+        .await;
+    }
+
+    async fn register(s: &AppState, plural: &str, scope: &str) {
+        s.crd_registry
+            .register(&json!({
+                "spec": {
+                    "group": "demo.io", "scope": scope,
+                    "names": { "plural": plural, "kind": "Thing" },
+                    "versions": [{ "name": "v1", "served": true, "storage": true }],
+                },
+            }))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn custom_resource_namespaced() {
+        let s = state();
+        register(&s, "widgets", "Namespaced").await;
+        let key = ResourceStorage::namespaced_key(
+            &ResourceStorage::custom_resource("demo.io", "widgets"),
+            "default",
+            "o",
+        );
+        scenario(&s, &key, |b| {
+            let s = s.clone();
+            async move {
+                crate::crd::crd_update_status_ns(
+                    State(s),
+                    Path((
+                        "demo.io".into(), "v1".into(), "default".into(), "widgets".into(), "o".into(),
+                    )),
+                    Json(b),
+                )
+                .await
+                .map(|_| ())
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn custom_resource_cluster_scoped() {
+        let s = state();
+        register(&s, "gadgets", "Cluster").await;
+        let key = ResourceStorage::cluster_key(
+            &ResourceStorage::custom_resource("demo.io", "gadgets"),
+            "o",
+        );
+        scenario(&s, &key, |b| {
+            let s = s.clone();
+            async move {
+                crate::crd::crd_update_status_cluster(
+                    State(s),
+                    Path(("demo.io".into(), "v1".into(), "gadgets".into(), "o".into())),
+                    Json(b),
+                )
+                .await
+                .map(|_| ())
+            }
+        })
+        .await;
     }
 }
