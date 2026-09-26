@@ -123,12 +123,10 @@ when each piece landed.
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted) are the
       start of it
 
-### Presentation (#81, in progress)
-- [ ] `docs/presentation.md`, Marp: purpose, place in stormcos (stormcentral's
-      graph: → fastetcd, stormcert, stormlb, stormd), how it works, what works
-      today, planned, interfaces, how it ships, status — every claim from the
-      code / README as of v0.15.2
-- [ ] Render check with marp-cli on dev
+### Presentation (#81) — COMPLETE 2026-09-26
+- [x] `docs/presentation.md`, 12-slide Marp deck from the code as of v0.15.2;
+      renders with `npx @marp-team/marp-cli docs/presentation.md` (checked on
+      dev). Update it when a slide's claim changes, like any other doc
 
 ### Docs from the code (#80) — COMPLETE 2026-09-26
 - [x] README, docs/, CLAUDE.md and module docs rewritten from the code
