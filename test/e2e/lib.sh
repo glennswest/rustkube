@@ -56,7 +56,15 @@ openssl x509 -req -in "$W/apiserver.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" -CAc
   -out "$W/apiserver.crt" -days 2 -extfile "$W/san.ext" 2>/dev/null
 
 # --- start --------------------------------------------------------------------
-"$FASTETCD" --data-dir "$W/etcd" --listen-client-urls http://127.0.0.1:32379 \
+# The store on tmpfs when there is one: this data is thrown away, and on a
+# shared build box every fsync to disk queues behind everyone else's builds —
+# namespace creation took over 30 s under the conformance suite's load (#67).
+DATA=$W/etcd
+if [ -d /dev/shm ] && [ -w /dev/shm ]; then
+  DATA=$(mktemp -d /dev/shm/rustkube-e2e.XXXXXX)
+  trap 'cleanup; rm -rf "$DATA"' EXIT
+fi
+"$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:32379 \
   --listen-peer-urls http://127.0.0.1:32380 --listen-metrics-url 127.0.0.1:32381 \
   >"$W/fastetcd.log" 2>&1 &
 # fastetcd first: an apiserver that outwaits its 60s datastore gate boots
@@ -81,6 +89,15 @@ done
 if [ -z "$ready" ]; then
   echo "apiserver never became ready"; cat "$W/apiserver.log"; exit 100
 fi
+
+# How fast the rig writes, said once, so a slow box is visible as that and
+# not as a suite of timeouts.
+t0=$(date +%s%N)
+for i in $(seq 20); do
+  curl -sk -o /dev/null -X POST -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+    "$API/api/v1/namespaces" -d "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"name\":\"rig-speed-$i\"}}"
+done
+echo "rig: 20 namespace creates in $(( ($(date +%s%N) - t0) / 1000000 )) ms (store at $DATA)"
 
 start_controller_manager() {
   "$BIN/kube-controller-manager" --apiserver "$API" --token "$ADMIN" \
