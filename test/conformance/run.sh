@@ -68,6 +68,16 @@ done
     sleep 10
   done ) &
 
+sleep 15
+echo "---- nodes as the suite will see them"
+k "$API/api/v1/nodes" | python3 -c '
+import json,sys
+for n in json.load(sys.stdin).get("items",[]):
+    c={x["type"]:x["status"] for x in n.get("status",{}).get("conditions",[])}
+    print(n["metadata"]["name"], "unschedulable=%s" % n.get("spec",{}).get("unschedulable"),
+          "conditions=%s" % c, "taints=%s" % [t["key"]+":"+t["effect"] for t in n.get("spec",{}).get("taints",[])],
+          "allocatable=%s" % n.get("status",{}).get("allocatable"))'
+
 # --- run ------------------------------------------------------------------------
 mkdir -p "$W/report"
 "$E2E/$V/ginkgo" -p --procs=16 --timeout=3h --no-color --silence-skips \
