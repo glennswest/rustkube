@@ -84,11 +84,15 @@ verb missing "top node" adm adm top node
 verb missing "top pod" adm adm top pod -n work
 
 # --- policy -------------------------------------------------------------------
-verb works "policy who-can" adm adm policy who-can get pods -n work
+# authorization.openshift.io LocalResourceAccessReview, not the k8s SAR (#106)
+verb missing "policy who-can" adm adm policy who-can get pods -n work
 verb works "policy add-role-to-user" adm adm policy add-role-to-user edit alice -n work
 check "alice can now list pods in work" as "$ALICE" alice get pods -n work
 verb works "policy add-role-to-group" adm adm policy add-role-to-group view devs -n work
+# The remove verbs read bindings as protobuf and match on roleRef.kind,
+# which the encoder used to drop (#69).
 verb works "policy remove-role-from-user" adm adm policy remove-role-from-user edit alice -n work
+check "alice can no longer list pods in work" bash -c "! KUBECONFIG=$W/kc-alice timeout 60 $OC --cache-dir $W/cache-alice --server $API --insecure-skip-tls-verify --token $ALICE get pods -n work >/dev/null 2>&1"
 verb works "policy remove-role-from-group" adm adm policy remove-role-from-group view devs -n work
 verb works "policy add-cluster-role-to-user" adm adm policy add-cluster-role-to-user view alice
 check "alice can now list namespaces" as "$ALICE" alice get ns
@@ -97,7 +101,9 @@ verb works "policy add-cluster-role-to-group" adm adm policy add-cluster-role-to
 verb works "policy remove-cluster-role-from-group" adm adm policy remove-cluster-role-from-group view devs
 adm adm policy add-role-to-user view alice -n work >/dev/null
 verb works "policy remove-user" adm adm policy remove-user alice -n work
-verb missing "policy add-scc-to-user" adm adm policy add-scc-to-user privileged alice
+# Binds ClusterRole system:openshift:scc:privileged. Accepted, and inert:
+# there are no SCCs and no SCC admission here (#70).
+verb works "policy add-scc-to-user (inert)" adm adm policy add-scc-to-user privileged alice
 verb missing "policy scc-review" adm adm policy scc-subject-review -u alice -f - <<<'{"apiVersion":"v1","kind":"Pod","metadata":{"name":"x"},"spec":{"containers":[{"name":"c","image":"i"}]}}'
 
 # --- certificates -------------------------------------------------------------
@@ -119,14 +125,25 @@ verb works "certificate deny" adm adm certificate deny csr-no
 check "csr-no is Denied" test "$(adm get csr csr-no -o jsonpath='{.status.conditions[0].type}')" = Denied
 
 # --- projects and groups ------------------------------------------------------
-verb works "new-project" adm adm new-project team --admin=alice --display-name=Team
+# Creates the project and the binding, then fails its own post-check, an
+# authorization.openshift.io SubjectAccessReview (#106).
+verb missing "new-project (post-check)" adm adm new-project team --admin=alice --display-name=Team
 check "team: alice is its admin" as "$ALICE" alice get project team
 verb works "create-bootstrap-project-template" adm adm create-bootstrap-project-template -o yaml
 verb missing "groups new" adm adm groups new devs alice
 verb missing "prune groups" adm adm prune groups --sync-config=/dev/null
 
+# --- a Deployment created by oc (protobuf) keeps its ReplicaSet (#99) ---------
+adm create deployment web -n work --image=registry.invalid/web >/dev/null
+check "deployment web has a uid" test -n "$(adm get deployment web -n work -o jsonpath='{.metadata.uid}')"
+sleep 45   # several GC passes
+check "its ReplicaSet was never collected as orphaned" bash -c "! grep -q 'ReplicaSet work/web.*owner is gone' $W/cm.log"
+check "and it is owned by the deployment's uid" test "$(adm get rs -n work -o jsonpath='{.items[0].metadata.ownerReferences[0].uid}')" = "$(adm get deployment web -n work -o jsonpath='{.metadata.uid}')"
+
 # --- inspection ---------------------------------------------------------------
-verb works "inspect" adm adm inspect ns/work --dest-dir="$W/inspect"
+# Writes its data, then exits 1: /apis has no aggregated discovery (#107).
+verb missing "inspect" adm adm inspect ns/work --dest-dir="$W/inspect"
+check "inspect wrote its data" test -d "$W/inspect/namespaces/work"
 verb missing "must-gather" adm adm must-gather --dest-dir="$W/mg" --timeout=30s
 
 # --- the OpenShift platform: out of scope here (#70) ------------------------
