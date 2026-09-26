@@ -4,6 +4,27 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-26 (oc adm, #69)
+- **fix(protobuf): nested `kind` and `apiVersion` survive encoding.** The
+  encoder skipped both keys at every depth, not just the envelope's, so every
+  protobuf response carried `roleRef`, `subjects`, `ownerReferences` and object
+  references with no kind. `oc adm policy remove-role-from-user` (and the
+  other remove verbs) could never find the binding the add verb had just made.
+- **fix(create): the server assigns `uid` and `creationTimestamp` when a body
+  sends them empty or null.** A protobuf create decodes with every field at its
+  zero value, and only absent keys were filled, so objects created by `oc` or
+  any client-go were stored with `uid: ""`. A Deployment created that way handed
+  the empty uid to its ReplicaSet's ownerReference and the GC deleted the
+  ReplicaSet every pass as orphaned (#99).
+- **docs: the `oc adm` checklist** in docs/oc-compatibility.md, every verb run
+  against a live apiserver; what fails is filed: OpenShift authorization
+  reviews for `who-can`/`new-project` (#106), aggregated discovery for
+  `inspect` (#107), `nodes/proxy` for `node-logs` (#108). Found on the way:
+  #109, #110, #111. The earlier note that `oc policy who-can` works was wrong.
+- **test:** `test/e2e/oc-adm.sh`; a round-trip test for RoleBindingList and
+  ownerReferences; `ensure_metadata_never_panics_on_bad_shapes` had no
+  `#[test]` and now runs.
+
 ### 2026-09-26 (presentation, #81)
 - **docs: `docs/presentation.md`** — a 12-slide Marp deck: what rustkube is,
   where it sits in stormcos (stormcentral's relationships), how it works,

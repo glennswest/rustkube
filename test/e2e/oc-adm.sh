@@ -101,6 +101,8 @@ verb works "policy add-cluster-role-to-group" adm adm policy add-cluster-role-to
 verb works "policy remove-cluster-role-from-group" adm adm policy remove-cluster-role-from-group view devs
 adm adm policy add-role-to-user view alice -n work >/dev/null
 verb works "policy remove-user" adm adm policy remove-user alice -n work
+adm adm policy add-role-to-group view devs -n work >/dev/null
+verb works "policy remove-group" adm adm policy remove-group devs -n work
 # Binds ClusterRole system:openshift:scc:privileged. Accepted, and inert:
 # there are no SCCs and no SCC admission here (#70).
 verb works "policy add-scc-to-user (inert)" adm adm policy add-scc-to-user privileged alice
@@ -129,7 +131,9 @@ check "csr-no is Denied" test "$(adm get csr csr-no -o jsonpath='{.status.condit
 # authorization.openshift.io SubjectAccessReview (#106).
 verb missing "new-project (post-check)" adm adm new-project team --admin=alice --display-name=Team
 check "team: alice is its admin" as "$ALICE" alice get project team
-verb works "create-bootstrap-project-template" adm adm create-bootstrap-project-template -o yaml
+for t in create-bootstrap-project-template create-login-template create-error-template create-provider-selection-template; do
+  verb works "$t" adm adm $t
+done
 verb missing "groups new" adm adm groups new devs alice
 verb missing "prune groups" adm adm prune groups --sync-config=/dev/null
 

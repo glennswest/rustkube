@@ -8,17 +8,21 @@ Nothing in it is implemented on the strength of being listed. Where a verb is
 known to be absent, say so against the verb rather than leaving a reader to
 discover it.
 
-State on 2026-09-24 (#80), from the code:
+State on 2026-09-26, from the code and from running oc against it
+(`test/e2e/projects.sh`, `test/e2e/oc-adm.sh`):
 - works: `oc new-project`, `oc projects`, `oc project`, `oc get/delete
-  project`, `oc adm policy add-role-to-user` (#97; `test/e2e/projects.sh`);
-  `oc logs` (#54); `oc get route` (stored only, nothing routes, #70);
-  `oc policy who-can`, `oc auth can-i --list`; `oc events`;
-  `oc adm certificate approve` (CSR `/approval`).
+  project` (#97); `oc logs` (#54); `oc get route` (stored only, nothing
+  routes, #70); `oc auth can-i --list`; `oc events`; `oc adm` node
+  lifecycle, `policy` role verbs, `certificate` — see the `oc adm` checklist
+  below (#69).
+- **not** `oc policy who-can`: it needs OpenShift's
+  `authorization.openshift.io` reviews, not the k8s SubjectAccessReview
+  (#106).
 - proxied by the apiserver but not answered by the kubelet: `oc exec`,
   `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` (#42 here,
   rustkube-node#56 there).
 - not served: `oc scale` (no `/scale`, #86); `oc adm top` (no
-  `metrics.k8s.io`, #83); `oc adm node-logs` (no `nodes/{name}/proxy`);
+  `metrics.k8s.io`, #83); `oc adm node-logs` (no `nodes/{name}/proxy`, #108);
   `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
   `user.openshift.io` or SelfSubjectReview); `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
@@ -161,6 +165,40 @@ SDN: `join-projects`, `isolate-projects`, `make-projects-global`).
 `oc adm catalog mirror` for disconnected operator content; `oc debug node/<name>` to drop
 into a host and check VFs / driver binding; `oc get sriovnetworknodestate -n
 openshift-sriov-network-operator` for the operator's device inventory.
+
+### `oc adm` against this apiserver (#69)
+
+Run verb by verb with oc 4.22 against a live apiserver and controller-manager
+on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
+`spec.nodeName`: `test/e2e/oc-adm.sh`, which fails if any row below changes.
+
+| verb | here | what it needs / why not |
+|---|---|---|
+| `cordon`, `uncordon`, `taint` | ✅ | node patches |
+| `drain` | ✅ | cordon + pod Eviction (PDB-gated, #7) |
+| `certificate approve`, `deny` | ✅ | CSR `/approval` |
+| `policy add-role-to-user/-group`, `remove-role-from-user/-group`, `remove-user`, `remove-group` | ✅ | RoleBindings (the remove verbs needed #69's protobuf fix) |
+| `policy add-/remove-cluster-role-to/from-user/-group` | ✅ | ClusterRoleBindings |
+| `create-bootstrap-project-template`, `create-login-template`, `create-error-template`, `create-provider-selection-template` | ✅ | client-side only: print a template |
+| `policy add-scc-to-user/-group` | ⚪ inert | binds ClusterRole `system:openshift:scc:<name>`; there are no SCCs and no SCC admission (#70) |
+| `new-project` | 🟡 | the project and its admin binding are made; its post-check, an `authorization.openshift.io` SubjectAccessReview, fails, so it exits 1 (#106). `oc new-project` works |
+| `inspect` | 🟡 | writes the data, then exits 1: `/apis` serves no aggregated discovery (#107) |
+| `policy who-can` | 🔴 | `authorization.openshift.io` LocalResourceAccessReview (#106) |
+| `policy scc-review`, `scc-subject-review` | 🔴 | `security.openshift.io` (#70) |
+| `node-logs` | 🔴 | `nodes/{name}/proxy` (#108), then the kubelet's `/logs/` |
+| `top node`, `top pod` | 🔴 | `metrics.k8s.io`: aggregation (#83) and a metrics server |
+| `copy-to-node`, `restart-kubelet` | 🔴 | a debug pod on the node, so kubelet exec (rustkube-node#56) — not in the script |
+| `must-gather` | 🔴 | the `openshift` imagestreams, then a running pod with exec |
+| `groups new/add-users/remove-users/sync/prune` | 🔴 | `user.openshift.io` Groups (#70) — RBAC `Group` subjects work without them |
+| `prune builds/deployments/images` | 🔴 | BuildConfigs, DeploymentConfigs, ImageStreams (#70) |
+| `upgrade`, `wait-for-stable-cluster`, `reboot-machine-config-pool`, `wait-for-node-reboot`, `ocp-certificates`, `node-image`, `release`, `catalog`, `build-chain`, `migrate`, `verify-image-signature` | 🔴 out of scope | the OpenShift platform: ClusterVersion, ClusterOperators, MachineConfigPools, the release payload, OLM (#70) |
+| `pod-network …` | — | OpenShift SDN, removed upstream |
+
+Found on the way, and not `oc adm`'s own: NotFound messages name the store
+key (#109); an unserved core resource answers an empty list rather than 404
+(#110); LIST items carry no `resourceVersion` (#111); objects created over
+protobuf were stored with an empty uid, which is what made the GC delete a
+new Deployment's ReplicaSet (#99, fixed in #69).
 
 ---
 
