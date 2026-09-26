@@ -27,14 +27,15 @@ fi
 
 as() { # <token> <kubeconfig-name> oc-args...
   local t=$1 k=$2; shift 2
-  KUBECONFIG=$W/kc-$k "$OC" --cache-dir "$W/cache-$k" --server "$API" \
+  # Capped here, not in verb(): `timeout` runs programs, not shell functions.
+  KUBECONFIG=$W/kc-$k timeout 60 "$OC" --cache-dir "$W/cache-$k" --server "$API" \
     --insecure-skip-tls-verify --token "$t" "$@" 2>&1
 }
 adm() { as "$ADMIN" admin "$@"; }
-# <works|missing> <verb label> <command...> — runs it under a 60s cap
+# <works|missing> <verb label> <command...>
 verb() {
   local want=$1 label=$2 out rc got; shift 2
-  out=$(timeout 60 "$@"); rc=$?
+  out=$("$@"); rc=$?
   [ $rc -eq 0 ] && got=works || got=missing
   local first; first=$(grep -m1 -iE 'error|forbidden|not found|could not|unable|doesn.t have' <<<"$out" | cut -c1-160)
   if [ "$got" = "$want" ]; then
