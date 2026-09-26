@@ -81,7 +81,7 @@ among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
 and others are left from the 10-crate layout; k8s-openapi is declared and never
 imported.
 
-## Current Version: `v0.15.0`
+## Current Version: `v0.15.1`
 
 ## Work Plan
 
@@ -109,10 +109,8 @@ when each piece landed.
       unauthenticated apiserver `/metrics` (#90)
 - [ ] Gateway controller: hardcoded address, overwrites foreign classes (#91)
 - [ ] Serving-cert reload applies a mismatched key/cert pair (#93)
-- [ ] `/status` PUT ignores the body's `resourceVersion` (#78) — in progress: all four
-      status PUT handlers (core/grouped cluster + namespaced, CR cluster +
-      namespaced; CSR `/approval` shares the cluster one) go through
-      `guaranteed_update` with the body's RV as precondition
+- [x] `/status` PUT is conditional on the body's `resourceVersion` (#78),
+      all four handlers; `test/e2e/status-rv.sh`
 
 ### Storage (v0.8.0)
 - [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
@@ -206,6 +204,7 @@ Known state on 2026-09-24:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.15.1 | 2026-09-26 | `PUT …/status` (and CSR `/approval`) is conditional on the body's `resourceVersion`: a stale status write is a 409 instead of silently overwriting newer status (#78). CronJob status writes chain within a pass |
 | v0.15.0 | 2026-09-25 | Projects: `project.openshift.io/v1` Project + ProjectRequest over Namespaces — `oc new-project` makes the requester its admin, `oc projects` lists only one's own; `admin`/`edit`/`view` roles (#97). `oc get all` works (discovery `all` category). `kube-system/node-admin` SA for node ssh login (#79). README/docs rewritten from the code (#80) |
 | v0.14.1 | 2026-09-23 | PATCH without a resourceVersion no longer 409s under concurrent writes — retried like `GuaranteedUpdate` (#77). API-created namespaces are `Active` with the `kubernetes` finalizer, backfilled at boot (#75). Resource fit honours pod-level requests (#73). Stormblock provisioner honours `WaitForFirstConsumer` |
 | v0.14.0 | 2026-09-22 | Custom resources keyed by API group, `/registry/{group}/{plural}` — two CRDs sharing a plural no longer share objects; existing keys migrate at boot (#76). A CRD written by apply is registered and Established (#74). VMIs are scheduled (#72). **Breaking:** a CRD group without a dot is refused |

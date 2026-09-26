@@ -4,6 +4,8 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.15.1] — 2026-09-26
+
 ### 2026-09-26 (status PUT, #78)
 - **fix: `PUT …/status` is conditional on the body's `resourceVersion`**, in
   all four handlers — built-in cluster-scoped (nodes, PVs, namespaces,
