@@ -1300,11 +1300,20 @@ fn ensure_metadata(obj: &mut Value, name: &str, namespace: Option<&str>) {
             .or_insert_with(|| Value::String(ns.to_string()));
     }
 
-    if !meta.contains_key("uid") {
+    // `uid` and `creationTimestamp` are the server's: assigned when the client
+    // left them absent, empty or null. **Present is not the same as set.** A
+    // protobuf body decodes to JSON with every field at its zero value, so a
+    // client-go create arrives with `"uid": ""` and `"creationTimestamp": null`
+    // — and checking only for the key stored objects with no uid. `oc create
+    // deployment` is such a client: its Deployment had uid "", the deployment
+    // controller copied that into its ReplicaSet's ownerReference, and the
+    // garbage collector, which ignores empty uids when collecting live owners,
+    // deleted the ReplicaSet as orphaned on every pass (#99, found by #69).
+    let unset = |v: Option<&Value>| v.and_then(Value::as_str).map_or(true, str::is_empty);
+    if unset(meta.get("uid")) {
         meta.insert("uid".into(), Value::String(uuid::Uuid::new_v4().to_string()));
     }
-
-    if !meta.contains_key("creationTimestamp") {
+    if unset(meta.get("creationTimestamp")) {
         meta.insert(
             "creationTimestamp".into(),
             Value::String(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
@@ -1596,6 +1605,26 @@ mod tests {
         assert!(apply_patch_body(&mut obj, "application/json-patch+json", b"{}").is_err());
     }
 
+    /// What a protobuf create decodes to: every metadata field present at
+    /// its zero value. The server's fields must still be the server's (#99).
+    #[test]
+    fn a_zero_valued_uid_and_timestamp_are_assigned() {
+        let mut v = json!({"metadata": {"name": "web", "uid": "", "creationTimestamp": null,
+                                        "generation": 0, "selfLink": ""}});
+        ensure_metadata(&mut v, "web", Some("demo"));
+        assert!(!v["metadata"]["uid"].as_str().unwrap().is_empty());
+        assert!(!v["metadata"]["creationTimestamp"].as_str().unwrap().is_empty());
+
+        // A uid the server already gave (a stored object re-created by the
+        // manifest applier, say) is kept.
+        let mut v = json!({"metadata": {"name": "web", "uid": "u1",
+                                        "creationTimestamp": "2026-01-01T00:00:00Z"}});
+        ensure_metadata(&mut v, "web", None);
+        assert_eq!(v["metadata"]["uid"], "u1");
+        assert_eq!(v["metadata"]["creationTimestamp"], "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
     fn ensure_metadata_never_panics_on_bad_shapes() {
         // Top-level body not an object (array / scalar / null).
         for mut v in [json!([1, 2, 3]), json!("nope"), json!(42), json!(null)] {
