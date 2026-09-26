@@ -44,6 +44,17 @@ token() { # <user> <groups-json>
 }
 ADMIN=$(token admin '["system:masters"]')
 
+# A throwaway CA and a serving cert from it, so the controllers verify the
+# apiserver as they do in stormcos, and the root CA publisher has a real
+# bundle to publish ($W/ca.crt).
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ca.key" -out "$W/ca.crt" \
+  -days 2 -subj /CN=rustkube-e2e-ca 2>/dev/null
+openssl req -newkey rsa:2048 -nodes -keyout "$W/apiserver.key" -out "$W/apiserver.csr" \
+  -subj /CN=apiserver 2>/dev/null
+printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:kubernetes,DNS:kubernetes.default.svc\n' >"$W/san.ext"
+openssl x509 -req -in "$W/apiserver.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" -CAcreateserial \
+  -out "$W/apiserver.crt" -days 2 -extfile "$W/san.ext" 2>/dev/null
+
 # --- start --------------------------------------------------------------------
 "$FASTETCD" --data-dir "$W/etcd" --listen-client-urls http://127.0.0.1:32379 \
   --listen-peer-urls http://127.0.0.1:32380 --listen-metrics-url 127.0.0.1:32381 \
@@ -55,7 +66,8 @@ for _ in $(seq 180); do
   sleep 1
 done
 (exec 3<>/dev/tcp/127.0.0.1/32379) 2>/dev/null || { echo "fastetcd never listened"; tail -40 "$W/fastetcd.log"; exit 100; }
-"$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $PORT --tls \
+"$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $PORT \
+  --tls-cert-file "$W/apiserver.crt" --tls-private-key-file "$W/apiserver.key" \
   --etcd-servers http://127.0.0.1:32379 --anonymous-auth false \
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
   >"$W/apiserver.log" 2>&1 &
@@ -72,12 +84,12 @@ fi
 
 start_controller_manager() {
   "$BIN/kube-controller-manager" --apiserver "$API" --token "$ADMIN" \
-    --insecure-skip-tls-verify --leader-elect false >"$W/cm.log" 2>&1 &
+    --certificate-authority "$W/ca.crt" --leader-elect false >"$W/cm.log" 2>&1 &
 }
 
 start_scheduler() {
   "$BIN/kube-scheduler" --apiserver "$API" --token "$ADMIN" \
-    --insecure-skip-tls-verify --leader-elect false >"$W/sched.log" 2>&1 &
+    --certificate-authority "$W/ca.crt" --leader-elect false >"$W/sched.log" 2>&1 &
 }
 
 # The number of failed checks is the exit status; logs when any failed.

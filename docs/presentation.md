@@ -119,11 +119,12 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 
 ## Today: controllers and scheduler
 
-**19 controllers** (`pkg/controller-manager/src/runner.rs`): Deployment,
+**20 controllers** (`pkg/controller-manager/src/runner.rs`): Deployment,
 ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service (Endpoints +
 EndpointSlices), Namespace cascade, node lifecycle, PDB, garbage collector,
 PersistentVolume binding, attach/detach, the in-kubelet `stormblock`
-provisioner, CSR, PodMigration, VirtualMachine, HPA\*, Gateway\*.
+provisioner, root CA publisher, CSR, PodMigration, VirtualMachine, HPA\*,
+Gateway\*.
 
 **Scheduler** (`pkg/scheduler`): filters — readiness, taints, selectors,
 node and pod (anti-)affinity, topology spread, resource fit, volume binding

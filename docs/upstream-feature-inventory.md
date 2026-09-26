@@ -72,9 +72,11 @@ approve + sign, PodMigration, VirtualMachine. Leader election ✅.
 🟡 placeholders: HPA (no metrics, cannot scale down, #89); Gateway API (status
 only, hardcoded address, #91).
 
-🔴 missing vs upstream: ResourceQuota, ServiceAccount token and
-`kube-root-ca.crt` publisher, TTL-after-finished, NodeIPAM/route, ClusterRole
-aggregation, endpoint-slice mirroring, ReplicationController.
+✅ the `kube-root-ca.crt` publisher (#67).
+
+🔴 missing vs upstream: ResourceQuota, ServiceAccount token controller,
+TTL-after-finished, NodeIPAM/route, ClusterRole aggregation, endpoint-slice
+mirroring, ReplicationController.
 
 All of them poll-and-list on a fixed interval; none uses an informer (#66).
 

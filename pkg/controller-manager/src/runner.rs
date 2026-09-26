@@ -349,6 +349,8 @@ pub struct ControllerManager {
     identity: String,
     /// Cluster CA (cert PEM, key PEM) for signing approved CSRs.
     signing_ca: Option<(String, String)>,
+    /// The CA bundle published as `kube-root-ca.crt` in every namespace.
+    root_ca: Option<String>,
     /// How long to wait for the apiserver to serve before running anyway.
     startup_timeout: std::time::Duration,
 }
@@ -367,6 +369,7 @@ impl ControllerManager {
             leader_elect: true,
             identity: Self::make_identity(),
             signing_ca: None,
+            root_ca: None,
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
         }
     }
@@ -378,6 +381,7 @@ impl ControllerManager {
             leader_elect: true,
             identity: Self::make_identity(),
             signing_ca: None,
+            root_ca: None,
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
         })
     }
@@ -392,6 +396,13 @@ impl ControllerManager {
     /// into the retry loop anyway.
     pub fn with_startup_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.startup_timeout = timeout;
+        self
+    }
+
+    /// The CA bundle to publish as `kube-root-ca.crt` in every namespace.
+    /// Without one the root CA publisher does not run.
+    pub fn with_root_ca(mut self, pem: String) -> Self {
+        self.root_ca = Some(pem);
         self
     }
 
@@ -503,7 +514,20 @@ impl ControllerManager {
             crate::csr::CsrController::new(api, ca).run().await;
         });
 
-        info!("All controllers started (16 controllers)");
+        match self.root_ca.clone() {
+            Some(pem) => {
+                let api = self.api.clone();
+                tasks.spawn(async move {
+                    crate::rootca::RootCaPublisher::new(api, pem).run().await;
+                });
+            }
+            None => tracing::warn!(
+                "no --root-ca-file or --certificate-authority: kube-root-ca.crt is not \
+                 published, so pods cannot verify the apiserver"
+            ),
+        }
+
+        info!("All controllers started ({} controllers)", tasks.len());
         tasks
     }
 

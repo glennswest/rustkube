@@ -26,6 +26,7 @@ pub mod pdb;
 pub mod node;
 pub mod replicaset;
 pub mod rollout;
+pub mod rootca;
 pub mod runner;
 pub mod service;
 pub mod stormblock;

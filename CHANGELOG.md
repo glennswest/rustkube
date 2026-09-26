@@ -4,6 +4,20 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-26 (conformance, #67)
+- **feat(controller-manager): the root CA publisher.** Every namespace that is
+  not terminating gets the `kube-root-ca.crt` ConfigMap (`ca.crt`), and has it
+  put back if changed. The bundle is the new `--root-ca-file`, defaulting to
+  `--certificate-authority`. The conformance suite waits for it in every
+  namespace it creates, so without it no conformance test could start.
+- **fix(selector): an absent field compares as its zero value**, as upstream:
+  `spec.unschedulable=false` matches a node that was never cordoned and
+  `spec.nodeName=` a pod no one scheduled. Both matched nothing, so the suite
+  found no schedulable node.
+- **test:** `test/conformance/run.sh` — upstream `e2e.test` `[Conformance]`
+  against the control plane with stand-in nodes; the e2e rig now serves a
+  certificate from its own CA and the controllers verify it.
+
 ## [v0.15.3] — 2026-09-26
 
 ### 2026-09-26 (oc adm, #69)

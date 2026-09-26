@@ -55,6 +55,12 @@ struct Cli {
     /// Seconds to wait for a credential file to be written, and for the
     /// apiserver to start serving, before giving up. The whole control plane
     /// starts at once, so these are normally races, not failures.
+    /// CA bundle (PEM) published as the `kube-root-ca.crt` ConfigMap in every
+    /// namespace, for pods to verify the apiserver. Defaults to
+    /// `--certificate-authority`.
+    #[arg(long = "root-ca-file")]
+    root_ca: Option<std::path::PathBuf>,
+
     #[arg(long = "startup-timeout", env = "STARTUP_TIMEOUT", default_value_t = 120)]
     startup_timeout: u64,
 }
@@ -100,6 +106,13 @@ async fn run() -> anyhow::Result<()> {
         || cli.client_cert.is_some()
         || cli.insecure;
 
+    // The bundle pods get to verify the apiserver: its own file, else the one
+    // this process verifies the apiserver with.
+    let root_ca = match cli.root_ca.as_deref().or(cli.ca.as_deref()) {
+        Some(path) => Some(startup::pem_file_string(path, "root CA bundle", wait).await?),
+        None => None,
+    };
+
     let mut cm = if needs_config {
         // Credentials are written by whatever bootstraps the node, often while
         // this process is already running: wait for each file to exist and be
@@ -124,6 +137,9 @@ async fn run() -> anyhow::Result<()> {
     .with_leader_election(cli.leader_elect)
     .with_startup_timeout(wait);
 
+    if let Some(pem) = root_ca {
+        cm = cm.with_root_ca(pem);
+    }
     if let Some((cert, key)) = signing_ca {
         cm = cm.with_signing_ca(cert, key);
     }

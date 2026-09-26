@@ -179,7 +179,7 @@ NotReady → eviction), PodDisruptionBudget status, garbage collection
 (background, foreground and orphan, driven by discovery), PersistentVolume
 (binding, phases, protection finalizers, reclaim), attach/detach
 (VolumeAttachment), the stormblock provisioner for the in-kubelet `stormblock`
-class, CSR approval and signing (auto-approves only the
+class, the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approval and signing (auto-approves only the
 `kubernetes.io/kube-apiserver-client-kubelet` signer; signs only with
 `--cluster-signing-*-file`), PodMigration, and VirtualMachine
 (`start`/`stop`/`restart`). Events are emitted for creates, deletes and
@@ -251,6 +251,7 @@ Every binary logs through `RUST_LOG` (default `info`).
 | `--leader-elect` | | `true` | |
 | `--startup-timeout` | `STARTUP_TIMEOUT` | `120` | seconds to wait for credential files and for the apiserver |
 | `--cluster-signing-cert-file`, `--cluster-signing-key-file` | | — | controller manager only: the CA the CSR controller signs with; without them CSRs are approved but not signed |
+| `--root-ca-file` | | `--certificate-authority` | controller manager only: the CA bundle published as `kube-root-ca.crt` in every namespace; with neither, nothing is published |
 
 Neither takes `--kubeconfig`. A credential file that does not exist yet is
 waited for, not treated as an error, because the whole control plane starts
