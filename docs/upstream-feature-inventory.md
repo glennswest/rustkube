@@ -41,7 +41,7 @@ posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 
 | Feature | Must-have | Status | Note |
 |---|---|---|---|
-| REST CRUD + `/status` | core | ✅ | a PUT to `/status` ignores the body's `resourceVersion` (#78) |
+| REST CRUD + `/status` | core | ✅ | a PUT to `/status` is conditional on the body's `resourceVersion`, as upstream (#78) |
 | Watch (list+watch, chunked) + watch cache | core | ✅ | |
 | Watch bookmarks, `sendInitialEvents` | core | ✅ | v0.7.25 (#39) |
 | Label & field selectors, pagination | core | ✅ | |
@@ -132,12 +132,11 @@ paths.
 3. Discovery for PriorityClass/TokenReview (#85); `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
 5. Scheduler: preemption (#84), scheduling gates (#87), queue.
-6. `/status` optimistic concurrency (#78).
 
 **Then:**
-7. Aggregation (#83) → metrics API → a real HPA (#89).
-8. OpenAPI schemas (`kubectl explain`), CRD schema validation, conversion webhooks.
-9. Informer-based controllers, if scale measurements say so (#66).
-10. API Priority & Fairness, audit, ValidatingAdmissionPolicy.
-11. Ingress/Gateway data plane, Routes (#70, #91), LoadBalancer.
-12. Multi-arch admission (#8), OpenShift extras.
+6. Aggregation (#83) → metrics API → a real HPA (#89).
+7. OpenAPI schemas (`kubectl explain`), CRD schema validation, conversion webhooks.
+8. Informer-based controllers, if scale measurements say so (#66).
+9. API Priority & Fairness, audit, ValidatingAdmissionPolicy.
+10. Ingress/Gateway data plane, Routes (#70, #91), LoadBalancer.
+11. Multi-arch admission (#8), OpenShift extras.

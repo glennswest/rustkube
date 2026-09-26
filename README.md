@@ -75,8 +75,9 @@ tokens; label and field selectors; `/openapi/v2` and `/openapi/v3`.
 strategic merge patch (with `patchMergeKey` for the lists that need it) and
 server-side apply with `managedFields` ownership and conflicts. The `/status`
 subresource; pod `eviction` gated by PodDisruptionBudgets; namespace
-`/finalize`; CSR `/approval`. A PUT to `/status` does not yet honour the
-body's `resourceVersion` (#78). There is **no `/scale`** subresource, though
+`/finalize`; CSR `/approval`. A PUT to `/status` (and `/approval`) is
+conditional on the body's `resourceVersion`: stale is a 409 and nothing is
+written; none is an unconditional update (#78). There is **no `/scale`** subresource, though
 discovery advertises `deployments/scale`, so `kubectl scale` fails (#86).
 
 **Proxied to the kubelet** (`https://<node>:10250`, authenticated with a token
