@@ -59,8 +59,8 @@ pub fn matches(schedule: &str, at: &DateTime<Utc>) -> bool {
 
     // The rule this module exists for. Restricted means "not `*`": when both
     // days are restricted the schedule is a union, not an intersection.
-    let dom_restricted = fields[2] != "*";
-    let dow_restricted = fields[4] != "*";
+    let dom_restricted = !is_any(fields[2]);
+    let dow_restricted = !is_any(fields[4]);
     match (dom_restricted, dow_restricted) {
         (true, true) => dom_matches || dow_matches,
         _ => dom_matches && dow_matches,
@@ -132,7 +132,7 @@ pub fn validate(schedule: &str) -> Result<(), Invalid> {
     // Every field is satisfiable alone; the remaining way to be impossible is
     // a day that the month never has. Only day-of-month and month can
     // conflict, and only when day-of-month is restricted.
-    if fields[2] != "*" {
+    if !is_any(fields[2]) {
         let days = parse_field(fields[2], 1, 31);
         let months = parse_field(fields[3], 1, 12);
         let mut possible = false;
@@ -236,6 +236,14 @@ pub fn start_to_run(
     Ok(starts.last().copied())
 }
 
+/// `*` or `?`. The question mark is "no specific value": upstream's parser
+/// (robfig/cron, which the CronJob controller uses) takes it wherever `*` goes,
+/// and it is how Quartz-style schedules write the day field they leave open —
+/// `*/1 * * * ?` is a conformance test's schedule (#67).
+fn is_any(field: &str) -> bool {
+    field == "*" || field == "?"
+}
+
 /// One cron field to the set of values it matches.
 ///
 /// `*`, `*/n`, `a-b`, `a-b/n`, and comma-separated lists of those.
@@ -251,7 +259,7 @@ fn parse_field(field: &str, min: u32, max: u32) -> HashSet<u32> {
         if step == 0 {
             continue;
         }
-        let (lo, hi) = if base == "*" {
+        let (lo, hi) = if is_any(base) {
             (min, max)
         } else if let Some((a, b)) = base.split_once('-') {
             match (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
@@ -278,6 +286,19 @@ fn parse_field(field: &str, min: u32, max: u32) -> HashSet<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `?` means what `*` means, including for the day-of-month/day-of-week
+    /// union rule (#67).
+    #[test]
+    fn a_question_mark_is_any_value() {
+        assert!(validate("*/1 * * * ?").is_ok());
+        assert!(validate("0 0 ? * MON").is_ok() || validate("0 0 ? * 1").is_ok());
+        let t = Utc.with_ymd_and_hms(2026, 9, 26, 10, 7, 0).unwrap();
+        assert!(matches("*/1 * * * ?", &t));
+        // `?` in day-of-month leaves day-of-week alone deciding: a Saturday.
+        assert!(matches("0 10 ? * 6", &Utc.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap()));
+        assert!(!matches("0 10 ? * 1", &Utc.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap()));
+    }
     use chrono::TimeZone;
 
     fn at(s: &str) -> DateTime<Utc> {
