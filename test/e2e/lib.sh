@@ -59,8 +59,10 @@ done
   --etcd-servers http://127.0.0.1:32379 --anonymous-auth false \
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
   >"$W/apiserver.log" 2>&1 &
+# Six minutes: on a loaded build box the bootstrap writes alone have taken
+# three.
 ready=
-for _ in $(seq 180); do
+for _ in $(seq 360); do
   curl -sfk -H "Authorization: Bearer $ADMIN" "$API/readyz" >/dev/null && { ready=1; break; }
   sleep 1
 done
