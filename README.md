@@ -67,7 +67,10 @@ that discovers first — `kubectl get priorityclasses` — does not find them.
 
 **Wire.** JSON and client-go's protobuf (`application/vnd.kubernetes.protobuf`)
 in both directions; Table output for `kubectl get`; `PartialObjectMetadata`;
-watch with bookmarks and `sendInitialEvents`; list pagination with `continue`
+watch with bookmarks and `sendInitialEvents` (a DELETED event carries the
+object's last state from the watch cache, and selectors apply to it; a watch
+opened below the cache's window gets a name-and-namespace tombstone, #100);
+list pagination with `continue`
 tokens; label and field selectors; `/openapi/v2` and `/openapi/v3`.
 
 **Writes.** Create, update, delete (with `DeleteOptions`: preconditions,
