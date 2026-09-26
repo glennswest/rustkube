@@ -4,6 +4,25 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-26 (status PUT, #78)
+- **fix: `PUT …/status` is conditional on the body's `resourceVersion`**, in
+  all four handlers — built-in cluster-scoped (nodes, PVs, namespaces,
+  storage.k8s.io, CSR `/status` and `/approval`), built-in namespaced, and
+  custom resources of either scope. It used to copy `status` onto a fresh read
+  and swap against *that* revision, so a stale writer silently overwrote newer
+  status, and a current one could 409 when another write landed between the
+  read and the swap. A stale version is now a 409 with nothing written; a body
+  with no `resourceVersion` is an unconditional update, retried against fresh
+  reads like a PATCH without one (#77). Shared as `resource::put_status` over
+  the new `resource::guaranteed_update`.
+- **fix(cronjob): a pass's second status write starts from the first's
+  result.** The stats write was built from the CronJob as listed, so after a
+  scheduling write it put back the old `lastScheduleTime`; under #78 it would
+  have 409'd and dropped the pruned-job counts instead.
+- **test:** `test_store::MemStore`, an in-memory `KvStore` with etcd's
+  revision and compare-and-swap semantics, so handlers can be tested as they
+  run; each status PUT handler is tested stale / current / unconditional.
+
 ## [v0.15.0] — 2026-09-25
 
 ### 2026-09-25 (Projects, #97)

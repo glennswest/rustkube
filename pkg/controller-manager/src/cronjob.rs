@@ -89,6 +89,13 @@ impl CronJobController {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("cronjob missing name"))?;
         let cj_uid = cj["metadata"]["uid"].as_str().unwrap_or("");
+        // The CronJob as last written this pass. A pass can write status more
+        // than once — the schedule marker, then the stats — and a status PUT
+        // is conditional on the resourceVersion it carries (#78), so each
+        // write starts from what the previous one stored. Built from `cj`,
+        // the stats write 409'd after a scheduling write; before #78 it
+        // landed and put back the old `lastScheduleTime`.
+        let mut latest = cj.clone();
         let schedule = cj["spec"]["schedule"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("cronjob missing schedule"))?;
@@ -208,19 +215,22 @@ impl CronJobController {
                         ),
                     )
                     .await;
-                let mut updated_cj = cj.clone();
+                let mut updated_cj = latest.clone();
                 if updated_cj["status"].is_null() {
                     updated_cj["status"] = json!({});
                 }
                 updated_cj["status"]["lastScheduleTime"] =
                     json!(now.format("%Y-%m-%dT%H:%M:%SZ").to_string());
-                let _ = self
+                let resp = self
                     .api
                     .update_status(
                         &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
                         &updated_cj,
                     )
                     .await;
+                if let Some(stored) = written(resp) {
+                    latest = stored;
+                }
                 None
             }
         };
@@ -295,7 +305,7 @@ impl CronJobController {
                 // "now" makes a catch-up run look like an on-time one and
                 // shifts the next window, so a controller that is a few
                 // seconds late slowly drifts off the schedule.
-                let mut updated_cj = cj.clone();
+                let mut updated_cj = latest.clone();
                 let now_str = scheduled_for.format("%Y-%m-%dT%H:%M:%SZ").to_string();
                 if updated_cj["status"].is_null() {
                     updated_cj["status"] = json!({});
@@ -324,13 +334,16 @@ impl CronJobController {
                     updated_cj["status"]["lastSuccessfulTime"] = json!(t);
                 }
 
-                let _ = self
+                let resp = self
                     .api
                     .update_status(
                         &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
                         &updated_cj,
                     )
                     .await;
+                if let Some(stored) = written(resp) {
+                    latest = stored;
+                }
             }
         }
 
@@ -345,7 +358,7 @@ impl CronJobController {
         self.write_stats(
             namespace,
             cj_name,
-            cj,
+            &latest,
             active_jobs.len() as u64,
             successful_jobs.len() as u64 - pruned_ok,
             failed_jobs.len() as u64 - pruned_bad,
@@ -501,6 +514,17 @@ impl CronJobController {
 }
 
 /// The latest `status.completionTime` among a set of Jobs.
+/// The object a status PUT stored, when it stored one.
+///
+/// A refused write answers with a `Status` (a 409 among them), which is not a
+/// base for the next write; the caller keeps what it had, and the next pass
+/// starts from a fresh list.
+fn written(resp: reqwest::Result<Value>) -> Option<Value> {
+    let v = resp.ok()?;
+    (v["kind"].as_str() != Some("Status") && v["metadata"]["resourceVersion"].is_string())
+        .then_some(v)
+}
+
 fn last_completion(jobs: &[&Value]) -> Option<String> {
     jobs.iter()
         .filter_map(|j| j["status"]["completionTime"].as_str())
@@ -508,5 +532,23 @@ fn last_completion(jobs: &[&Value]) -> Option<String> {
         .map(str::to_owned)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn only_a_stored_object_is_a_base_for_the_next_write() {
+        let stored = json!({
+            "kind": "CronJob",
+            "metadata": { "name": "c", "resourceVersion": "12" },
+            "status": { "lastScheduleTime": "2026-09-26T10:00:00Z" },
+        });
+        assert_eq!(written(Ok(stored.clone())), Some(stored));
 
+        let conflict = json!({
+            "kind": "Status", "apiVersion": "v1", "status": "Failure",
+            "reason": "Conflict", "code": 409, "metadata": {},
+        });
+        assert_eq!(written(Ok(conflict)), None);
+    }
+}
