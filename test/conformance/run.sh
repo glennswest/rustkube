@@ -101,4 +101,9 @@ for f in sorted(glob.glob(sys.argv[1] + "/**/*.xml", recursive=True)):
             print("  WHY " + (lines[0][:300] if lines else "(no message)"))
 print("SUMMARY", " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
 PY
+if grep -q "A BeforeSuite node failed" "$W/e2e.log"; then
+  # The whole suite was skipped: the reason is in the setup, near the top.
+  echo "---- BeforeSuite failed"
+  grep -E -m 40 -i "error|fail|unable|timed out|not ready|forbidden" "$W/e2e.log" | cut -c1-300
+fi
 echo "---- e2e.log (tail)"; tail -15 "$W/e2e.log"
