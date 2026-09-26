@@ -17,6 +17,10 @@
   and field selectors now apply to deletions, so a selected watch no longer
   hears about every object's deletion. A watch opened below the cache's window
   still gets a name-only tombstone.
+- **fix(watch cache): a watch with no resourceVersion is served from the
+  cache.** Revision 0 means "from now", but it was read as "before the cache's
+  window" and given a store watch of its own — one more upstream watch per
+  such client, and none of the cache's state (the last state above among it).
 - **test:** `test/e2e/watch-deleted.sh`.
 
 ## [v0.15.1] — 2026-09-26

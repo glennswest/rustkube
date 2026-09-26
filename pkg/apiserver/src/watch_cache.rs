@@ -332,10 +332,21 @@ impl WatchCache {
     pub async fn watch(&self, prefix: &str, start_rev: u64) -> Result<WatchStream> {
         let cache = self.ensure(prefix).await?;
 
+        // Revision 0 is "from now", as it is to etcd — not "from the
+        // beginning". The cache's live stream from where it stands is exactly
+        // that, so it is served here rather than by a store watch of its own.
+        // It used to fall through to the store, which is every watch a client
+        // opens without a resourceVersion: one more upstream watch each, and
+        // DELETED events without the last state only the cache holds (#100).
+        let start_rev = if start_rev == 0 {
+            cache.snapshot_rev.load(Ordering::SeqCst)
+        } else {
+            start_rev
+        };
+
         // The pump captured only `revision > pump_start_rev`. If the client
         // wants events from before that, the cache can't reconstruct them —
-        // fall back to a dedicated store watch (old behavior for stale RVs,
-        // including watch-from-0).
+        // fall back to a dedicated store watch.
         if start_rev < cache.pump_start_rev {
             tracing::debug!(
                 "watch-cache: fallback store watch prefix={prefix} start_rev={start_rev} < pump_start={}",
