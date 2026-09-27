@@ -14,6 +14,9 @@ This mirrors how `k8s.io/apimachinery` + `k8s.io/api` hold the codec used by bot
   Licensed Apache-2.0.
 - `gogoproto/gogo.proto` — https://github.com/gogo/protobuf. Licensed BSD-3-Clause.
 
+`authentication/v1`, `authorization/v1` and `node/v1` were added from the
+same branch on 2026-09-27 (#67).
+
 `google/protobuf/descriptor.proto` is not vendored; it ships with `protoc`.
 
 ## Updating

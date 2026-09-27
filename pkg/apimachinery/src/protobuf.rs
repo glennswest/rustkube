@@ -116,6 +116,9 @@ fn message_name(api_version: &str, kind: &str) -> Option<String> {
         ("scheduling.k8s.io", "v1") => "k8s.io.api.scheduling.v1",
         ("admissionregistration.k8s.io", "v1") => "k8s.io.api.admissionregistration.v1",
         ("certificates.k8s.io", "v1") => "k8s.io.api.certificates.v1",
+        ("authentication.k8s.io", "v1") => "k8s.io.api.authentication.v1",
+        ("authorization.k8s.io", "v1") => "k8s.io.api.authorization.v1",
+        ("node.k8s.io", "v1") => "k8s.io.api.node.v1",
         ("apiextensions.k8s.io", "v1") => {
             "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1"
         }
@@ -817,6 +820,19 @@ mod tests {
         assert_eq!(owner["apiVersion"], "apps/v1");
         assert_eq!(owner["kind"], "Deployment");
         assert_eq!(owner["uid"], "u1");
+    }
+
+    /// client-go sends TokenRequest and SubjectAccessReview as protobuf; they
+    /// were refused with "no protobuf schema" (#67).
+    #[test]
+    fn token_request_and_sar_have_schemas() {
+        let tr = json!({"apiVersion": "authentication.k8s.io/v1", "kind": "TokenRequest",
+                        "spec": {"audiences": ["api"], "expirationSeconds": 3600}});
+        let back = decode_to_json(&encode_from_json(&tr, "authentication.k8s.io/v1", "TokenRequest").unwrap(), "", "").unwrap();
+        assert_eq!(back["spec"]["audiences"], json!(["api"]));
+        assert_eq!(back["spec"]["expirationSeconds"], 3600);
+        assert!(supports("authorization.k8s.io/v1", "SubjectAccessReview"));
+        assert!(supports("node.k8s.io/v1", "RuntimeClass"));
     }
 
     #[test]
