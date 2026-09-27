@@ -209,7 +209,14 @@ when each piece landed.
     webhook specs fail with `resource "deployments" not found` — **found**:
     protobuf creates stored `metadata.namespace: ""`, so client-go's next GET
     had no namespace in its path and hit the CRD catch-all; fixed 2026-09-27.
-  - **2026-09-27:** chunks relaunched (`tmp/chunks.sh`, logs `tmp/conf-*.log`).
+  - **2026-09-27:** fixed from the api-machinery triage: empty namespace on
+    protobuf create, selector watch DELETED/ADDED, deletecollection. Filed:
+    APF #118, admission policies #119, CRD OpenAPI #120, CR schema #121,
+    YAML/fieldValidation #122, autoscaling/v1 #123, ResourceQuota #124,
+    ReplicationController #125, Table 406 #126; list kinds on #110. Not yet
+    triaged: CRD /status spec mismatch (probe with RK_WHY_LINES=40),
+    OrderedNamespaceDeletion, GC dependency circle — rerun first.
+    Chunks to relaunch at the fixed commit (`tmp/chunks.sh`, logs `tmp/conf-*.log`).
   - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
     docs/conformance.md: RK_PORT_OFFSET side by side, RK_SUITE_TIMEOUT=45m)
     and the focused webhook probe with
