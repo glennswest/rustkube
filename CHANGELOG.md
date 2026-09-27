@@ -5,6 +5,11 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(controller-manager): Service endpoints.** EndpointSlices carry
+  `endpointslice.kubernetes.io/managed-by: endpointslice-controller.k8s.io`,
+  and the Service controller deletes the Endpoints and EndpointSlices it made
+  as soon as their Service is gone, rather than leaving them to the garbage
+  collector's next pass.
 - **fix(watch): a watch with no `resourceVersion` (or `"0"`) starts with the
   current state**, each object as an ADDED event, then live changes — as
   upstream. It started from now and said nothing of what existed, so a client

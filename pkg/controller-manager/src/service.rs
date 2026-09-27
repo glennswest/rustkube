@@ -64,7 +64,46 @@ impl ServiceController {
                 debug!("Failed to reconcile service {namespace}/{name}: {e}");
             }
         }
+        self.remove_orphans(namespace, &services).await;
         Ok(())
+    }
+
+    /// Delete the Endpoints and EndpointSlices this controller made for a
+    /// Service that is gone.
+    ///
+    /// They carry the Service as their controlling owner, so the garbage
+    /// collector would get to them — on its own schedule, which under load is
+    /// longer than a client waits (#67: the Endpoints conformance spec gives
+    /// it 30 s). Upstream's endpoints controller deletes them itself. Only
+    /// objects whose controller is a Service with a uid no live Service has
+    /// are touched: a selectorless Service's hand-made Endpoints have no such
+    /// owner.
+    async fn remove_orphans(&self, namespace: &str, services: &[Value]) {
+        let live: std::collections::HashSet<&str> =
+            services.iter().filter_map(|s| s["metadata"]["uid"].as_str()).collect();
+        for (list_path, item_path) in [
+            (format!("/api/v1/namespaces/{namespace}/endpoints"),
+             format!("/api/v1/namespaces/{namespace}/endpoints")),
+            (format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices"),
+             format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices")),
+        ] {
+            let Ok(list) = self.api.list(&list_path).await else { continue };
+            for item in list["items"].as_array().into_iter().flatten() {
+                let owner = item["metadata"]["ownerReferences"]
+                    .as_array()
+                    .and_then(|refs| {
+                        refs.iter().find(|r| r["kind"] == "Service" && r["controller"] == true)
+                    });
+                let Some(uid) = owner.and_then(|o| o["uid"].as_str()) else { continue };
+                if uid.is_empty() || live.contains(uid) {
+                    continue;
+                }
+                if let Some(name) = item["metadata"]["name"].as_str() {
+                    debug!("Service controller: deleting {item_path}/{name}, its Service is gone");
+                    let _ = self.api.delete(&format!("{item_path}/{name}")).await;
+                }
+            }
+        }
     }
 
     async fn reconcile_service(
@@ -207,7 +246,12 @@ impl ServiceController {
             "metadata": {
                 "name": svc_name,
                 "namespace": namespace,
-                "labels": { "kubernetes.io/service-name": svc_name },
+                // `managed-by` is how consumers (and the conformance suite)
+                // tell the controller's slices from hand-made ones.
+                "labels": {
+                    "kubernetes.io/service-name": svc_name,
+                    "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io"
+                },
                 "ownerReferences": [{
                     "apiVersion": "v1",
                     "kind": "Service",
