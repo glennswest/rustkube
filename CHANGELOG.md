@@ -5,6 +5,11 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(watch): a selector watch sees an object leave and enter.** A write
+  that takes an object out of the watcher's selector is a DELETED to it
+  (carrying the new state) and one that brings it in an ADDED, as upstream;
+  such a write was dropped or sent as MODIFIED. The watch cache hands a
+  MODIFIED event the state it replaced, as it already did for DELETED.
 - **fix(create): an empty `metadata.namespace` is the URL's namespace.** A
   protobuf create (every client-go typed client) sends `"namespace": ""`,
   and the object was stored and returned with it empty, so the client's next

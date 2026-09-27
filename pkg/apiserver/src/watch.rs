@@ -191,19 +191,33 @@ fn render_event(
             }
             ("ADDED", obj)
         }
-        WatchEvent::Modified { value, revision, .. } => {
+        WatchEvent::Modified { value, revision, prev_value, .. } => {
             let mut obj: Value = serde_json::from_slice(value).unwrap_or(json!({}));
             inject_resource_version(&mut obj, *revision);
-            if !selector::matches_selectors(&obj, label_sel, field_sel) {
-                return None;
-            }
+            // Upstream's selector semantics: to a watcher of `app=web`, a
+            // write that takes an object out of `app=web` is its DELETED
+            // (carrying the new state), and one that brings it in is its
+            // ADDED. Without the previous state (a watch below the cache's
+            // window) a non-matching write is dropped and a matching one is
+            // MODIFIED, as before.
+            let now = selector::matches_selectors(&obj, label_sel, field_sel);
+            let before = prev_value
+                .as_deref()
+                .and_then(|b| serde_json::from_slice::<Value>(b).ok())
+                .map(|p| selector::matches_selectors(&p, label_sel, field_sel));
+            let event_type = match (before, now) {
+                (_, true) if before == Some(false) => "ADDED",
+                (_, true) => "MODIFIED",
+                (Some(true), false) => "DELETED",
+                (_, false) => return None,
+            };
             if let Some(f) = transform {
                 obj = f(obj);
             }
             if metadata_only {
                 obj = to_partial_object_metadata(&obj);
             }
-            ("MODIFIED", obj)
+            (event_type, obj)
         }
         WatchEvent::Deleted { revision, key, prev_value } => {
             // The object's last state, when the watch cache held it (#100):
@@ -567,5 +581,35 @@ mod tests {
 
         assert!(render(&ev, Some("app=web")).is_some());
         assert!(render(&ev, Some("app=db")).is_none(), "a watcher of app=db heard about a web VMI");
+    }
+
+    fn modified(prev: Option<&str>, now: &str) -> apimachinery::watch::WatchEvent {
+        let obj = |app: &str| serde_json::to_vec(&serde_json::json!({
+            "apiVersion": "kubevirt.io/v1", "kind": "VirtualMachineInstance",
+            "metadata": { "name": "web-1", "namespace": "default", "labels": { "app": app } },
+        })).unwrap();
+        apimachinery::watch::WatchEvent::Modified {
+            key: "/registry/kubevirt.io/virtualmachineinstances/default/web-1".into(),
+            value: obj(now),
+            revision: 36,
+            prev_value: prev.map(obj),
+        }
+    }
+
+    /// An object that stops matching a selector is DELETED to that watcher;
+    /// one that starts matching is ADDED (#67, the Watchers conformance spec).
+    #[test]
+    fn a_selector_watch_sees_objects_leave_and_enter() {
+        let ty = |ev, sel| render(&ev, sel).map(|e| e["type"].as_str().unwrap().to_string());
+        assert_eq!(ty(modified(Some("web"), "db"), Some("app=web")).as_deref(), Some("DELETED"));
+        let e = render(&modified(Some("web"), "db"), Some("app=web")).unwrap();
+        assert_eq!(e["object"]["metadata"]["labels"]["app"], "db", "DELETED carries the new state");
+        assert_eq!(ty(modified(Some("db"), "web"), Some("app=web")).as_deref(), Some("ADDED"));
+        assert_eq!(ty(modified(Some("web"), "web"), Some("app=web")).as_deref(), Some("MODIFIED"));
+        assert_eq!(ty(modified(Some("db"), "db"), Some("app=web")), None);
+        // No previous state: matching is MODIFIED, not matching is dropped.
+        assert_eq!(ty(modified(None, "web"), Some("app=web")).as_deref(), Some("MODIFIED"));
+        assert_eq!(ty(modified(None, "db"), Some("app=web")), None);
+        assert_eq!(ty(modified(Some("db"), "web"), None).as_deref(), Some("MODIFIED"));
     }
 }

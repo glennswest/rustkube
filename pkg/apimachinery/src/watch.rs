@@ -12,6 +12,12 @@ pub enum WatchEvent {
         key: String,
         value: Vec<u8>,
         revision: u64,
+        /// The object before this write, when something knows it — filled in
+        /// by the apiserver's watch cache like `Deleted::prev_value`. A
+        /// selector watch needs it: an object that stops matching is a
+        /// DELETED to that watcher, and one that starts matching an ADDED.
+        #[serde(default)]
+        prev_value: Option<Vec<u8>>,
     },
     Deleted {
         key: String,

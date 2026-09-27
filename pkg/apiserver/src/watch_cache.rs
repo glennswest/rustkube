@@ -160,9 +160,16 @@ impl WatchCache {
                 {
                     let mut snap = pump.snapshot.lock().unwrap();
                     match &mut ev {
-                        WatchEvent::Added { key, value, .. }
-                        | WatchEvent::Modified { key, value, .. } => {
+                        WatchEvent::Added { key, value, .. } => {
                             snap.insert(key.clone(), value.clone());
+                        }
+                        // The state it replaces goes with the event, so a
+                        // selector watch can tell "stopped matching" (#67).
+                        WatchEvent::Modified { key, value, prev_value, .. } => {
+                            let last = snap.insert(key.clone(), value.clone());
+                            if prev_value.is_none() {
+                                *prev_value = last;
+                            }
                         }
                         // What is removed is the object's last state: hand it
                         // to the event, before the ring and the fan-out see

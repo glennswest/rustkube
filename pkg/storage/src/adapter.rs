@@ -255,6 +255,7 @@ impl KvStore for EtcdStore {
                                             key,
                                             value: kv.value().to_vec(),
                                             revision: kv.mod_revision() as u64,
+                                            prev_value: None,
                                         }
                                     }
                                 }
