@@ -191,6 +191,29 @@ when each piece landed.
       fail as "needs a node". Triage every failure into: not implemented /
       wrong / needs a real node / not applicable → issues. A full-cluster run
       needs stormcos test machines (rustkube-node#27, #32).
+  - **State 2026-09-27 (session restarted mid-run):** sig-api-machinery ran
+    on dev (e2e v1.36.5): 14 passed, 76 failed. Triage so far, not yet filed:
+    flowcontrol (APF) not served (2); Validating/MutatingAdmissionPolicy not
+    served, 3 specs hang to the suite timeout (6); aggregated discovery (#107,
+    4); CRD schemas not published to /openapi (8); CR defaulting, CR
+    fieldValidation unknown/duplicate, YAML request bodies refused ("Expected
+    request with Content-Type: application/json") (5); CRD deletecollection
+    405; CRD /status spec mismatch; autoscaling/v1 not served (Discovery
+    spec); resourcequotas/podtemplates/replicationcontrollers missing from
+    `resource_to_list_kind` + not in discovery (#110; ResourceQuota 10 specs,
+    chunking 2); no ResourceQuota or ReplicationController controller;
+    SelfSubjectAccessReview ignores Accept: Table (should 406); watch with a
+    selector sends no DELETED when an object stops matching; webhook/
+    conversion/aggregator specs need a pod (+ #82, #83). **Open question:**
+    webhook specs fail with `resource "deployments" not found` — that message
+    is `crd.rs` `validate_crd`, so some apps/v1 deployments request falls
+    through to the CRD catch-all; not yet found.
+  - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
+    docs/conformance.md: RK_PORT_OFFSET side by side, RK_SUITE_TIMEOUT=45m)
+    and the focused webhook probe with
+    `RK_LOG_GREP='deployment|404|not found'`; the chunks launched at restart
+    were lost with the session. Then file the issues, write the results table
+    into docs/conformance.md, close #67.
 - [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — CI
       builds x86_64 musl only; `build-release.sh` can target aarch64 via
       `cross`, and no such build has been recorded
