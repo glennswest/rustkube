@@ -500,6 +500,98 @@ pub(crate) fn rule_matches(rule: &Value, req: &AuthorizationRequest) -> bool {
     true
 }
 
+/// The identity a request acts as when it carries `Impersonate-*` headers.
+///
+/// `None` when it carries none. The caller must be allowed the `impersonate`
+/// verb on each thing it assumes, as upstream checks it: the user (`users`,
+/// or `serviceaccounts` in its namespace for a ServiceAccount's name), every
+/// `Impersonate-Group` (`groups`), and an `Impersonate-Uid` (`uids` in
+/// `authentication.k8s.io`). The result is authenticated: it gets
+/// `system:authenticated`, and a ServiceAccount named without groups gets its
+/// ServiceAccount groups.
+///
+/// Without this every impersonated request ran as the impersonator —
+/// `kubectl --as=alice` had the admin's rights, not Alice's (#67: the
+/// SubjectReview conformance spec, which compares a review of a
+/// ServiceAccount with what an impersonated request is allowed).
+async fn impersonated(
+    rbac: &RbacEngine,
+    user: &UserInfo,
+    headers: &axum::http::HeaderMap,
+) -> Result<Option<UserInfo>, crate::error::ApiError> {
+    let values = |name: &str| -> Vec<String> {
+        headers
+            .get_all(name)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(str::to_string)
+            .collect()
+    };
+    let username = headers.get("impersonate-user").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let groups = values("impersonate-group");
+    let uid = headers.get("impersonate-uid").and_then(|v| v.to_str().ok()).map(str::to_string);
+    let Some(username) = username else {
+        if groups.is_empty() && uid.is_none() {
+            return Ok(None);
+        }
+        return Err(crate::error::ApiError {
+            status: StatusCode::BAD_REQUEST,
+            reason: "BadRequest".into(),
+            message: "requested impersonation of groups or a uid without impersonating a user".into(),
+        });
+    };
+    let sa = username
+        .strip_prefix("system:serviceaccount:")
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(ns, name)| (ns.to_string(), name.to_string()));
+    let mut checks = vec![match &sa {
+        Some((ns, name)) => AuthorizationRequest {
+            verb: "impersonate".into(), resource: "serviceaccounts".into(), subresource: None,
+            api_group: String::new(), namespace: Some(ns.clone()), name: Some(name.clone()),
+        },
+        None => AuthorizationRequest {
+            verb: "impersonate".into(), resource: "users".into(), subresource: None,
+            api_group: String::new(), namespace: None, name: Some(username.clone()),
+        },
+    }];
+    for g in &groups {
+        checks.push(AuthorizationRequest {
+            verb: "impersonate".into(), resource: "groups".into(), subresource: None,
+            api_group: String::new(), namespace: None, name: Some(g.clone()),
+        });
+    }
+    if let Some(u) = &uid {
+        checks.push(AuthorizationRequest {
+            verb: "impersonate".into(), resource: "uids".into(), subresource: None,
+            api_group: "authentication.k8s.io".into(), namespace: None, name: Some(u.clone()),
+        });
+    }
+    for c in &checks {
+        if !rbac.authorize(user, c).await {
+            return Err(crate::error::ApiError {
+                status: StatusCode::FORBIDDEN,
+                reason: "Forbidden".into(),
+                message: format!(
+                    "{} is not allowed to impersonate {} \"{}\"",
+                    user.username,
+                    c.resource,
+                    c.name.as_deref().unwrap_or("")
+                ),
+            });
+        }
+    }
+    let mut out_groups = groups;
+    if out_groups.is_empty() {
+        if let Some((ns, _)) = &sa {
+            out_groups = vec!["system:serviceaccounts".into(), format!("system:serviceaccounts:{ns}")];
+        }
+    }
+    if username != "system:anonymous" && !out_groups.iter().any(|g| g == "system:authenticated") {
+        out_groups.push("system:authenticated".into());
+    }
+    Ok(Some(UserInfo { username, groups: out_groups }))
+}
+
 /// RBAC middleware — checks authorization after authentication.
 pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Response, Response> {
     // Extract authorization info from the request path
@@ -534,6 +626,16 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
             username: "system:anonymous".into(),
             groups: vec!["system:unauthenticated".into()],
         });
+
+    // Impersonation: from here on the request is the identity it assumes.
+    let user = match request.extensions().get::<Arc<RbacEngine>>().cloned() {
+        Some(rbac) => match impersonated(&rbac, &user, request.headers()).await {
+            Ok(Some(as_user)) => as_user,
+            Ok(None) => user,
+            Err(e) => return Err(e.into_response()),
+        },
+        None => user,
+    };
 
     let auth_req = parse_authorization_request(&path, &method);
 
@@ -1124,5 +1226,45 @@ mod path_arm_order_tests {
         assert_eq!(ns, None);
         assert_eq!(name.as_deref(), Some("coredns"));
         assert_eq!(sub.as_deref(), Some("status"));
+    }
+}
+
+#[cfg(test)]
+mod impersonation_tests {
+    use super::*;
+    use crate::test_store::MemStore;
+    use axum::http::HeaderMap;
+
+    fn engine() -> RbacEngine {
+        RbacEngine::new(Arc::new(ResourceStorage::new(Arc::new(MemStore::default()))))
+    }
+    fn admin() -> UserInfo {
+        UserInfo { username: "admin".into(), groups: vec!["system:masters".into()] }
+    }
+
+    /// The request becomes who it impersonates (#67).
+    #[tokio::test]
+    async fn impersonation_assumes_the_identity() {
+        let e = engine();
+        assert!(impersonated(&e, &admin(), &HeaderMap::new()).await.unwrap().is_none());
+
+        let mut h = HeaderMap::new();
+        h.insert("impersonate-user", "system:serviceaccount:ns1:e2e".parse().unwrap());
+        let u = impersonated(&e, &admin(), &h).await.unwrap().unwrap();
+        assert_eq!(u.username, "system:serviceaccount:ns1:e2e");
+        assert_eq!(u.groups, ["system:serviceaccounts", "system:serviceaccounts:ns1", "system:authenticated"]);
+
+        let mut h = HeaderMap::new();
+        h.insert("impersonate-user", "alice".parse().unwrap());
+        h.append("impersonate-group", "dev".parse().unwrap());
+        h.append("impersonate-group", "ops".parse().unwrap());
+        let u = impersonated(&e, &admin(), &h).await.unwrap().unwrap();
+        assert_eq!(u.username, "alice");
+        assert_eq!(u.groups, ["dev", "ops", "system:authenticated"]);
+
+        let mut h = HeaderMap::new();
+        h.insert("impersonate-group", "dev".parse().unwrap());
+        let err = impersonated(&e, &admin(), &h).await.unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
     }
 }

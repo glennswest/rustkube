@@ -5,6 +5,11 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(security): impersonation.** `Impersonate-User`/`-Group`/`-Uid`
+  were ignored, so an impersonated request — `kubectl --as=alice` — ran with
+  the impersonator's own rights. The caller must now be allowed `impersonate`
+  on what it assumes (403 otherwise), and the request is authorized as that
+  identity; groups without a user are a 400.
 - **feat(admission): ServiceAccount admission mounts the API credentials.**
   A pod gets upstream's projected `kube-api-access-*` volume (bound token,
   `kube-root-ca.crt`, namespace) mounted read-only at

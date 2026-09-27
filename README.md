@@ -105,6 +105,11 @@ kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
    must carry is in [docs/certificates.md](docs/certificates.md);
 3. otherwise `system:anonymous`, if `--anonymous-auth` is true; else 401.
 
+**Impersonation** (`Impersonate-User`, `-Group`, `-Uid`; `kubectl --as`): the
+caller needs the `impersonate` verb on the `users` (or `serviceaccounts`),
+`groups` and `uids` it names, and the request is then authorized as that
+identity, plus `system:authenticated`. `Impersonate-Extra-*` is ignored.
+
 TokenRequest (`serviceaccounts/{name}/token`) mints an unbound token with a
 fixed 24-hour lifetime; the request body, `expirationSeconds` included, is
 ignored. TokenReview is served.
