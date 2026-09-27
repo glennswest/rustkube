@@ -2081,7 +2081,10 @@ mod status_put_tests {
             .await
             .unwrap();
         assert_eq!(done.items.len(), 2);
-        let get = |ns: &str, n: &str| s.storage.get(&ResourceStorage::namespaced_key("configmaps", ns, n));
+        let get = |ns: &str, n: &str| {
+            let (storage, key) = (s.storage.clone(), ResourceStorage::namespaced_key("configmaps", ns, n));
+            async move { storage.get(&key).await }
+        };
         assert!(get("a", "c1").await.is_err(), "c1 was not deleted");
         assert!(!get("a", "c2").await.unwrap()["metadata"]["deletionTimestamp"].is_null(), "c2 not terminating");
         assert!(get("a", "c3").await.is_ok(), "c3 did not match the selector");
