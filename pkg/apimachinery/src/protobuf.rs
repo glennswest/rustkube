@@ -119,6 +119,7 @@ fn message_name(api_version: &str, kind: &str) -> Option<String> {
         ("authentication.k8s.io", "v1") => "k8s.io.api.authentication.v1",
         ("authorization.k8s.io", "v1") => "k8s.io.api.authorization.v1",
         ("node.k8s.io", "v1") => "k8s.io.api.node.v1",
+        ("events.k8s.io", "v1") => "k8s.io.api.events.v1",
         ("apiextensions.k8s.io", "v1") => {
             "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1"
         }
@@ -870,6 +871,7 @@ mod tests {
         assert_eq!(back["spec"]["expirationSeconds"], 3600);
         assert!(supports("authorization.k8s.io/v1", "SubjectAccessReview"));
         assert!(supports("node.k8s.io/v1", "RuntimeClass"));
+        assert!(supports("events.k8s.io/v1", "Event"));
     }
 
     #[test]

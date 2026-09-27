@@ -513,10 +513,7 @@ pub async fn crd_create_ns(
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
-    let name = body["metadata"]["name"]
-        .as_str()
-        .ok_or_else(|| ApiError::invalid("metadata.name is required"))?
-        .to_string();
+    let name = crate::handlers::resource::object_name(&mut body)?;
     crate::handlers::resource::check_body_namespace(&body, &namespace)?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
@@ -828,10 +825,7 @@ pub async fn crd_create_cluster(
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
-    let name = body["metadata"]["name"]
-        .as_str()
-        .ok_or_else(|| ApiError::invalid("metadata.name is required"))?
-        .to_string();
+    let name = crate::handlers::resource::object_name(&mut body)?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, None);
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
 

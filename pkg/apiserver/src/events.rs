@@ -133,11 +133,7 @@ pub async fn create(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let mut core = events_to_core(body);
-    let name = core["metadata"]["name"]
-        .as_str()
-        .or_else(|| core["metadata"]["generateName"].as_str())
-        .ok_or_else(|| ApiError::invalid("metadata.name is required"))?
-        .to_string();
+    let name = crate::handlers::resource::object_name(&mut core)?;
     ensure_metadata_pub(&mut core, &name, Some(&namespace));
     let key = ResourceStorage::namespaced_key(RESOURCE, &namespace, &name);
     let stored = state.storage.create(&key, core).await?;
@@ -251,6 +247,23 @@ pub async fn delete(
         "apiVersion": "v1", "kind": "Status", "metadata": {}, "status": "Success",
         "details": { "name": name, "namespace": namespace, "kind": RESOURCE, "group": "events.k8s.io" }
     })))
+}
+
+/// DELETE /apis/events.k8s.io/v1/namespaces/{ns}/events — deletecollection,
+/// over the same stored core/v1 Events.
+pub async fn delete_collection(
+    State(state): State<AppState>,
+    Path(namespace): Path<String>,
+    RawQuery(query): RawQuery,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let prefix = ResourceStorage::namespace_prefix(RESOURCE, &namespace);
+    let done = crate::handlers::resource::delete_collection(
+        &state, &prefix, RESOURCE, RESOURCE, query.as_deref(), &body,
+    )
+    .await?;
+    let items: Vec<Value> = done.items.into_iter().map(core_to_events).collect();
+    Ok(Json(json!({ "apiVersion": GV, "kind": "EventList", "metadata": {}, "items": items })))
 }
 
 /// GET /apis/events.k8s.io/v1 — resource discovery.

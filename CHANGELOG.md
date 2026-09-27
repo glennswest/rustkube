@@ -5,6 +5,15 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(create): `metadata.generateName` is honoured.** A create with no name
+  (or `"name": ""`, which every protobuf create carries) and a
+  `generateName` gets the prefix plus five random characters, as upstream.
+  The empty name was taken as given: the object was keyed `…/` and the next
+  such create was `"" already exists`. events.k8s.io creates used the bare
+  prefix as the name.
+- **fix(events.k8s.io): protobuf and deletecollection.** `events.k8s.io/v1`
+  Events decode and encode over protobuf (the vendored `events/v1` proto), so
+  typed client-go clients can write them; DELETE on the collection is served.
 - **fix(delete): a delete that leaves the object terminating retries a lost
   write.** Adding `deletionTimestamp` and the propagation finalizer swapped
   against the revision read, so a controller's write in between (the

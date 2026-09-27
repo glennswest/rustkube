@@ -312,16 +312,45 @@ pub async fn list_all_namespaces_resources(
     }
 }
 
+/// The name a create stores the object under.
+///
+/// `metadata.name` when it is set; otherwise `metadata.generateName` plus five
+/// random characters from upstream's alphabet, written back into the body.
+/// A protobuf create always carries `"name": ""`, and an empty name used to be
+/// taken as given — the object was keyed `…/` and the second such create was
+/// `"" already exists` (#67: the CSR API conformance spec, and everything else
+/// the framework creates by generateName).
+pub(crate) fn object_name(body: &mut Value) -> Result<String, ApiError> {
+    if let Some(n) = body["metadata"]["name"].as_str().filter(|n| !n.is_empty()) {
+        return Ok(n.to_string());
+    }
+    let prefix = body["metadata"]["generateName"]
+        .as_str()
+        .filter(|g| !g.is_empty())
+        .ok_or_else(|| ApiError::invalid("metadata.name or metadata.generateName is required"))?
+        .to_string();
+    const ALPHABET: &[u8] = b"bcdfghjklmnpqrstvwxz2456789";
+    let suffix: String = uuid::Uuid::new_v4()
+        .as_bytes()
+        .iter()
+        .take(5)
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect();
+    let name = format!("{prefix}{suffix}");
+    if !body["metadata"].is_object() {
+        body["metadata"] = json!({});
+    }
+    body["metadata"]["name"] = json!(name);
+    Ok(name)
+}
+
 /// POST — create a cluster-scoped resource.
 pub async fn create_cluster_resource(
     State(state): State<AppState>,
     Path(resource): Path<String>,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let name = body["metadata"]["name"]
-        .as_str()
-        .ok_or_else(|| ApiError::invalid("metadata.name is required"))?
-        .to_string();
+    let name = object_name(&mut body)?;
 
     ensure_metadata(&mut body, &name, None);
 
@@ -341,10 +370,7 @@ pub async fn create_namespaced_resource(
     Path((namespace, resource)): Path<(String, String)>,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let name = body["metadata"]["name"]
-        .as_str()
-        .ok_or_else(|| ApiError::invalid("metadata.name is required"))?
-        .to_string();
+    let name = object_name(&mut body)?;
 
     check_body_namespace(&body, &namespace)?;
     ensure_metadata(&mut body, &name, Some(&namespace));
@@ -1906,6 +1932,19 @@ mod tests {
         ensure_metadata(&mut v, "web", None);
         assert_eq!(v["metadata"]["uid"], "u1");
         assert_eq!(v["metadata"]["creationTimestamp"], "2026-01-01T00:00:00Z");
+    }
+
+    /// generateName is honoured when the name is absent or empty (#67).
+    #[test]
+    fn generate_name_makes_a_name() {
+        let mut v = json!({"metadata": {"name": "", "generateName": "csr-"}});
+        let n = object_name(&mut v).unwrap();
+        assert!(n.starts_with("csr-") && n.len() == 9, "{n}");
+        assert_eq!(v["metadata"]["name"], n.as_str());
+        let mut w = json!({"metadata": {"generateName": "csr-"}});
+        assert_ne!(object_name(&mut w).unwrap(), n);
+        assert_eq!(object_name(&mut json!({"metadata": {"name": "x", "generateName": "y-"}})).unwrap(), "x");
+        assert!(object_name(&mut json!({"metadata": {"name": ""}})).is_err());
     }
 
     /// A protobuf create's `"namespace": ""` is the URL's namespace (#67);

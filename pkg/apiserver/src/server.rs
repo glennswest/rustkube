@@ -185,7 +185,9 @@ fn build_router(
         .route("/apis/events.k8s.io/v1", get(crate::events::discovery))
         .route(
             "/apis/events.k8s.io/v1/namespaces/{namespace}/events",
-            get(crate::events::list_ns).post(crate::events::create),
+            get(crate::events::list_ns)
+                .post(crate::events::create)
+                .delete(crate::events::delete_collection),
         )
         .route(
             "/apis/events.k8s.io/v1/namespaces/{namespace}/events/{name}",
