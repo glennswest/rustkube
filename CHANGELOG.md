@@ -5,6 +5,14 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(list): items carry their `resourceVersion`; paged lists are pinned to
+  the first page's revision and say how much is left.** The watch cache's
+  snapshot now keeps each object's mod revision, so every LIST item has
+  `metadata.resourceVersion` (#111). A continue token is `{revision}:{key}`,
+  and each page of one paged LIST reports the first page's revision, with
+  `remainingItemCount` when no selector filtered it — the API chunking and
+  ResourceQuota lifecycle conformance specs check both. Old bare-key tokens
+  still work.
 - **fix(protobuf): CRD schemas keep `x-kubernetes-*`, `$ref` and `$schema`.**
   A CRD created or updated over protobuf (cilium-operator, any typed
   apiextensions client) was stored with those JSONSchemaProps fields under

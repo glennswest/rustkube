@@ -120,10 +120,13 @@ pub async fn list_cluster_resources(
     }
 
     let limit = params.limit.unwrap_or(500);
-    let (items, continue_token, revision) = state
+    let page = state
         .storage
-        .list(&prefix, limit, params.continue_token.as_deref())
+        .list_page(&prefix, limit, params.continue_token.as_deref())
         .await?;
+    let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
+    // Upstream leaves it out when a selector filtered the page.
+    let remaining = page.remaining.filter(|_| params.label_selector.is_none() && params.field_selector.is_none());
 
     let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
@@ -148,6 +151,9 @@ pub async fn list_cluster_resources(
 
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
+    }
+    if let Some(n) = remaining {
+        list["metadata"]["remainingItemCount"] = json!(n);
     }
 
     {
@@ -186,10 +192,13 @@ pub async fn list_namespaced_resources(
     }
 
     let limit = params.limit.unwrap_or(500);
-    let (items, continue_token, revision) = state
+    let page = state
         .storage
-        .list(&prefix, limit, params.continue_token.as_deref())
+        .list_page(&prefix, limit, params.continue_token.as_deref())
         .await?;
+    let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
+    // Upstream leaves it out when a selector filtered the page.
+    let remaining = page.remaining.filter(|_| params.label_selector.is_none() && params.field_selector.is_none());
 
     let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
@@ -214,6 +223,9 @@ pub async fn list_namespaced_resources(
 
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
+    }
+    if let Some(n) = remaining {
+        list["metadata"]["remainingItemCount"] = json!(n);
     }
 
     {
@@ -252,10 +264,13 @@ pub async fn list_all_namespaces_resources(
     }
 
     let limit = params.limit.unwrap_or(500);
-    let (items, continue_token, revision) = state
+    let page = state
         .storage
-        .list(&prefix, limit, params.continue_token.as_deref())
+        .list_page(&prefix, limit, params.continue_token.as_deref())
         .await?;
+    let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
+    // Upstream leaves it out when a selector filtered the page.
+    let remaining = page.remaining.filter(|_| params.label_selector.is_none() && params.field_selector.is_none());
 
     let items = selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
@@ -280,6 +295,9 @@ pub async fn list_all_namespaces_resources(
 
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
+    }
+    if let Some(n) = remaining {
+        list["metadata"]["remainingItemCount"] = json!(n);
     }
 
     {

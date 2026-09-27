@@ -72,7 +72,9 @@ opened below the cache's window gets a name-and-namespace tombstone, #100; to
 a selector watch, an object that stops matching is DELETED and one that starts
 matching is ADDED);
 list pagination with `continue`
-tokens; label and field selectors; `/openapi/v2` and `/openapi/v3`.
+tokens (every page reports the first page's `resourceVersion`, with
+`remainingItemCount`; items carry their own `resourceVersion`); label and
+field selectors; `/openapi/v2` and `/openapi/v3`.
 
 **Writes.** Create (a body's empty `metadata.namespace` is the URL's; a
 different one is a 400), update, delete (with `DeleteOptions`: preconditions,

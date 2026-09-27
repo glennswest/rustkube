@@ -51,18 +51,36 @@ const STALL_SECS: u64 = 30;
 
 /// Read the full prefix from the store into a key→object map, returning it with
 /// the revision it reflects. Pages through the whole prefix.
+/// Key → (object bytes, the revision that last wrote it). The revision is the
+/// object's resourceVersion; a LIST item without it cannot be compared with
+/// anything (#111).
+type Snapshot = BTreeMap<String, (Vec<u8>, u64)>;
+
+/// A page of a LIST from the cache (or, when it lags, from the store).
+pub struct CachePage {
+    /// Each object with its own mod revision.
+    pub items: Vec<(Vec<u8>, u64)>,
+    /// The last key returned, when more follow.
+    pub continue_key: Option<String>,
+    /// The revision the page reflects.
+    pub revision: u64,
+    /// How many keys follow this page, when known (upstream's
+    /// `remainingItemCount`).
+    pub remaining: Option<u64>,
+}
+
 async fn seed_snapshot(
     store: &Arc<dyn KvStore>,
     prefix: &str,
-) -> Result<(BTreeMap<String, Vec<u8>>, u64)> {
+) -> Result<(Snapshot, u64)> {
     let mut snapshot = BTreeMap::new();
     let mut continue_token: Option<String> = None;
     let mut rev = 0u64;
     loop {
         let page = store.list(prefix, SEED_PAGE, continue_token.as_deref()).await?;
         rev = page.revision;
-        for (key, bytes, _rev) in page.items {
-            snapshot.insert(key, bytes);
+        for (key, bytes, mod_rev) in page.items {
+            snapshot.insert(key, (bytes, mod_rev));
         }
         match page.continue_token {
             Some(t) => continue_token = Some(t),
@@ -94,7 +112,7 @@ struct PrefixCache {
     pump_start_rev: u64,
     /// Materialized key→object snapshot (seeded from the store, kept current by
     /// the pump) so LIST/relist storms are served from memory, not the store.
-    snapshot: Mutex<BTreeMap<String, Vec<u8>>>,
+    snapshot: Mutex<Snapshot>,
     /// Revision the snapshot currently reflects.
     snapshot_rev: AtomicU64,
     /// Last time the pump made progress (an event) or the freshness task
@@ -160,13 +178,13 @@ impl WatchCache {
                 {
                     let mut snap = pump.snapshot.lock().unwrap();
                     match &mut ev {
-                        WatchEvent::Added { key, value, .. } => {
-                            snap.insert(key.clone(), value.clone());
+                        WatchEvent::Added { key, value, revision } => {
+                            snap.insert(key.clone(), (value.clone(), *revision));
                         }
                         // The state it replaces goes with the event, so a
                         // selector watch can tell "stopped matching" (#67).
-                        WatchEvent::Modified { key, value, prev_value, .. } => {
-                            let last = snap.insert(key.clone(), value.clone());
+                        WatchEvent::Modified { key, value, prev_value, revision } => {
+                            let last = snap.insert(key.clone(), (value.clone(), *revision)).map(|(v, _)| v);
                             if prev_value.is_none() {
                                 *prev_value = last;
                             }
@@ -176,7 +194,7 @@ impl WatchCache {
                         // it, so every watcher's DELETED carries the object
                         // rather than a name (#100).
                         WatchEvent::Deleted { key, prev_value, .. } => {
-                            let last = snap.remove(key);
+                            let last = snap.remove(key).map(|(v, _)| v);
                             if prev_value.is_none() {
                                 *prev_value = last;
                             }
@@ -319,7 +337,7 @@ impl WatchCache {
         limit: usize,
         continue_token: Option<&str>,
         min_rev: u64,
-    ) -> Result<(Vec<Vec<u8>>, Option<String>, u64)> {
+    ) -> Result<CachePage> {
         let cache = self.ensure(prefix).await?;
         if min_rev > 0 && cache.snapshot_rev.load(Ordering::SeqCst) < min_rev {
             let deadline = std::time::Instant::now() + MIN_REV_WAIT;
@@ -330,8 +348,13 @@ impl WatchCache {
                          listing from the store"
                     );
                     let page = self.store.list(prefix, limit, continue_token).await?;
-                    let items = page.items.into_iter().map(|(_, v, _)| v).collect();
-                    return Ok((items, page.continue_token, page.revision));
+                    let items = page.items.into_iter().map(|(_, v, r)| (v, r)).collect();
+                    return Ok(CachePage {
+                        items,
+                        continue_key: page.continue_token,
+                        revision: page.revision,
+                        remaining: None,
+                    });
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(2)).await;
             }
@@ -347,17 +370,23 @@ impl WatchCache {
         let mut items = Vec::new();
         let mut last_key: Option<String> = None;
         let mut next: Option<String> = None;
-        for (key, value) in snap.range((lower, Bound::Unbounded)) {
-            if limit != 0 && items.len() == limit {
-                // A further item exists → resume the next page after the last
-                // key we actually returned (Excluded bound above).
-                next = last_key.clone();
-                break;
-            }
+        let mut remaining = None;
+        let mut range = snap.range((lower, Bound::Unbounded));
+        for (key, value) in range.by_ref() {
             items.push(value.clone());
             last_key = Some(key.clone());
+            if limit != 0 && items.len() == limit {
+                break;
+            }
         }
-        Ok((items, next, rev))
+        // Anything left is the next page: resume after the last key returned
+        // (Excluded bound above), and say how much is left.
+        let left = range.count() as u64;
+        if left > 0 {
+            next = last_key;
+            remaining = Some(left);
+        }
+        Ok(CachePage { items, continue_key: next, revision: rev, remaining })
     }
 
     /// Watch `prefix` for events after `start_rev`, served from the shared cache

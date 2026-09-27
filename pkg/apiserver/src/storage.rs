@@ -150,6 +150,31 @@ impl ResourceStorage {
         limit: usize,
         continue_token: Option<&str>,
     ) -> Result<(Vec<Value>, Option<String>, u64), ApiError> {
+        let page = self.list_page(prefix, limit, continue_token).await?;
+        Ok((page.items, page.continue_token, page.revision))
+    }
+
+    /// A page of a LIST, with what a list's metadata needs.
+    ///
+    /// Each item carries its own `resourceVersion` — the revision that last
+    /// wrote it, which a client compares with what a later write returns
+    /// (#111). The continue token is `{revision}:{last key}`: every page of
+    /// one paged LIST reports the first page's revision, as upstream does and
+    /// the chunking conformance specs check. The pages themselves are read
+    /// from the current snapshot, so a later page can hold objects newer than
+    /// that revision — upstream's "inconsistent continue", which a watch from
+    /// the list's revision tolerates (it replays, it does not miss). A bare
+    /// key (a token from before this) still works.
+    pub async fn list_page(
+        &self,
+        prefix: &str,
+        limit: usize,
+        continue_token: Option<&str>,
+    ) -> Result<ListPage, ApiError> {
+        let (pinned, continue_token) = match continue_token.map(parse_continue) {
+            Some((rev, key)) => (rev, Some(key)),
+            None => (None, None),
+        };
         let _timer = apimachinery::metrics::StoreTimer::new("list", Self::resource_of(prefix));
         // Served from the shared watch cache's in-memory snapshot (seeded once
         // from the store), so relist storms don't fan out to fastetcd — but
@@ -158,20 +183,26 @@ impl ResourceStorage {
         // what it created; the cache applying the write a few milliseconds
         // later is not an excuse the conformance suite accepts (#67).
         let min_rev = self.written_under(prefix);
-        let (raw, continue_token, revision) = self
+        let page = self
             .watch_cache
             .list(prefix, limit, continue_token, min_rev)
             .await
             .map_err(ApiError::from)?;
 
-        let mut items = Vec::with_capacity(raw.len());
-        for bytes in &raw {
-            let obj: Value = serde_json::from_slice(bytes)
+        let mut items = Vec::with_capacity(page.items.len());
+        for (bytes, mod_rev) in &page.items {
+            let mut obj: Value = serde_json::from_slice(bytes)
                 .map_err(|e| ApiError::internal(&e.to_string()))?;
+            inject_resource_version(&mut obj, *mod_rev);
             items.push(obj);
         }
-
-        Ok((items, continue_token, revision))
+        let revision = pinned.unwrap_or(page.revision);
+        Ok(ListPage {
+            items,
+            continue_token: page.continue_key.map(|k| format!("{revision}:{k}")),
+            revision,
+            remaining: page.remaining,
+        })
     }
 
     /// Create a resource (fails if it already exists).
@@ -253,6 +284,35 @@ impl ResourceStorage {
 }
 
 /// Set `metadata.resourceVersion` to the store revision the object reflects.
+/// A continue token: `{revision}:{key}`, or a bare key (keys start with `/`).
+fn parse_continue(token: &str) -> (Option<u64>, &str) {
+    match token.split_once(':') {
+        Some((rev, key)) if !rev.is_empty() && rev.bytes().all(|b| b.is_ascii_digit()) => {
+            (rev.parse().ok(), key)
+        }
+        _ => (None, token),
+    }
+}
+
+#[cfg(test)]
+mod continue_tests {
+    #[test]
+    fn a_continue_token_pins_the_revision() {
+        assert_eq!(super::parse_continue("42:/registry/pods/a/p1"), (Some(42), "/registry/pods/a/p1"));
+        assert_eq!(super::parse_continue("/registry/pods/a/p:1"), (None, "/registry/pods/a/p:1"));
+        assert_eq!(super::parse_continue(":/x"), (None, ":/x"));
+    }
+}
+
+/// A page of a LIST: see `ResourceStorage::list_page`.
+pub struct ListPage {
+    pub items: Vec<Value>,
+    pub continue_token: Option<String>,
+    pub revision: u64,
+    /// Objects after this page (`metadata.remainingItemCount`), when known.
+    pub remaining: Option<u64>,
+}
+
 fn inject_resource_version(obj: &mut Value, rev: u64) {
     if !obj.get("metadata").map(Value::is_object).unwrap_or(false) {
         obj["metadata"] = serde_json::json!({});

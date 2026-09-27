@@ -474,10 +474,13 @@ pub async fn crd_list_ns(
     }
 
     let limit = params.limit.unwrap_or(500);
-    let (items, continue_token, revision) = state
+    let page = state
         .storage
-        .list(&prefix, limit, params.continue_token.as_deref())
+        .list_page(&prefix, limit, params.continue_token.as_deref())
         .await?;
+    let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
+    // Upstream leaves it out when a selector filtered the page.
+    let remaining = page.remaining.filter(|_| params.label_selector.is_none() && params.field_selector.is_none());
     let items = crate::selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let mut list = json!({
@@ -488,6 +491,9 @@ pub async fn crd_list_ns(
     });
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
+    }
+    if let Some(n) = remaining {
+        list["metadata"]["remainingItemCount"] = json!(n);
     }
     let body = crate::handlers::resource::project_list(list, metadata_only);
     // A custom resource gets a Table too, built from the columns its own CRD
@@ -724,10 +730,13 @@ pub async fn crd_list_cluster(
     }
 
     let limit = params.limit.unwrap_or(500);
-    let (items, continue_token, revision) = state
+    let page = state
         .storage
-        .list(&prefix, limit, params.continue_token.as_deref())
+        .list_page(&prefix, limit, params.continue_token.as_deref())
         .await?;
+    let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
+    // Upstream leaves it out when a selector filtered the page.
+    let remaining = page.remaining.filter(|_| params.label_selector.is_none() && params.field_selector.is_none());
     let items = crate::selector::filter_objects(items, &params.label_selector, &params.field_selector);
 
     let mut list = json!({
@@ -738,6 +747,9 @@ pub async fn crd_list_cluster(
     });
     if let Some(token) = continue_token {
         list["metadata"]["continue"] = Value::String(token);
+    }
+    if let Some(n) = remaining {
+        list["metadata"]["remainingItemCount"] = json!(n);
     }
     let body = crate::handlers::resource::project_list(list, metadata_only);
     // A custom resource gets a Table too, built from the columns its own CRD
