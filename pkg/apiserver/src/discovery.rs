@@ -303,6 +303,51 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "shortNames": ["ep"]
             },
             {
+                "name": "podtemplates",
+                "singularName": "podtemplate",
+                "namespaced": true,
+                "kind": "PodTemplate",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "replicationcontrollers",
+                "singularName": "replicationcontroller",
+                "namespaced": true,
+                "kind": "ReplicationController",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["rc"]
+            },
+            {
+                "name": "replicationcontrollers/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "ReplicationController",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "resourcequotas",
+                "singularName": "resourcequota",
+                "namespaced": true,
+                "kind": "ResourceQuota",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["quota"]
+            },
+            {
+                "name": "resourcequotas/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "ResourceQuota",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "limitranges",
+                "singularName": "limitrange",
+                "namespaced": true,
+                "kind": "LimitRange",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["limits"]
+            },
+            {
                 "name": "configmaps",
                 "singularName": "configmap",
                 "namespaced": true,

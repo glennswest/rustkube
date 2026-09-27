@@ -5,6 +5,12 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(apiserver): PodTemplate, ReplicationController, ResourceQuota and
+  LimitRange lists have their real kinds and are in `/api/v1` discovery.**
+  They were listed as `podtemplatesList` etc., which client-go refuses, and
+  their protobuf bodies decoded against a kind that does not exist (#110 in
+  part). They are stored and served; no controller acts on RCs (#125) or
+  quotas (#124) yet.
 - **feat(apiserver): `deletecollection`.** DELETE on a collection path —
   client-go's `DeleteCollection`, `kubectl delete --all` — deletes every
   object the label and field selectors match, each as a single DELETE would
