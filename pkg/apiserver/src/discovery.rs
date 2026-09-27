@@ -156,6 +156,19 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "project.openshift.io/v1", "version": "v1"}
         }),
         json!({
+            // PriorityClass (#85): routed and resolved at pod admission, but
+            // undiscoverable, so kubectl and helm could not find it.
+            "name": "scheduling.k8s.io",
+            "versions": [{"groupVersion": "scheduling.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "scheduling.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
+            // TokenReview (#85). The conformance Discovery test looks for it.
+            "name": "authentication.k8s.io",
+            "versions": [{"groupVersion": "authentication.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "authentication.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "gateway.networking.k8s.io",
             "versions": [{"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "gateway.networking.k8s.io/v1", "version": "v1"}
@@ -1090,6 +1103,40 @@ pub async fn api_route_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/scheduling.k8s.io/v1 — PriorityClass (#85).
+pub async fn api_scheduling_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "scheduling.k8s.io/v1",
+        "resources": [{
+            "name": "priorityclasses",
+            "singularName": "priorityclass",
+            "namespaced": false,
+            "kind": "PriorityClass",
+            "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+            "shortNames": ["pc"]
+        }]
+    }))
+}
+
+/// GET /apis/authentication.k8s.io/v1 — TokenReview (#85). Create only: it
+/// is a question, not a stored object.
+pub async fn api_authentication_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "authentication.k8s.io/v1",
+        "resources": [{
+            "name": "tokenreviews",
+            "singularName": "tokenreview",
+            "namespaced": false,
+            "kind": "TokenReview",
+            "verbs": ["create"]
+        }]
+    }))
+}
+
 /// GET /apis/project.openshift.io/v1 — Projects over Namespaces (#97).
 ///
 /// `projects` has no `patch`: a Project's only writable fields are its labels
@@ -1287,6 +1334,8 @@ mod tests {
             "gateway.networking.k8s.io",
             "route.openshift.io",
             "project.openshift.io",
+            "scheduling.k8s.io",
+            "authentication.k8s.io",
             "apiregistration.k8s.io",
         ] {
             assert!(

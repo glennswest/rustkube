@@ -44,6 +44,7 @@ fn build_router(
         .route("/apis", get(discovery::api_groups_dynamic))
         .route("/apis/", get(discovery::api_groups_dynamic))
         .route("/apis/{group}", get(discovery::api_group))
+        .route("/apis/{group}/", get(discovery::api_group))
         .route("/api/v1", get(discovery::api_v1_resources))
         .route("/apis/apps/v1", get(discovery::api_apps_v1_resources))
         .route("/apis/batch/v1", get(discovery::api_batch_v1_resources))
@@ -260,6 +261,14 @@ fn build_router(
             post(crate::eviction::create_eviction),
         )
         // scheduling.k8s.io v1 — PriorityClass (cluster-scoped)
+        .route(
+            "/apis/scheduling.k8s.io/v1",
+            get(discovery::api_scheduling_v1_resources),
+        )
+        .route(
+            "/apis/authentication.k8s.io/v1",
+            get(discovery::api_authentication_v1_resources),
+        )
         .route(
             "/apis/scheduling.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources).post(resource::create_cluster_resource),

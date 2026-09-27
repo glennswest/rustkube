@@ -38,7 +38,9 @@ token() { # <user> <groups-json>
   local now h p s
   now=$(date +%s)
   h=$(printf '{"typ":"JWT","alg":"RS256"}' | b64url)
-  p=$(printf '{"sub":"%s","groups":%s,"iat":%d,"exp":%d}' "$1" "$2" "$now" $((now + 3600)) | b64url)
+  # A day: a conformance chunk runs past the hour, and an expired token
+  # turned its last specs into 401s.
+  p=$(printf '{"sub":"%s","groups":%s,"iat":%d,"exp":%d}' "$1" "$2" "$now" $((now + 86400)) | b64url)
   s=$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign "$W/sa.key" -binary | b64url)
   printf '%s.%s.%s' "$h" "$p" "$s"
 }

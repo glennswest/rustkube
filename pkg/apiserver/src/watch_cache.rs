@@ -378,7 +378,13 @@ impl WatchCache {
                 "watch-cache: fallback store watch prefix={prefix} start_rev={start_rev} < pump_start={}",
                 cache.pump_start_rev
             );
-            return self.store.watch(prefix, start_rev).await;
+            // `start_rev + 1`: a Kubernetes watch from resourceVersion N
+            // delivers the events *after* N, and an etcd watch's start
+            // revision is inclusive. Passing N replayed the event at N — the
+            // ADDED of the very object the client just read — and every CRD
+            // fixture in the conformance suite that creates, watches and
+            // deletes a CR saw "expected DELETE, but got ADDED" (#67).
+            return self.store.watch(prefix, start_rev + 1).await;
         }
         tracing::debug!("watch-cache: serving prefix={prefix} from shared cache");
 

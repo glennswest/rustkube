@@ -608,6 +608,9 @@ fn is_discovery_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix("/apis/") else {
         return false;
     };
+    // `/apis/{group}/` too: upstream serves the group document with a
+    // trailing slash, and the conformance suite asks for it (#67).
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
     !rest.is_empty() && rest.split('/').count() <= 2 && !rest.ends_with('/')
 }
 
