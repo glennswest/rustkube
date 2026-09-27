@@ -69,12 +69,17 @@ that discovers first — `kubectl get priorityclasses` — does not find them.
 in both directions; Table output for `kubectl get`; `PartialObjectMetadata`;
 watch with bookmarks and `sendInitialEvents` (a DELETED event carries the
 object's last state from the watch cache, and selectors apply to it; a watch
-opened below the cache's window gets a name-and-namespace tombstone, #100);
+opened below the cache's window gets a name-and-namespace tombstone, #100; to
+a selector watch, an object that stops matching is DELETED and one that starts
+matching is ADDED);
 list pagination with `continue`
 tokens; label and field selectors; `/openapi/v2` and `/openapi/v3`.
 
-**Writes.** Create, update, delete (with `DeleteOptions`: preconditions,
-`dryRun`, grace period, `propagationPolicy`), JSON Patch, merge patch,
+**Writes.** Create (a body's empty `metadata.namespace` is the URL's; a
+different one is a 400), update, delete (with `DeleteOptions`: preconditions,
+`dryRun`, grace period, `propagationPolicy`), `deletecollection` with label
+and field selectors on every generic collection path and for custom resources
+(not across namespaces, and not for namespaces), JSON Patch, merge patch,
 strategic merge patch (with `patchMergeKey` for the lists that need it) and
 server-side apply with `managedFields` ownership and conflicts. The `/status`
 subresource; pod `eviction` gated by PodDisruptionBudgets; namespace

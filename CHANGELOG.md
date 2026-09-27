@@ -5,6 +5,13 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **feat(apiserver): `deletecollection`.** DELETE on a collection path —
+  client-go's `DeleteCollection`, `kubectl delete --all` — deletes every
+  object the label and field selectors match, each as a single DELETE would
+  (DeleteOptions, finalizers, propagation), for built-ins and custom
+  resources; CRDs deleted this way are unregistered. It was a 405 everywhere.
+  A namespaced resource's cluster-wide path refuses it (405), as upstream;
+  discovery now lists the verb.
 - **fix(watch): a selector watch sees an object leave and enter.** A write
   that takes an object out of the watcher's selector is a DELETED to it
   (carrying the new state) and one that brings it in an ADDED, as upstream;

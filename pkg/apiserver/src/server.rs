@@ -64,6 +64,7 @@ fn build_router(
         .route(
             "/api/v1/{resource}",
             get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
                 .post(resource::create_cluster_resource),
         )
         .route(
@@ -84,6 +85,7 @@ fn build_router(
         .route(
             "/api/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -102,6 +104,7 @@ fn build_router(
         .route(
             "/apis/apps/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -114,12 +117,14 @@ fn build_router(
         // Apps v1 — cluster-scoped list (e.g., kubectl get deployments --all-namespaces)
         .route(
             "/apis/apps/v1/{resource}",
-            get(resource::list_cluster_resources),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
         )
         // Batch v1 — namespace-scoped resources (jobs, cronjobs)
         .route(
             "/apis/batch/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -131,12 +136,14 @@ fn build_router(
         )
         .route(
             "/apis/batch/v1/{resource}",
-            get(resource::list_cluster_resources),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
         )
         // Coordination v1
         .route(
             "/apis/coordination.k8s.io/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -148,7 +155,8 @@ fn build_router(
         )
         .route(
             "/apis/coordination.k8s.io/v1/{resource}",
-            get(resource::list_cluster_resources),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
         )
         // discovery.k8s.io v1 — EndpointSlices (namespaced). Needed by Cilium /
         // kube-proxy-replacement, which use slices as the modern default (#22).
@@ -158,7 +166,8 @@ fn build_router(
         )
         .route(
             "/apis/discovery.k8s.io/v1/namespaces/{namespace}/{resource}",
-            get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
+            get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection).post(resource::create_namespaced_resource),
         )
         .route(
             "/apis/discovery.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
@@ -195,7 +204,8 @@ fn build_router(
         )
         .route(
             "/apis/storage.k8s.io/v1/{resource}",
-            get(resource::list_cluster_resources).post(resource::create_cluster_resource),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection).post(resource::create_cluster_resource),
         )
         .route(
             "/apis/storage.k8s.io/v1/{resource}/{name}",
@@ -212,7 +222,8 @@ fn build_router(
         )
         .route(
             "/apis/storage.k8s.io/v1/namespaces/{namespace}/{resource}",
-            get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
+            get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection).post(resource::create_namespaced_resource),
         )
         .route(
             "/apis/storage.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
@@ -236,7 +247,8 @@ fn build_router(
         )
         .route(
             "/apis/policy/v1/namespaces/{namespace}/{resource}",
-            get(resource::list_namespaced_resources).post(resource::create_namespaced_resource),
+            get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection).post(resource::create_namespaced_resource),
         )
         .route(
             "/apis/policy/v1/namespaces/{namespace}/{resource}/{name}",
@@ -271,7 +283,8 @@ fn build_router(
         )
         .route(
             "/apis/scheduling.k8s.io/v1/{resource}",
-            get(resource::list_cluster_resources).post(resource::create_cluster_resource),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection).post(resource::create_cluster_resource),
         )
         .route(
             "/apis/scheduling.k8s.io/v1/{resource}/{name}",
@@ -284,6 +297,7 @@ fn build_router(
         .route(
             "/apis/rbac.authorization.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
                 .post(resource::create_cluster_resource),
         )
         .route(
@@ -301,7 +315,8 @@ fn build_router(
         )
         .route(
             "/apis/certificates.k8s.io/v1/{resource}",
-            get(resource::list_cluster_resources).post(resource::create_cluster_resource),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection).post(resource::create_cluster_resource),
         )
         .route(
             "/apis/certificates.k8s.io/v1/{resource}/{name}",
@@ -321,6 +336,7 @@ fn build_router(
         .route(
             "/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -338,6 +354,7 @@ fn build_router(
         .route(
             "/apis/rustkube.io/v1alpha1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -349,7 +366,8 @@ fn build_router(
         )
         .route(
             "/apis/rustkube.io/v1alpha1/{resource}",
-            get(resource::list_cluster_resources),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
         )
         // Status subresource routes — core v1 cluster-scoped
         .route(
@@ -471,6 +489,7 @@ fn build_router(
         .route(
             "/apis/autoscaling/v2/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -488,7 +507,8 @@ fn build_router(
         )
         .route(
             "/apis/autoscaling/v2/{resource}",
-            get(resource::list_cluster_resources),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
         )
         // project.openshift.io/v1 — Projects are Namespaces with owners (#97).
         // Static paths, so they win over the CRD catch-all below.
@@ -520,6 +540,7 @@ fn build_router(
         .route(
             "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -531,7 +552,8 @@ fn build_router(
         )
         .route(
             "/apis/route.openshift.io/v1/{resource}",
-            get(resource::list_cluster_resources),
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
         )
         // networking.k8s.io/v1
         .route(
@@ -541,6 +563,7 @@ fn build_router(
         .route(
             "/apis/networking.k8s.io/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -553,6 +576,7 @@ fn build_router(
         .route(
             "/apis/networking.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
                 .post(resource::create_cluster_resource),
         )
         .route(
@@ -570,6 +594,7 @@ fn build_router(
         .route(
             "/apis/admissionregistration.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
                 .post(resource::create_cluster_resource),
         )
         .route(
@@ -587,6 +612,7 @@ fn build_router(
         .route(
             "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/{resource}",
             get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
                 .post(resource::create_namespaced_resource),
         )
         .route(
@@ -599,6 +625,7 @@ fn build_router(
         .route(
             "/apis/gateway.networking.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
                 .post(resource::create_cluster_resource),
         )
         .route(
@@ -616,6 +643,7 @@ fn build_router(
         .route(
             "/apis/apiregistration.k8s.io/v1/{resource}",
             get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
                 .post(resource::create_cluster_resource),
         )
         .route(
@@ -635,7 +663,9 @@ fn build_router(
         // CRD catch-all routes for dynamic custom resources
         .route(
             "/apis/{group}/{version}/{resource}",
-            get(crd::crd_list_cluster).post(crd::crd_create_cluster),
+            get(crd::crd_list_cluster)
+                .post(crd::crd_create_cluster)
+                .delete(crd::crd_delete_collection_cluster),
         )
         .route(
             "/apis/{group}/{version}/{resource}/{name}",
@@ -653,7 +683,9 @@ fn build_router(
         )
         .route(
             "/apis/{group}/{version}/namespaces/{namespace}/{resource}",
-            get(crd::crd_list_ns).post(crd::crd_create_ns),
+            get(crd::crd_list_ns)
+                .post(crd::crd_create_ns)
+                .delete(crd::crd_delete_collection_ns),
         )
         .route(
             "/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}",

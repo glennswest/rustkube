@@ -245,7 +245,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "node",
                 "namespaced": false,
                 "kind": "Node",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["no"]
             },
             {
@@ -284,7 +284,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "service",
                 "namespaced": true,
                 "kind": "Service",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["svc"]
             },
             {
@@ -299,7 +299,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "endpoint",
                 "namespaced": true,
                 "kind": "Endpoints",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["ep"]
             },
             {
@@ -307,7 +307,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "configmap",
                 "namespaced": true,
                 "kind": "ConfigMap",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["cm"]
             },
             {
@@ -315,14 +315,14 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "secret",
                 "namespaced": true,
                 "kind": "Secret",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "serviceaccounts",
                 "singularName": "serviceaccount",
                 "namespaced": true,
                 "kind": "ServiceAccount",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["sa"]
             },
             {
@@ -330,7 +330,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "event",
                 "namespaced": true,
                 "kind": "Event",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["ev"]
             },
             {
@@ -338,7 +338,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "persistentvolumeclaim",
                 "namespaced": true,
                 "kind": "PersistentVolumeClaim",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["pvc"]
             },
             {
@@ -346,7 +346,7 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "singularName": "persistentvolume",
                 "namespaced": false,
                 "kind": "PersistentVolume",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["pv"]
             }
         ]
@@ -365,7 +365,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
                 "singularName": "deployment",
                 "namespaced": true,
                 "kind": "Deployment",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["deploy"]
             },
             {
@@ -390,7 +390,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
                 "singularName": "replicaset",
                 "namespaced": true,
                 "kind": "ReplicaSet",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["rs"]
             },
             {
@@ -399,7 +399,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
                 "singularName": "statefulset",
                 "namespaced": true,
                 "kind": "StatefulSet",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["sts"]
             },
             {
@@ -415,7 +415,7 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
                 "singularName": "daemonset",
                 "namespaced": true,
                 "kind": "DaemonSet",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["ds"]
             },
             {
@@ -441,7 +441,7 @@ pub async fn api_batch_v1_resources() -> impl IntoResponse {
                 "singularName": "job",
                 "namespaced": true,
                 "kind": "Job",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "jobs/status",
@@ -456,7 +456,7 @@ pub async fn api_batch_v1_resources() -> impl IntoResponse {
                 "singularName": "cronjob",
                 "namespaced": true,
                 "kind": "CronJob",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["cj"]
             },
             {
@@ -481,7 +481,7 @@ pub async fn api_coordination_v1_resources() -> impl IntoResponse {
                 "singularName": "lease",
                 "namespaced": true,
                 "kind": "Lease",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             }
         ]
     }))
@@ -498,7 +498,7 @@ pub async fn api_discovery_v1_resources() -> impl IntoResponse {
                 "singularName": "endpointslice",
                 "namespaced": true,
                 "kind": "EndpointSlice",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             }
         ]
     }))
@@ -905,7 +905,7 @@ pub async fn api_certificates_v1_resources() -> impl IntoResponse {
                 "singularName": "certificatesigningrequest",
                 "namespaced": false,
                 "kind": "CertificateSigningRequest",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["csr"]
             },
             {
@@ -937,7 +937,7 @@ pub async fn api_rustkube_v1alpha1_resources() -> impl IntoResponse {
                 "singularName": "podmigration",
                 "namespaced": true,
                 "kind": "PodMigration",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["pm"]
             }
         ]
@@ -955,28 +955,28 @@ pub async fn api_rbac_v1_resources() -> impl IntoResponse {
                 "singularName": "clusterrole",
                 "namespaced": false,
                 "kind": "ClusterRole",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "clusterrolebindings",
                 "singularName": "clusterrolebinding",
                 "namespaced": false,
                 "kind": "ClusterRoleBinding",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "roles",
                 "singularName": "role",
                 "namespaced": true,
                 "kind": "Role",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "rolebindings",
                 "singularName": "rolebinding",
                 "namespaced": true,
                 "kind": "RoleBinding",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             }
         ]
     }))
@@ -993,7 +993,7 @@ pub async fn api_apiextensions_v1_resources() -> impl IntoResponse {
                 "singularName": "customresourcedefinition",
                 "namespaced": false,
                 "kind": "CustomResourceDefinition",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["crd", "crds"]
             },
             {
@@ -1019,7 +1019,7 @@ pub async fn api_autoscaling_v2_resources() -> impl IntoResponse {
                 "singularName": "horizontalpodautoscaler",
                 "namespaced": true,
                 "kind": "HorizontalPodAutoscaler",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["hpa"]
             },
             {
@@ -1044,7 +1044,7 @@ pub async fn api_networking_v1_resources() -> impl IntoResponse {
                 "singularName": "networkpolicy",
                 "namespaced": true,
                 "kind": "NetworkPolicy",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["netpol"]
             },
             {
@@ -1052,7 +1052,7 @@ pub async fn api_networking_v1_resources() -> impl IntoResponse {
                 "singularName": "ingress",
                 "namespaced": true,
                 "kind": "Ingress",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
                 "shortNames": ["ing"]
             },
             {
@@ -1067,7 +1067,7 @@ pub async fn api_networking_v1_resources() -> impl IntoResponse {
                 "singularName": "ingressclass",
                 "namespaced": false,
                 "kind": "IngressClass",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             }
         ]
     }))
@@ -1090,7 +1090,7 @@ pub async fn api_route_v1_resources() -> impl IntoResponse {
                 "singularName": "route",
                 "namespaced": true,
                 "kind": "Route",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "routes/status",
@@ -1114,7 +1114,7 @@ pub async fn api_scheduling_v1_resources() -> impl IntoResponse {
             "singularName": "priorityclass",
             "namespaced": false,
             "kind": "PriorityClass",
-            "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"],
+            "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
             "shortNames": ["pc"]
         }]
     }))
@@ -1177,14 +1177,14 @@ pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
                 "singularName": "mutatingwebhookconfiguration",
                 "namespaced": false,
                 "kind": "MutatingWebhookConfiguration",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "validatingwebhookconfigurations",
                 "singularName": "validatingwebhookconfiguration",
                 "namespaced": false,
                 "kind": "ValidatingWebhookConfiguration",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             }
         ]
     }))
@@ -1201,14 +1201,14 @@ pub async fn api_gateway_v1_resources() -> impl IntoResponse {
                 "singularName": "gatewayclass",
                 "namespaced": false,
                 "kind": "GatewayClass",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "gateways",
                 "singularName": "gateway",
                 "namespaced": true,
                 "kind": "Gateway",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "gateways/status",
@@ -1222,7 +1222,7 @@ pub async fn api_gateway_v1_resources() -> impl IntoResponse {
                 "singularName": "httproute",
                 "namespaced": true,
                 "kind": "HTTPRoute",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "httproutes/status",
@@ -1246,7 +1246,7 @@ pub async fn api_apiregistration_v1_resources() -> impl IntoResponse {
                 "singularName": "apiservice",
                 "namespaced": false,
                 "kind": "APIService",
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             },
             {
                 "name": "apiservices/status",

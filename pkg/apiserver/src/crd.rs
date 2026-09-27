@@ -237,7 +237,7 @@ impl CrdRegistry {
                     "singularName": def.singular,
                     "namespaced": def.scope == CrdScope::Namespaced,
                     "kind": def.kind,
-                    "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                    "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
                 });
                 if !def.short_names.is_empty() {
                     res["shortNames"] = json!(def.short_names);
@@ -885,6 +885,55 @@ pub async fn crd_delete_cluster(
     }
 
     Ok(Json(out))
+}
+
+/// DELETE a collection of cluster-scoped CRs — or of CRDs themselves, each
+/// of which is unregistered once it is gone.
+pub async fn crd_delete_collection_cluster(
+    State(state): State<AppState>,
+    Path((group, version, resource)): Path<(String, String, String)>,
+    RawQuery(query): RawQuery,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let store = storage_resource(&group, &resource);
+    let (item_kind, list_kind) = crd_kinds(&state, &group, &version, &resource).await;
+    let done = crate::handlers::resource::delete_collection(
+        &state, &ResourceStorage::cluster_prefix(&store), &store, &item_kind, query.as_deref(), &body,
+    )
+    .await?;
+    if resource == "customresourcedefinitions" {
+        for (name, removed) in &done.removed {
+            if *removed {
+                state.crd_registry.unregister(name).await;
+            }
+        }
+    }
+    Ok(Json(json!({
+        "apiVersion": format!("{group}/{version}"), "kind": list_kind,
+        "metadata": {}, "items": done.items,
+    })))
+}
+
+/// DELETE a collection of CRs in one namespace.
+pub async fn crd_delete_collection_ns(
+    State(state): State<AppState>,
+    Path((group, version, namespace, resource)): Path<(String, String, String, String)>,
+    RawQuery(query): RawQuery,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    validate_crd(&state, &group, &version, &resource).await?;
+    let store = storage_resource(&group, &resource);
+    let (item_kind, list_kind) = crd_kinds(&state, &group, &version, &resource).await;
+    let done = crate::handlers::resource::delete_collection(
+        &state, &ResourceStorage::namespace_prefix(&store, &namespace), &store, &item_kind,
+        query.as_deref(), &body,
+    )
+    .await?;
+    Ok(Json(json!({
+        "apiVersion": format!("{group}/{version}"), "kind": list_kind,
+        "metadata": {}, "items": done.items,
+    })))
 }
 
 /// Validate that the resource exists in the CRD registry or is a built-in CRD resource.

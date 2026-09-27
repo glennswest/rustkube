@@ -754,6 +754,126 @@ pub async fn delete_namespaced_resource(
     Ok(Json(out))
 }
 
+/// What a `deletecollection` removed: the deleted objects, and for each
+/// whether it is gone (as opposed to left terminating on its finalizers).
+pub(crate) struct DeletedCollection {
+    pub items: Vec<Value>,
+    pub removed: Vec<(String, bool)>,
+}
+
+/// `deletecollection` — DELETE on a collection path, as `kubectl delete
+/// --all`, client-go's `DeleteCollection` and many conformance specs send it.
+///
+/// Every object under `prefix` that the request's label and field selectors
+/// match is deleted as a single DELETE would delete it (DeleteOptions,
+/// finalizers, propagation); one that is already gone is skipped. Namespaces
+/// terminate gracefully. `store_resource` is where the objects are keyed —
+/// the plural, or `{group}/{plural}` for a custom resource.
+pub(crate) async fn delete_collection(
+    state: &AppState,
+    prefix: &str,
+    store_resource: &str,
+    kind: &str,
+    query: Option<&str>,
+    body: &[u8],
+) -> Result<DeletedCollection, ApiError> {
+    let params = WatchParams::from_query(query.unwrap_or(""));
+    let opts = parse_delete_options(body);
+    let cluster_path = prefix == ResourceStorage::cluster_prefix(store_resource);
+    let mut matched = Vec::new();
+    let mut token: Option<String> = None;
+    loop {
+        let (items, next, _) = state.storage.list(prefix, 500, token.as_deref()).await?;
+        matched.extend(selector::filter_objects(items, &params.label_selector, &params.field_selector));
+        match next {
+            Some(t) => token = Some(t),
+            None => break,
+        }
+    }
+    let namespaced = |o: &Value| o["metadata"]["namespace"].as_str().map_or(false, |n| !n.is_empty());
+    if cluster_path && matched.iter().any(namespaced) {
+        return Err(refuse_namespaced(store_resource));
+    }
+    delete_each(state, matched, store_resource, kind, &opts).await
+}
+
+/// The cluster-scoped path of a *namespaced* resource (`/api/v1/pods`) lists
+/// across namespaces but has no deletecollection upstream — deleting every
+/// pod in the cluster is not one request. Refused before anything is deleted.
+fn refuse_namespaced(resource: &str) -> ApiError {
+    ApiError {
+        status: StatusCode::METHOD_NOT_ALLOWED,
+        reason: "MethodNotAllowed".into(),
+        message: format!("the server does not allow this method on the requested resource (deletecollection {resource} across namespaces)"),
+    }
+}
+
+async fn delete_each(
+    state: &AppState,
+    matched: Vec<Value>,
+    store_resource: &str,
+    kind: &str,
+    opts: &DeleteOptions,
+) -> Result<DeletedCollection, ApiError> {
+    let mut out = DeletedCollection { items: Vec::new(), removed: Vec::new() };
+    for obj in matched {
+        let Some(name) = obj["metadata"]["name"].as_str().map(str::to_string) else {
+            continue;
+        };
+        let namespace = obj["metadata"]["namespace"]
+            .as_str()
+            .filter(|n| !n.is_empty())
+            .map(str::to_string);
+        let key = match &namespace {
+            Some(ns) => ResourceStorage::namespaced_key(store_resource, ns, &name),
+            None => ResourceStorage::cluster_key(store_resource, &name),
+        };
+        let result = if store_resource == "namespaces" {
+            terminate_namespace(state, &name, obj.clone(), opts).await
+        } else {
+            perform_delete(state, &key, obj.clone(), opts, &name, namespace.as_deref(), kind).await
+        };
+        match result {
+            Ok(r) => {
+                out.removed.push((name, r["kind"] == "Status"));
+                out.items.push(if r["kind"] == "Status" { obj } else { r });
+            }
+            // Deleted by someone else between the list and now.
+            Err(e) if e.status == StatusCode::NOT_FOUND => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(out)
+}
+
+fn deleted_list(api_version: &str, list_kind: String, items: Vec<Value>) -> Value {
+    json!({ "apiVersion": api_version, "kind": list_kind, "metadata": {}, "items": items })
+}
+
+/// DELETE a collection of a cluster-scoped resource (`deletecollection`).
+pub async fn delete_cluster_collection(
+    State(state): State<AppState>,
+    Path(resource): Path<String>,
+    RawQuery(query): RawQuery,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let prefix = ResourceStorage::cluster_prefix(&resource);
+    let done = delete_collection(&state, &prefix, &resource, &resource, query.as_deref(), &body).await?;
+    Ok(Json(deleted_list(resource_to_api_version(&resource), resource_to_list_kind(&resource), done.items)))
+}
+
+/// DELETE a collection of a namespaced resource in one namespace.
+pub async fn delete_namespaced_collection(
+    State(state): State<AppState>,
+    Path((namespace, resource)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let prefix = ResourceStorage::namespace_prefix(&resource, &namespace);
+    let done = delete_collection(&state, &prefix, &resource, &resource, query.as_deref(), &body).await?;
+    Ok(Json(deleted_list(resource_to_api_version(&resource), resource_to_list_kind(&resource), done.items)))
+}
+
 // --- Status subresource handlers ---
 
 /// GET status for a cluster-scoped resource.
@@ -1936,6 +2056,40 @@ mod status_put_tests {
         put(body(Some(""), "E")).await.unwrap();
         let stored = state.storage.get(key).await.unwrap();
         assert_eq!(stored["status"]["phase"], "E", "{key}");
+    }
+
+    /// deletecollection deletes what the selector matches in the namespace,
+    /// leaves a finalized object terminating, and will not sweep a namespaced
+    /// resource across namespaces (#67).
+    #[tokio::test]
+    async fn deletecollection_honours_selectors_and_scope() {
+        let s = state();
+        for (ns, name, app, fin) in [("a", "c1", "web", false), ("a", "c2", "web", true),
+                                     ("a", "c3", "db", false), ("b", "c4", "web", false)] {
+            let mut obj = json!({"metadata": {"name": name, "namespace": ns, "labels": {"app": app}}});
+            if fin {
+                obj["metadata"]["finalizers"] = json!(["x/keep"]);
+            }
+            s.storage.create(&ResourceStorage::namespaced_key("configmaps", ns, name), obj).await.unwrap();
+        }
+        let done = delete_collection(&s, &ResourceStorage::namespace_prefix("configmaps", "a"),
+                                     "configmaps", "configmaps", Some("labelSelector=app%3Dweb"), b"")
+            .await
+            .unwrap();
+        assert_eq!(done.items.len(), 2);
+        let get = |ns: &str, n: &str| s.storage.get(&ResourceStorage::namespaced_key("configmaps", ns, n));
+        assert!(get("a", "c1").await.is_err(), "c1 was not deleted");
+        assert!(!get("a", "c2").await.unwrap()["metadata"]["deletionTimestamp"].is_null(), "c2 not terminating");
+        assert!(get("a", "c3").await.is_ok(), "c3 did not match the selector");
+        assert!(get("b", "c4").await.is_ok(), "c4 is in another namespace");
+
+        let err = delete_collection(&s, &ResourceStorage::cluster_prefix("configmaps"),
+                                    "configmaps", "configmaps", None, b"")
+            .await
+            .err()
+            .expect("a namespaced resource's cluster path has no deletecollection");
+        assert_eq!(err.status, StatusCode::METHOD_NOT_ALLOWED);
+        assert!(get("b", "c4").await.is_ok());
     }
 
     /// PUT keeps what the server owns, refuses a rename, and 404s a missing
