@@ -187,6 +187,32 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
     }))
 }
 
+/// GET /apis/{group} — one group's `APIGroup` document.
+///
+/// Upstream serves it, and clients use it to find a group's versions without
+/// the whole list; the conformance suite fetches `/apis/apiextensions.k8s.io`
+/// and got a 404 (#67).
+pub async fn api_group(
+    State(state): State<AppState>,
+    axum::extract::Path(group): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let mut groups = builtin_groups();
+    groups.extend(state.crd_registry.api_groups().await);
+    match groups.into_iter().find(|g| g["name"] == group.as_str()) {
+        Some(mut g) => {
+            g["kind"] = json!("APIGroup");
+            g["apiVersion"] = json!("v1");
+            Json(g).into_response()
+        }
+        None => crate::error::ApiError {
+            status: axum::http::StatusCode::NOT_FOUND,
+            reason: "NotFound".into(),
+            message: "the server could not find the requested resource".into(),
+        }
+        .into_response(),
+    }
+}
+
 /// GET /api/v1 — list core/v1 resources.
 pub async fn api_v1_resources() -> impl IntoResponse {
     Json(json!({

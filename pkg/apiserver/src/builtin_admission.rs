@@ -310,6 +310,7 @@ async fn priority_from_class(storage: &ResourceStorage, obj: &mut Value) {
 /// Nothing logged an error — the Service simply never worked, which is the
 /// worst way for a default to be missing.
 fn default_service_ports(obj: &mut Value) {
+    default_service_spec(obj);
     let Some(ports) = obj["spec"]["ports"].as_array_mut() else {
         return;
     };
@@ -326,9 +327,55 @@ fn default_service_ports(obj: &mut Value) {
     }
 }
 
+/// The Service spec fields upstream defaults on create, when they are absent
+/// **or empty** — a client-go body decodes from protobuf with every string at
+/// `""`, so a Service created by client-go arrived with `type: ""` and was
+/// stored that way (#67).
+fn default_service_spec(obj: &mut Value) {
+    if !obj["spec"].is_object() {
+        obj["spec"] = json!({});
+    }
+    let spec = &mut obj["spec"];
+    let unset = |v: &Value| v.as_str().map_or(true, str::is_empty);
+    if unset(&spec["type"]) {
+        spec["type"] = json!("ClusterIP");
+    }
+    let external_name = spec["type"] == "ExternalName";
+    if unset(&spec["sessionAffinity"]) {
+        spec["sessionAffinity"] = json!("None");
+    }
+    if !external_name {
+        if unset(&spec["internalTrafficPolicy"]) {
+            spec["internalTrafficPolicy"] = json!("Cluster");
+        }
+        if unset(&spec["ipFamilyPolicy"]) {
+            spec["ipFamilyPolicy"] = json!("SingleStack");
+        }
+        if spec["ipFamilies"].as_array().map_or(true, Vec::is_empty) {
+            spec["ipFamilies"] = json!(["IPv4"]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod service_defaults_tests {
     use super::*;
+
+    #[test]
+    fn an_empty_service_type_is_cluster_ip() {
+        let mut svc = json!({"spec": {"type": "", "sessionAffinity": "", "ports": [{"port": 80}]}});
+        default_service_ports(&mut svc);
+        assert_eq!(svc["spec"]["type"], "ClusterIP");
+        assert_eq!(svc["spec"]["sessionAffinity"], "None");
+        assert_eq!(svc["spec"]["internalTrafficPolicy"], "Cluster");
+        assert_eq!(svc["spec"]["ipFamilies"], json!(["IPv4"]));
+        assert_eq!(svc["spec"]["ports"][0]["protocol"], "TCP");
+
+        let mut ext = json!({"spec": {"type": "ExternalName", "externalName": "x.example"}});
+        default_service_ports(&mut ext);
+        assert_eq!(ext["spec"]["type"], "ExternalName");
+        assert!(ext["spec"]["ipFamilies"].is_null());
+    }
 
     #[test]
     fn read_write_once_pod_may_not_be_combined() {

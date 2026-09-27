@@ -43,6 +43,7 @@ fn build_router(
         .route("/openapi/v3/{*path}", get(discovery::openapi_v3_group))
         .route("/apis", get(discovery::api_groups_dynamic))
         .route("/apis/", get(discovery::api_groups_dynamic))
+        .route("/apis/{group}", get(discovery::api_group))
         .route("/api/v1", get(discovery::api_v1_resources))
         .route("/apis/apps/v1", get(discovery::api_apps_v1_resources))
         .route("/apis/batch/v1", get(discovery::api_batch_v1_resources))
