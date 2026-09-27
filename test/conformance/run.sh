@@ -16,6 +16,9 @@
 # what a run on real stormcos nodes is for. Specs that only need the API pass
 # or fail on their merits.
 #
+# sc-build ends a job at two hours and a full run is longer: on the build box
+# run it by SIG, one sc-build each (docs/conformance.md has the loop).
+#
 # Output: one line per spec, `RESULT <passed|failed|skipped> <seconds> <name>`,
 # followed by its first failure line — that is the triage input. The binaries
 # are cached in $HOME/target/k8s-e2e on the build box.
