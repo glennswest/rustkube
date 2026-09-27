@@ -18,82 +18,101 @@ impl NamespaceController {
         Self { api }
     }
 
+    /// Two loops, not one. Provisioning a new namespace's default
+    /// ServiceAccount must not wait behind the purge of terminating ones: a
+    /// purge lists every namespaced resource type in every terminating
+    /// namespace, and with a few dozen of them — the conformance suite ends
+    /// tests faster than that — one pass was thousands of sequential requests,
+    /// new namespaces waited more than 30 s for their ServiceAccount, and the
+    /// suite's namespace setup timed out (#67).
     pub async fn run(&self) {
         info!("Namespace controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
+        tokio::join!(self.provision_loop(), self.terminate_loop());
+    }
 
+    /// Every 2 s: each live namespace has its default ServiceAccount.
+    async fn provision_loop(&self) {
+        let mut interval = time::interval(Duration::from_secs(2));
         loop {
             interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Namespace reconcile error: {e}");
-            }
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            let terminating = !ns["metadata"]["deletionTimestamp"].is_null()
-                || ns["status"]["phase"].as_str() == Some("Terminating");
-
-            if terminating {
-                // Cascade-delete everything in the namespace, then finalize (#28).
-                if let Err(e) = self.terminate_namespace(ns_name).await {
-                    debug!("Failed to terminate namespace {ns_name}: {e}");
+            let namespaces = match self.namespaces().await {
+                Ok(n) => n,
+                Err(e) => {
+                    error!("Namespace list failed: {e}");
+                    continue;
                 }
-            } else if let Err(e) = self.ensure_default_service_account(ns_name).await {
-                debug!("Failed to ensure default SA in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    /// Drive a Terminating namespace to deletion: purge every namespaced
-    /// resource in it, and once nothing remains, clear the `kubernetes`
-    /// finalizer via /finalize so the apiserver removes the namespace object.
-    async fn terminate_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let resources = self.discover_namespaced_resources().await;
-
-        let mut remaining = 0usize;
-        for (api_root, resource) in &resources {
-            let list_path = format!("{api_root}/namespaces/{namespace}/{resource}");
-            let items = match self.api.list(&list_path).await {
-                Ok(v) => v["items"].as_array().cloned().unwrap_or_default(),
-                // A resource type we can't list — skip it rather than stall
-                // termination forever.
-                Err(_) => continue,
             };
-            for item in &items {
-                if let Some(name) = item["metadata"]["name"].as_str() {
-                    let _ = self
-                        .api
-                        .delete(&format!("{api_root}/namespaces/{namespace}/{resource}/{name}"))
-                        .await;
+            let limit = Arc::new(tokio::sync::Semaphore::new(16));
+            let mut tasks = tokio::task::JoinSet::new();
+            for (name, terminating) in namespaces {
+                if terminating {
+                    continue;
                 }
+                let api = self.api.clone();
+                let limit = limit.clone();
+                tasks.spawn(async move {
+                    let _permit = limit.acquire().await;
+                    if let Err(e) = ensure_default_service_account(&api, &name).await {
+                        debug!("Failed to ensure default SA in {name}: {e}");
+                    }
+                });
             }
-            remaining += items.len();
+            while tasks.join_next().await.is_some() {}
         }
+    }
 
-        if remaining == 0 {
-            // Empty — clear the finalizer; the apiserver then deletes the object.
-            let body = json!({
-                "apiVersion": "v1",
-                "kind": "Namespace",
-                "metadata": { "name": namespace },
-                "spec": { "finalizers": [] }
-            });
-            let _ = self
-                .api
-                .update(&format!("/api/v1/namespaces/{namespace}/finalize"), &body)
-                .await;
-            info!("Namespace {namespace} terminated (finalized)");
-        } else {
-            debug!("Namespace {namespace} terminating: purged {remaining} resource(s) this pass");
+    /// Every 5 s: purge the terminating namespaces, several at once, with the
+    /// resource types discovered once per pass rather than once per namespace.
+    async fn terminate_loop(&self) {
+        let mut interval = time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let terminating: Vec<String> = match self.namespaces().await {
+                Ok(n) => n.into_iter().filter(|(_, t)| *t).map(|(n, _)| n).collect(),
+                Err(e) => {
+                    error!("Namespace list failed: {e}");
+                    continue;
+                }
+            };
+            if terminating.is_empty() {
+                continue;
+            }
+            let resources = Arc::new(self.discover_namespaced_resources().await);
+            let limit = Arc::new(tokio::sync::Semaphore::new(8));
+            let mut tasks = tokio::task::JoinSet::new();
+            for name in terminating {
+                let api = self.api.clone();
+                let resources = resources.clone();
+                let limit = limit.clone();
+                tasks.spawn(async move {
+                    let _permit = limit.acquire().await;
+                    // Cascade-delete everything in the namespace, then finalize (#28).
+                    if let Err(e) = terminate_namespace(&api, &name, &resources).await {
+                        debug!("Failed to terminate namespace {name}: {e}");
+                    }
+                });
+            }
+            while tasks.join_next().await.is_some() {}
         }
-        Ok(())
+    }
+
+    /// `(name, terminating)` for every namespace.
+    async fn namespaces(&self) -> anyhow::Result<Vec<(String, bool)>> {
+        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
+        Ok(ns_list["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|ns| {
+                        let name = ns["metadata"]["name"].as_str()?.to_string();
+                        let terminating = !ns["metadata"]["deletionTimestamp"].is_null()
+                            || ns["status"]["phase"].as_str() == Some("Terminating");
+                        Some((name, terminating))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     /// Discover every namespaced (non-subresource) API resource from the
@@ -135,31 +154,72 @@ impl NamespaceController {
             }
         }
     }
+}
 
-    async fn ensure_default_service_account(&self, namespace: &str) -> anyhow::Result<()> {
-        let path = format!("/api/v1/namespaces/{namespace}/serviceaccounts/default");
-        let resp = self.api.get(&path).await?;
-
-        if resp.status().is_success() {
-            return Ok(()); // Already exists
-        }
-
-        let sa = json!({
-            "apiVersion": "v1",
-            "kind": "ServiceAccount",
-            "metadata": {
-                "name": "default",
-                "namespace": namespace
+/// Drive a Terminating namespace to deletion: purge every namespaced
+/// resource in it, and once nothing remains, clear the `kubernetes`
+/// finalizer via /finalize so the apiserver removes the namespace object.
+async fn terminate_namespace(
+    api: &ApiClient,
+    namespace: &str,
+    resources: &[(String, String)],
+) -> anyhow::Result<()> {
+    let mut remaining = 0usize;
+    for (api_root, resource) in resources {
+        let list_path = format!("{api_root}/namespaces/{namespace}/{resource}");
+        let items = match api.list(&list_path).await {
+            Ok(v) => v["items"].as_array().cloned().unwrap_or_default(),
+            // A resource type we can't list — skip it rather than stall
+            // termination forever.
+            Err(_) => continue,
+        };
+        for item in &items {
+            if let Some(name) = item["metadata"]["name"].as_str() {
+                let _ = api
+                    .delete(&format!("{api_root}/namespaces/{namespace}/{resource}/{name}"))
+                    .await;
             }
-        });
-
-        self.api
-            .create(
-                &format!("/api/v1/namespaces/{namespace}/serviceaccounts"),
-                &sa,
-            )
-            .await?;
-        info!("Created default ServiceAccount in {namespace}");
-        Ok(())
+        }
+        remaining += items.len();
     }
+
+    if remaining == 0 {
+        // Empty — clear the finalizer; the apiserver then deletes the object.
+        let body = json!({
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": { "name": namespace },
+            "spec": { "finalizers": [] }
+        });
+        let _ = api
+            .update(&format!("/api/v1/namespaces/{namespace}/finalize"), &body)
+            .await;
+        info!("Namespace {namespace} terminated (finalized)");
+    } else {
+        debug!("Namespace {namespace} terminating: purged {remaining} resource(s) this pass");
+    }
+    Ok(())
+}
+
+async fn ensure_default_service_account(api: &ApiClient, namespace: &str) -> anyhow::Result<()> {
+    let path = format!("/api/v1/namespaces/{namespace}/serviceaccounts/default");
+    let resp = api.get(&path).await?;
+
+    if resp.status().is_success() {
+        return Ok(()); // Already exists
+    }
+
+    let sa = json!({
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {
+            "name": "default",
+            "namespace": namespace
+        }
+    });
+
+    api.create(&format!("/api/v1/namespaces/{namespace}/serviceaccounts"), &sa)
+        .await?;
+    info!("Created default ServiceAccount in {namespace}");
+    Ok(())
 }
