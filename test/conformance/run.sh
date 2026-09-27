@@ -83,7 +83,9 @@ for n in json.load(sys.stdin).get("items",[]):
 
 # --- run ------------------------------------------------------------------------
 mkdir -p "$W/report"
-"$E2E/$V/ginkgo" -p --procs=16 --timeout=3h --no-color --silence-skips \
+# 100 minutes, under sc-build's two-hour limit: a spec that hangs is then
+# reported as the one that timed out, and the report is still written.
+"$E2E/$V/ginkgo" -p --procs=16 --timeout=100m --no-color --silence-skips \
   "$E2E/$V/e2e.test" -- \
   --kubeconfig="$W/kubeconfig" --provider=skeleton \
   --ginkgo.focus="$FOCUS" \
