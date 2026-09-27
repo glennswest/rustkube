@@ -634,11 +634,17 @@ async fn patch_cr_status(
         .unwrap_or("");
     // Re-read and re-applied on a lost CAS, like every PATCH (#77).
     crate::handlers::resource::guaranteed_patch(state, key, ct, body, |mut existing| {
-        // Apply to a copy, then take only its status back — so a patch body
-        // that touches other fields can't sneak spec changes through /status.
+        // Apply to a copy, then take back its status and its labels and
+        // annotations — what upstream's status strategies let a status write
+        // change — so a patch body can't sneak spec changes through /status.
         let mut scratch = existing.clone();
         crate::handlers::resource::apply_patch_body(&mut scratch, ct, body)?;
         existing["status"] = scratch["status"].clone();
+        for f in ["labels", "annotations"] {
+            if existing["metadata"].is_object() && !scratch["metadata"][f].is_null() {
+                existing["metadata"][f] = scratch["metadata"][f].clone();
+            }
+        }
         Ok(existing)
     })
     .await

@@ -1031,6 +1031,7 @@ pub(crate) async fn put_status(
         if let Some(status) = body.get("status") {
             existing["status"] = status.clone();
         }
+        status_write_metadata(&mut existing, body, false);
         Ok(existing)
     })
     .await
@@ -1560,9 +1561,30 @@ fn strategic_merge_list(target: &mut Vec<Value>, patch: &[Value], key: &str) {
 /// Apply a status subresource patch to `existing`, honoring the patch
 /// Content-Type: strategic-merge (merge keyed lists like conditions), merge-patch
 /// (RFC-7386, arrays replaced), or JSON patch.
+/// What a status write may change besides `status`: labels and annotations,
+/// as upstream's status strategies allow (they reset only the spec). A
+/// status PATCH that also set an annotation lost the annotation (#67: the
+/// CronJob API conformance spec).
+fn status_write_metadata(existing: &mut Value, patch: &Value, merge: bool) {
+    for f in ["labels", "annotations"] {
+        let Some(new) = patch["metadata"].get(f) else { continue };
+        if !existing["metadata"].is_object() {
+            existing["metadata"] = json!({});
+        }
+        if merge {
+            merge_json(&mut existing["metadata"][f], new);
+        } else {
+            existing["metadata"][f] = new.clone();
+        }
+    }
+}
+
 fn apply_status_patch(existing: &mut Value, content_type: &str, body: &[u8]) -> Result<(), ApiError> {
     match content_type.split(';').next().unwrap_or("").trim() {
         "application/json-patch+json" => {
+            // Applied whole, then the spec put back: a status write never
+            // changes it.
+            let spec = existing.get("spec").cloned();
             let mut ops: Value = serde_json::from_slice(body)
                 .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
             normalize_json_patch(existing, &mut ops);
@@ -1570,6 +1592,14 @@ fn apply_status_patch(existing: &mut Value, content_type: &str, body: &[u8]) -> 
                 .map_err(|e| ApiError::invalid(&format!("invalid JSON Patch: {e}")))?;
             json_patch::patch(existing, &patch)
                 .map_err(|e| ApiError::invalid(&format!("JSON Patch could not be applied: {e}")))?;
+            match spec {
+                Some(s) => existing["spec"] = s,
+                None => {
+                    if let Some(o) = existing.as_object_mut() {
+                        o.remove("spec");
+                    }
+                }
+            }
         }
         "application/strategic-merge-patch+json" => {
             let patch: Value = serde_json::from_slice(body)
@@ -1577,6 +1607,7 @@ fn apply_status_patch(existing: &mut Value, content_type: &str, body: &[u8]) -> 
             if let Some(sp) = patch.get("status") {
                 strategic_merge(&mut existing["status"], sp);
             }
+            status_write_metadata(existing, &patch, true);
         }
         _ => {
             let patch: Value = serde_json::from_slice(body)
@@ -1584,6 +1615,7 @@ fn apply_status_patch(existing: &mut Value, content_type: &str, body: &[u8]) -> 
             if let Some(sp) = patch.get("status") {
                 merge_json(&mut existing["status"], sp);
             }
+            status_write_metadata(existing, &patch, true);
         }
     }
     Ok(())
@@ -2371,6 +2403,29 @@ mod status_put_tests {
             }
         })
         .await;
+    }
+}
+
+#[cfg(test)]
+mod status_write_tests {
+    use super::*;
+
+    /// A status write changes status, labels and annotations, never spec (#67).
+    #[test]
+    fn a_status_patch_keeps_its_annotations_and_not_spec() {
+        let base = json!({"metadata": {"name": "c", "annotations": {"a": "1"}},
+                          "spec": {"schedule": "* * * * *"}, "status": {}});
+        let mut o = base.clone();
+        apply_status_patch(&mut o, "application/merge-patch+json",
+            br#"{"metadata":{"annotations":{"patchedstatus":"true"}},"status":{"active":[]},"spec":{"schedule":"x"}}"#).unwrap();
+        assert_eq!(o["metadata"]["annotations"]["patchedstatus"], "true");
+        assert_eq!(o["metadata"]["annotations"]["a"], "1");
+        assert_eq!(o["spec"]["schedule"], "* * * * *");
+        let mut o = base.clone();
+        apply_status_patch(&mut o, "application/json-patch+json",
+            br#"[{"op":"replace","path":"/spec/schedule","value":"x"},{"op":"add","path":"/status/x","value":1}]"#).unwrap();
+        assert_eq!(o["spec"]["schedule"], "* * * * *");
+        assert_eq!(o["status"]["x"], 1);
     }
 }
 

@@ -5,6 +5,11 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(status): a status write keeps its label and annotation changes and
+  never its spec changes.** `/status` PATCH and PUT applied only `status`, so
+  an annotation set in the same write was lost; a JSON Patch to `/status`
+  could change the spec. Upstream's status strategies allow labels and
+  annotations and reset only the spec; so does this now.
 - **fix(apiserver): immutable ConfigMaps and Secrets.** With
   `immutable: true`, an update (PUT or PATCH) that changes the data or unsets
   `immutable` is a 422; it was written.
