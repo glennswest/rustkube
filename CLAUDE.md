@@ -217,9 +217,23 @@ when each piece landed.
     triaged: CRD /status spec mismatch (probe with RK_WHY_LINES=40),
     OrderedNamespaceDeletion, GC dependency circle — rerun first.
     Unit tests pass at 2e5dcb9 (after #129/#130, test-only). All six chunks
-    + a CRD /status probe launched at 2e5dcb9 (`tmp/chunks.sh`, logs
+    + a CRD /status probe ran at 2e5dcb9 (`tmp/chunks.sh`, logs
     `tmp/conf-*.log`; the pre-fix api-machinery log is
-    `tmp/conf-apimachinery-5ebe056.log`).
+    `tmp/conf-apimachinery-5ebe056.log`). Summaries at 2e5dcb9:
+    api-machinery 15/90, misc 14/34, network 6/47, node 11/103, storage
+    6/91 passed; apps still running.
+  - **Fixed from that run (after 2e5dcb9, unverified by a rerun yet):** CRD
+    schema x-kubernetes-* over protobuf; LIST item RVs + pinned paging +
+    remainingItemCount (#111); DELETE-to-terminating retries; generateName;
+    events.k8s.io protobuf + deletecollection; SA token volume injection;
+    impersonation; watch without RV sends current state; EndpointSlice
+    managed-by + prompt endpoints cleanup; ConfigMap/Secret key + sysctl
+    validation, qosClass; immutable ConfigMap/Secret; VolumeAttributesClass.
+  - **Filed from it:** LimitRanger #131, NodePort/type-change #132,
+    EndpointSliceMirroring #133, ServiceCIDR/IPAddress #134, RuntimeClass
+    #135, pod resize #136, DRA #137.
+  - **Next:** unit tests at head, triage apps, rerun all chunks at head,
+    write the results table into docs/conformance.md, close #67.
   - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
     docs/conformance.md: RK_PORT_OFFSET side by side, RK_SUITE_TIMEOUT=45m)
     and the focused webhook probe with
