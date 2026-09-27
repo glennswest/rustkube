@@ -417,6 +417,35 @@ pub(crate) async fn persist_or_finalize(
     state.storage.update(key, obj, prev_rev).await
 }
 
+/// An immutable ConfigMap or Secret (`immutable: true`) keeps its data, and
+/// stays immutable: an update that changes either is a 422, as upstream.
+/// Such updates were written (#67: the ConfigMap and Secret immutability
+/// conformance specs).
+pub(crate) fn check_immutable(key: &str, old: &Value, new: &Value) -> Result<(), ApiError> {
+    let fields: &[&str] = if key.starts_with("/registry/configmaps/") {
+        &["data", "binaryData"]
+    } else if key.starts_with("/registry/secrets/") {
+        &["data", "stringData"]
+    } else {
+        return Ok(());
+    };
+    if old["immutable"].as_bool() != Some(true) {
+        return Ok(());
+    }
+    if new["immutable"].as_bool() != Some(true) {
+        return Err(ApiError::invalid("immutable: Forbidden: field is immutable when `immutable` is set"));
+    }
+    // An absent map and an empty one are the same data.
+    let same = |f: &str| {
+        let empty = |v: &Value| v.is_null() || v.as_object().is_some_and(|m| m.is_empty());
+        old[f] == new[f] || (empty(&old[f]) && empty(&new[f]))
+    };
+    if !fields.iter().all(|f| same(f)) {
+        return Err(ApiError::invalid("data: Forbidden: field is immutable when `immutable` is set"));
+    }
+    Ok(())
+}
+
 /// PUT — update a cluster-scoped resource.
 pub async fn update_cluster_resource(
     State(state): State<AppState>,
@@ -484,6 +513,7 @@ pub(crate) async fn put_object(
         }
     }
     keep_server_fields(&mut body, &existing, name, namespace);
+    check_immutable(key, &existing, &body)?;
     persist_or_finalize(state, key, body).await
 }
 
@@ -1249,7 +1279,9 @@ where
         }});
         let name = fresh["metadata"]["name"].as_str().unwrap_or_default().to_string();
         let namespace = fresh["metadata"]["namespace"].as_str().map(str::to_owned);
+        let before = fresh.clone();
         let mut obj = mutate(fresh)?;
+        check_immutable(key, &before, &obj)?;
         if !obj["metadata"].is_object() {
             return Err(ApiError::invalid("metadata must be an object"));
         }
@@ -1675,6 +1707,7 @@ fn resource_to_list_kind(resource: &str) -> String {
         "csinodes" => "CSINode",
         "volumeattachments" => "VolumeAttachment",
         "csistoragecapacities" => "CSIStorageCapacity",
+        "volumeattributesclasses" => "VolumeAttributesClass",
         "endpointslices" => "EndpointSlice",
         "certificatesigningrequests" => "CertificateSigningRequest",
         "priorityclasses" => "PriorityClass",
@@ -1696,7 +1729,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "leases" => "coordination.k8s.io/v1",
         "endpointslices" => "discovery.k8s.io/v1",
         "storageclasses" | "csidrivers" | "csinodes" | "volumeattachments"
-        | "csistoragecapacities" => "storage.k8s.io/v1",
+        | "csistoragecapacities" | "volumeattributesclasses" => "storage.k8s.io/v1",
         "clusterroles" | "clusterrolebindings" | "roles" | "rolebindings" => {
             "rbac.authorization.k8s.io/v1"
         }
@@ -2338,5 +2371,21 @@ mod status_put_tests {
             }
         })
         .await;
+    }
+}
+
+#[cfg(test)]
+mod immutable_tests {
+    use super::*;
+
+    #[test]
+    fn an_immutable_configmap_keeps_its_data() {
+        let k = "/registry/configmaps/ns/c";
+        let old = json!({"immutable": true, "data": {"a": "1"}});
+        assert!(check_immutable(k, &old, &json!({"immutable": true, "data": {"a": "1"}, "metadata": {"labels": {"x": "y"}}})).is_ok());
+        assert!(check_immutable(k, &old, &json!({"immutable": true, "data": {"a": "2"}})).is_err());
+        assert!(check_immutable(k, &old, &json!({"immutable": false, "data": {"a": "1"}})).is_err());
+        assert!(check_immutable(k, &json!({"data": {"a": "1"}}), &json!({"data": {"a": "2"}})).is_ok());
+        assert!(check_immutable("/registry/pods/ns/p", &old, &json!({})).is_ok());
     }
 }

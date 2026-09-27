@@ -722,6 +722,7 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
             ("csinodes", "CSINode", false),
             ("volumeattachments", "VolumeAttachment", false),
             ("csistoragecapacities", "CSIStorageCapacity", true),
+            ("volumeattributesclasses", "VolumeAttributesClass", false),
         ],
         ("rbac.authorization.k8s.io", "v1") => vec![
             ("clusterroles", "ClusterRole", false),
@@ -934,6 +935,14 @@ pub async fn api_storage_v1_resources() -> impl IntoResponse {
                 "namespaced": true,
                 "kind": "CSIStorageCapacity",
                 "verbs": verbs
+            },
+            {
+                "name": "volumeattributesclasses",
+                "singularName": "volumeattributesclass",
+                "namespaced": false,
+                "kind": "VolumeAttributesClass",
+                "verbs": verbs,
+                "shortNames": ["vac"]
             }
         ]
     }))

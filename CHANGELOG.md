@@ -5,6 +5,12 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(apiserver): immutable ConfigMaps and Secrets.** With
+  `immutable: true`, an update (PUT or PATCH) that changes the data or unsets
+  `immutable` is a 422; it was written.
+- **feat(apiserver): `storage.k8s.io/v1` VolumeAttributesClass** is served
+  and discoverable, over JSON and protobuf (the vendored `storage/v1` proto is
+  release-1.36's).
 - **fix(admission): validation upstream does and this did not.** ConfigMap
   and Secret data keys must be 1–253 characters of `[-._a-zA-Z0-9]` (an
   empty key was stored), a ConfigMap key may not be in both `data` and
