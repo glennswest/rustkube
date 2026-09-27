@@ -5,6 +5,13 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(delete): a delete that leaves the object terminating retries a lost
+  write.** Adding `deletionTimestamp` and the propagation finalizer swapped
+  against the revision read, so a controller's write in between (the
+  deployment controller's status) made `DELETE … propagationPolicy=Orphan` a
+  409 `resource version mismatch`. It re-reads and re-applies now, as
+  upstream's `GuaranteedUpdate` does; a `resourceVersion` precondition still
+  makes a stale delete a 409.
 - **fix(list): items carry their `resourceVersion`; paged lists are pinned to
   the first page's revision and say how much is left.** The watch cache's
   snapshot now keeps each object's mod revision, so every LIST item has

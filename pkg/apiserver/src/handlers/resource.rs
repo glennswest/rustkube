@@ -574,7 +574,7 @@ fn delete_success(name: &str, namespace: Option<&str>, kind: &str) -> Value {
 pub(crate) async fn perform_delete(
     state: &AppState,
     key: &str,
-    mut obj: Value,
+    obj: Value,
     opts: &DeleteOptions,
     name: &str,
     namespace: Option<&str>,
@@ -607,18 +607,35 @@ pub(crate) async fn perform_delete(
         // Mark for deletion and persist; controllers finish the job. If it was
         // already terminating and its finalizers are now clear, this branch isn't
         // reached (finalizers empty) and the hard delete below removes it.
-        if obj["metadata"]["deletionTimestamp"].is_null() {
-            obj["metadata"]["deletionTimestamp"] =
-                json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-        }
-        if let Some(g) = opts.grace_period_seconds {
-            obj["metadata"]["deletionGracePeriodSeconds"] = json!(g);
-        }
-        obj["metadata"]["finalizers"] = json!(finalizers);
-        let prev_rev = obj["metadata"]["resourceVersion"]
-            .as_str()
-            .and_then(|r| r.parse::<u64>().ok());
-        return state.storage.update(key, obj, prev_rev).await;
+        //
+        // Written like `GuaranteedUpdate`: a controller writing the object
+        // between the read and this write (the deployment controller's status
+        // update, say) is re-read and the marks applied again, not a 409 —
+        // only a `resourceVersion` precondition makes a stale delete fail
+        // (#67: the GC's orphan-propagation conformance spec lost that race).
+        let implied = match opts.propagation_policy.as_deref() {
+            Some("Foreground") => Some("foregroundDeletion"),
+            Some("Orphan") => Some("orphan"),
+            _ => None,
+        };
+        let grace = opts.grace_period_seconds;
+        return guaranteed_update(state, key, opts.precondition_rv.clone(), move |mut fresh| {
+            let mut fins: Vec<Value> =
+                fresh["metadata"]["finalizers"].as_array().cloned().unwrap_or_default();
+            if let Some(f) = implied {
+                ensure_finalizer(&mut fins, f);
+            }
+            if fresh["metadata"]["deletionTimestamp"].is_null() {
+                fresh["metadata"]["deletionTimestamp"] =
+                    json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+            }
+            if let Some(g) = grace {
+                fresh["metadata"]["deletionGracePeriodSeconds"] = json!(g);
+            }
+            fresh["metadata"]["finalizers"] = json!(fins);
+            Ok(fresh)
+        })
+        .await;
     }
 
     // Give the ClusterIP back before the Service goes.
