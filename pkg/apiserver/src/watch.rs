@@ -63,6 +63,10 @@ pub struct WatchResponseOpts {
     /// `initial-events-end` BOOKMARK, before any live events. The caller must
     /// open the live watch at this same revision so there is no gap or overlap.
     pub initial: Option<(Vec<Value>, u64)>,
+    /// End the initial events with the `initial-events-end` BOOKMARK — only
+    /// for `sendInitialEvents=true`; a plain watch with no resourceVersion
+    /// gets the ADDED events alone, as upstream sends them.
+    pub initial_end_bookmark: bool,
 }
 
 /// Convert a watch stream into an HTTP response of chunked JSON watch events,
@@ -77,6 +81,7 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         metadata_only,
         transform,
         initial,
+        initial_end_bookmark,
     } = opts;
 
     // Under `as=PartialObjectMetadata`, every event object (and the type on
@@ -104,10 +109,11 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
             }
             // End-of-initial-list signal: without this, client-go WatchList
             // informers never report synced.
-            if tx
-                .send(Ok(render_bookmark(list_rev, true, &api_version, &kind)))
-                .await
-                .is_err()
+            if initial_end_bookmark
+                && tx
+                    .send(Ok(render_bookmark(list_rev, true, &api_version, &kind)))
+                    .await
+                    .is_err()
             {
                 return;
             }
@@ -373,6 +379,19 @@ pub struct WatchParams {
 }
 
 impl WatchParams {
+    /// Does this watch start with the current state, as ADDED events?
+    ///
+    /// For `sendInitialEvents=true`, and — as upstream — for a watch with no
+    /// `resourceVersion` or `"0"`: "get state and start at most recent". Only
+    /// a watch from a specific revision starts after it. A bare watch used to
+    /// start from now and say nothing about what exists, so a client waiting
+    /// for the ADDED of an object it had just created waited forever (#67:
+    /// the ServiceAccount lifecycle conformance spec hung to the suite
+    /// timeout).
+    pub fn wants_initial_state(&self) -> bool {
+        self.send_initial_events || matches!(self.resource_version, None | Some(0))
+    }
+
     pub fn from_query(query: &str) -> Self {
         let mut params = Self {
             watch: false,
@@ -426,6 +445,15 @@ impl WatchParams {
 #[cfg(test)]
 mod tests {
     use super::WatchParams;
+
+    /// No resourceVersion, or "0", starts with the current state (#67).
+    #[test]
+    fn a_watch_without_a_revision_starts_with_the_state() {
+        assert!(WatchParams::from_query("watch=true").wants_initial_state());
+        assert!(WatchParams::from_query("watch=true&resourceVersion=0").wants_initial_state());
+        assert!(!WatchParams::from_query("watch=true&resourceVersion=42").wants_initial_state());
+        assert!(WatchParams::from_query("watch=true&resourceVersion=42&sendInitialEvents=true").wants_initial_state());
+    }
 
     #[test]
     fn continue_token_is_percent_decoded() {

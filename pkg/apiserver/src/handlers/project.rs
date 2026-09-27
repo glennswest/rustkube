@@ -430,7 +430,7 @@ pub async fn list_projects(
                 user.username
             )));
         }
-        let (initial, live_rev) = if params.send_initial_events {
+        let (initial, live_rev) = if params.wants_initial_state() {
             let (items, rev) = all_namespaces(&state.storage).await?;
             (Some((items, rev)), rev)
         } else {
@@ -449,6 +449,7 @@ pub async fn list_projects(
                 metadata_only: false,
                 transform: Some(namespace_to_project),
                 initial,
+                initial_end_bookmark: params.send_initial_events,
             },
         ));
     }

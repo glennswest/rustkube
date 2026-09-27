@@ -49,7 +49,7 @@ pub(crate) async fn watch_prefix(
     // For WatchList, snapshot the current state and open the live watch at the
     // SAME revision so there is no gap or overlap between the initial list and
     // the live stream. Otherwise start from the requested resourceVersion.
-    let (initial, live_rev) = if params.send_initial_events {
+    let (initial, live_rev) = if params.wants_initial_state() {
         let (items, _continue, rev) = storage.list(prefix, 0, None).await?;
         (Some((items, rev)), rev)
     } else {
@@ -67,6 +67,7 @@ pub(crate) async fn watch_prefix(
             metadata_only,
             transform: None,
             initial,
+            initial_end_bookmark: params.send_initial_events,
         },
     ))
 }

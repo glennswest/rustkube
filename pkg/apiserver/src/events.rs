@@ -162,7 +162,7 @@ pub async fn list_all(
 async fn list_or_watch(state: &AppState, prefix: &str, query: &str) -> Result<Response, ApiError> {
     let params = WatchParams::from_query(query);
     if params.watch {
-        let (initial, live_rev) = if params.send_initial_events {
+        let (initial, live_rev) = if params.wants_initial_state() {
             let (items, _c, rev) = state.storage.list(prefix, 0, None).await?;
             (Some((items, rev)), rev)
         } else {
@@ -180,6 +180,7 @@ async fn list_or_watch(state: &AppState, prefix: &str, query: &str) -> Result<Re
                 metadata_only: false,
                 transform: Some(core_to_events),
                 initial,
+                initial_end_bookmark: params.send_initial_events,
             },
         ));
     }

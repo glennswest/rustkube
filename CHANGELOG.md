@@ -5,6 +5,12 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(watch): a watch with no `resourceVersion` (or `"0"`) starts with the
+  current state**, each object as an ADDED event, then live changes — as
+  upstream. It started from now and said nothing of what existed, so a client
+  that created an object and then watched for its ADDED waited forever. Only
+  `sendInitialEvents=true` ends the initial events with the
+  `initial-events-end` bookmark.
 - **fix(security): impersonation.** `Impersonate-User`/`-Group`/`-Uid`
   were ignored, so an impersonated request — `kubectl --as=alice` — ran with
   the impersonator's own rights. The caller must now be allowed `impersonate`

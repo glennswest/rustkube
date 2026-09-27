@@ -66,7 +66,9 @@ routes for it, #70), `project.openshift.io/v1` (Projects, below),
 
 **Wire.** JSON and client-go's protobuf (`application/vnd.kubernetes.protobuf`)
 in both directions; Table output for `kubectl get`; `PartialObjectMetadata`;
-watch with bookmarks and `sendInitialEvents` (a DELETED event carries the
+watch with bookmarks and `sendInitialEvents` (a watch with no
+`resourceVersion`, or `0`, starts with the current objects as ADDED events;
+a DELETED event carries the
 object's last state from the watch cache, and selectors apply to it; a watch
 opened below the cache's window gets a name-and-namespace tombstone, #100; to
 a selector watch, an object that stops matching is DELETED and one that starts
