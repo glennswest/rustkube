@@ -790,11 +790,24 @@ pub(crate) async fn delete_collection(
             None => break,
         }
     }
+    delete_listed(state, matched, cluster_path, store_resource, kind, &opts).await
+}
+
+/// The half of `delete_collection` after the list: refuse a namespaced
+/// resource on its cluster path, then delete each object.
+async fn delete_listed(
+    state: &AppState,
+    matched: Vec<Value>,
+    cluster_path: bool,
+    store_resource: &str,
+    kind: &str,
+    opts: &DeleteOptions,
+) -> Result<DeletedCollection, ApiError> {
     let namespaced = |o: &Value| o["metadata"]["namespace"].as_str().map_or(false, |n| !n.is_empty());
     if cluster_path && matched.iter().any(namespaced) {
         return Err(refuse_namespaced(store_resource));
     }
-    delete_each(state, matched, store_resource, kind, &opts).await
+    delete_each(state, matched, store_resource, kind, opts).await
 }
 
 /// The cluster-scoped path of a *namespaced* resource (`/api/v1/pods`) lists
@@ -2076,10 +2089,15 @@ mod status_put_tests {
             }
             s.storage.create(&ResourceStorage::namespaced_key("configmaps", ns, name), obj).await.unwrap();
         }
-        let done = delete_collection(&s, &ResourceStorage::namespace_prefix("configmaps", "a"),
-                                     "configmaps", "configmaps", Some("labelSelector=app%3Dweb"), b"")
-            .await
-            .unwrap();
+        // What the LIST would hand over: namespace `a`, filtered by `app=web`.
+        // (MemStore does not list; the selector filter has its own tests.)
+        let mut in_a = Vec::new();
+        for n in ["c1", "c2", "c3"] {
+            in_a.push(s.storage.get(&ResourceStorage::namespaced_key("configmaps", "a", n)).await.unwrap());
+        }
+        let matched = selector::filter_objects(in_a, &Some("app=web".into()), &None);
+        let opts = DeleteOptions::default();
+        let done = delete_listed(&s, matched, false, "configmaps", "configmaps", &opts).await.unwrap();
         assert_eq!(done.items.len(), 2);
         let get = |ns: &str, n: &str| {
             let (storage, key) = (s.storage.clone(), ResourceStorage::namespaced_key("configmaps", ns, n));
@@ -2090,8 +2108,8 @@ mod status_put_tests {
         assert!(get("a", "c3").await.is_ok(), "c3 did not match the selector");
         assert!(get("b", "c4").await.is_ok(), "c4 is in another namespace");
 
-        let err = delete_collection(&s, &ResourceStorage::cluster_prefix("configmaps"),
-                                    "configmaps", "configmaps", None, b"")
+        let c4 = s.storage.get(&ResourceStorage::namespaced_key("configmaps", "b", "c4")).await.unwrap();
+        let err = delete_listed(&s, vec![c4], true, "configmaps", "configmaps", &opts)
             .await
             .err()
             .expect("a namespaced resource's cluster path has no deletecollection");
