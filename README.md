@@ -155,8 +155,10 @@ from `--service-cidr`, the pod's default ServiceAccount and its projected
 `automountServiceAccountToken: false`), the not-ready /
 unreachable tolerations, priority from its PriorityClass, a subset of
 PodSecurity keyed on the namespace's `pod-security.kubernetes.io/enforce`
-label, CronJob schedule validation, and PVC access-mode validation
-(`ReadWriteOncePod` may not be combined with another mode). That is the
+label, CronJob schedule validation, PVC access-mode validation
+(`ReadWriteOncePod` may not be combined with another mode), ConfigMap and
+Secret data-key validation, pod sysctl-name validation, and a pod's
+`status.qosClass`. That is the
 whole chain: **admission webhooks are not called**. Webhook configurations
 are stored and served, and no request reaches a webhook (#82).
 

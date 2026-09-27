@@ -5,6 +5,12 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(admission): validation upstream does and this did not.** ConfigMap
+  and Secret data keys must be 1–253 characters of `[-._a-zA-Z0-9]` (an
+  empty key was stored), a ConfigMap key may not be in both `data` and
+  `binaryData`, and pod sysctl names must be valid and unique — each a 422.
+  A pod gets `status.qosClass` (Guaranteed / Burstable / BestEffort) on
+  create.
 - **fix(controller-manager): Service endpoints.** EndpointSlices carry
   `endpointslice.kubernetes.io/managed-by: endpointslice-controller.k8s.io`,
   and the Service controller deletes the Endpoints and EndpointSlices it made

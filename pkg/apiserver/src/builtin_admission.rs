@@ -19,6 +19,9 @@
 //!   the namespace's `pod-security.kubernetes.io/enforce` label.
 //! - **CronJob schedule** and **PVC access modes** (validating): a
 //!   `ReadWriteOncePod` claim may not name any other mode.
+//! - **Validation** of what upstream's strategies refuse and nothing else here
+//!   checked: ConfigMap and Secret data keys, pod sysctl names. And a pod's
+//!   `status.qosClass`, which upstream sets on create.
 //!
 //! That is all the admission there is: webhooks are not called (#82).
 
@@ -63,6 +66,8 @@ pub async fn admit_create(
         }
         default_toleration_seconds(obj);
         priority_from_class(storage, obj).await;
+        pod_sysctls(obj)?;
+        qos_class(obj);
         // PodSecurity — validate against the namespace's enforce level.
         if let Some(ns_obj) = &ns_obj {
             let level = ns_obj["metadata"]["labels"]
@@ -75,6 +80,10 @@ pub async fn admit_create(
 
     if resource == "cronjobs" {
         cronjob_schedule(obj)?;
+    }
+
+    if resource == "configmaps" || resource == "secrets" {
+        data_keys(resource, obj)?;
     }
 
     if resource == "persistentvolumeclaims" {
@@ -259,6 +268,112 @@ fn service_account_default(obj: &mut Value) {
             .unwrap_or_else(|| json!("default"));
         spec.insert("serviceAccount".into(), name);
     }
+}
+
+/// A ConfigMap or Secret data key, as upstream validates it: 1–253
+/// characters of `[-._a-zA-Z0-9]`, not `.` or `..`, and not in both `data`
+/// and `binaryData`. An empty key was stored (#67: the ConfigMap and Secret
+/// empty-key conformance specs).
+fn data_keys(resource: &str, obj: &Value) -> Result<(), ApiError> {
+    let fields: &[&str] = if resource == "configmaps" { &["data", "binaryData"] } else { &["data", "stringData"] };
+    let valid = |k: &str| {
+        !k.is_empty()
+            && k.len() <= 253
+            && k != "."
+            && k != ".."
+            && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+    };
+    for f in fields {
+        for k in obj[*f].as_object().into_iter().flat_map(|m| m.keys()) {
+            if !valid(k) {
+                return Err(ApiError::invalid(&format!(
+                    "{f}[{k:?}]: Invalid value: {k:?}: a valid config key must consist of alphanumeric \
+                     characters, '-', '_' or '.'"
+                )));
+            }
+        }
+    }
+    if resource == "configmaps" {
+        if let (Some(d), Some(b)) = (obj["data"].as_object(), obj["binaryData"].as_object()) {
+            if let Some(k) = d.keys().find(|k| b.contains_key(*k)) {
+                return Err(ApiError::invalid(&format!("data[{k:?}]: duplicate of key present in binaryData")));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Pod sysctl names: dot- or slash-separated segments of `[a-z0-9_-]`, each
+/// starting and ending alphanumeric, at most 253 characters, none twice.
+/// Invalid names were accepted (#67: the Sysctls conformance spec).
+fn pod_sysctls(obj: &Value) -> Result<(), ApiError> {
+    let Some(sysctls) = obj["spec"]["securityContext"]["sysctls"].as_array() else {
+        return Ok(());
+    };
+    let segment_ok = |s: &str| {
+        let b = s.as_bytes();
+        !b.is_empty()
+            && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+            && (b[b.len() - 1].is_ascii_lowercase() || b[b.len() - 1].is_ascii_digit())
+            && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
+    };
+    let mut seen = std::collections::HashSet::new();
+    for s in sysctls {
+        let name = s["name"].as_str().unwrap_or("");
+        if name.is_empty() || name.len() > 253 || !name.split(['.', '/']).all(segment_ok) {
+            return Err(ApiError::invalid(&format!(
+                "spec.securityContext.sysctls: Invalid value: {name:?}: must be a valid sysctl name"
+            )));
+        }
+        if !seen.insert(name) {
+            return Err(ApiError::invalid(&format!(
+                "spec.securityContext.sysctls: Duplicate value: {name:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A pod's QoS class, set on create as upstream does: Guaranteed when every
+/// container has cpu and memory limits and its requests (defaulting to the
+/// limits) equal them; BestEffort when no container requests or limits
+/// either; Burstable otherwise. It was never set (#67).
+fn qos_class(obj: &mut Value) {
+    let spec = &obj["spec"];
+    let containers: Vec<&Value> = ["containers", "initContainers"]
+        .iter()
+        .flat_map(|k| spec[*k].as_array().into_iter().flatten())
+        .collect();
+    let mut any = false;
+    let mut guaranteed = !containers.is_empty();
+    for c in &containers {
+        let (req, lim) = (&c["resources"]["requests"], &c["resources"]["limits"]);
+        for r in ["cpu", "memory"] {
+            // A quantity may arrive as a string or a bare number.
+            let text = |v: &Value| v.as_str().map(str::to_string).or_else(|| v.as_f64().map(|n| n.to_string()));
+            let amount = |s: &str| {
+                if r == "cpu" {
+                    apimachinery::quantity::parse_cpu_millis(s)
+                } else {
+                    apimachinery::quantity::parse_bytes(s)
+                }
+            };
+            let (rq, lm) = (text(&req[r]), text(&lim[r]));
+            if rq.is_some() || lm.is_some() {
+                any = true;
+            }
+            match (rq, lm) {
+                (_, None) => guaranteed = false,
+                (Some(q), Some(l)) if amount(&q) != amount(&l) => guaranteed = false,
+                _ => {}
+            }
+        }
+    }
+    let class = if guaranteed { "Guaranteed" } else if any { "Burstable" } else { "BestEffort" };
+    if !obj["status"].is_object() {
+        obj["status"] = json!({});
+    }
+    obj["status"]["qosClass"] = json!(class);
 }
 
 /// Where a container finds its ServiceAccount credentials.
@@ -608,5 +723,47 @@ mod sa_token_tests {
         let mut p = pod(Some(true));
         service_account_token_volume(&s, "n", &mut p).await;
         assert_eq!(mounted(&p), 2, "the pod's choice wins");
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn data_keys_are_validated() {
+        assert!(data_keys("configmaps", &json!({"data": {"a.b-c_1": "x"}})).is_ok());
+        assert!(data_keys("configmaps", &json!({"data": {"": "x"}})).is_err());
+        assert!(data_keys("secrets", &json!({"data": {"": "eA=="}})).is_err());
+        assert!(data_keys("secrets", &json!({"stringData": {"a/b": "x"}})).is_err());
+        assert!(data_keys("configmaps", &json!({"data": {"..": "x"}})).is_err());
+        assert!(data_keys("configmaps", &json!({"data": {"k": "x"}, "binaryData": {"k": "eA=="}})).is_err());
+    }
+
+    #[test]
+    fn sysctl_names_are_validated() {
+        let pod = |names: &[&str]| json!({"spec": {"securityContext": {"sysctls":
+            names.iter().map(|n| json!({"name": n, "value": "1"})).collect::<Vec<_>>()}}});
+        assert!(pod_sysctls(&pod(&["kernel.shm_rmid_forced", "net.ipv4.conf/eth0.forwarding"])).is_ok());
+        for bad in ["foo-", "bar..", "", "Kernel.x", "a..b"] {
+            assert!(pod_sysctls(&pod(&[bad])).is_err(), "{bad:?}");
+        }
+        assert!(pod_sysctls(&pod(&["kernel.msgmax", "kernel.msgmax"])).is_err());
+    }
+
+    #[test]
+    fn qos_class_is_set() {
+        let pod = |res: Value| {
+            let mut p = json!({"spec": {"containers": [{"name": "c", "resources": res}]}});
+            qos_class(&mut p);
+            p["status"]["qosClass"].as_str().unwrap().to_string()
+        };
+        assert_eq!(pod(json!({})), "BestEffort");
+        assert_eq!(pod(json!({"requests": {"cpu": "100m"}})), "Burstable");
+        assert_eq!(pod(json!({"limits": {"cpu": "1", "memory": "1Gi"}})), "Guaranteed");
+        assert_eq!(pod(json!({"requests": {"cpu": "1000m", "memory": "1Gi"},
+                              "limits": {"cpu": "1", "memory": "1Gi"}})), "Guaranteed");
+        assert_eq!(pod(json!({"requests": {"cpu": "500m", "memory": "1Gi"},
+                              "limits": {"cpu": "1", "memory": "1Gi"}})), "Burstable");
     }
 }
