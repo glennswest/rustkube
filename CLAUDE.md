@@ -216,7 +216,10 @@ when each piece landed.
     ReplicationController #125, Table 406 #126; list kinds on #110. Not yet
     triaged: CRD /status spec mismatch (probe with RK_WHY_LINES=40),
     OrderedNamespaceDeletion, GC dependency circle — rerun first.
-    Chunks to relaunch at the fixed commit (`tmp/chunks.sh`, logs `tmp/conf-*.log`).
+    Unit tests pass at 2e5dcb9 (after #129/#130, test-only). All six chunks
+    + a CRD /status probe launched at 2e5dcb9 (`tmp/chunks.sh`, logs
+    `tmp/conf-*.log`; the pre-fix api-machinery log is
+    `tmp/conf-apimachinery-5ebe056.log`).
   - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
     docs/conformance.md: RK_PORT_OFFSET side by side, RK_SUITE_TIMEOUT=45m)
     and the focused webhook probe with
