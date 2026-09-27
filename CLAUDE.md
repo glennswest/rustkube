@@ -232,8 +232,15 @@ when each piece landed.
   - **Filed from it:** LimitRanger #131, NodePort/type-change #132,
     EndpointSliceMirroring #133, ServiceCIDR/IPAddress #134, RuntimeClass
     #135, pod resize #136, DRA #137.
-  - **Next:** unit tests at head, triage apps, rerun all chunks at head,
-    write the results table into docs/conformance.md, close #67.
+  - **2026-09-27, owner's rule: conformance no longer runs in build slots.**
+    The last in-slot run (six chunks at 430b268, logs `tmp/conf-*.log`;
+    the 2e5dcb9 run is in `tmp/run-2e5dcb9/`) is allowed to finish; no new
+    ones. From ab130be: `sc-build test/conformance/stage.sh` once per commit
+    → /build/assets/conformance/<sha>, then the chunks run on conform.g8.lo
+    with RK_BIN/RK_FASTETCD (docs/conformance.md). conform.g8.lo did not
+    resolve yet on 2026-09-27.
+  - **Next:** triage the 430b268 run, write the results table into
+    docs/conformance.md; further runs only on conform.g8.lo; close #67.
   - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
     docs/conformance.md: RK_PORT_OFFSET side by side, RK_SUITE_TIMEOUT=45m)
     and the focused webhook probe with
