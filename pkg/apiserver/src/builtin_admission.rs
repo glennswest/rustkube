@@ -4,7 +4,10 @@
 //! - **NamespaceLifecycle** (validating): reject writes into a namespace that is
 //!   missing or being terminated.
 //! - **ServiceAccount** (mutating): default a Pod's `serviceAccountName` to
-//!   `default`.
+//!   `default`, and mount its API credentials — the projected
+//!   `kube-api-access-*` volume (token, `ca.crt`, namespace) at
+//!   `/var/run/secrets/kubernetes.io/serviceaccount` in every container —
+//!   unless the pod or its ServiceAccount opts out.
 //! - **DefaultTolerationSeconds** (mutating): add the not-ready/unreachable
 //!   NoExecute tolerations (300s) to Pods that lack them.
 //! - **Namespace defaults** (mutating): `status.phase: Active` and the
@@ -55,6 +58,9 @@ pub async fn admit_create(
 
     if resource == "pods" {
         service_account_default(obj);
+        if let Some(ns) = namespace {
+            service_account_token_volume(storage, ns, obj).await;
+        }
         default_toleration_seconds(obj);
         priority_from_class(storage, obj).await;
         // PodSecurity — validate against the namespace's enforce level.
@@ -252,6 +258,87 @@ fn service_account_default(obj: &mut Value) {
             .cloned()
             .unwrap_or_else(|| json!("default"));
         spec.insert("serviceAccount".into(), name);
+    }
+}
+
+/// Where a container finds its ServiceAccount credentials.
+const SA_MOUNT_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
+
+/// ServiceAccount admission's token mount, as upstream: a projected volume of
+/// a bound token (3607 s), the namespace's `kube-root-ca.crt` and the pod's
+/// namespace, mounted read-only at `SA_MOUNT_PATH` in every container and
+/// init container that does not already mount something there.
+///
+/// Skipped when `spec.automountServiceAccountToken` is false, or it is unset
+/// and the ServiceAccount's is false — the opt-out the conformance suite
+/// checks (#67) — and when a volume of that name is already there. The
+/// kubelet (rustkube-node) materializes all three sources.
+async fn service_account_token_volume(storage: &ResourceStorage, namespace: &str, obj: &mut Value) {
+    let automount = match obj["spec"]["automountServiceAccountToken"].as_bool() {
+        Some(b) => b,
+        None => {
+            let sa = obj["spec"]["serviceAccountName"].as_str().unwrap_or("default").to_string();
+            let key = ResourceStorage::namespaced_key("serviceaccounts", namespace, &sa);
+            storage
+                .get(&key)
+                .await
+                .ok()
+                .and_then(|sa| sa["automountServiceAccountToken"].as_bool())
+                .unwrap_or(true)
+        }
+    };
+    if !automount {
+        return;
+    }
+    let Some(spec) = obj.get_mut("spec").and_then(|s| s.as_object_mut()) else {
+        return;
+    };
+    let mounts_path = |c: &Value| {
+        c["volumeMounts"]
+            .as_array()
+            .is_some_and(|ms| ms.iter().any(|m| m["mountPath"].as_str() == Some(SA_MOUNT_PATH)))
+    };
+    let volumes = spec.entry("volumes").or_insert_with(|| json!([]));
+    let Some(volumes) = volumes.as_array_mut() else { return };
+    if volumes
+        .iter()
+        .any(|v| v["name"].as_str().is_some_and(|n| n.starts_with("kube-api-access-")))
+    {
+        return;
+    }
+    const ALPHABET: &[u8] = b"bcdfghjklmnpqrstvwxz2456789";
+    let suffix: String = uuid::Uuid::new_v4()
+        .as_bytes()
+        .iter()
+        .take(5)
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect();
+    let name = format!("kube-api-access-{suffix}");
+    volumes.push(json!({
+        "name": name,
+        "projected": {
+            "defaultMode": 420,
+            "sources": [
+                { "serviceAccountToken": { "expirationSeconds": 3607, "path": "token" } },
+                { "configMap": { "name": "kube-root-ca.crt",
+                                 "items": [ { "key": "ca.crt", "path": "ca.crt" } ] } },
+                { "downwardAPI": { "items": [ { "path": "namespace",
+                    "fieldRef": { "apiVersion": "v1", "fieldPath": "metadata.namespace" } } ] } }
+            ]
+        }
+    }));
+    for key in ["containers", "initContainers"] {
+        if let Some(cs) = spec.get_mut(key).and_then(Value::as_array_mut) {
+            for c in cs.iter_mut() {
+                if mounts_path(c) || !c.is_object() {
+                    continue;
+                }
+                let ms = c.as_object_mut().unwrap().entry("volumeMounts").or_insert_with(|| json!([]));
+                if let Some(ms) = ms.as_array_mut() {
+                    ms.push(json!({ "name": name, "mountPath": SA_MOUNT_PATH, "readOnly": true }));
+                }
+            }
+        }
     }
 }
 
@@ -461,5 +548,65 @@ mod namespace_tests {
         assert!(!namespace_defaults(&mut ns));
         assert_eq!(ns["status"]["phase"], "Terminating");
         assert_eq!(ns["spec"]["finalizers"], json!([]));
+    }
+}
+
+#[cfg(test)]
+mod sa_token_tests {
+    use super::*;
+    use crate::test_store::MemStore;
+    use std::sync::Arc;
+
+    fn pod(automount: Option<bool>) -> Value {
+        let mut p = json!({"metadata": {"name": "p", "namespace": "n"},
+                           "spec": {"serviceAccountName": "default",
+                                    "containers": [{"name": "a"}, {"name": "b"}]}});
+        if let Some(a) = automount {
+            p["spec"]["automountServiceAccountToken"] = json!(a);
+        }
+        p
+    }
+
+    fn mounted(p: &Value) -> usize {
+        p["spec"]["containers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["volumeMounts"].as_array().is_some_and(|ms| {
+                ms.iter().any(|m| m["mountPath"] == SA_MOUNT_PATH)
+            }))
+            .count()
+    }
+
+    /// Mounted by default; not when the pod or its ServiceAccount opts out,
+    /// the pod's choice winning (#67).
+    #[tokio::test]
+    async fn the_token_volume_follows_automount() {
+        let s = ResourceStorage::new(Arc::new(MemStore::default()));
+        let mut p = pod(None);
+        service_account_token_volume(&s, "n", &mut p).await;
+        assert_eq!(mounted(&p), 2);
+        let vol = &p["spec"]["volumes"][0];
+        assert!(vol["name"].as_str().unwrap().starts_with("kube-api-access-"));
+        assert_eq!(vol["projected"]["sources"][0]["serviceAccountToken"]["path"], "token");
+        // Idempotent: a second pass adds nothing.
+        service_account_token_volume(&s, "n", &mut p).await;
+        assert_eq!(p["spec"]["volumes"].as_array().unwrap().len(), 1);
+
+        let mut p = pod(Some(false));
+        service_account_token_volume(&s, "n", &mut p).await;
+        assert_eq!(mounted(&p), 0);
+
+        s.create(&ResourceStorage::namespaced_key("serviceaccounts", "n", "default"),
+                 json!({"metadata": {"name": "default", "namespace": "n"},
+                        "automountServiceAccountToken": false}))
+            .await
+            .unwrap();
+        let mut p = pod(None);
+        service_account_token_volume(&s, "n", &mut p).await;
+        assert_eq!(mounted(&p), 0, "the ServiceAccount opted out");
+        let mut p = pod(Some(true));
+        service_account_token_volume(&s, "n", &mut p).await;
+        assert_eq!(mounted(&p), 2, "the pod's choice wins");
     }
 }

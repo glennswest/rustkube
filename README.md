@@ -143,7 +143,9 @@ the namespace cascade takes everything in it.
 
 **Admission**, on create: NamespaceLifecycle, namespace defaults (`Active`,
 the `kubernetes` finalizer), Service port defaults and ClusterIP allocation
-from `--service-cidr`, the pod's default ServiceAccount, the not-ready /
+from `--service-cidr`, the pod's default ServiceAccount and its projected
+`kube-api-access-*` token volume (unless the pod or ServiceAccount sets
+`automountServiceAccountToken: false`), the not-ready /
 unreachable tolerations, priority from its PriorityClass, a subset of
 PodSecurity keyed on the namespace's `pod-security.kubernetes.io/enforce`
 label, CronJob schedule validation, and PVC access-mode validation

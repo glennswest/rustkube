@@ -5,6 +5,13 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **feat(admission): ServiceAccount admission mounts the API credentials.**
+  A pod gets upstream's projected `kube-api-access-*` volume (bound token,
+  `kube-root-ca.crt`, namespace) mounted read-only at
+  `/var/run/secrets/kubernetes.io/serviceaccount` in every container, unless
+  it or its ServiceAccount sets `automountServiceAccountToken: false` or a
+  container already mounts that path. rustkube-node already materializes
+  such a volume, and mounts its own only when none was injected.
 - **fix(create): `metadata.generateName` is honoured.** A create with no name
   (or `"name": ""`, which every protobuf create carries) and a
   `generateName` gets the prefix plus five random characters, as upstream.
