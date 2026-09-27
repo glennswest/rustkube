@@ -18,6 +18,8 @@
 #
 # sc-build ends a job at two hours and a full run is longer: on the build box
 # run it by SIG, one sc-build each (docs/conformance.md has the loop).
+# RK_PORT_OFFSET (test/e2e/lib.sh) lets chunks run side by side;
+# RK_SUITE_TIMEOUT (default 100m) cuts hung specs off sooner.
 #
 # Output: one line per spec, `RESULT <passed|failed|skipped> <seconds> <name>`,
 # followed by its first failure line — that is the triage input. The binaries
@@ -83,9 +85,10 @@ for n in json.load(sys.stdin).get("items",[]):
 
 # --- run ------------------------------------------------------------------------
 mkdir -p "$W/report"
-# 100 minutes, under sc-build's two-hour limit: a spec that hangs is then
-# reported as the one that timed out, and the report is still written.
-"$E2E/$V/ginkgo" -p --procs=16 --timeout=100m --no-color --silence-skips \
+# Under sc-build's two-hour limit, so a spec that hangs is reported as the
+# one that timed out and the report is still written. A healthy chunk is done
+# in 20 minutes; the rest of the time is hung specs waiting to be cut off.
+"$E2E/$V/ginkgo" -p --procs=16 --timeout="${RK_SUITE_TIMEOUT:-100m}" --no-color --silence-skips \
   "$E2E/$V/e2e.test" -- \
   --kubeconfig="$W/kubeconfig" --provider=skeleton \
   --ginkgo.focus="$FOCUS" \
@@ -130,3 +133,9 @@ fi
 echo "---- what the first failure was waiting on"
 grep -m1 -B14 "\[FAILED\]" "$W/e2e.log" | grep -E "STEP|Waiting|wait|FAILED" | cut -c1-250
 echo "---- e2e.log (tail)"; tail -15 "$W/e2e.log"
+# RK_LOG_GREP=<regex>: the apiserver's and controller-manager's log lines that
+# match, for chasing one failure.
+if [ -n "${RK_LOG_GREP:-}" ]; then
+  echo "---- apiserver log matching $RK_LOG_GREP"; grep -E "$RK_LOG_GREP" "$W/apiserver.log" | tail -60 | cut -c1-400
+  echo "---- controller-manager log matching $RK_LOG_GREP"; grep -E "$RK_LOG_GREP" "$W/cm.log" | tail -30 | cut -c1-400
+fi

@@ -9,14 +9,17 @@
 #   pass/fail, FAIL, report
 #
 # Needs cargo, git, openssl and curl, and network access to fetch fastetcd.
-# Ports: 36443 (apiserver), 32379-32381 (fastetcd).
+# Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
+# each, so two runs can share the build box.
 set -u
 mkdir -p "$HOME/tmp" && export TMPDIR="$HOME/tmp"
 W=$(mktemp -d)
 cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
 
-PORT=36443
+OFF=${RK_PORT_OFFSET:-0}
+PORT=$((36443 + OFF))
+ETCD=$((32379 + OFF))
 API=https://127.0.0.1:$PORT
 FAIL=0
 pass() { echo "PASS  $*"; }
@@ -66,19 +69,19 @@ if [ -d /dev/shm ] && [ -w /dev/shm ]; then
   DATA=$(mktemp -d /dev/shm/rustkube-e2e.XXXXXX)
   trap 'cleanup; rm -rf "$DATA"' EXIT
 fi
-"$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:32379 \
-  --listen-peer-urls http://127.0.0.1:32380 --listen-metrics-url 127.0.0.1:32381 \
+"$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:$ETCD \
+  --listen-peer-urls http://127.0.0.1:$((ETCD + 1)) --listen-metrics-url 127.0.0.1:$((ETCD + 2)) \
   >"$W/fastetcd.log" 2>&1 &
 # fastetcd first: an apiserver that outwaits its 60s datastore gate boots
 # into a hole.
 for _ in $(seq 180); do
-  (exec 3<>/dev/tcp/127.0.0.1/32379) 2>/dev/null && break
+  (exec 3<>/dev/tcp/127.0.0.1/$ETCD) 2>/dev/null && break
   sleep 1
 done
-(exec 3<>/dev/tcp/127.0.0.1/32379) 2>/dev/null || { echo "fastetcd never listened"; tail -40 "$W/fastetcd.log"; exit 100; }
+(exec 3<>/dev/tcp/127.0.0.1/$ETCD) 2>/dev/null || { echo "fastetcd never listened"; tail -40 "$W/fastetcd.log"; exit 100; }
 "$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $PORT \
   --tls-cert-file "$W/apiserver.crt" --tls-private-key-file "$W/apiserver.key" \
-  --etcd-servers http://127.0.0.1:32379 --anonymous-auth false \
+  --etcd-servers http://127.0.0.1:$ETCD --anonymous-auth false \
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
   >"$W/apiserver.log" 2>&1 &
 # Six minutes: on a loaded build box the bootstrap writes alone have taken

@@ -4,6 +4,12 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-27 (conformance, #67)
+- **test:** the e2e rig's ports move by `RK_PORT_OFFSET`, so conformance
+  chunks run side by side on the build box; `RK_SUITE_TIMEOUT` sets the
+  suite timeout and `RK_LOG_GREP` prints matching apiserver and
+  controller-manager log lines.
+
 ### 2026-09-26 (conformance, #67)
 - **feat(controller-manager): the root CA publisher.** Every namespace that is
   not terminating gets the `kube-root-ca.crt` ConfigMap (`ca.crt`), and has it

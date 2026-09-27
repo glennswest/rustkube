@@ -23,14 +23,21 @@ cannot tell, and what it found (#67).
   message and where it failed.
 
 sc-build ends a job at two hours, and a whole run is longer, so on dev it is
-run in chunks by SIG, one sc-build each:
+run in chunks by SIG, one sc-build each. `RK_PORT_OFFSET` moves the rig's
+ports so chunks run side by side, and `RK_SUITE_TIMEOUT` (default `100m`)
+cuts off specs that hang — a chunk's real work is done in about 20 minutes:
 
 ```bash
+i=0
 for f in 'sig-api-machinery' 'sig-apps' 'sig-(auth|cli|instrumentation|architecture|scheduling)' \
          'sig-network' 'sig-node' 'sig-storage'; do
-  sc-build "bash test/conformance/run.sh '\[$f\].*\[Conformance\]'"
-done
+  i=$((i + 10))
+  sc-build "RK_PORT_OFFSET=$i RK_SUITE_TIMEOUT=45m bash test/conformance/run.sh '\[$f\].*\[Conformance\]'" &
+done; wait
 ```
+
+To chase one failure, focus on it and set `RK_LOG_GREP` to a regex: the
+matching apiserver and controller-manager log lines are printed at the end.
 
 ## What this run can and cannot say
 
