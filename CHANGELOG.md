@@ -5,6 +5,13 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(protobuf): CRD schemas keep `x-kubernetes-*`, `$ref` and `$schema`.**
+  A CRD created or updated over protobuf (cilium-operator, any typed
+  apiextensions client) was stored with those JSONSchemaProps fields under
+  their proto names (`xKubernetesPreserveUnknownFields`, `ref`, …), which no
+  JSON client reads, so a JSON GET showed them unset. Both directions now use
+  Kubernetes' names; a CRD stored before this keeps the old keys until its
+  next write (they still encode correctly to protobuf).
 - **fix(apiserver): PodTemplate, ReplicationController, ResourceQuota and
   LimitRange lists have their real kinds and are in `/api/v1` discovery.**
   They were listed as `podtemplatesList` etc., which client-go refuses, and

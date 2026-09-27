@@ -224,6 +224,41 @@ const RAW_EXTENSION: &str = "k8s.io.apimachinery.pkg.runtime.RawExtension";
 // these, a CRD's openAPIV3Schema round-trips into the wrong JSON shape.
 const AEXT: &str = "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1";
 const AEXT_JSON: &str = "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1.JSON";
+const AEXT_PROPS: &str = "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1.JSONSchemaProps";
+
+/// Fields whose Kubernetes JSON name is not the proto `json_name`.
+///
+/// Everywhere else the proto field name *is* the Go JSON tag, but
+/// JSONSchemaProps names its extensions `x-kubernetes-*` and its refs `$ref`
+/// and `$schema`. Decoding them under the proto names stored every CRD
+/// created over protobuf with `xKubernetesPreserveUnknownFields` in its
+/// schema — a key no JSON client knows, so a JSON read of the CRD said the
+/// field was unset (#67, the CRD status-subresource conformance spec).
+const K8S_JSON_NAMES: &[(&str, &str, &str)] = &[
+    (AEXT_PROPS, "ref", "$ref"),
+    (AEXT_PROPS, "schema", "$schema"),
+    (AEXT_PROPS, "xKubernetesPreserveUnknownFields", "x-kubernetes-preserve-unknown-fields"),
+    (AEXT_PROPS, "xKubernetesEmbeddedResource", "x-kubernetes-embedded-resource"),
+    (AEXT_PROPS, "xKubernetesIntOrString", "x-kubernetes-int-or-string"),
+    (AEXT_PROPS, "xKubernetesListMapKeys", "x-kubernetes-list-map-keys"),
+    (AEXT_PROPS, "xKubernetesListType", "x-kubernetes-list-type"),
+    (AEXT_PROPS, "xKubernetesMapType", "x-kubernetes-map-type"),
+    (AEXT_PROPS, "xKubernetesValidations", "x-kubernetes-validations"),
+];
+
+/// The JSON key for `field` of message `msg`, as Kubernetes spells it.
+fn k8s_json_key(msg: &str, field: &prost_reflect::FieldDescriptor) -> String {
+    K8S_JSON_NAMES
+        .iter()
+        .find(|(m, f, _)| *m == msg && *f == field.name())
+        .map(|(_, _, j)| j.to_string())
+        .unwrap_or_else(|| field.json_name().to_string())
+}
+
+/// The proto field name behind a Kubernetes-spelled JSON key, when the two differ.
+fn proto_field_for_k8s_key(msg: &str, key: &str) -> Option<&'static str> {
+    K8S_JSON_NAMES.iter().find(|(m, _, j)| *m == msg && *j == key).map(|(_, f, _)| *f)
+}
 const AEXT_PROPS_OR_BOOL: &str =
     "k8s.io.apiextensions_apiserver.pkg.apis.apiextensions.v1.JSONSchemaPropsOrBool";
 const AEXT_PROPS_OR_ARRAY: &str =
@@ -366,6 +401,7 @@ fn message_to_json(msg: &DynamicMessage) -> Value {
     }
 
     let mut obj = Map::new();
+    let msg_name = msg.descriptor().full_name().to_string();
     for field in msg.descriptor().fields() {
         let value = msg.get_field(&field);
         match value.as_ref() {
@@ -374,7 +410,7 @@ fn message_to_json(msg: &DynamicMessage) -> Value {
                     continue;
                 }
                 let arr: Vec<Value> = items.iter().map(pb_scalar_or_msg_to_json).collect();
-                obj.insert(field.json_name().to_string(), Value::Array(arr));
+                obj.insert(k8s_json_key(&msg_name, &field), Value::Array(arr));
             }
             PbValue::Map(entries) => {
                 if entries.is_empty() {
@@ -384,7 +420,7 @@ fn message_to_json(msg: &DynamicMessage) -> Value {
                 for (k, v) in entries {
                     mo.insert(map_key_to_string(k), pb_scalar_or_msg_to_json(v));
                 }
-                obj.insert(field.json_name().to_string(), Value::Object(mo));
+                obj.insert(k8s_json_key(&msg_name, &field), Value::Object(mo));
             }
             _ => {
                 // Singular: include only if explicitly present, so unset proto2
@@ -393,7 +429,7 @@ fn message_to_json(msg: &DynamicMessage) -> Value {
                     continue;
                 }
                 obj.insert(
-                    field.json_name().to_string(),
+                    k8s_json_key(&msg_name, &field),
                     pb_scalar_or_msg_to_json(value.as_ref()),
                 );
             }
@@ -476,6 +512,7 @@ fn json_to_message(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMess
         let field = match desc
             .get_field_by_json_name(key)
             .or_else(|| desc.get_field_by_name(key))
+            .or_else(|| proto_field_for_k8s_key(desc.full_name(), key).and_then(|f| desc.get_field_by_name(f)))
         {
             Some(f) => f,
             None => continue, // unknown field: ignore (server is authoritative)
@@ -938,6 +975,43 @@ mod tests {
         );
         // items: single-schema union survives.
         assert_eq!(schema["properties"]["tags"]["items"]["type"], "string");
+    }
+
+    /// JSONSchemaProps' `x-kubernetes-*`, `$ref` and `$schema` keep their
+    /// Kubernetes spelling through protobuf in both directions (#67); the
+    /// proto spelling a pre-fix store holds still encodes.
+    #[test]
+    fn schema_extensions_keep_their_kubernetes_names() {
+        let crd = |schema: Value| json!({
+            "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+            "metadata": { "name": "foos.example.com" },
+            "spec": { "group": "example.com", "scope": "Cluster",
+                      "names": { "plural": "foos", "kind": "Foo" },
+                      "versions": [{ "name": "v1", "served": true, "storage": true,
+                                     "schema": { "openAPIV3Schema": schema } }] }
+        });
+        let schema_of = |v: &Value| v["spec"]["versions"][0]["schema"]["openAPIV3Schema"].clone();
+        let sent = crd(json!({
+            "type": "object", "$schema": "http://json-schema.org/draft-04/schema#",
+            "x-kubernetes-preserve-unknown-fields": true,
+            "properties": { "l": { "type": "array", "items": { "type": "object" },
+                                   "x-kubernetes-list-type": "map",
+                                   "x-kubernetes-list-map-keys": ["name"] },
+                            "n": { "x-kubernetes-int-or-string": true } }
+        }));
+        let wire = encode_from_json(&sent, "apiextensions.k8s.io/v1", "CustomResourceDefinition").unwrap();
+        let back = schema_of(&decode_to_json(&wire, "", "").unwrap());
+        assert_eq!(back["x-kubernetes-preserve-unknown-fields"], true);
+        assert_eq!(back["$schema"], "http://json-schema.org/draft-04/schema#");
+        assert_eq!(back["properties"]["l"]["x-kubernetes-list-type"], "map");
+        assert_eq!(back["properties"]["l"]["x-kubernetes-list-map-keys"], json!(["name"]));
+        assert_eq!(back["properties"]["n"]["x-kubernetes-int-or-string"], true);
+        assert!(back.get("xKubernetesPreserveUnknownFields").is_none());
+
+        let old = crd(json!({ "type": "object", "xKubernetesPreserveUnknownFields": true }));
+        let wire = encode_from_json(&old, "apiextensions.k8s.io/v1", "CustomResourceDefinition").unwrap();
+        let back = schema_of(&decode_to_json(&wire, "", "").unwrap());
+        assert_eq!(back["x-kubernetes-preserve-unknown-fields"], true);
     }
 
     #[test]
