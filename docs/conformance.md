@@ -38,6 +38,8 @@ done; wait
 
 To chase one failure, focus on it and set `RK_LOG_GREP` to a regex: the
 matching apiserver and controller-manager log lines are printed at the end.
+`RK_WHY_LINES=40` prints that many more lines of each failure message, which
+is where a `Failf` with a diff puts the diff.
 
 ## What this run can and cannot say
 

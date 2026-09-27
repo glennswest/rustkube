@@ -19,7 +19,8 @@
 # sc-build ends a job at two hours and a full run is longer: on the build box
 # run it by SIG, one sc-build each (docs/conformance.md has the loop).
 # RK_PORT_OFFSET (test/e2e/lib.sh) lets chunks run side by side;
-# RK_SUITE_TIMEOUT (default 100m) cuts hung specs off sooner.
+# RK_SUITE_TIMEOUT (default 100m) cuts hung specs off sooner; RK_WHY_LINES
+# prints that many more lines of each failure message (a diff, say).
 #
 # Output: one line per spec, `RESULT <passed|failed|skipped> <seconds> <name>`,
 # followed by its first failure line — that is the triage input. The binaries
@@ -99,7 +100,7 @@ echo "ginkgo exit $?"
 
 # --- per-spec results, for triage ----------------------------------------------
 python3 - "$W/report" <<'PY'
-import glob, sys, xml.etree.ElementTree as ET
+import glob, os, sys, xml.etree.ElementTree as ET
 counts = {}
 for f in sorted(glob.glob(sys.argv[1] + "/**/*.xml", recursive=True)):
     for tc in ET.parse(f).getroot().iter("testcase"):
@@ -119,6 +120,10 @@ for f in sorted(glob.glob(sys.argv[1] + "/**/*.xml", recursive=True)):
             msg = ((node.get("message") or "") + "\n" + (node.text or "")).strip()
             lines = [l.strip() for l in msg.splitlines() if l.strip()]
             print("  WHY " + (lines[0][:300] if lines else "(no message)"))
+            # RK_WHY_LINES=n: the next n lines of the message too — a
+            # Failf with a diff puts the diff there.
+            for l in lines[1:1 + int(os.environ.get("RK_WHY_LINES", "0"))]:
+                print("      | " + l[:300])
             # Where it failed and what it was doing: the STEP lines and the
             # location, which is what a triage needs beyond the message.
             for l in [l for l in lines[1:] if "STEP" in l or "In [" in l or ".go:" in l][:6]:
