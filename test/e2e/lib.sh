@@ -8,7 +8,12 @@
 #   ADMIN    a system:masters bearer token; token <user> <groups-json> mints more
 #   pass/fail, FAIL, report
 #
-# Needs cargo, git, openssl and curl, and network access to fetch fastetcd.
+# Needs cargo, git, openssl and curl, and network access to fetch fastetcd —
+# unless it is handed prebuilt binaries, which is how the conformance VM runs
+# it (no toolchain, no build slot):
+#   RK_BIN       directory holding kube-apiserver, kube-controller-manager and
+#                kube-scheduler (test/conformance/stage.sh builds and publishes it)
+#   RK_FASTETCD  path to a fastetcd server binary
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
 # each, so two runs can share the build box.
 set -u
@@ -25,13 +30,25 @@ FAIL=0
 pass() { echo "PASS  $*"; }
 fail() { echo "FAIL  $*"; FAIL=$((FAIL + 1)); }
 
-# --- build ------------------------------------------------------------------
-export CARGO_TARGET_DIR=$HOME/target/rustkube-e2e
-cargo build -q -p kube-apiserver -p kube-controller-manager -p kube-scheduler || exit 100
-BIN=$CARGO_TARGET_DIR/debug
-git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
-(cd "$W/fastetcd" && CARGO_TARGET_DIR=$HOME/target/fastetcd-e2e cargo build -q -p fastetcd-server) || exit 100
-FASTETCD=$(ls "$HOME"/target/fastetcd-e2e/debug/fastetcd* | grep -v '\.d$' | head -1)
+# --- build (or take prebuilt binaries) ---------------------------------------
+if [ -n "${RK_BIN:-}" ]; then
+  BIN=$RK_BIN
+  for b in kube-apiserver kube-controller-manager kube-scheduler; do
+    [ -x "$BIN/$b" ] || { echo "RK_BIN=$BIN has no $b"; exit 100; }
+  done
+else
+  export CARGO_TARGET_DIR=$HOME/target/rustkube-e2e
+  cargo build -q -p kube-apiserver -p kube-controller-manager -p kube-scheduler || exit 100
+  BIN=$CARGO_TARGET_DIR/debug
+fi
+if [ -n "${RK_FASTETCD:-}" ]; then
+  FASTETCD=$RK_FASTETCD
+  [ -x "$FASTETCD" ] || { echo "RK_FASTETCD=$FASTETCD is not executable"; exit 100; }
+else
+  git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
+  (cd "$W/fastetcd" && CARGO_TARGET_DIR=$HOME/target/fastetcd-e2e cargo build -q -p fastetcd-server) || exit 100
+  FASTETCD=$(ls "$HOME"/target/fastetcd-e2e/debug/fastetcd* | grep -v '\.d$' | head -1)
+fi
 
 # --- credentials --------------------------------------------------------------
 openssl genrsa -out "$W/sa.key" 2048 2>/dev/null

@@ -5,6 +5,12 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **test:** Conformance runs take prebuilt binaries (`RK_BIN`, `RK_FASTETCD` in
+  `test/e2e/lib.sh`), so they no longer need a build slot.
+  `test/conformance/stage.sh` builds them once per commit and publishes them
+  to `/build/assets/conformance/<sha>` with a MANIFEST, for a conformance VM
+  that has no toolchain. Four chunks running in build slots had taken dev to
+  load 48
 - **fix(status): a status write keeps its label and annotation changes and
   never its spec changes.** `/status` PATCH and PUT applied only `status`, so
   an annotation set in the same write was lost; a JSON Patch to `/status`

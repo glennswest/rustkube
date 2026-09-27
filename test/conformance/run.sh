@@ -16,8 +16,11 @@
 # what a run on real stormcos nodes is for. Specs that only need the API pass
 # or fail on their merits.
 #
-# sc-build ends a job at two hours and a full run is longer: on the build box
-# run it by SIG, one sc-build each (docs/conformance.md has the loop).
+# It runs on the conformance VM, not in a build slot: stage the binaries once
+# with `sc-build test/conformance/stage.sh`, then on the VM
+#   RK_BIN=<staged>/bin RK_FASTETCD=<staged>/fastetcd test/conformance/run.sh
+# (docs/conformance.md). Run by SIG, chunks side by side with RK_PORT_OFFSET.
+# Without RK_BIN it still builds from the checkout, as it did in sc-build.
 # RK_PORT_OFFSET (test/e2e/lib.sh) lets chunks run side by side;
 # RK_SUITE_TIMEOUT (default 100m) cuts hung specs off sooner; RK_WHY_LINES
 # prints that many more lines of each failure message (a diff, say).

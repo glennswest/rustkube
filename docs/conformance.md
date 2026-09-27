@@ -7,14 +7,15 @@ cannot tell, and what it found (#67).
 
 ## How it runs
 
-`test/conformance/run.sh [focus-regex]`, from the checkout, on the build box:
+`test/conformance/run.sh [focus-regex]`, from the checkout:
 
-- builds kube-apiserver, kube-controller-manager and kube-scheduler from the
-  checkout and starts them on a fresh fastetcd (the shared setup is
-  `test/e2e/lib.sh`: a throwaway CA and serving cert, the store on tmpfs);
+- starts kube-apiserver, kube-controller-manager and kube-scheduler on a fresh
+  fastetcd (the shared setup is `test/e2e/lib.sh`: a throwaway CA and serving
+  cert, the store on tmpfs). With `RK_BIN`/`RK_FASTETCD` it uses prebuilt
+  binaries; without them it builds both from source;
 - fetches upstream's `e2e.test` and `ginkgo` for the release matching the API
   posture the apiserver reports (1.36 — `stable-1.36.txt`), cached in
-  `$HOME/target/k8s-e2e` on the build box;
+  `$HOME/target/k8s-e2e`;
 - creates two **stand-in Nodes** — API objects with capacity, addresses and a
   Ready condition, kept Ready by renewing their Leases every 10 s the way a
   kubelet would;
@@ -22,19 +23,33 @@ cannot tell, and what it found (#67).
   `RESULT <passed|failed> <seconds> <name>` line per spec, with the failure
   message and where it failed.
 
-sc-build ends a job at two hours, and a whole run is longer, so on dev it is
-run in chunks by SIG, one sc-build each. `RK_PORT_OFFSET` moves the rig's
-ports so chunks run side by side, and `RK_SUITE_TIMEOUT` (default `100m`)
-cuts off specs that hang — a chunk's real work is done in about 20 minutes:
+### Where it runs: the conformance VM, not a build slot
+
+A run compiles nothing: it is a test workload, and it used to hold dev's
+build slots for 45–90 minutes per chunk (four at once took dev to load 48 on
+2026-09-27 and stalled every project's builds). So the binaries are built
+**once per commit** in one ordinary sc-build, and the suite runs on the
+conformance VM, which has no toolchain:
 
 ```bash
+# 1. on the agent VM, from the checkout (pushed first): build and publish
+sc-build test/conformance/stage.sh       # → STAGED /build/assets/conformance/<sha>
+
+# 2. on the conformance VM: fetch that directory, then run the chunks
+S=/srv/conformance/<sha>                 # copied from dev's /build/assets/conformance/<sha>
 i=0
 for f in 'sig-api-machinery' 'sig-apps' 'sig-(auth|cli|instrumentation|architecture|scheduling)' \
          'sig-network' 'sig-node' 'sig-storage'; do
   i=$((i + 10))
-  sc-build "RK_PORT_OFFSET=$i RK_SUITE_TIMEOUT=45m bash test/conformance/run.sh '\[$f\].*\[Conformance\]'" &
+  RK_BIN=$S/bin RK_FASTETCD=$S/fastetcd RK_PORT_OFFSET=$i RK_SUITE_TIMEOUT=45m \
+    bash test/conformance/run.sh "\[$f\].*\[Conformance\]" > tmp/conf-$i.log 2>&1 &
 done; wait
 ```
+
+`RK_PORT_OFFSET` moves each rig's ports so chunks run side by side, and
+`RK_SUITE_TIMEOUT` (default `100m`) cuts off specs that hang; a chunk's real
+work is done in about 20 minutes. `stage.sh` writes a `MANIFEST` with both
+commits and every binary's sha256, so a result names exactly what it tested.
 
 To chase one failure, focus on it and set `RK_LOG_GREP` to a regex: the
 matching apiserver and controller-manager log lines are printed at the end.
