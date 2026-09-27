@@ -5,6 +5,13 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(create): an empty `metadata.namespace` is the URL's namespace.** A
+  protobuf create (every client-go typed client) sends `"namespace": ""`,
+  and the object was stored and returned with it empty, so the client's next
+  GET went to `/apis/apps/v1/deployments/{name}` and was answered
+  `resource "deployments" not found` — every admission-webhook, conversion
+  and aggregator spec failed on its server Deployment. A body naming a
+  different namespace than the URL is now refused with 400, as upstream.
 - **test:** the e2e rig's ports move by `RK_PORT_OFFSET`, so conformance
   chunks run side by side on the build box; `RK_SUITE_TIMEOUT` sets the
   suite timeout and `RK_LOG_GREP` prints matching apiserver and

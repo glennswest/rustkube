@@ -328,6 +328,7 @@ pub async fn create_namespaced_resource(
         .ok_or_else(|| ApiError::invalid("metadata.name is required"))?
         .to_string();
 
+    check_body_namespace(&body, &namespace)?;
     ensure_metadata(&mut body, &name, Some(&namespace));
 
     // Built-in admission (NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds).
@@ -1383,9 +1384,17 @@ fn ensure_metadata(obj: &mut Value, name: &str, namespace: Option<&str>) {
 
     meta.entry("name").or_insert_with(|| Value::String(name.to_string()));
 
+    // Same rule as uid below: a protobuf create carries `"namespace": ""`,
+    // and an object stored with an empty namespace is returned with one —
+    // client-go then GETs `/apis/apps/v1/deployments/{name}`, which is no
+    // path at all (#67: every webhook spec's server Deployment). A namespace
+    // that names a *different* one is refused by the caller
+    // (`check_body_namespace`), not rewritten here.
+    let empty = |v: Option<&Value>| v.and_then(Value::as_str).map_or(true, str::is_empty);
     if let Some(ns) = namespace {
-        meta.entry("namespace")
-            .or_insert_with(|| Value::String(ns.to_string()));
+        if empty(meta.get("namespace")) {
+            meta.insert("namespace".into(), Value::String(ns.to_string()));
+        }
     }
 
     // `uid` and `creationTimestamp` are the server's: assigned when the client
@@ -1397,7 +1406,7 @@ fn ensure_metadata(obj: &mut Value, name: &str, namespace: Option<&str>) {
     // controller copied that into its ReplicaSet's ownerReference, and the
     // garbage collector, which ignores empty uids when collecting live owners,
     // deleted the ReplicaSet as orphaned on every pass (#99, found by #69).
-    let unset = |v: Option<&Value>| v.and_then(Value::as_str).map_or(true, str::is_empty);
+    let unset = empty;
     if unset(meta.get("uid")) {
         meta.insert("uid".into(), Value::String(uuid::Uuid::new_v4().to_string()));
     }
@@ -1406,6 +1415,21 @@ fn ensure_metadata(obj: &mut Value, name: &str, namespace: Option<&str>) {
             "creationTimestamp".into(),
             Value::String(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         );
+    }
+}
+
+/// A create's body may leave `metadata.namespace` empty — it is taken from
+/// the URL — but may not name another one: upstream refuses that with 400.
+pub(crate) fn check_body_namespace(body: &Value, namespace: &str) -> Result<(), ApiError> {
+    match body["metadata"]["namespace"].as_str().filter(|n| !n.is_empty()) {
+        Some(ns) if ns != namespace => Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            reason: "BadRequest".into(),
+            message: format!(
+                "the namespace of the provided object does not match the namespace sent on the request ({ns} != {namespace})"
+            ),
+        }),
+        _ => Ok(()),
     }
 }
 
@@ -1710,6 +1734,20 @@ mod tests {
         ensure_metadata(&mut v, "web", None);
         assert_eq!(v["metadata"]["uid"], "u1");
         assert_eq!(v["metadata"]["creationTimestamp"], "2026-01-01T00:00:00Z");
+    }
+
+    /// A protobuf create's `"namespace": ""` is the URL's namespace (#67);
+    /// a body naming another namespace is refused.
+    #[test]
+    fn an_empty_namespace_is_the_urls() {
+        let mut v = json!({"metadata": {"name": "web", "namespace": ""}});
+        ensure_metadata(&mut v, "web", Some("demo"));
+        assert_eq!(v["metadata"]["namespace"], "demo");
+        assert!(check_body_namespace(&json!({"metadata": {"namespace": ""}}), "demo").is_ok());
+        assert!(check_body_namespace(&json!({"metadata": {}}), "demo").is_ok());
+        assert!(check_body_namespace(&json!({"metadata": {"namespace": "demo"}}), "demo").is_ok());
+        let err = check_body_namespace(&json!({"metadata": {"namespace": "other"}}), "demo").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
     }
 
     #[test]

@@ -205,9 +205,10 @@ when each piece landed.
     SelfSubjectAccessReview ignores Accept: Table (should 406); watch with a
     selector sends no DELETED when an object stops matching; webhook/
     conversion/aggregator specs need a pod (+ #82, #83). **Open question:**
-    webhook specs fail with `resource "deployments" not found` — that message
-    is `crd.rs` `validate_crd`, so some apps/v1 deployments request falls
-    through to the CRD catch-all; not yet found.
+    webhook specs fail with `resource "deployments" not found` — **found**:
+    protobuf creates stored `metadata.namespace: ""`, so client-go's next GET
+    had no namespace in its path and hit the CRD catch-all; fixed 2026-09-27.
+  - **2026-09-27:** chunks relaunched (`tmp/chunks.sh`, logs `tmp/conf-*.log`).
   - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
     docs/conformance.md: RK_PORT_OFFSET side by side, RK_SUITE_TIMEOUT=45m)
     and the focused webhook probe with
