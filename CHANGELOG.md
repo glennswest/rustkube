@@ -14,9 +14,34 @@
   `spec.unschedulable=false` matches a node that was never cordoned and
   `spec.nodeName=` a pod no one scheduled. Both matched nothing, so the suite
   found no schedulable node.
+- **fix(watch-cache): a LIST reflects this apiserver's own recent writes.**
+  The snapshot applies a write milliseconds after it commits, so a client that
+  created and immediately listed could miss what it created. A LIST now waits
+  (up to 2 s) for the snapshot to reach this apiserver's newest write under its
+  prefix, and reads the store if it does not. `KvStore::delete` returns the
+  revision so deletes count.
+- **fix(update): PUT and PATCH keep `uid` and `creationTimestamp`; PUT answers
+  404 for a missing object and 400 for a rename.** PUT stored its body as sent
+  — creating missing objects, rewriting or zeroing server-owned fields — and a
+  patch with `creationTimestamp: null` (the conformance suite's ConfigMap
+  patch) deleted it. Built-in and custom-resource PUTs share `put_object`.
+- **fix(namespace): default-ServiceAccount provisioning no longer waits behind
+  namespace termination.** Two loops; terminating namespaces are purged eight
+  at a time with discovery done once per pass. With dozens terminating, a new
+  namespace waited more than 30 s for its ServiceAccount.
+- **fix(cron): `?` is any value**, as upstream's parser takes it.
+- **fix(discovery): `/api/`, `/apis/` (trailing slash) and `/apis/{group}` are
+  served.**
+- **fix(service): an empty `type` defaults to `ClusterIP`**, with
+  `sessionAffinity`, `internalTrafficPolicy`, `ipFamilyPolicy` and
+  `ipFamilies` — a client-go Service arrived with `type: ""` and kept it.
+- **fix(protobuf): schemas for `authentication.k8s.io/v1`,
+  `authorization.k8s.io/v1` and `node.k8s.io/v1`** — client-go's TokenRequest
+  and SubjectAccessReview were refused.
 - **test:** `test/conformance/run.sh` — upstream `e2e.test` `[Conformance]`
   against the control plane with stand-in nodes; the e2e rig now serves a
-  certificate from its own CA and the controllers verify it.
+  certificate from its own CA, keeps fastetcd on tmpfs, and reports how fast
+  it writes.
 
 ## [v0.15.3] — 2026-09-26
 
