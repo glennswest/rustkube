@@ -38,6 +38,14 @@
 - **fix(protobuf): schemas for `authentication.k8s.io/v1`,
   `authorization.k8s.io/v1` and `node.k8s.io/v1`** — client-go's TokenRequest
   and SubjectAccessReview were refused.
+- **fix(watch): a watch below the cache's window starts after the requested
+  revision.** The fallback store watch passed the revision itself, and etcd's
+  start revision is inclusive, so the client was replayed the ADDED of the
+  object it had just read — every CR create/watch/delete spec saw
+  "expected DELETE, but got ADDED".
+- **fix(discovery): `scheduling.k8s.io/v1` (PriorityClass) and
+  `authentication.k8s.io/v1` (TokenReview) are in `/apis` with their resource
+  lists (#85); `/apis/{group}/` with a trailing slash is served.**
 - **test:** `test/conformance/run.sh` — upstream `e2e.test` `[Conformance]`
   against the control plane with stand-in nodes; the e2e rig now serves a
   certificate from its own CA, keeps fastetcd on tmpfs, and reports how fast
