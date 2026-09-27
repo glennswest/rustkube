@@ -62,8 +62,7 @@ routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet).
 
 `scheduling.k8s.io/v1` (PriorityClass) and `authentication.k8s.io/v1`
-(TokenReview) are **served but not advertised** in `/apis` (#85), so a client
-that discovers first — `kubectl get priorityclasses` — does not find them.
+(TokenReview) are served and advertised in `/apis` (#85).
 
 **Wire.** JSON and client-go's protobuf (`application/vnd.kubernetes.protobuf`)
 in both directions; Table output for `kubectl get`; `PartialObjectMetadata`;

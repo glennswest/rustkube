@@ -28,12 +28,12 @@ posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 | `discovery.k8s.io/v1` — EndpointSlice | core | ✅ | served; the Service controller writes them (v0.7.5, #22) |
 | `policy/v1` — PodDisruptionBudget, Eviction | core | ✅ | `eviction.rs` (429 when blocked), `pdb.rs` (v0.7.18, #7). Not: 500 on multiple matching PDBs, `unhealthyPodEvictionPolicy`, `disruptedPods` |
 | `storage.k8s.io/v1` — StorageClass, CSIDriver, CSINode, VolumeAttachment, CSIStorageCapacity | core | ✅ | v0.7.11 (#24); see [storage.md](storage.md) |
-| `scheduling.k8s.io/v1` — PriorityClass | core | 🟡 | served and resolved at pod admission, **not in `/apis`** (#85) |
+| `scheduling.k8s.io/v1` — PriorityClass | core | ✅ | served, in `/apis`, and resolved at pod admission (#85) |
 | `node.k8s.io/v1` — RuntimeClass | optional | 🔴 | |
 | `certificates.k8s.io/v1` — CSR | core | ✅ | with `/approval` and `/status`; `csr.rs` approves and signs |
 | `events.k8s.io/v1` — Event | optional | ✅ | translated to/from stored core/v1 (v0.7.34, #48) |
 | `flowcontrol.apiserver.k8s.io/v1` (APF) | optional | 🔴 | |
-| `authentication.k8s.io/v1` — TokenReview; SelfSubjectReview | core | 🟡 | TokenReview served, **not in `/apis`** (#85); no SelfSubjectReview (`kubectl auth whoami`) |
+| `authentication.k8s.io/v1` — TokenReview; SelfSubjectReview | core | 🟡 | TokenReview served and in `/apis` (#85); no SelfSubjectReview (`kubectl auth whoami`) |
 | `authorization.k8s.io/v1` — SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview, LocalSubjectAccessReview | core | ✅ | v0.9.0 (#59), v0.12.0 (#69) |
 | `metrics.k8s.io` | optional | 🔴 | needs aggregation (#83) and a metrics server |
 | `project.openshift.io/v1` — Project, ProjectRequest | OpenShift | ✅ | Projects over Namespaces, owned by their requester, listed only to members (v0.15.0, #97) |
@@ -132,7 +132,7 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
 **Open, conformance-blocking:**
 1. Admission webhooks (#82), LimitRanger, ResourceQuota.
 2. Node authorizer (nodes are `cluster-admin` today); RBAC escalation prevention (#98).
-3. Discovery for PriorityClass/TokenReview (#85); `/scale` (#86).
+3. `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
 5. Scheduler: preemption (#84), scheduling gates (#87), queue.
 6. The GC deleting a live Deployment's ReplicaSet (#99).

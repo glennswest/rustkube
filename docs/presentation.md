@@ -208,7 +208,7 @@ Missing:
   CA; fine on `sno` (dev anonymous-admin), refused on `storage`.
 - **rustkube-node#56** — the kubelet serves no exec/attach/port-forward, so
   `oc rsh`/`cp`/`port-forward` stop at the node.
-- **#82, #86, #85** — webhooks, `kubectl scale`, discovery gaps: what a
+- **#82, #86** — webhooks, `kubectl scale`: what a
   typical operator install trips over first.
 
 Every open issue: `gh issue list -R glennswest/rustkube`.

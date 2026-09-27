@@ -101,7 +101,8 @@ when each piece landed.
 - [ ] Admission webhooks are never called (#82)
 - [ ] Aggregation proxies nothing (#83)
 - [ ] Scheduler never preempts (#84); ignores `schedulingGates` (#87)
-- [ ] PriorityClass / TokenReview missing from `/apis` (#85)
+- [x] PriorityClass / TokenReview missing from `/apis` (#85) — fixed in
+      6fd2722; closes when the conformance rerun confirms
 - [ ] No `/scale` subresource; `kubectl scale` fails (#86)
 - [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88)
 - [ ] HPA placeholder: no metrics, never scales down (#89)
