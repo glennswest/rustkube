@@ -68,6 +68,7 @@ pub async fn admit_create(
         priority_from_class(storage, obj).await;
         pod_sysctls(obj)?;
         qos_class(obj);
+        initial_phase(obj);
         // PodSecurity — validate against the namespace's enforce level.
         if let Some(ns_obj) = &ns_obj {
             let level = ns_obj["metadata"]["labels"]
@@ -88,6 +89,10 @@ pub async fn admit_create(
 
     if resource == "persistentvolumeclaims" {
         access_modes(obj)?;
+    }
+
+    if resource == "persistentvolumeclaims" || resource == "persistentvolumes" {
+        initial_phase(obj);
     }
     Ok(())
 }
@@ -317,21 +322,25 @@ fn pod_sysctls(obj: &Value) -> Result<(), ApiError> {
             && (b[b.len() - 1].is_ascii_lowercase() || b[b.len() - 1].is_ascii_digit())
             && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
     };
+    // Every problem in one error, as upstream reports them: a client fixing
+    // one name at a time would otherwise need a round trip per name.
     let mut seen = std::collections::HashSet::new();
-    for s in sysctls {
+    let mut errors = Vec::new();
+    for (i, s) in sysctls.iter().enumerate() {
         let name = s["name"].as_str().unwrap_or("");
         if name.is_empty() || name.len() > 253 || !name.split(['.', '/']).all(segment_ok) {
-            return Err(ApiError::invalid(&format!(
-                "spec.securityContext.sysctls: Invalid value: {name:?}: must be a valid sysctl name"
-            )));
-        }
-        if !seen.insert(name) {
-            return Err(ApiError::invalid(&format!(
-                "spec.securityContext.sysctls: Duplicate value: {name:?}"
-            )));
+            errors.push(format!(
+                "spec.securityContext.sysctls[{i}].name: Invalid value: {name:?}: must be a valid sysctl name"
+            ));
+        } else if !seen.insert(name) {
+            errors.push(format!("spec.securityContext.sysctls[{i}].name: Duplicate value: {name:?}"));
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::invalid(&errors.join(", ")))
+    }
 }
 
 /// A pod's QoS class, set on create as upstream does: Guaranteed when every
@@ -374,6 +383,19 @@ fn qos_class(obj: &mut Value) {
         obj["status"] = json!({});
     }
     obj["status"]["qosClass"] = json!(class);
+}
+
+/// `status.phase: Pending` on create for a Pod, PersistentVolumeClaim or
+/// PersistentVolume that names none, as upstream's strategies set it. They
+/// were stored with no phase at all, which is outside the enum every client
+/// switches on (#67; #102 for PVCs).
+fn initial_phase(obj: &mut Value) {
+    if !obj["status"].is_object() {
+        obj["status"] = json!({});
+    }
+    if obj["status"]["phase"].as_str().map_or(true, str::is_empty) {
+        obj["status"]["phase"] = json!("Pending");
+    }
 }
 
 /// Where a container finds its ServiceAccount credentials.
@@ -749,6 +771,13 @@ mod validation_tests {
             assert!(pod_sysctls(&pod(&[bad])).is_err(), "{bad:?}");
         }
         assert!(pod_sysctls(&pod(&["kernel.msgmax", "kernel.msgmax"])).is_err());
+        // Every invalid name is reported, the valid ones are not (the
+        // conformance spec checks both).
+        let msg = pod_sysctls(&pod(&["foo-", "kernel.shmmax", "safe-and-unsafe", "bar.."]))
+            .unwrap_err()
+            .message;
+        assert!(msg.contains(r#"Invalid value: "foo-""#) && msg.contains(r#"Invalid value: "bar..""#), "{msg}");
+        assert!(!msg.contains("safe-and-unsafe") && !msg.contains("kernel.shmmax"), "{msg}");
     }
 
     #[test]

@@ -121,7 +121,8 @@ when each piece landed.
 - [ ] RBAC escalation prevention (#98); until then Namespace writes stay
       cluster-scoped (#97)
 - [ ] Secrets: `stringData` not folded into `data` (#101)
-- [ ] PVC `status.phase` not defaulted to `Pending` on create (#102)
+- [x] PVC `status.phase` not defaulted to `Pending` on create (#102) — Pods,
+      PVCs and PVs get `Pending` on create (#67)
 - [ ] No generic ephemeral-volume controller (#94)
 - [ ] Test containers per the stormcos test standard (#96); the e2e scripts
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted) are the

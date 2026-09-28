@@ -5,6 +5,11 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **fix(apiserver): smaller conformance findings.** A new Pod, PVC (#102) or
+  PV gets `status.phase: Pending`; every invalid sysctl name is reported in
+  one error; CSR `/approval` and `/status` take PATCH; Ingress `/status` is
+  routed (it fell through to the CRD catch-all); an Event's `source` field
+  selector matches `source.component`.
 - **test:** Conformance runs take prebuilt binaries (`RK_BIN`, `RK_FASTETCD` in
   `test/e2e/lib.sh`), so they no longer need a build slot.
   `test/conformance/stage.sh` builds them once per commit and publishes them

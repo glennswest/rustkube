@@ -157,8 +157,9 @@ unreachable tolerations, priority from its PriorityClass, a subset of
 PodSecurity keyed on the namespace's `pod-security.kubernetes.io/enforce`
 label, CronJob schedule validation, PVC access-mode validation
 (`ReadWriteOncePod` may not be combined with another mode), ConfigMap and
-Secret data-key validation, pod sysctl-name validation, and a pod's
-`status.qosClass`. That is the
+Secret data-key validation, pod sysctl-name validation, a pod's
+`status.qosClass`, and `status.phase: Pending` for a new Pod,
+PersistentVolumeClaim or PersistentVolume. That is the
 whole chain: **admission webhooks are not called**. Webhook configurations
 are stored and served, and no request reaches a webhook (#82).
 

@@ -329,11 +329,15 @@ fn build_router(
         )
         .route(
             "/apis/certificates.k8s.io/v1/{resource}/{name}/approval",
-            get(resource::get_cluster_status).put(resource::update_cluster_status),
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .patch(resource::patch_cluster_status),
         )
         .route(
             "/apis/certificates.k8s.io/v1/{resource}/{name}/status",
-            get(resource::get_cluster_status).put(resource::update_cluster_status),
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .patch(resource::patch_cluster_status),
         )
         .route(
             "/apis/rbac.authorization.k8s.io/v1/namespaces/{namespace}/{resource}",
@@ -574,6 +578,14 @@ fn build_router(
                 .put(resource::update_namespaced_resource)
                 .delete(resource::delete_namespaced_resource)
                 .patch(resource::patch_namespaced_resource),
+        )
+        // Ingress `/status` — without it the path fell through to the CRD
+        // catch-all and answered `resource "ingresses" not found` (#67).
+        .route(
+            "/apis/networking.k8s.io/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
         )
         .route(
             "/apis/networking.k8s.io/v1/{resource}",

@@ -247,6 +247,12 @@ fn parse_set_values(s: &str) -> Vec<String> {
 
 /// Resolve a dotted field path (e.g. "metadata.name") in a JSON value.
 fn resolve_field(obj: &Value, path: &str) -> Option<String> {
+    // An Event's `source` field label is its `source.component`, as upstream
+    // registers it; the object itself is `{component, host}` (#67: the Events
+    // API conformance spec lists by `source=test-controller`).
+    if path == "source" && obj.get("source").is_some_and(Value::is_object) {
+        return resolve_field(obj, "source.component");
+    }
     let mut current = obj;
     for part in path.split('.') {
         current = current.get(part)?;
@@ -264,6 +270,14 @@ fn resolve_field(obj: &Value, path: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An Event's `source` label is `source.component` (#67).
+    #[test]
+    fn event_source_is_its_component() {
+        let ev = json!({"source": {"component": "test-controller", "host": "h"}});
+        assert!(matches_field_selector(&ev, &parse_field_selector("source=test-controller")));
+        assert!(!matches_field_selector(&ev, &parse_field_selector("source=other")));
+    }
 
     /// Absent fields are their zero value (#67).
     #[test]
