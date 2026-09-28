@@ -136,9 +136,10 @@ when each piece landed.
       [x] test/e2e/test-container.sh: short 5/5 on a real control plane
       [x] found + fixed: `?dryRun=All` delete deleted; workload controllers
       re-created children of an owner being deleted
-      [ ] rig run of medium/long after those fixes [ ] a real
-      `stormcentral test run rustkube short` (C2NR0Q2 was failing its
-      /readyz for every component on 2026-09-28); the e2e scripts
+      [x] rig run at 3fe5869: short 5/5, medium 14 + 1 skip (the 4
+      kubelet-only checks fail on the rig, as expected), long 2 waves pass
+      [ ] a real `stormcentral test run rustkube short` — refused
+      2026-09-28: C2NR0Q2's apiserver not answering, install 11.52 failed; the e2e scripts
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted,
       vm-runstrategy) are the
       start of it
