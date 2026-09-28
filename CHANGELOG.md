@@ -4,6 +4,18 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-28 (volume snapshots, #64)
+- **fix(rbac):** a ServiceAccount subject with no `namespace` means the
+  binding's own namespace, as upstream reads it; it was taken as `default`.
+  Upstream manifests rely on it: the snapshot-controller's leader-election
+  RoleBinding in `kube-system` granted it nothing, so it never took its
+  Lease and never ran. A ClusterRoleBinding's unqualified ServiceAccount
+  matches nothing, as upstream
+- **test:** `test/e2e/snapshot-controller.sh` applies external-snapshotter's
+  CRDs and runs its real snapshot-controller (from the release image, as its
+  own ServiceAccount with upstream RBAC and leader election) against a real
+  apiserver, playing the csi-snapshotter sidecar
+
 ### 2026-09-28 (test container, #96)
 - **feat(test):** `test/` is rustkube's test container per stormcentral's
   test standard: `/test short|medium|long`, JSON lines, exit 0/1/2, run by

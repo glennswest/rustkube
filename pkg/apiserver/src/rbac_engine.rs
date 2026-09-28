@@ -398,10 +398,22 @@ pub(crate) fn subjects_match(binding: &Value, user: &UserInfo) -> bool {
             "User" if name == user.username => return true,
             "Group" if user.groups.iter().any(|g| g == name) => return true,
             "ServiceAccount" => {
-                let ns = subject["namespace"].as_str().unwrap_or("default");
-                let sa_user = format!("system:serviceaccount:{ns}:{name}");
-                if sa_user == user.username {
-                    return true;
+                // A subject without a namespace means the binding's own, as
+                // upstream's authorizer reads it — a RoleBinding in
+                // kube-system naming `snapshot-controller` means
+                // kube-system's. Upstream manifests rely on it (the
+                // snapshot-controller's leader-election RoleBinding, #64).
+                // Defaulting to `default` granted such a binding to nobody.
+                // A ClusterRoleBinding has no namespace to lend: unqualified,
+                // it matches no ServiceAccount.
+                let ns = subject["namespace"]
+                    .as_str()
+                    .filter(|n| !n.is_empty())
+                    .or_else(|| binding["metadata"]["namespace"].as_str().filter(|n| !n.is_empty()));
+                if let Some(ns) = ns {
+                    if format!("system:serviceaccount:{ns}:{name}") == user.username {
+                        return true;
+                    }
                 }
             }
             _ => {}
@@ -1266,5 +1278,32 @@ mod impersonation_tests {
         h.insert("impersonate-group", "dev".parse().unwrap());
         let err = impersonated(&e, &admin(), &h).await.unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+mod subject_namespace_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sa(ns: &str, name: &str) -> UserInfo {
+        UserInfo { username: format!("system:serviceaccount:{ns}:{name}"), groups: vec![] }
+    }
+
+    #[test]
+    fn an_unqualified_service_account_is_the_bindings_namespaces() {
+        // upstream's snapshot-controller leader-election RoleBinding (#64)
+        let rb = json!({"metadata": {"name": "le", "namespace": "kube-system"},
+            "subjects": [{"kind": "ServiceAccount", "name": "snapshot-controller"}]});
+        assert!(subjects_match(&rb, &sa("kube-system", "snapshot-controller")));
+        assert!(!subjects_match(&rb, &sa("default", "snapshot-controller")));
+        // An explicit namespace still wins.
+        let rb = json!({"metadata": {"namespace": "kube-system"},
+            "subjects": [{"kind": "ServiceAccount", "name": "x", "namespace": "other"}]});
+        assert!(subjects_match(&rb, &sa("other", "x")));
+        assert!(!subjects_match(&rb, &sa("kube-system", "x")));
+        // A ClusterRoleBinding has no namespace to lend.
+        let crb = json!({"metadata": {"name": "c"}, "subjects": [{"kind": "ServiceAccount", "name": "x"}]});
+        assert!(!subjects_match(&crb, &sa("default", "x")));
     }
 }
