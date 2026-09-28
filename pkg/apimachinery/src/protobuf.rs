@@ -247,6 +247,38 @@ const K8S_JSON_NAMES: &[(&str, &str, &str)] = &[
     (AEXT_PROPS, "xKubernetesValidations", "x-kubernetes-validations"),
 ];
 
+/// Go structs embedded with `json:",inline"`: in protobuf the embedded struct
+/// is a field of its own, in JSON its fields sit beside the outer struct's.
+/// Every one in the served groups (from k8s.io/api v0.36 `types.go`).
+///
+/// Without this a JSON object encoded to protobuf lost the embedded fields
+/// (they matched no field of the outer message) and a protobuf body decoded
+/// to JSON nested them under the proto name. A PV read over protobuf had no
+/// `csi`, so upstream's snapshot-controller found "no CSI
+/// PersistentVolumeSource" (#64); a pod's volumes lost their source, its
+/// probes their handler, every `configMapKeyRef`/`secretKeyRef`/`envFrom`
+/// and configMap/secret volume its `name`.
+const INLINE: &[(&str, &str)] = &[
+    ("k8s.io.api.core.v1.Volume", "volumeSource"),
+    ("k8s.io.api.core.v1.PersistentVolumeSpec", "persistentVolumeSource"),
+    ("k8s.io.api.core.v1.Probe", "handler"),
+    ("k8s.io.api.core.v1.EphemeralContainer", "ephemeralContainerCommon"),
+    ("k8s.io.api.core.v1.SecretProjection", "localObjectReference"),
+    ("k8s.io.api.core.v1.ConfigMapVolumeSource", "localObjectReference"),
+    ("k8s.io.api.core.v1.ConfigMapProjection", "localObjectReference"),
+    ("k8s.io.api.core.v1.ConfigMapKeySelector", "localObjectReference"),
+    ("k8s.io.api.core.v1.SecretKeySelector", "localObjectReference"),
+    ("k8s.io.api.core.v1.ConfigMapEnvSource", "localObjectReference"),
+    ("k8s.io.api.core.v1.SecretEnvSource", "localObjectReference"),
+    ("k8s.io.api.networking.v1.IngressRule", "ingressRuleValue"),
+    ("k8s.io.api.admissionregistration.v1.NamedRuleWithOperations", "ruleWithOperations"),
+    ("k8s.io.api.admissionregistration.v1.RuleWithOperations", "rule"),
+];
+
+fn is_inline(msg: &str, field: &str) -> bool {
+    INLINE.iter().any(|(m, f)| *m == msg && *f == field)
+}
+
 /// The JSON key for `field` of message `msg`, as Kubernetes spells it.
 fn k8s_json_key(msg: &str, field: &prost_reflect::FieldDescriptor) -> String {
     K8S_JSON_NAMES
@@ -429,6 +461,15 @@ fn message_to_json(msg: &DynamicMessage) -> Value {
                 if !msg.has_field(&field) {
                     continue;
                 }
+                // An inline embed: its fields go beside ours, as in Go's JSON.
+                if is_inline(&msg_name, field.name()) {
+                    if let Value::Object(inner) = pb_scalar_or_msg_to_json(value.as_ref()) {
+                        for (k, v) in inner {
+                            obj.entry(k).or_insert(v);
+                        }
+                    }
+                    continue;
+                }
                 obj.insert(
                     k8s_json_key(&msg_name, &field),
                     pb_scalar_or_msg_to_json(value.as_ref()),
@@ -498,6 +539,8 @@ fn json_to_message(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMess
         _ => return Ok(msg), // non-object → empty message
     };
 
+    // Keys no field of this message has: an inline embed's (below).
+    let mut rest = Map::new();
     for (key, val) in obj {
         // `apiVersion` and `kind` are NOT skipped by name. At the top level they
         // are the envelope's TypeMeta, and the object's message has no such
@@ -516,7 +559,12 @@ fn json_to_message(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMess
             .or_else(|| proto_field_for_k8s_key(desc.full_name(), key).and_then(|f| desc.get_field_by_name(f)))
         {
             Some(f) => f,
-            None => continue, // unknown field: ignore (server is authoritative)
+            None => {
+                // Unknown here: an inline embed's field, or ignored (the
+                // server is authoritative).
+                rest.insert(key.clone(), val.clone());
+                continue;
+            }
         };
 
         if field.is_list() {
@@ -547,6 +595,15 @@ fn json_to_message(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMess
             msg.set_field(&field, PbValue::Map(map));
         } else {
             msg.set_field(&field, json_to_pb_value(&field, val)?);
+        }
+    }
+    // The embedded struct, from the keys that are its. A chain of embeds
+    // (NamedRuleWithOperations → RuleWithOperations → Rule) resolves by
+    // recursion: what this level does not know is passed down whole.
+    for field in desc.fields().filter(|f| is_inline(desc.full_name(), f.name())) {
+        if let prost_reflect::Kind::Message(inner) = field.kind() {
+            let sub = json_to_message(&Value::Object(rest.clone()), &inner)?;
+            msg.set_field(&field, PbValue::Message(sub));
         }
     }
     Ok(msg)
@@ -858,6 +915,52 @@ mod tests {
         assert_eq!(owner["apiVersion"], "apps/v1");
         assert_eq!(owner["kind"], "Deployment");
         assert_eq!(owner["uid"], "u1");
+    }
+
+    /// Go's `json:",inline"` embeds are fields of their own on the wire and
+    /// flat in JSON (#64: a PV read over protobuf had no `csi`).
+    #[test]
+    fn inline_embeds_roundtrip_flat() {
+        let pv = json!({"apiVersion": "v1", "kind": "PersistentVolume", "metadata": {"name": "pv"},
+            "spec": {"capacity": {"storage": "1Gi"}, "accessModes": ["ReadWriteOnce"],
+                     "csi": {"driver": "d.example", "volumeHandle": "vol-1"}}});
+        let wire = encode_from_json(&pv, "v1", "PersistentVolume").unwrap();
+        let back = decode_to_json(&wire, "", "").unwrap();
+        assert_eq!(back["spec"]["csi"]["volumeHandle"], "vol-1");
+        assert_eq!(back["spec"]["capacity"]["storage"], "1Gi");
+        assert!(back["spec"]["persistentVolumeSource"].is_null(), "flattened, not nested");
+
+        // On the wire it is where Go puts it: spec.persistentVolumeSource.csi.
+        let desc = POOL.get_message_by_name("k8s.io.api.core.v1.PersistentVolumeSpec").unwrap();
+        let spec = json_to_message(&pv["spec"], &desc).unwrap();
+        let src = spec.get_field_by_name("persistentVolumeSource").unwrap();
+        let src = src.as_message().unwrap();
+        assert!(src.has_field_by_name("csi"));
+
+        let pod = json!({"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p"},
+            "spec": {"containers": [{"name": "c", "image": "i",
+                        "env": [{"name": "E", "valueFrom": {"configMapKeyRef": {"name": "cm", "key": "k"}}}],
+                        "envFrom": [{"secretRef": {"name": "sec"}}],
+                        "readinessProbe": {"httpGet": {"path": "/ready", "port": 8080}, "periodSeconds": 5}}],
+                     "volumes": [{"name": "v", "configMap": {"name": "cm", "defaultMode": 420}}]}});
+        let back = decode_to_json(&encode_from_json(&pod, "v1", "Pod").unwrap(), "", "").unwrap();
+        let c = &back["spec"]["containers"][0];
+        assert_eq!(c["env"][0]["valueFrom"]["configMapKeyRef"]["name"], "cm");
+        assert_eq!(c["envFrom"][0]["secretRef"]["name"], "sec");
+        assert_eq!(c["readinessProbe"]["httpGet"]["path"], "/ready");
+        assert_eq!(c["readinessProbe"]["periodSeconds"], 5);
+        assert_eq!(back["spec"]["volumes"][0]["name"], "v");
+        assert_eq!(back["spec"]["volumes"][0]["configMap"]["name"], "cm");
+
+        // A chain of embeds: NamedRuleWithOperations → RuleWithOperations → Rule.
+        let vwc = json!({"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingWebhookConfiguration",
+            "metadata": {"name": "w"}, "webhooks": [{"name": "w.example", "sideEffects": "None", "admissionReviewVersions": ["v1"],
+                "clientConfig": {"url": "https://x"},
+                "rules": [{"operations": ["CREATE"], "apiGroups": [""], "apiVersions": ["v1"], "resources": ["pods"]}]}]});
+        let back = decode_to_json(&encode_from_json(&vwc, "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration").unwrap(), "", "").unwrap();
+        let rule = &back["webhooks"][0]["rules"][0];
+        assert_eq!(rule["operations"][0], "CREATE");
+        assert_eq!(rule["resources"][0], "pods");
     }
 
     /// client-go sends TokenRequest and SubjectAccessReview as protobuf; they

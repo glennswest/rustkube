@@ -21,6 +21,15 @@
   free for another claim — and the snapshot-controller refused the claim as
   "not bound or invalid". A claimRef set by name alone gets its uid; one with
   another claim's uid is Lost
+- **fix(protobuf): Go's `json:",inline"` embeds.** In protobuf an embedded
+  struct is a field of its own; in JSON its fields sit beside the outer
+  struct's. The codec knew neither: encoding dropped them and decoding
+  nested them. Over protobuf a PV lost its source (`csi`, `nfs`, …) — the
+  snapshot-controller found "no CSI PersistentVolumeSource" — and a pod its
+  volumes' sources, its probes' handlers, and the `name` of every
+  configMap/secret key ref, `envFrom` and configMap volume; an Ingress rule
+  its `http`; a webhook rule its groups and resources. All 14 embeds of the
+  served groups are mapped, both ways
 
 ### 2026-09-28 (test container, #96)
 - **feat(test):** `test/` is rustkube's test container per stormcentral's
