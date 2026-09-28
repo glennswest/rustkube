@@ -33,6 +33,13 @@ SNAP_VERSION=${SNAP_VERSION:-v8.6.0}
 RAW=https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/$SNAP_VERSION
 start_controller_manager
 
+# On any failure, what the controller said.
+sc_log() { [ -f "$W/sc.log" ] && { echo "---- snapshot-controller log (head 40, tail 60)"; head -40 "$W/sc.log"; echo "…"; tail -60 "$W/sc.log"; }; }
+trap 'sc_log_on_fail' EXIT
+# Replaces lib.sh's trap, so it does what that one did: stop the rig, and
+# remove the store (on tmpfs) and the scratch dir.
+sc_log_on_fail() { [ "$FAIL" -ne 0 ] && sc_log; cleanup; rm -rf "$DATA"; }
+
 # --- tools -----------------------------------------------------------------------
 KUBECTL=$(command -v kubectl || true)
 if [ -z "$KUBECTL" ]; then
@@ -152,7 +159,6 @@ for _ in $(seq 60); do
 done
 if [ -z "$content" ]; then
   fail "the controller bound no VolumeSnapshotContent in 60 s: $(k -n default get volumesnapshot snap1 -o jsonpath='{.status}')"
-  echo "---- snapshot-controller log (tail)"; grep -Ei 'error|fail' "$W/sc.log" | tail -30
   report
 fi
 pass "VolumeSnapshot bound to $content"
@@ -193,5 +199,4 @@ done
 errs=$(grep -Ec '^E[0-9]{4}' "$W/sc.log" || true)
 echo "---- snapshot-controller: $errs error lines"
 grep -E '^E[0-9]{4}' "$W/sc.log" | sed 's/^.\{0,40\}\] //' | sort | uniq -c | sort -rn | head -15
-[ "$FAIL" -ne 0 ] && { echo "---- snapshot-controller log (tail)"; tail -40 "$W/sc.log"; }
 report
