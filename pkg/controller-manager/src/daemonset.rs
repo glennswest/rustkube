@@ -119,6 +119,14 @@ impl DaemonSetController {
             .ok_or_else(|| anyhow::anyhow!("daemonset missing name"))?;
         let ds_uid = ds["metadata"]["uid"].as_str().unwrap_or("");
 
+        // Being deleted: what it owns is the garbage collector's now. Making
+        // replacements for the children a foreground delete removes races
+        // that delete (upstream skips a deleting owner the same way; found by
+        // the test container's gc-foreground check, #96).
+        if !ds["metadata"]["deletionTimestamp"].is_null() {
+            return Ok(());
+        }
+
         // Nodes this DaemonSet is eligible for (matches nodeSelector) — regardless
         // of readiness; its pods tolerate NotReady. Scheduling and GC key off this
         // set, so a node briefly going NotReady no longer churns its pod (#44).

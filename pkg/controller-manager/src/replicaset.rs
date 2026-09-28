@@ -87,6 +87,14 @@ impl ReplicaSetController {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("replicaset missing name"))?;
         let rs_uid = rs["metadata"]["uid"].as_str().unwrap_or("");
+
+        // Being deleted: what it owns is the garbage collector's now. Making
+        // replacements for the children a foreground delete removes races
+        // that delete (upstream skips a deleting owner the same way; found by
+        // the test container's gc-foreground check, #96).
+        if !rs["metadata"]["deletionTimestamp"].is_null() {
+            return Ok(());
+        }
         let desired = rs["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
 
         // All pods owned by this ReplicaSet (by controller ownerReference).

@@ -103,6 +103,14 @@ impl DeploymentController {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("deployment missing name"))?;
         let deploy_uid = deploy["metadata"]["uid"].as_str().unwrap_or("");
+
+        // Being deleted: what it owns is the garbage collector's now. Making
+        // replacements for the children a foreground delete removes races
+        // that delete (upstream skips a deleting owner the same way; found by
+        // the test container's gc-foreground check, #96).
+        if !deploy["metadata"]["deletionTimestamp"].is_null() {
+            return Ok(());
+        }
         let desired = deploy["spec"]["replicas"].as_u64().unwrap_or(1);
         let selector = &deploy["spec"]["selector"];
         let pod_template = &deploy["spec"]["template"];
