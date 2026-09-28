@@ -138,6 +138,34 @@ is loopback, so only the node holding a volume can delete it: the kubelet's
 `reclaim_released` deletes the clone and then the PV (rustkube-node#46). The
 control plane only reports that the node will.
 
+## Volume snapshots
+
+`VolumeSnapshot`, `VolumeSnapshotContent` and `VolumeSnapshotClass` are not
+built into rustkube. They are CRDs from `kubernetes-csi/external-snapshotter`,
+served like any other custom resource, and three things outside this repo
+make them work:
+
+- **the CRDs and the snapshot-controller** (one per cluster, watching every
+  namespace) are the cluster's business: stormpump#28 installs them;
+- **the `csi-snapshotter` sidecar** runs beside a CSI driver and calls its
+  `CreateSnapshot`/`DeleteSnapshot`: stormblock-csi's business, and whether
+  that maps onto stormblock's goldens and CoW clones is stormblock#111;
+- the in-kubelet `stormblock` class has no sidecars at all, so snapshots are
+  for CSI-class claims.
+
+What rustkube owes is that upstream's controller works against this
+apiserver, and `test/e2e/snapshot-controller.sh` checks exactly that
+(#64): it applies external-snapshotter v8.6.0's six CRDs with kubectl, runs
+the real snapshot-controller from its release image as its own ServiceAccount
+with upstream's RBAC and leader election, binds a PVC to a CSI PV, snapshots
+it, and plays the sidecar (content status on create, the finalizer on
+delete). Create → bind → ready → delete passes end to end. Getting there fixed
+four rustkube bugs: an unqualified ServiceAccount in a RoleBinding was read as
+`default`'s (the controller could not take its Lease), a claim bound by
+`volumeName` never bound its volume (the controller refused it), and the
+protobuf codec dropped Go's inline embeds (a PV read by client-go had no
+`csi`) and the webhook configurations' `Webhooks` field.
+
 ## What rustkube deliberately does not do
 
 - **It provisions nothing but the `stormblock` class.** A class with
@@ -173,3 +201,5 @@ These are the places where a change on one side silently breaks the other:
 integration test for this contract. On this side, the binder's matching rules
 are unit-tested in `pkg/controller-manager/src/persistentvolume.rs` and the
 placement rules in `pkg/scheduler/src/volumebinding.rs`.
+`test/e2e/snapshot-controller.sh` runs upstream's snapshot-controller against
+a real control plane on fastetcd (see Volume snapshots above).
