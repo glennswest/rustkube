@@ -4,6 +4,8 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.17.0] — 2026-09-28
+
 ### 2026-09-28 (volume snapshots, #64)
 - **fix(rbac):** a ServiceAccount subject with no `namespace` means the
   binding's own namespace, as upstream reads it; it was taken as `default`.

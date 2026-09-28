@@ -81,7 +81,7 @@ among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
 and others are left from the 10-crate layout; k8s-openapi is declared and never
 imported.
 
-## Current Version: `v0.16.1`
+## Current Version: `v0.17.0`
 
 ## Work Plan
 
@@ -330,6 +330,7 @@ Known state on 2026-09-24:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.17.0 | 2026-09-28 | Test container `test/` (`/test short|medium|long`, #96). Volume snapshots work against upstream's snapshot-controller (#64): RoleBinding ServiceAccount subjects default to the binding's namespace; a claim bound by `volumeName` binds its PV; protobuf inline embeds (PV sources, volume sources, probe handlers, key-ref names) and webhook configurations' `webhooks`. `?dryRun=All` deletes no longer delete; workload controllers leave a deleting owner alone |
 | v0.16.1 | 2026-09-28 | PriorityClass `value`/`preemptionPolicy` immutable; conformance `run.sh` fetches kubectl (#67) |
 | v0.16.0 | 2026-09-28 | VirtualMachine honours `runStrategy` on a failed VMI: recreated with backoff under `Always`/`RerunOnFailure`, left under `Once`/`Manual`; `printableStatus` `CrashLoopBackOff`/`Failed` + `Failure` condition; `Once` starts (#104). Conformance fixes from the #67 runs: LIST item RVs (#111), SA token volumes, impersonation, generateName, Pending on create (#102), selector-watch DELETED, and more (CHANGELOG) |
 | v0.15.3 | 2026-09-26 | Protobuf responses keep nested `kind`/`apiVersion` (roleRef, subjects, ownerReferences) — `oc adm policy remove-*` works. Objects created over protobuf get a real uid — the GC no longer deletes a new Deployment's ReplicaSet (#99). `oc adm` checklist (#69) |
