@@ -13,7 +13,7 @@ cannot tell, and what it found (#67).
   fastetcd (the shared setup is `test/e2e/lib.sh`: a throwaway CA and serving
   cert, the store on tmpfs). With `RK_BIN`/`RK_FASTETCD` it uses prebuilt
   binaries; without them it builds both from source;
-- fetches upstream's `e2e.test` and `ginkgo` for the release matching the API
+- fetches upstream's `e2e.test`, `ginkgo` and `kubectl` for the release matching the API
   posture the apiserver reports (1.36 — `stable-1.36.txt`), cached in
   `$HOME/target/k8s-e2e`;
 - creates two **stand-in Nodes** — API objects with capacity, addresses and a

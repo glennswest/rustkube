@@ -4,6 +4,12 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-28 (conformance, #67)
+- **test:** `test/conformance/run.sh` fetches `kubectl` of the same release
+  as `e2e.test` and hands it to the suite. The conformance VM has none on
+  PATH, so the efbea2d run failed every kubectl spec (sig-cli) before it
+  reached the apiserver — the drop from 18 to 12 passed in that chunk.
+
 ## [v0.16.0] — 2026-09-28
 
 ### 2026-09-28 (VirtualMachine, #104)

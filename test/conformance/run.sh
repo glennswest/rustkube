@@ -45,7 +45,17 @@ if [ ! -x "$E2E/$V/e2e.test" ]; then
     | tar -xz -C "$E2E/$V" --strip-components=3 kubernetes/test/bin/e2e.test kubernetes/test/bin/ginkgo \
     || exit 100
 fi
-echo "e2e.test $V"
+# The kubectl specs (sig-cli) shell out to kubectl. The build box happened to
+# have one on PATH; the conformance VM does not, and every one of them failed
+# with "executable file not found" before reaching the apiserver. The same
+# release as e2e.test, so client skew is not a variable.
+if [ ! -x "$E2E/$V/kubectl" ]; then
+  curl -sfL -o "$E2E/$V/kubectl.part" "https://dl.k8s.io/$V/bin/linux/amd64/kubectl" \
+    && chmod +x "$E2E/$V/kubectl.part" && mv "$E2E/$V/kubectl.part" "$E2E/$V/kubectl" \
+    || exit 100
+fi
+export PATH="$E2E/$V:$PATH"
+echo "e2e.test $V, kubectl $("$E2E/$V/kubectl" version --client 2>/dev/null | head -1)"
 
 cat >"$W/kubeconfig" <<KC
 apiVersion: v1
@@ -94,7 +104,7 @@ mkdir -p "$W/report"
 # in 20 minutes; the rest of the time is hung specs waiting to be cut off.
 "$E2E/$V/ginkgo" -p --procs=16 --timeout="${RK_SUITE_TIMEOUT:-100m}" --no-color --silence-skips \
   "$E2E/$V/e2e.test" -- \
-  --kubeconfig="$W/kubeconfig" --provider=skeleton \
+  --kubeconfig="$W/kubeconfig" --provider=skeleton --kubectl-path="$E2E/$V/kubectl" \
   --ginkgo.focus="$FOCUS" \
   --report-dir="$W/report" \
   --node-schedulable-timeout=2m \
