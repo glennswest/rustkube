@@ -36,7 +36,7 @@ conformance VM, which has no toolchain:
 sc-build test/conformance/stage.sh       # → STAGED /build/assets/conformance/<sha>
 
 # 2. on the conformance VM: fetch, check out the same commit, run all six chunks
-ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && test/conformance/vm.sh <sha>'
+ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && git checkout -q origin/main && test/conformance/vm.sh <sha>'
 # → ~/results/<sha>/<chunk>.log and SUMMARY (passed/failed/skipped per chunk)
 ```
 
