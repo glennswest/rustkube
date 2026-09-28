@@ -22,7 +22,8 @@
 
 HOSTPATH=${HOSTPATH_VERSION:-v1.17.1}
 PROVISIONER=${PROVISIONER_VERSION:-v6.3.0}
-RESIZER=${RESIZER_VERSION:-v2.3.0}
+# v2.3.0 is released on GitHub but has no image on registry.k8s.io yet.
+RESIZER=${RESIZER_VERSION:-v2.2.0}
 DRIVER=hostpath.csi.k8s.io
 start_controller_manager
 
