@@ -178,7 +178,12 @@ when each piece landed.
 - [x] Volume-aware scheduling — PV `nodeAffinity`, `selected-node`,
       `CSIStorageCapacity`
 - [ ] Volume expansion — `status.allocatedResources` + resize conditions (#63)
-- [ ] Snapshots — the external-snapshotter CRDs and controller (#64)
+- [ ] Snapshots — the external-snapshotter CRDs and controller (#64) — IN
+      PROGRESS 2026-09-28. Install is stormpump#28, CreateSnapshot is
+      stormblock#111. Here: `test/e2e/snapshot-controller.sh` — upstream
+      v8.6.0 CRDs (all six) establish, snapshot-controller from its image runs
+      as its SA with upstream RBAC + leader election, the script plays the
+      csi-snapshotter sidecar: snapshot → content → ready → delete
 - [x] `ReadWriteOncePod` enforcement — scheduler + admission (#65); the
       kubelet's mount refusal is rustkube-node#42
 - [x] In-kubelet `stormblock` class: `stormblock.rs` writes the PV once the
