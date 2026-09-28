@@ -15,6 +15,12 @@
   CRDs and runs its real snapshot-controller (from the release image, as its
   own ServiceAccount with upstream RBAC and leader election) against a real
   apiserver, playing the csi-snapshotter sidecar
+- **fix(persistentvolume):** a claim bound by hand (`spec.volumeName`) binds
+  its volume: the PV gets a `claimRef` with the claim's uid and goes Bound.
+  Only the claim said Bound; the volume stayed Available with no claimRef —
+  free for another claim — and the snapshot-controller refused the claim as
+  "not bound or invalid". A claimRef set by name alone gets its uid; one with
+  another claim's uid is Lost
 
 ### 2026-09-28 (test container, #96)
 - **feat(test):** `test/` is rustkube's test container per stormcentral's

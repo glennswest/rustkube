@@ -356,6 +356,32 @@ impl PersistentVolumeController {
             return self.set_claim_phase(&path, pvc, "Lost").await;
         }
 
+        // A claim that names its volume (`spec.volumeName`, bound by hand)
+        // binds it: the volume gets a claimRef carrying the claim's uid, as
+        // upstream's binder does. It was only the claim that said Bound — the
+        // volume stayed Available with no claimRef, free for another claim to
+        // take, and clients that check both halves (the snapshot-controller's
+        // "claim in dataSource not bound or invalid", #64) refused it. A
+        // claimRef set by name alone gets its uid the same way; one naming
+        // this claim with another uid is a claim that was deleted and made
+        // again, which is Lost, as upstream.
+        let ref_uid = pv["spec"]["claimRef"]["uid"].as_str().unwrap_or("");
+        let claim_uid = pvc["metadata"]["uid"].as_str().unwrap_or("");
+        if ref_name.is_empty() || ref_uid.is_empty() {
+            return self.bind(namespace, name, pvc, &pv).await;
+        }
+        if !claim_uid.is_empty() && ref_uid != claim_uid {
+            self.events
+                .event(
+                    pvc,
+                    "Warning",
+                    "ClaimMisbound",
+                    &format!("Volume {volume_name} is bound to an earlier claim of this name (uid {ref_uid})"),
+                )
+                .await;
+            return self.set_claim_phase(&path, pvc, "Lost").await;
+        }
+
         // The claim's status reports what it actually got, which for a
         // dynamically provisioned volume can exceed what it asked for.
         let capacity = pv["spec"]["capacity"]["storage"].as_str().unwrap_or("");
