@@ -187,6 +187,10 @@ when each piece landed.
       whole status whenever PV and claim capacity differed, wiping
       FileSystemResizePending). Verify: `test/e2e/volume-expansion.sh` with
       the real external-provisioner + external-resizer + hostpath CSI
+      [x] (1)-(3) done, e2e 12/13 at 3ce0... — the 13th found (4): strategic
+      merge has no directives (`$patch: delete`, `$setElementOrder`,
+      `$deleteFromPrimitiveList`, `$retainKeys`); client-go's removal of a
+      condition was merged in as a literal `$patch` field. Fixing next
 - [x] Snapshots (#64) — COMPLETE 2026-09-28. Install is stormpump#28,
       CreateSnapshot is stormblock#111. `test/e2e/snapshot-controller.sh`:
       upstream v8.6.0 CRDs + the real snapshot-controller as its SA, 18/18.
