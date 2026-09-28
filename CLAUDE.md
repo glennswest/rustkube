@@ -251,6 +251,11 @@ when each piece landed.
     → /build/assets/conformance/<sha>, then the chunks run on conform.g8.lo
     with RK_BIN/RK_FASTETCD (docs/conformance.md). conform.g8.lo did not
     resolve yet on 2026-09-27.
+  - **2026-09-28:** conform.g8.lo is up. A vm.sh run at efbea2d (results in
+    `conform:~/results/efbea2d…`) passed 75 vs 79 at 430b268 — auth/cli
+    chunk 18→12. In progress: diff the two runs spec by spec, fix any
+    regression, stage + run v0.16.0 on the VM, update docs/conformance.md,
+    close #67 with the confirmed numbers.
   - **Next:** triage the 430b268 run, write the results table into
     docs/conformance.md; further runs only on conform.g8.lo; close #67.
   - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
