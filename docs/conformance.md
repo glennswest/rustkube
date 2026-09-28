@@ -35,16 +35,14 @@ conformance VM, which has no toolchain:
 # 1. on the agent VM, from the checkout (pushed first): build and publish
 sc-build test/conformance/stage.sh       # → STAGED /build/assets/conformance/<sha>
 
-# 2. on the conformance VM: fetch that directory, then run the chunks
-S=/srv/conformance/<sha>                 # copied from dev's /build/assets/conformance/<sha>
-i=0
-for f in 'sig-api-machinery' 'sig-apps' 'sig-(auth|cli|instrumentation|architecture|scheduling)' \
-         'sig-network' 'sig-node' 'sig-storage'; do
-  i=$((i + 10))
-  RK_BIN=$S/bin RK_FASTETCD=$S/fastetcd RK_PORT_OFFSET=$i RK_SUITE_TIMEOUT=45m \
-    bash test/conformance/run.sh "\[$f\].*\[Conformance\]" > tmp/conf-$i.log 2>&1 &
-done; wait
+# 2. on the conformance VM: fetch, check out the same commit, run all six chunks
+ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && test/conformance/vm.sh <sha>'
+# → ~/results/<sha>/<chunk>.log and SUMMARY (passed/failed/skipped per chunk)
 ```
+
+`vm.sh` fetches the staged directory with a read-only rsync key (it can read
+`/build/assets/conformance` on dev and nothing else), checks the binaries
+against their MANIFEST, and runs the chunks side by side:
 
 `RK_PORT_OFFSET` moves each rig's ports so chunks run side by side, and
 `RK_SUITE_TIMEOUT` (default `100m`) cuts off specs that hang; a chunk's real

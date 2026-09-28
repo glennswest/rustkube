@@ -5,6 +5,10 @@
 <!-- New unreleased changes go here -->
 
 ### 2026-09-27 (conformance, #67)
+- **test:** `test/conformance/vm.sh <sha>` runs the whole suite on the
+  conformance VM (conform.g8.lo): it fetches the staged binaries, checks them
+  against their MANIFEST, checks out the same commit, runs the six chunks side
+  by side, and writes per-chunk logs and a SUMMARY to `~/results/<sha>`
 - **fix(apiserver): smaller conformance findings.** A new Pod, PVC (#102) or
   PV gets `status.phase: Pending`; every invalid sysctl name is reported in
   one error; CSR `/approval` and `/status` take PATCH; Ingress `/status` is
