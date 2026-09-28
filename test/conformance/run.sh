@@ -49,10 +49,14 @@ fi
 # have one on PATH; the conformance VM does not, and every one of them failed
 # with "executable file not found" before reaching the apiserver. The same
 # release as e2e.test, so client skew is not a variable.
+# A download per process, renamed into place: vm.sh starts six of these at
+# once, and a shared temp name had one rig rename the file while another was
+# still writing it.
 if [ ! -x "$E2E/$V/kubectl" ]; then
-  curl -sfL -o "$E2E/$V/kubectl.part" "https://dl.k8s.io/$V/bin/linux/amd64/kubectl" \
-    && chmod +x "$E2E/$V/kubectl.part" && mv "$E2E/$V/kubectl.part" "$E2E/$V/kubectl" \
-    || exit 100
+  part=$E2E/$V/kubectl.part.$$
+  curl -sfL -o "$part" "https://dl.k8s.io/$V/bin/linux/amd64/kubectl" \
+    && chmod +x "$part" && mv -f "$part" "$E2E/$V/kubectl" \
+    || { rm -f "$part"; exit 100; }
 fi
 export PATH="$E2E/$V:$PATH"
 echo "e2e.test $V, kubectl $("$E2E/$V/kubectl" version --client 2>/dev/null | head -1)"
