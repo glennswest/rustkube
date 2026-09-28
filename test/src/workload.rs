@@ -96,13 +96,6 @@ pub async fn pods_of(kube: &Kube, app: &str) -> Result<Vec<Value>> {
     Ok(l["items"].as_array().cloned().unwrap_or_default())
 }
 
-pub fn running(pod: &Value) -> bool {
-    pod["status"]["phase"] == "Running"
-        && pod["status"]["conditions"]
-            .as_array()
-            .is_some_and(|cs| cs.iter().any(|c| c["type"] == "Ready" && c["status"] == "True"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,13 +109,5 @@ mod tests {
         assert_eq!(c["args"][0], "idle");
         assert_eq!(t["spec"]["securityContext"]["runAsNonRoot"], true);
         assert_eq!(t["metadata"]["labels"]["storm.io/test-run"], "r1");
-    }
-
-    #[test]
-    fn ready_means_running_and_ready() {
-        let p = json!({"status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]}});
-        assert!(running(&p));
-        assert!(!running(&json!({"status": {"phase": "Running"}})));
-        assert!(!running(&json!({"status": {"phase": "Pending"}})));
     }
 }

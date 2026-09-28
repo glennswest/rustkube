@@ -30,7 +30,7 @@ for n in node-a node-b; do
 done
 
 EXPECT=${RK_TEST_EXPECT_FAIL:-'running|endpointslice|job-completes|daemonset|rollout'}
-BAD=0
+
 for suite in "${@:-short}"; do
   ns=test-rustkube-$suite-e2e
   k -X POST "$API/api/v1/namespaces" -d "{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"name\":\"$ns\"}}" >/dev/null
