@@ -1561,21 +1561,49 @@ fn strategic_merge_key(field: &str) -> Option<&'static str> {
     })
 }
 
+/// List fields upstream merges as a set of scalars (`patchStrategy:"merge"`
+/// on a list of strings): a strategic patch adds its values, and removes the
+/// ones named in `$deleteFromPrimitiveList/<field>`.
+fn strategic_merge_set(field: &str) -> bool {
+    field == "finalizers"
+}
+
 /// Strategic-merge-patch (schema-lite): recursively merge objects; merge list
 /// fields that have a known `patchMergeKey` by upserting entries by that key
 /// (preserving unmatched existing entries); overwrite scalars and unkeyed lists;
 /// a `null` value deletes the key.
+///
+/// And the directives a patch made by client-go's `CreateTwoWayMergePatch`
+/// carries (#63) — without them a removal was stored as data: an element
+/// `{"type": "Resizing", "$patch": "delete"}` was merged *into* the Resizing
+/// condition, and `$setElementOrder/conditions` became a field of the object:
+///
+/// - `"$patch": "delete"` on a list element removes the element with that
+///   key; on a map, the map; `"$patch": "replace"` replaces the map, or (as a
+///   list element) the list, with the rest of the patch;
+/// - `"$retainKeys": [..]` drops the map's keys it does not name;
+/// - `"$deleteFromPrimitiveList/<field>"` removes those values from a set
+///   list (`finalizers`);
+/// - `"$setElementOrder/<field>"` orders a merged list; it is a hint and is
+///   never stored.
 pub(crate) fn strategic_merge(target: &mut Value, patch: &Value) {
     let Value::Object(p) = patch else {
         *target = patch.clone();
         return;
     };
+    if p.get("$patch").and_then(Value::as_str) == Some("replace") {
+        *target = strip_directives(patch);
+        return;
+    }
     if !target.is_object() {
         *target = json!({});
     }
     let t = target.as_object_mut().unwrap();
     for (k, pv) in p {
-        if pv.is_null() {
+        if k.starts_with('$') {
+            continue; // directives, handled below
+        }
+        if pv.is_null() || pv.get("$patch").and_then(Value::as_str) == Some("delete") {
             t.remove(k);
             continue;
         }
@@ -1588,22 +1616,93 @@ pub(crate) fn strategic_merge(target: &mut Value, patch: &Value) {
                     mk.unwrap(),
                 );
             }
+            Some(tv) if strategic_merge_set(k) && tv.is_array() && pv.is_array() => {
+                let list = tv.as_array_mut().unwrap();
+                for v in pv.as_array().unwrap() {
+                    if !list.contains(v) {
+                        list.push(v.clone());
+                    }
+                }
+            }
             Some(tv) if tv.is_object() && pv.is_object() => strategic_merge(tv, pv),
             _ => {
-                t.insert(k.clone(), pv.clone());
+                t.insert(k.clone(), strip_directives(pv));
             }
         }
+    }
+    for (k, pv) in p {
+        if let Some(field) = k.strip_prefix("$deleteFromPrimitiveList/") {
+            if let (Some(list), Some(gone)) = (t.get_mut(field).and_then(Value::as_array_mut), pv.as_array()) {
+                list.retain(|v| !gone.contains(v));
+            }
+        } else if let Some(field) = k.strip_prefix("$setElementOrder/") {
+            if let (Some(list), Some(order)) = (t.get_mut(field).and_then(Value::as_array_mut), pv.as_array()) {
+                set_element_order(list, order, strategic_merge_key(field));
+            }
+        }
+    }
+    if let Some(keep) = p.get("$retainKeys").and_then(Value::as_array) {
+        t.retain(|k, _| keep.iter().any(|x| x.as_str() == Some(k.as_str())));
+    }
+}
+
+/// Order `list` as `order` names its elements (by merge key, or by value for
+/// a list of scalars); elements `order` does not name keep their place after
+/// the named ones, as upstream orders them.
+fn set_element_order(list: &mut Vec<Value>, order: &[Value], key: Option<&str>) {
+    let id = |v: &Value| -> Value {
+        match key {
+            Some(k) => v.get(k).cloned().unwrap_or(Value::Null),
+            None => v.clone(),
+        }
+    };
+    let rank = |v: &Value| -> usize {
+        let i = id(v);
+        order.iter().position(|o| id(o) == i).unwrap_or(order.len())
+    };
+    list.sort_by_key(|v| rank(v)); // stable: unnamed keep their order
+}
+
+/// A patch value stored as data: without the directive keys it may carry.
+fn strip_directives(v: &Value) -> Value {
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .filter(|(k, _)| !k.starts_with('$'))
+                .map(|(k, x)| (k.clone(), strip_directives(x)))
+                .collect(),
+        ),
+        Value::Array(a) => Value::Array(
+            a.iter()
+                .filter(|x| x.get("$patch").is_none() || x.as_object().is_some_and(|m| m.len() > 1))
+                .map(strip_directives)
+                .collect(),
+        ),
+        other => other.clone(),
     }
 }
 
 /// Upsert each `patch` item into `target` by `key`: an item whose key matches an
-/// existing entry is strategic-merged into it; a new key is appended.
+/// existing entry is strategic-merged into it; a new key is appended. An item
+/// `{"$patch": "delete", <key>: …}` removes that entry, and an item
+/// `{"$patch": "replace"}` makes the list exactly the patch's other items.
 fn strategic_merge_list(target: &mut Vec<Value>, patch: &[Value], key: &str) {
+    let directive = |v: &Value| v.get("$patch").and_then(Value::as_str).map(str::to_string);
+    if patch.iter().any(|v| directive(v).as_deref() == Some("replace")) {
+        *target = patch.iter().filter(|v| directive(v).is_none()).map(strip_directives).collect();
+        return;
+    }
     for pitem in patch {
         let pkey = pitem.get(key);
+        if directive(pitem).as_deref() == Some("delete") {
+            if let Some(pk) = pkey {
+                target.retain(|t| t.get(key) != Some(pk));
+            }
+            continue;
+        }
         match pkey.and_then(|pk| target.iter_mut().find(|t| t.get(key) == Some(pk))) {
             Some(existing) => strategic_merge(existing, pitem),
-            None => target.push(pitem.clone()),
+            None => target.push(strip_directives(pitem)),
         }
     }
 }
@@ -1857,6 +1956,39 @@ mod tests {
         assert_eq!(obj["spec"]["replicas"], 3);
         assert!(obj["spec"].get("paused").is_none(), "null must delete the key");
         assert_eq!(obj["status"]["phase"], "A", "untouched fields survive");
+    }
+
+    #[test]
+    fn strategic_merge_directives_from_client_go() {
+        // external-resizer moving a claim from Resizing to
+        // FileSystemResizePending (#63), as CreateTwoWayMergePatch spells it.
+        let mut pvc = json!({"status": {"conditions": [
+            {"type": "Resizing", "status": "True"}, {"type": "Other", "status": "True"}]}});
+        strategic_merge(&mut pvc, &json!({"status": {
+            "$setElementOrder/conditions": [{"type": "Other"}, {"type": "FileSystemResizePending"}],
+            "conditions": [{"type": "Resizing", "$patch": "delete"},
+                           {"type": "FileSystemResizePending", "status": "True"}]}}));
+        assert_eq!(pvc, json!({"status": {"conditions": [
+            {"type": "Other", "status": "True"}, {"type": "FileSystemResizePending", "status": "True"}]}}));
+
+        // A finalizer removed, one added: the set merges, nothing literal stored.
+        let mut obj = json!({"metadata": {"finalizers": ["a", "b"]}});
+        strategic_merge(&mut obj, &json!({"metadata": {
+            "$deleteFromPrimitiveList/finalizers": ["a"],
+            "$setElementOrder/finalizers": ["b", "c"], "finalizers": ["c"]}}));
+        assert_eq!(obj, json!({"metadata": {"finalizers": ["b", "c"]}}));
+
+        // $patch on maps, and $retainKeys.
+        let mut obj = json!({"spec": {"a": {"x": 1, "y": 2}, "b": {"z": 1}, "strategy": {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": 1}}}});
+        strategic_merge(&mut obj, &json!({"spec": {
+            "a": {"$patch": "replace", "w": 9}, "b": {"$patch": "delete"},
+            "strategy": {"$retainKeys": ["type"], "type": "Recreate"}}}));
+        assert_eq!(obj, json!({"spec": {"a": {"w": 9}, "strategy": {"type": "Recreate"}}}));
+
+        // A list replaced wholesale.
+        let mut obj = json!({"env": [{"name": "A"}, {"name": "B"}]});
+        strategic_merge(&mut obj, &json!({"env": [{"$patch": "replace"}, {"name": "C"}]}));
+        assert_eq!(obj, json!({"env": [{"name": "C"}]}));
     }
 
     #[test]
