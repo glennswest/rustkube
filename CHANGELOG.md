@@ -4,6 +4,18 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-28 (VirtualMachine, #104)
+- **fix:** The VirtualMachine controller honours `runStrategy` on a finished
+  VMI: a `Failed` one is deleted and recreated under `Always`,
+  `RerunOnFailure` and `running: true` (a `Succeeded` one under `Always` and
+  `running: true`), with 10 s → 5 min backoff kept in `status.startFailure`;
+  `Once` and `Manual` leave it. `printableStatus` reads `CrashLoopBackOff`
+  while backing off and `Failed` when left failed — never `Starting` — and
+  the VMI's `status.message` is on a `Failure` condition next to `Ready`.
+  A refused VM status write (409/404 answered as a `Status`) was taken for
+  success; it is now logged. Status fields the controller does not own are
+  kept.
+
 ### 2026-09-27 (conformance, #67)
 - **test:** `test/conformance/vm.sh <sha>` runs the whole suite on the
   conformance VM (conform.g8.lo): it fetches the staged binaries, checks them

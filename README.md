@@ -200,7 +200,10 @@ NotReady → eviction), PodDisruptionBudget status, garbage collection
 class, the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approval and signing (auto-approves only the
 `kubernetes.io/kube-apiserver-client-kubelet` signer; signs only with
 `--cluster-signing-*-file`), PodMigration, and VirtualMachine
-(`start`/`stop`/`restart`). Events are emitted for creates, deletes and
+(`start`/`stop`/`restart`; a failed VMI is recreated with backoff under
+`Always`/`RerunOnFailure`/`running: true` and left under `Once`/`Manual`,
+the VM reading `CrashLoopBackOff` or `Failed` with the VMI's message on a
+`Failure` condition, #104). Events are emitted for creates, deletes and
 scaling, and expired ones are deleted.
 
 Two are placeholders: **HPA** reads no metrics — its "utilization" is the
