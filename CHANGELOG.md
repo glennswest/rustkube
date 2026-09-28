@@ -4,6 +4,8 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.16.0] — 2026-09-28
+
 ### 2026-09-28 (VirtualMachine, #104)
 - **fix:** The VirtualMachine controller honours `runStrategy` on a finished
   VMI: a `Failed` one is deleted and recreated under `Always`,

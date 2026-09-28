@@ -81,7 +81,7 @@ among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
 and others are left from the 10-crate layout; k8s-openapi is declared and never
 imported.
 
-## Current Version: `v0.15.3`
+## Current Version: `v0.16.0`
 
 ## Work Plan
 
@@ -125,16 +125,19 @@ when each piece landed.
       PVCs and PVs get `Pending` on create (#67)
 - [ ] No generic ephemeral-volume controller (#94)
 - [ ] Test containers per the stormcos test standard (#96); the e2e scripts
-      in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted) are the
+      in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted,
+      vm-runstrategy) are the
       start of it
 
-### VM runStrategy on a failed VMI (#104) — IN PROGRESS 2026-09-28
-- [ ] Failed VMI recreated for `Always`/`RerunOnFailure`/`running: true`
+### VM runStrategy on a failed VMI (#104) — COMPLETE 2026-09-28
+- [x] Failed VMI recreated for `Always`/`RerunOnFailure`/`running: true`
       (Succeeded too for `Always`), with backoff in `status.startFailure`;
       `Once`/`Manual` leave it
-- [ ] printableStatus `CrashLoopBackOff` (backing off) / `Failed` (left
+- [x] printableStatus `CrashLoopBackOff` (backing off) / `Failed` (left
       failed); VMI `status.message` on a VM `Failure` condition
-- [ ] A refused VM status write is logged, not swallowed
+- [x] A refused VM status write is logged, not swallowed
+- [x] `runStrategy: Once` starts the VM (it read as `spec.running`)
+- [x] `test/e2e/vm-runstrategy.sh` on dev: 10/10 (v0.16.0)
 
 ### Presentation (#81) — COMPLETE 2026-09-26
 - [x] `docs/presentation.md`, 12-slide Marp deck from the code as of v0.15.2;
@@ -309,6 +312,7 @@ Known state on 2026-09-24:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.16.0 | 2026-09-28 | VirtualMachine honours `runStrategy` on a failed VMI: recreated with backoff under `Always`/`RerunOnFailure`, left under `Once`/`Manual`; `printableStatus` `CrashLoopBackOff`/`Failed` + `Failure` condition; `Once` starts (#104). Conformance fixes from the #67 runs: LIST item RVs (#111), SA token volumes, impersonation, generateName, Pending on create (#102), selector-watch DELETED, and more (CHANGELOG) |
 | v0.15.3 | 2026-09-26 | Protobuf responses keep nested `kind`/`apiVersion` (roleRef, subjects, ownerReferences) — `oc adm policy remove-*` works. Objects created over protobuf get a real uid — the GC no longer deletes a new Deployment's ReplicaSet (#99). `oc adm` checklist (#69) |
 | v0.15.2 | 2026-09-26 | Watch DELETED events: a custom resource's names its real namespace, not its plural, so informers drop it; DELETED carries the object's last state and honours selectors; a watch with no resourceVersion is served by the watch cache (#100) |
 | v0.15.1 | 2026-09-26 | `PUT …/status` (and CSR `/approval`) is conditional on the body's `resourceVersion`: a stale status write is a 409 instead of silently overwriting newer status (#78). CronJob status writes chain within a pass |
