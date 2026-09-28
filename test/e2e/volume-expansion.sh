@@ -146,9 +146,17 @@ fi
 if cond | grep -q "FileSystemResizePending=True"; then
   sleep 20
   got="$(k -n default get pvc grow-me -o jsonpath='{.status.capacity.storage}') $(cond)"
-  [ "$got" = "1Gi FileSystemResizePending=True " ] \
-    && pass "20 s on: still 1Gi and FileSystemResizePending (the kubelet's step)" || fail "status changed under the resize: '$got'"
+  # The resizer keeps Resizing beside FileSystemResizePending on its
+  # recover-expansion path (keepOldResizeConditions); the kubelet clears both.
+  case "$got" in
+    "1Gi "*FileSystemResizePending=True*) pass "20 s on: still 1Gi and FileSystemResizePending (the kubelet's step)" ;;
+    *) fail "status changed under the resize: '$got'" ;;
+  esac
 fi
+# The resizer's strategic patches carry directives ($setElementOrder/…);
+# none may be stored as a field.
+stray=$(k -n default get pvc grow-me -o json | grep -o '"\$[A-Za-z/]*' | sort -u | tr '\n' ' ')
+[ -z "$stray" ] && pass "no patch directive stored in the claim" || fail "directives stored as fields: $stray"
 # And a Resizing claim is not shrunk below what it has.
 out=$(k -n default patch pvc grow-me --type=merge -p '{"spec":{"resources":{"requests":{"storage":"1Gi"}}}}' 2>&1) \
   && pass "back to 1Gi (= status.capacity) is allowed: recovery" || fail "recovery refused: $out"

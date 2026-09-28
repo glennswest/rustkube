@@ -22,10 +22,11 @@
   orders lists with `$setElementOrder/…`, removes set members with
   `$deleteFromPrimitiveList/…` and clears maps with `$retainKeys`. None were
   known: a removal was merged *into* the element as a literal `$patch`
-  field, and the directive keys were stored as fields — the external-resizer
-  could not clear `Resizing`, and a strategic patch could not remove a
-  finalizer. All are honoured now, and `finalizers` merge as a set, as
-  upstream's `patchStrategy: merge`
+  field, and the directive keys were stored as fields — every status patch
+  from the external-resizer stored `$setElementOrder/conditions` in the
+  claim, and a strategic patch could not remove a finalizer. All are
+  honoured now, and `finalizers` merge as a set, as upstream's
+  `patchStrategy: merge`
 
 ## [v0.17.0] — 2026-09-28
 
