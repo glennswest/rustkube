@@ -18,8 +18,8 @@
 #   (extracted from its release image) as system:serviceaccount:kube-system:
 #   snapshot-controller, with leader election, as its Deployment does;
 # - binds a PVC to a CSI PV, snapshots it, and plays the csi-snapshotter
-#   sidecar (which belongs beside a driver and is absent here) by writing the
-#   VolumeSnapshotContent's status;
+#   sidecar (which belongs beside a driver and is absent here): it writes the
+#   VolumeSnapshotContent's status, and on delete drops its finalizer;
 # - checks the controller's side at each step: content created and bound,
 #   PVC source protection added and released, VolumeSnapshot ready, and a
 #   delete that takes the content with it.
@@ -187,7 +187,22 @@ k -n default get pvc snap-src -o jsonpath='{.metadata.finalizers}' | grep -q pvc
   && fail "PVC source protection not released once the snapshot is ready" || pass "PVC source protection released"
 
 # Delete: the snapshot goes, and with deletionPolicy Delete the content too.
+# The controller marks the content being-deleted and deletes it; the sidecar
+# deletes the snapshot on the storage and then drops the content's
+# bound-protection finalizer; the controller then releases the VolumeSnapshot.
 k -n default delete volumesnapshot snap1 --wait=false >/dev/null 2>&1
+marked=
+for _ in $(seq 60); do
+  if [ "$(k get volumesnapshotcontent "$content" -o jsonpath='{.metadata.annotations.snapshot\.storage\.kubernetes\.io/volumesnapshot-being-deleted}' 2>/dev/null)" = yes ] \
+     && [ -n "$(k get volumesnapshotcontent "$content" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]; then
+    marked=1; break
+  fi
+  sleep 1
+done
+[ -n "$marked" ] && pass "controller marked the content being-deleted and deleted it" \
+  || fail "content not marked and deleted: $(k get volumesnapshotcontent "$content" -o jsonpath='{.metadata}' 2>&1)"
+k patch volumesnapshotcontent "$content" --type=json -p '[{"op":"remove","path":"/metadata/finalizers"}]' >"$W/apply.out" 2>&1 \
+  && pass "content finalizer removed (as the sidecar would)" || fail "remove content finalizer: $(cat "$W/apply.out")"
 gone=
 for _ in $(seq 90); do
   if ! k -n default get volumesnapshot snap1 >/dev/null 2>&1 && ! k get volumesnapshotcontent "$content" >/dev/null 2>&1; then gone=1; break; fi

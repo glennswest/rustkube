@@ -30,6 +30,10 @@
   configMap/secret key ref, `envFrom` and configMap volume; an Ingress rule
   its `http`; a webhook rule its groups and resources. All 14 embeds of the
   served groups are mapped, both ways
+- **fix(protobuf):** Validating/MutatingWebhookConfiguration's proto field
+  is `Webhooks` under the JSON tag `webhooks` (and admission-policy
+  `Expression`/`Name`): over protobuf a webhook configuration lost every
+  webhook
 
 ### 2026-09-28 (test container, #96)
 - **feat(test):** `test/` is rustkube's test container per stormcentral's

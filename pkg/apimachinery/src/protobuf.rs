@@ -245,7 +245,17 @@ const K8S_JSON_NAMES: &[(&str, &str, &str)] = &[
     (AEXT_PROPS, "xKubernetesListType", "x-kubernetes-list-type"),
     (AEXT_PROPS, "xKubernetesMapType", "x-kubernetes-map-type"),
     (AEXT_PROPS, "xKubernetesValidations", "x-kubernetes-validations"),
+    // Capitalised proto field names under lower-case JSON tags: a webhook
+    // configuration read or written over protobuf lost every webhook (#64,
+    // found by the inline-embed test).
+    (ADMREG_VWC, "Webhooks", "webhooks"),
+    (ADMREG_MWC, "Webhooks", "webhooks"),
+    ("k8s.io.api.admissionregistration.v1.Validation", "Expression", "expression"),
+    ("k8s.io.api.admissionregistration.v1.Variable", "Name", "name"),
+    ("k8s.io.api.admissionregistration.v1.Variable", "Expression", "expression"),
 ];
+const ADMREG_VWC: &str = "k8s.io.api.admissionregistration.v1.ValidatingWebhookConfiguration";
+const ADMREG_MWC: &str = "k8s.io.api.admissionregistration.v1.MutatingWebhookConfiguration";
 
 /// Go structs embedded with `json:",inline"`: in protobuf the embedded struct
 /// is a field of its own, in JSON its fields sit beside the outer struct's.
