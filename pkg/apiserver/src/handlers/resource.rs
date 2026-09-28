@@ -532,6 +532,9 @@ pub(crate) async fn put_object(
     }
     keep_server_fields(&mut body, &existing, name, namespace);
     check_immutable(key, &existing, &body)?;
+    if key.starts_with("/registry/persistentvolumeclaims/") {
+        crate::builtin_admission::pvc_update(&state.storage, &existing, &body).await?;
+    }
     persist_or_finalize(state, key, body).await
 }
 
@@ -1327,6 +1330,9 @@ where
         let before = fresh.clone();
         let mut obj = mutate(fresh)?;
         check_immutable(key, &before, &obj)?;
+        if key.starts_with("/registry/persistentvolumeclaims/") {
+            crate::builtin_admission::pvc_update(&state.storage, &before, &obj).await?;
+        }
         if !obj["metadata"].is_object() {
             return Err(ApiError::invalid("metadata must be an object"));
         }

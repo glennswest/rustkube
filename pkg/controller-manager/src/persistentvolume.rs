@@ -383,7 +383,15 @@ impl PersistentVolumeController {
         }
 
         // The claim's status reports what it actually got, which for a
-        // dynamically provisioned volume can exceed what it asked for.
+        // dynamically provisioned volume can exceed what it asked for — set
+        // as the claim becomes Bound, and then left alone, as upstream's
+        // binder does. After that `status.capacity` belongs to volume
+        // expansion (#63): the external-resizer grows the volume first and
+        // the claim's capacity follows only once the filesystem has grown
+        // (`FileSystemResizePending` until then). Copying the volume's
+        // capacity onto a Bound claim — and replacing its whole status to do
+        // it — claimed space the filesystem did not have and wiped the
+        // resizer's conditions, so the node never grew it.
         let capacity = pv["spec"]["capacity"]["storage"].as_str().unwrap_or("");
         let want_phase = "Bound";
         let phase_now = pvc["status"]["phase"].as_str().unwrap_or("");
@@ -392,15 +400,18 @@ impl PersistentVolumeController {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        if phase_now == want_phase && cap_now == capacity {
+        if phase_now == want_phase && !cap_now.is_empty() {
             return Ok(());
         }
         let mut updated = pvc.clone();
-        updated["status"] = json!({
-            "phase": want_phase,
-            "accessModes": modes,
-            "capacity": { "storage": capacity },
-        });
+        if !updated["status"].is_object() {
+            updated["status"] = json!({});
+        }
+        updated["status"]["phase"] = json!(want_phase);
+        updated["status"]["accessModes"] = json!(modes);
+        if cap_now.is_empty() || phase_now != want_phase {
+            updated["status"]["capacity"] = json!({ "storage": capacity });
+        }
         self.api.update_status(&path, &updated).await?;
         if phase_now != want_phase {
             info!("PVC {namespace}/{name} bound to {volume_name}");

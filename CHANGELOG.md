@@ -4,6 +4,20 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-28 (volume expansion, #63)
+- **feat(apiserver): PVC resize admission.** A Bound claim's
+  `spec.resources.requests.storage` may grow — the start of volume expansion,
+  which the driver's external-resizer carries out — if its StorageClass has
+  `allowVolumeExpansion: true` (403 otherwise). It may shrink only back to
+  `status.capacity` (recovery from a failed expansion). The rest of a claim's
+  spec is immutable after creation (422), except a `volumeName` or
+  `storageClassName` set where there was none. Any change was stored before
+- **fix(persistentvolume):** the binder sets a claim's `status.capacity` as
+  it becomes Bound and then leaves it, and no longer replaces the claim's
+  whole status. It copied the volume's capacity onto a Bound claim on every
+  pass, which claimed space the filesystem did not have yet and wiped the
+  resizer's `Resizing`/`FileSystemResizePending` conditions
+
 ## [v0.17.0] — 2026-09-28
 
 ### 2026-09-28 (volume snapshots, #64)

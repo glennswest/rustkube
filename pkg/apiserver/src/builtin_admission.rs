@@ -97,6 +97,105 @@ pub async fn admit_create(
     Ok(())
 }
 
+/// Admission for an update of a PersistentVolumeClaim (#63): upstream's
+/// validation of the claim, then its `PersistentVolumeClaimResize` plugin.
+///
+/// Growing a claim is the one change a bound claim's spec takes, and it is
+/// how volume expansion starts: the driver's external-resizer sees
+/// `spec.resources.requests.storage` above `status.capacity` and does the
+/// rest, writing the claim's resize status itself. What the apiserver owes is
+/// that only a legal request reaches it:
+///
+/// - a claim's spec is immutable after creation except
+///   `resources.requests`, `volumeAttributesClassName`, a `volumeName` set
+///   where there was none (binding) and a `storageClassName` set where there
+///   was none (a default class assigned after the fact);
+/// - `resources.requests` changes only on a Bound claim, and only `storage`;
+/// - it may shrink only to what the claim has (`status.capacity`) — the
+///   recovery from an expansion the driver could not make — never below;
+/// - growing needs a StorageClass with `allowVolumeExpansion: true`
+///   (403 otherwise, as upstream's admission answers).
+///
+/// Before this any change to a claim's spec was stored, and a larger request
+/// waited forever for a resize nobody would make.
+pub async fn pvc_update(storage: &ResourceStorage, old: &Value, new: &Value) -> Result<(), ApiError> {
+    let grew = pvc_update_valid(old, new)?;
+    if grew {
+        let class = old["spec"]["storageClassName"].as_str().unwrap_or("");
+        let expandable = !class.is_empty()
+            && storage
+                .get(&ResourceStorage::cluster_key("storageclasses", class))
+                .await
+                .ok()
+                .is_some_and(|sc| sc["allowVolumeExpansion"].as_bool() == Some(true));
+        if !expandable {
+            return Err(ApiError::forbidden(
+                "only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The validation half of [`pvc_update`]; `Ok(true)` when the storage
+/// request grew.
+fn pvc_update_valid(old: &Value, new: &Value) -> Result<bool, ApiError> {
+    use apimachinery::quantity::parse_bytes;
+    let immutable = |spec: &Value| -> Value {
+        let mut s = spec.clone();
+        if let Some(m) = s.as_object_mut() {
+            m.remove("resources");
+            m.remove("volumeAttributesClassName");
+            // Unset is upstream's default.
+            m.entry("volumeMode").or_insert(json!("Filesystem"));
+            if old["spec"]["volumeName"].as_str().unwrap_or("").is_empty() {
+                m.remove("volumeName");
+            }
+            if old["spec"]["storageClassName"].is_null() {
+                m.remove("storageClassName");
+            }
+            m.retain(|_, v| !v.is_null());
+        }
+        s
+    };
+    if immutable(&old["spec"]) != immutable(&new["spec"]) {
+        return Err(ApiError::invalid(
+            "spec: Forbidden: spec is immutable after creation except resources.requests and volumeAttributesClassName for bound claims",
+        ));
+    }
+    let (or, nr) = (&old["spec"]["resources"], &new["spec"]["resources"]);
+    if or == nr {
+        return Ok(false);
+    }
+    if old["status"]["phase"].as_str() != Some("Bound") {
+        return Err(ApiError::invalid(
+            "spec: Forbidden: spec is immutable after creation except resources.requests and volumeAttributesClassName for bound claims",
+        ));
+    }
+    let without_storage = |r: &Value| -> Value {
+        let mut r = r.clone();
+        if let Some(q) = r["requests"].as_object_mut() {
+            q.remove("storage");
+        }
+        r
+    };
+    if without_storage(or) != without_storage(nr) {
+        return Err(ApiError::invalid(
+            "spec.resources: Forbidden: only resources.requests.storage may be changed",
+        ));
+    }
+    let bytes = |v: &Value| v.as_str().map(parse_bytes).unwrap_or(0);
+    let (was, now) = (bytes(&or["requests"]["storage"]), bytes(&nr["requests"]["storage"]));
+    let has = bytes(&old["status"]["capacity"]["storage"]);
+    if now < was && now < has {
+        return Err(ApiError::invalid(&format!(
+            "spec.resources.requests.storage: Forbidden: field can not be less than status.capacity ({})",
+            old["status"]["capacity"]["storage"].as_str().unwrap_or("?")
+        )));
+    }
+    Ok(now > was)
+}
+
 /// What a namespace is given on create: `status.phase: Active` and the
 /// `kubernetes` finalizer in `spec.finalizers` (#75).
 ///
@@ -794,5 +893,57 @@ mod validation_tests {
                               "limits": {"cpu": "1", "memory": "1Gi"}})), "Guaranteed");
         assert_eq!(pod(json!({"requests": {"cpu": "500m", "memory": "1Gi"},
                               "limits": {"cpu": "1", "memory": "1Gi"}})), "Burstable");
+    }
+}
+
+#[cfg(test)]
+mod pvc_update_tests {
+    use super::*;
+
+    fn claim(req: &str, phase: &str) -> Value {
+        json!({"spec": {"accessModes": ["ReadWriteOnce"], "storageClassName": "fast", "volumeName": "pv-1",
+                        "resources": {"requests": {"storage": req}}},
+               "status": {"phase": phase, "capacity": {"storage": "1Gi"}}})
+    }
+
+    #[test]
+    fn a_bound_claim_may_grow() {
+        assert!(matches!(pvc_update_valid(&claim("1Gi", "Bound"), &claim("2Gi", "Bound")), Ok(true)));
+        // No change, or a change elsewhere (metadata), is not growth.
+        assert!(matches!(pvc_update_valid(&claim("1Gi", "Bound"), &claim("1Gi", "Bound")), Ok(false)));
+    }
+
+    #[test]
+    fn it_shrinks_only_back_to_what_it_has() {
+        // Grew to 3Gi, the driver failed: back to 2Gi is recovery, fine.
+        assert!(matches!(pvc_update_valid(&claim("3Gi", "Bound"), &claim("2Gi", "Bound")), Ok(false)));
+        // Below status.capacity (1Gi) is not.
+        assert!(pvc_update_valid(&claim("2Gi", "Bound"), &claim("512Mi", "Bound")).is_err());
+    }
+
+    #[test]
+    fn an_unbound_claim_keeps_its_request() {
+        assert!(pvc_update_valid(&claim("1Gi", "Pending"), &claim("2Gi", "Pending")).is_err());
+    }
+
+    #[test]
+    fn the_rest_of_the_spec_is_immutable_but_for_binding_and_a_late_default_class() {
+        let mut other = claim("1Gi", "Bound");
+        other["spec"]["accessModes"] = json!(["ReadWriteMany"]);
+        assert!(pvc_update_valid(&claim("1Gi", "Bound"), &other).is_err());
+        // The binder setting volumeName, a default class arriving late.
+        let mut unbound = claim("1Gi", "Pending");
+        unbound["spec"]["volumeName"] = json!("");
+        unbound["spec"].as_object_mut().unwrap().remove("storageClassName");
+        let bound = claim("1Gi", "Pending");
+        assert!(pvc_update_valid(&unbound, &bound).is_ok());
+        // volumeMode absent reads as Filesystem.
+        let mut explicit = claim("1Gi", "Bound");
+        explicit["spec"]["volumeMode"] = json!("Filesystem");
+        assert!(pvc_update_valid(&claim("1Gi", "Bound"), &explicit).is_ok());
+        // Limits are not a resize.
+        let mut limits = claim("1Gi", "Bound");
+        limits["spec"]["resources"]["limits"] = json!({"storage": "5Gi"});
+        assert!(pvc_update_valid(&claim("1Gi", "Bound"), &limits).is_err());
     }
 }
