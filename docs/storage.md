@@ -138,6 +138,38 @@ is loopback, so only the node holding a volume can delete it: the kubelet's
 `reclaim_released` deletes the clone and then the PV (rustkube-node#46). The
 control plane only reports that the node will.
 
+## Volume expansion
+
+Growing a claim is three parties, and rustkube is the first (#63):
+
+1. **the apiserver** admits the larger request: only on a Bound claim, only
+   `resources.requests.storage`, only if the claim's StorageClass has
+   `allowVolumeExpansion: true` (403 otherwise, upstream's
+   `PersistentVolumeClaimResize`). A request may shrink only back to
+   `status.capacity`, the recovery from an expansion the driver could not
+   make; the rest of a claim's spec is immutable (422);
+2. **the driver's external-resizer** sees the request above `status.capacity`,
+   calls `ControllerExpandVolume`, grows the PV's `spec.capacity`, and writes
+   the claim's resize status itself: `allocatedResources`,
+   `allocatedResourceStatuses`, the `Resizing` condition and, when the node
+   has to grow the filesystem, `FileSystemResizePending`;
+3. **the kubelet** grows the filesystem (`NodeExpandVolume`), sets the
+   claim's `status.capacity` and clears the conditions — rustkube-node#42.
+
+The binder sets a claim's `status.capacity` as it becomes Bound and then
+leaves it: between steps 2 and 3 the volume is larger than the filesystem,
+and the claim says so. (It used to copy the PV's capacity onto the claim on
+every pass, which wiped the handshake.)
+
+`test/e2e/volume-expansion.sh` runs the real hostpath CSI driver,
+external-provisioner and external-resizer against a real control plane:
+a claim provisioned, the three refusals, a grow to 2Gi that stops — with no
+kubelet — at `FileSystemResizePending` with the old capacity, and the
+recovery shrink. Against the code before #63 it fails four checks.
+
+The in-kubelet `stormblock` class has no resizer; expanding it is the
+kubelet's business when it is wanted.
+
 ## Volume snapshots
 
 `VolumeSnapshot`, `VolumeSnapshotContent` and `VolumeSnapshotClass` are not
@@ -202,4 +234,5 @@ integration test for this contract. On this side, the binder's matching rules
 are unit-tested in `pkg/controller-manager/src/persistentvolume.rs` and the
 placement rules in `pkg/scheduler/src/volumebinding.rs`.
 `test/e2e/snapshot-controller.sh` runs upstream's snapshot-controller against
-a real control plane on fastetcd (see Volume snapshots above).
+a real control plane on fastetcd (see Volume snapshots above). `test/e2e/volume-expansion.sh` does the same for the
+external-provisioner and external-resizer with the hostpath CSI driver.

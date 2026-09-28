@@ -161,8 +161,12 @@ label, CronJob schedule validation, PVC access-mode validation
 (`ReadWriteOncePod` may not be combined with another mode), ConfigMap and
 Secret data-key validation, pod sysctl-name validation, a pod's
 `status.qosClass`, and `status.phase: Pending` for a new Pod,
-PersistentVolumeClaim or PersistentVolume. That is the
-whole chain: **admission webhooks are not called**. Webhook configurations
+PersistentVolumeClaim or PersistentVolume. **On update**: immutable
+ConfigMaps/Secrets and PriorityClass `value`; a PersistentVolumeClaim's
+spec is immutable but for growing `resources.requests.storage` on a Bound
+claim whose StorageClass has `allowVolumeExpansion` (403 otherwise; shrinking
+only back to `status.capacity`) — volume expansion, docs/storage.md. That is
+the whole chain: **admission webhooks are not called**. Webhook configurations
 are stored and served, and no request reaches a webhook (#82).
 
 **At boot**, idempotently: waits for the datastore; creates the `default`,
