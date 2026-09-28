@@ -124,6 +124,11 @@ when each piece landed.
 - [x] PVC `status.phase` not defaulted to `Pending` on create (#102) — Pods,
       PVCs and PVs get `Pending` on create (#67)
 - [ ] No generic ephemeral-volume controller (#94)
+- [ ] QA tests + must-gather in stormcos_qa (#35) — **waiting on the owner**
+      (2026-09-28): the 16 `stormcos_qa/tests/rustkube/*.sh` all use plain
+      HTTP with no auth (stale, stormcos_qa#11), nothing runs qa-runner
+      (stormcos_qa#14), and the test standard now wants a `test/` container
+      here (#96). Which home, and whether to edit stormcos_qa, is the owner's call
 - [ ] Test containers per the stormcos test standard (#96); the e2e scripts
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted,
       vm-runstrategy) are the
