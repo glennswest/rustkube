@@ -959,8 +959,8 @@ mod tests {
                 "rules": [{"operations": ["CREATE"], "apiGroups": [""], "apiVersions": ["v1"], "resources": ["pods"]}]}]});
         let back = decode_to_json(&encode_from_json(&vwc, "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration").unwrap(), "", "").unwrap();
         let rule = &back["webhooks"][0]["rules"][0];
-        assert_eq!(rule["operations"][0], "CREATE");
-        assert_eq!(rule["resources"][0], "pods");
+        assert_eq!(rule["operations"][0], "CREATE", "decoded: {back}");
+        assert_eq!(rule["resources"][0], "pods", "decoded: {back}");
     }
 
     /// client-go sends TokenRequest and SubjectAccessReview as protobuf; they
