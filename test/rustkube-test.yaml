@@ -1,0 +1,24 @@
+# rustkube-test-<suite>: how stormcentral runs rustkube's tests on a test
+# machine, per stormcentral docs/test-standard.md (#96). stormcentral's runner
+# makes the namespace, the storm-test ServiceAccount and its Role itself
+# (src/testruns.rs); this file records what the suites need of it.
+#
+# Test metadata (what the runner matches against the machine):
+#   suites:   short (< 2 min), medium (< 30 min), long (night window) —
+#             test/README.md lists every check
+#   requires: []            (the node's apiserver, a scheduler with a Ready
+#                            node; medium's last four checks and long's pods
+#                            need the kubelet to run pods)
+#   privileged: no          (the Job and its workload pods run unprivileged,
+#                            uid 65532, no capabilities)
+#   api:      namespaced, in the run's namespace only: configmaps, events,
+#             services, pods, endpointslices, deployments, replicasets,
+#             daemonsets, jobs; /readyz, /version, /metrics (read). No
+#             cluster-scoped access: CRD/Node/Lease checks report skip.
+#   images:   only the test image itself: workload pods run `/test idle`
+#   external: none
+#
+# The Job as stormcentral submits it (src/testruns.rs job_manifest):
+#   serviceAccountName: storm-test, command ["/test"], args [<suite>],
+#   env STORM_API STORM_NODE STORM_RUN_ID STORM_NAMESPACE STORM_SUITE
+#       STORM_TIMEOUT STORM_COMPONENT STORM_COMMIT

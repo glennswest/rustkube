@@ -37,6 +37,8 @@ cmd/kube-scheduler           → pkg/scheduler           filter / score / bind
                                pkg/apimachinery        errors, the KvStore trait, protobuf codec, metrics, quantities, selectors, cron
                                pkg/storage             the KvStore implementation over etcd v3 (etcd-client)
                                pkg/cloud               empty: a doc comment and no code; nothing depends on it
+test/                          rustkube-test           the test container (/test short|medium|long), test/README.md
+test/e2e, test/conformance                             scripts: a real control plane on fastetcd, and the upstream conformance suite
 ```
 
 ## What the apiserver does
@@ -307,6 +309,15 @@ is filed as a `build-failure` issue here.
 
 Release artifacts — static musl binaries and `FROM scratch` images — are
 described in [docs/releasing.md](docs/releasing.md).
+
+**On a node**, rustkube is tested by its test container, `test/`, which
+stormcentral runs as a Job on every test machine per its test standard:
+`stormcentral test run rustkube short|medium|long`. `short` (under two
+minutes) proves the control plane is up and does its job; `medium` its API
+semantics, controllers and GC end to end; `long` overnight waves with a
+latency, memory and residue trend. See [test/README.md](test/README.md). The
+same binary runs against a real apiserver, controller-manager and scheduler on
+fastetcd on the build box with `sc-build test/e2e/test-container.sh`.
 
 ## How it ships
 

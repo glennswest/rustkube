@@ -131,13 +131,14 @@ when each piece landed.
       2026-09-28. `test/` crate `rustkube-test` (workspace member, excluded
       from default-members), `/test short|medium|long`, JSON lines, exit
       0/1/2. Runs as stormcentral's `storm-test` SA: `*` in its namespace
-      only, no cluster reads. Plan: [ ] short (apiserver up over TLS + SA
-      token, CRUD+watch, controller-manager's per-namespace work,
-      ReplicaSet → pod bound by the scheduler) [ ] medium (the 16 retired
-      stormcos_qa checks that fit a namespace + status RV, watch DELETED,
-      GC cascade, Job, Service→EndpointSlice) [ ] long (API waves: ramp,
-      hold, drain; latency + residue trend) [ ] test/build.sh +
-      Containerfile verified on dev [ ] a real `stormcentral test run`; the e2e scripts
+      only, no cluster reads. [x] short, medium, long written (test/README.md)
+      [x] test/build.sh stages a static-pie musl binary on dev
+      [x] test/e2e/test-container.sh: short 5/5 on a real control plane
+      [x] found + fixed: `?dryRun=All` delete deleted; workload controllers
+      re-created children of an owner being deleted
+      [ ] rig run of medium/long after those fixes [ ] a real
+      `stormcentral test run rustkube short` (C2NR0Q2 was failing its
+      /readyz for every component on 2026-09-28); the e2e scripts
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted,
       vm-runstrategy) are the
       start of it
