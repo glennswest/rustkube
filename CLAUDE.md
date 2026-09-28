@@ -178,7 +178,15 @@ when each piece landed.
 - [x] Attach/detach — `VolumeAttachment` for drivers that require it
 - [x] Volume-aware scheduling — PV `nodeAffinity`, `selected-node`,
       `CSIStorageCapacity`
-- [ ] Volume expansion — `status.allocatedResources` + resize conditions (#63)
+- [ ] Volume expansion (#63) — IN PROGRESS 2026-09-28. Upstream: the
+      external-resizer writes the resize status itself; the control plane's
+      part is (1) PVC update validation — bound claims' spec immutable but
+      for growing storage, shrink only down to status.capacity; (2)
+      PersistentVolumeClaimResize admission — class `allowVolumeExpansion`;
+      (3) the binder sets capacity only on becoming Bound (it rewrote the
+      whole status whenever PV and claim capacity differed, wiping
+      FileSystemResizePending). Verify: `test/e2e/volume-expansion.sh` with
+      the real external-provisioner + external-resizer + hostpath CSI
 - [x] Snapshots (#64) — COMPLETE 2026-09-28. Install is stormpump#28,
       CreateSnapshot is stormblock#111. `test/e2e/snapshot-controller.sh`:
       upstream v8.6.0 CRDs + the real snapshot-controller as its SA, 18/18.
