@@ -197,7 +197,7 @@ when each piece landed.
 ### Phase 4: Scale & Conformance
 - [ ] 1000+ node testing (#66) — the controllers list everything every tick,
       which is what will break first
-- [ ] K8s conformance test suite (#67) — in progress: first run on dev,
+- [x] K8s conformance test suite (#67) — closed 2026-09-28; first run on dev,
       `test/conformance/run.sh`: e2e.test v1.36.x `[Conformance]` (443) against
       apiserver + controller-manager + scheduler with two heartbeat-kept
       stand-in Nodes and no kubelet; pod-dependent tests are expected to
