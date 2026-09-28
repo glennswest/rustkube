@@ -22,11 +22,12 @@
   orders lists with `$setElementOrder/…`, removes set members with
   `$deleteFromPrimitiveList/…` and clears maps with `$retainKeys`. None were
   known: a removal was merged *into* the element as a literal `$patch`
-  field, and the directive keys were stored as fields — every status patch
-  from the external-resizer stored `$setElementOrder/conditions` in the
-  claim, and a strategic patch could not remove a finalizer. All are
-  honoured now, and `finalizers` merge as a set, as upstream's
-  `patchStrategy: merge`
+  field, and the directive keys were stored as fields, so a client-go
+  controller could not remove a condition, container or env var by
+  strategic patch, nor a finalizer. All are honoured now, and `finalizers`
+  merge as a set, as upstream's `patchStrategy: merge`. Found while chasing
+  what turned out to be upstream behaviour: the external-resizer keeps
+  `Resizing` beside `FileSystemResizePending` on its recover-expansion path
 
 ## [v0.17.0] — 2026-09-28
 
