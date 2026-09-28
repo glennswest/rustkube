@@ -128,6 +128,14 @@ when each piece landed.
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted) are the
       start of it
 
+### VM runStrategy on a failed VMI (#104) — IN PROGRESS 2026-09-28
+- [ ] Failed VMI recreated for `Always`/`RerunOnFailure`/`running: true`
+      (Succeeded too for `Always`), with backoff in `status.startFailure`;
+      `Once`/`Manual` leave it
+- [ ] printableStatus `CrashLoopBackOff` (backing off) / `Failed` (left
+      failed); VMI `status.message` on a VM `Failure` condition
+- [ ] A refused VM status write is logged, not swallowed
+
 ### Presentation (#81) — COMPLETE 2026-09-26
 - [x] `docs/presentation.md`, 12-slide Marp deck from the code as of v0.15.2;
       renders with `npx @marp-team/marp-cli docs/presentation.md` (checked on
