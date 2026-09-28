@@ -4,6 +4,8 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.18.0] — 2026-09-28
+
 ### 2026-09-28 (volume expansion, #63)
 - **feat(apiserver): PVC resize admission.** A Bound claim's
   `spec.resources.requests.storage` may grow — the start of volume expansion,
