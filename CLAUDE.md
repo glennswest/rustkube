@@ -251,19 +251,14 @@ when each piece landed.
     → /build/assets/conformance/<sha>, then the chunks run on conform.g8.lo
     with RK_BIN/RK_FASTETCD (docs/conformance.md). conform.g8.lo did not
     resolve yet on 2026-09-27.
-  - **2026-09-28:** conform.g8.lo is up. A vm.sh run at efbea2d (results in
-    `conform:~/results/efbea2d…`) passed 75 vs 79 at 430b268 — auth/cli
-    chunk 18→12. In progress: diff the two runs spec by spec, fix any
-    regression, stage + run v0.16.0 on the VM, update docs/conformance.md,
-    close #67 with the confirmed numbers.
-  - **Next:** triage the 430b268 run, write the results table into
-    docs/conformance.md; further runs only on conform.g8.lo; close #67.
-  - **Next:** rerun the other chunks (`tmp/chunks.sh` shape is in
-    docs/conformance.md: RK_PORT_OFFSET side by side, RK_SUITE_TIMEOUT=45m)
-    and the focused webhook probe with
-    `RK_LOG_GREP='deployment|404|not found'`; the chunks launched at restart
-    were lost with the session. Then file the issues, write the results table
-    into docs/conformance.md, close #67.
+  - **2026-09-28:** first VM run at efbea2d: 75 passed. The drop was the
+    VM's missing kubectl (fixed d1881ac; chunk rerun 19 passed, best yet);
+    GC orphan was load (4/4 focused); PriorityClass `value` immutability
+    fixed (c241688). docs/conformance.md has the table. #67 closed: the run
+    exists and every failure is filed. **Blocked for new runs:** stage.sh
+    can't write /build/assets under the no-kept-state build rule (#140) —
+    owner decides how binaries reach conform.g8.lo (goldens? #96 test
+    container?). efbea2d is still staged there.
 - [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — CI
       builds x86_64 musl only; `build-release.sh` can target aarch64 via
       `cross`, and no such build has been recorded

@@ -40,6 +40,13 @@ ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && git checkout -q origin
 # → ~/results/<sha>/<chunk>.log and SUMMARY (passed/failed/skipped per chunk)
 ```
 
+> **Staging is broken since 2026-09-28.** sc-build now gives every job a
+> private drive and keeps nothing, so `stage.sh` can no longer write
+> `/build/assets` (#140). Until the owner decides how a commit's binaries
+> reach this VM (e.g. from the goldens, or conformance as a test container
+> under `stormcentral test`, #96), only an already-staged commit can be run;
+> efbea2d is still staged on the VM.
+
 `vm.sh` fetches the staged directory with a read-only rsync key (it can read
 `/build/assets/conformance` on dev and nothing else), checks the binaries
 against their MANIFEST, and runs the chunks side by side:
@@ -71,6 +78,36 @@ work on API objects (namespaces, garbage collection, CronJobs, Services and
 EndpointSlices, ResourceQuota), the scheduler's decisions, watch semantics.
 
 ## Results
+
+### The first run on the conformance VM, 2026-09-28, at efbea2d
+
+The same six chunks, on conform.g8.lo from staged binaries (`vm.sh`): 428
+specs reported, **75 passed, 353 failed** — fewer passes than 430b268, and
+not because of the control plane:
+
+| Chunk | 430b268 | efbea2d | after the kubectl fix |
+|---|---:|---:|---:|
+| sig-api-machinery | 19 | 18 | — |
+| sig-apps | 7 | 7 | — |
+| sig-auth, cli, instrumentation, architecture, scheduling | 18 | 12 | **19** |
+| sig-network | 10 | 11 | — |
+| sig-node | 14 | 15 | — |
+| sig-storage | 11 | 12 | — |
+
+- **Seven sig-cli specs failed on the VM's missing `kubectl`** ("executable
+  file not found"); the build box had one on PATH. `run.sh` now fetches the
+  release's own `kubectl` (d1881ac). Rerun of that chunk on the VM with the
+  efbea2d binaries and the fixed script: 19 passed, 24 failed — all seven back,
+  plus the CSR spec fixed in 6d0ed10.
+- **The four fixes of 6d0ed10 were confirmed** end to end: CSR API operations,
+  Ingress API operations, invalid sysctls, PV/PVC status.
+- **GC "orphan RS created by deployment"** failed once under six parallel
+  chunks and passed four times out of four focused, one of them alongside a
+  full chunk: timing under load, not a regression. Counted as "load" with the
+  ServiceAccount one below.
+- **PriorityClass endpoints** was reached for the first time (#85 put the kind
+  in discovery) and found `value` writable; it is immutable upstream. Fixed in
+  c241688 — PriorityClass `value` and `preemptionPolicy` refuse change (422).
 
 ### The run of 2026-09-27, at 430b268
 
