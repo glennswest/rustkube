@@ -4,6 +4,30 @@
 
 <!-- New unreleased changes go here -->
 
+### 2026-09-28 (test container, #96)
+- **feat(test):** `test/` is rustkube's test container per stormcentral's
+  test standard: `/test short|medium|long`, JSON lines, exit 0/1/2, run by
+  stormcentral as the `storm-test` ServiceAccount in its own namespace. short:
+  the apiserver over TLS with the SA token, an object's round trip with a
+  stale-update 409, a watch, the namespace's default ServiceAccount and
+  `kube-root-ca.crt`, a ReplicaSet's pod created and bound. medium: SSA,
+  JSON/strategic patches, conditional status, DeleteOptions, selectors,
+  paging, generateName, WatchList, selector-watch DELETED,
+  PartialObjectMetadata, events.k8s.io, GC orphan/foreground, a Deployment
+  rolled out, its EndpointSlice, a Job, a DaemonSet. long: API waves with a
+  latency, memory and residue trend. Pods run the test image itself
+  (`/test idle`). A workspace member outside `default-members`, so root
+  builds are unchanged. Replaces rustkube's scripts in stormcos_qa (#35,
+  stormcos_qa#25)
+- **fix(apiserver):** DeleteOptions in the query (`?dryRun=All`,
+  `propagationPolicy`, `gracePeriodSeconds`, `orphanDependents`) are
+  honoured, as upstream does without a body. A `?dryRun=All` delete deleted
+  the object
+- **fix(controller-manager):** Deployment, ReplicaSet, StatefulSet,
+  DaemonSet and Job controllers leave an owner that is being deleted alone.
+  A ReplicaSet under a foreground delete made new pods as the garbage
+  collector removed its old ones
+
 ## [v0.16.1] — 2026-09-28
 
 ### 2026-09-28 (conformance, #67)

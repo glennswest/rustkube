@@ -606,12 +606,13 @@ pub async fn crd_patch_status_ns(
 pub async fn crd_delete_ns(
     State(state): State<AppState>,
     Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
     let obj = state.storage.get(&key).await?;
-    let opts = crate::handlers::resource::parse_delete_options(&body);
+    let opts = crate::handlers::resource::parse_delete_options(&body, query.as_deref());
     let (item_kind, _) = crd_kinds(&state, &group, &version, &resource).await;
     let out = crate::handlers::resource::perform_delete(
         &state, &key, obj, &opts, &name, Some(&namespace), &item_kind,
@@ -879,12 +880,13 @@ pub async fn crd_update_cluster(
 pub async fn crd_delete_cluster(
     State(state): State<AppState>,
     Path((group, version, resource, name)): Path<(String, String, String, String)>,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
     let obj = state.storage.get(&key).await?;
-    let opts = crate::handlers::resource::parse_delete_options(&body);
+    let opts = crate::handlers::resource::parse_delete_options(&body, query.as_deref());
     let (item_kind, _) = crd_kinds(&state, &group, &version, &resource).await;
     let out = crate::handlers::resource::perform_delete(
         &state, &key, obj, &opts, &name, None, &item_kind,

@@ -341,10 +341,11 @@ fn apply_project_update(ns: &mut Value, project: &Value) {
 pub async fn delete_project(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let ns = get_namespace(&state, &name).await?;
-    let opts = parse_delete_options(&body);
+    let opts = parse_delete_options(&body, query.as_deref());
     resource::terminate_namespace(&state, &name, ns, &opts).await?;
     Ok(Json(json!({
         "apiVersion": "v1", "kind": "Status", "metadata": {}, "status": "Success",

@@ -576,9 +576,33 @@ pub(crate) struct DeleteOptions {
     dry_run: bool,
 }
 
-/// Parse a DeleteOptions request body (JSON — protobuf is transcoded upstream).
-/// An empty/absent body yields defaults (Background, no preconditions).
-pub(crate) fn parse_delete_options(body: &[u8]) -> DeleteOptions {
+/// Parse DeleteOptions from a request body (JSON — protobuf is transcoded
+/// upstream) and the query string. An empty/absent body yields defaults
+/// (Background, no preconditions).
+///
+/// The query carries the same options (`dryRun`, `propagationPolicy`,
+/// `gracePeriodSeconds`, `orphanDependents`), as upstream decodes them when
+/// there is no body — `kubectl delete --dry-run=server` and plain-HTTP
+/// clients send them that way. The body wins where both say something.
+/// Without this a `?dryRun=All` delete deleted (#96: the test container's
+/// medium suite).
+pub(crate) fn parse_delete_options(body: &[u8], query: Option<&str>) -> DeleteOptions {
+    let mut opts = parse_delete_body(body);
+    for (k, v) in form_urlencoded::parse(query.unwrap_or("").as_bytes()) {
+        match k.as_ref() {
+            "dryRun" if v == "All" => opts.dry_run = true,
+            "propagationPolicy" if opts.propagation_policy.is_none() => opts.propagation_policy = Some(v.into_owned()),
+            "orphanDependents" if opts.propagation_policy.is_none() && v == "true" => {
+                opts.propagation_policy = Some("Orphan".into())
+            }
+            "gracePeriodSeconds" if opts.grace_period_seconds.is_none() => opts.grace_period_seconds = v.parse().ok(),
+            _ => {}
+        }
+    }
+    opts
+}
+
+fn parse_delete_body(body: &[u8]) -> DeleteOptions {
     let v: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
     DeleteOptions {
         grace_period_seconds: v.get("gracePeriodSeconds").and_then(Value::as_i64),
@@ -730,12 +754,13 @@ pub(crate) async fn perform_delete(
 pub async fn delete_cluster_resource(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
     // Get the object first so we can return it (and inspect it for namespaces).
     let obj = state.storage.get(&key).await?;
-    let opts = parse_delete_options(&body);
+    let opts = parse_delete_options(&body, query.as_deref());
     check_preconditions(&obj, &opts)?;
 
     // Namespaces terminate gracefully (#28).
@@ -855,11 +880,12 @@ pub async fn finalize_namespace(
 pub async fn delete_namespaced_resource(
     State(state): State<AppState>,
     Path((namespace, resource, name)): Path<(String, String, String)>,
+    RawQuery(query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
     let obj = state.storage.get(&key).await?;
-    let opts = parse_delete_options(&body);
+    let opts = parse_delete_options(&body, query.as_deref());
     let out = perform_delete(&state, &key, obj, &opts, &name, Some(&namespace), &resource).await?;
     Ok(Json(out))
 }
@@ -888,7 +914,7 @@ pub(crate) async fn delete_collection(
     body: &[u8],
 ) -> Result<DeletedCollection, ApiError> {
     let params = WatchParams::from_query(query.unwrap_or(""));
-    let opts = parse_delete_options(body);
+    let opts = parse_delete_options(body, query);
     let cluster_path = prefix == ResourceStorage::cluster_prefix(store_resource);
     let mut matched = Vec::new();
     let mut token: Option<String> = None;
@@ -1857,6 +1883,7 @@ mod tests {
         let opts = parse_delete_options(
             br#"{"gracePeriodSeconds":30,"propagationPolicy":"Foreground",
                  "preconditions":{"uid":"abc","resourceVersion":"42"},"dryRun":["All"]}"#,
+            None,
         );
         assert_eq!(opts.grace_period_seconds, Some(30));
         assert_eq!(opts.propagation_policy.as_deref(), Some("Foreground"));
@@ -1865,12 +1892,26 @@ mod tests {
         let obj = json!({"metadata": {"uid": "abc", "resourceVersion": "42"}});
         assert!(check_preconditions(&obj, &opts).is_ok());
         // A uid mismatch is a Conflict.
-        let bad = parse_delete_options(br#"{"preconditions":{"uid":"WRONG"}}"#);
+        let bad = parse_delete_options(br#"{"preconditions":{"uid":"WRONG"}}"#, None);
         assert!(check_preconditions(&obj, &bad).is_err());
         // Empty body → defaults (Background, no preconditions).
-        let empty = parse_delete_options(b"");
+        let empty = parse_delete_options(b"", None);
         assert!(empty.propagation_policy.is_none() && !empty.dry_run);
         assert!(check_preconditions(&obj, &empty).is_ok());
+    }
+
+    #[test]
+    fn delete_options_from_the_query() {
+        // No body: the query says it all (`kubectl delete --dry-run=server`).
+        let q = parse_delete_options(b"", Some("dryRun=All&propagationPolicy=Foreground&gracePeriodSeconds=0"));
+        assert!(q.dry_run);
+        assert_eq!(q.propagation_policy.as_deref(), Some("Foreground"));
+        assert_eq!(q.grace_period_seconds, Some(0));
+        assert_eq!(parse_delete_options(b"", Some("orphanDependents=true")).propagation_policy.as_deref(), Some("Orphan"));
+        // The body wins where both speak.
+        let both = parse_delete_options(br#"{"propagationPolicy":"Background"}"#, Some("propagationPolicy=Orphan"));
+        assert_eq!(both.propagation_policy.as_deref(), Some("Background"));
+        assert!(!parse_delete_options(b"", Some("dryRun=")).dry_run);
     }
 
     /// Absent and empty are the same thing to a controller.

@@ -179,8 +179,11 @@ async fn delete_options(kube: &Kube) -> Result<Outcome> {
         return fail(format!("delete with a wrong uid precondition: {} (want 409)", r.status));
     }
     let r = kube.req("DELETE", &format!("{path}?dryRun=All"), JSON, None, None).await?;
-    if !r.ok() || kube.get(&path).await?.is_none() {
-        return fail(format!("dryRun delete: {} and the object is {}", r.status, "gone"));
+    if !r.ok() {
+        return fail(format!("dryRun delete: {} {}", r.status, brief(&r.body)));
+    }
+    if kube.get(&path).await?.is_none() {
+        return fail("a ?dryRun=All delete deleted the object");
     }
     let right = json!({"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": made["metadata"]["uid"]}});
     let r = kube.req("DELETE", &path, JSON, Some(&right), None).await?;
