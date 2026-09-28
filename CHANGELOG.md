@@ -9,6 +9,7 @@
   as `e2e.test` and hands it to the suite. The conformance VM has none on
   PATH, so the efbea2d run failed every kubectl spec (sig-cli) before it
   reached the apiserver — the drop from 18 to 12 passed in that chunk.
+  Each rig downloads under its own temp name: `vm.sh` starts six at once.
 
 ## [v0.16.0] — 2026-09-28
 
