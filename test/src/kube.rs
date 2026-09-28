@@ -12,6 +12,7 @@ pub const STRATEGIC: &str = "application/strategic-merge-patch+json";
 pub const JSON_PATCH: &str = "application/json-patch+json";
 pub const APPLY: &str = "application/apply-patch+yaml";
 
+#[derive(Clone)]
 pub struct Kube {
     http: reqwest::Client,
     base: String,
