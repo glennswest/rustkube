@@ -15,6 +15,9 @@
   A refused VM status write (409/404 answered as a `Status`) was taken for
   success; it is now logged. Status fields the controller does not own are
   kept.
+- **fix:** `runStrategy: Once` starts the VM. It was read as the boolean
+  `spec.running`, so a `Once` VM without it never got a VMI (found by
+  `test/e2e/vm-runstrategy.sh`).
 
 ### 2026-09-27 (conformance, #67)
 - **test:** `test/conformance/vm.sh <sha>` runs the whole suite on the

@@ -11,8 +11,8 @@
 //! What this reconciles is deliberately narrow: one VMI per VM, named after
 //! it, owned by it.
 //!
-//! - `spec.running: true` (or `runStrategy: Always`/`RerunOnFailure`) → the VMI
-//!   exists
+//! - `spec.running: true` (or `runStrategy: Always`/`RerunOnFailure`/`Once`)
+//!   → the VMI exists
 //! - `spec.running: false` (or `runStrategy: Halted`) → it does not
 //! - `spec.template` is the VMI's spec, the way a Deployment's `template` is a
 //!   pod's

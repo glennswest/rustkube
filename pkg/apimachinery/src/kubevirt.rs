@@ -23,12 +23,17 @@ use serde_json::Value;
 /// about running should not start a guest, and the CRD prints `spec.running`
 /// as a column, so an absent field already reads as stopped to anyone looking.
 ///
+/// `Once` is "true": it starts a VMI like `Always` does, and differs only in
+/// what happens once that VMI has finished, which is the controller's business
+/// (it is not replaced, #104). Read as the boolean, a `Once` VM with no
+/// `running` never started at all.
+///
 /// `Manual` is deliberately not "true": it means start and stop decide, and
 /// what they set is the boolean — so the boolean is the only thing left to
 /// read, which is what falling through to it does.
 pub fn wants_running(vm: &Value) -> bool {
     match vm["spec"]["runStrategy"].as_str() {
-        Some("Always") | Some("RerunOnFailure") => return true,
+        Some("Always") | Some("RerunOnFailure") | Some("Once") => return true,
         Some("Halted") => return false,
         _ => {}
     }
@@ -44,6 +49,11 @@ mod tests {
     fn run_strategy_wins_over_the_boolean() {
         assert!(wants_running(&json!({"spec": {"running": false, "runStrategy": "Always"}})));
         assert!(!wants_running(&json!({"spec": {"running": true, "runStrategy": "Halted"}})));
+    }
+
+    #[test]
+    fn once_starts_a_guest() {
+        assert!(wants_running(&json!({"spec": {"runStrategy": "Once"}})));
     }
 
     #[test]
