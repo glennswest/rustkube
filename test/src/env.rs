@@ -4,7 +4,9 @@
 use anyhow::{anyhow, Context, Result};
 use std::time::{Duration, Instant};
 
-const SA: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
+/// Where a pod's ServiceAccount is mounted. `STORM_SA_DIR` overrides it, for
+/// a run outside a pod (test/e2e/test-container.sh).
+const SA_DIR: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
 
 pub struct Env {
     /// `https://<node>:6443`, verified with the ServiceAccount's `ca.crt`.
@@ -34,9 +36,10 @@ pub fn default_budget(suite: &str) -> u64 {
 
 impl Env {
     pub fn discover(suite: &str) -> Result<Env> {
+        let sa = var("STORM_SA_DIR").unwrap_or_else(|| SA_DIR.into());
         let namespace = match var("STORM_NAMESPACE") {
             Some(n) => n,
-            None => std::fs::read_to_string(format!("{SA}/namespace"))
+            None => std::fs::read_to_string(format!("{sa}/namespace"))
                 .context("no STORM_NAMESPACE and no service-account namespace")?
                 .trim()
                 .to_string(),
@@ -48,11 +51,11 @@ impl Env {
                 Some(if h.contains(':') { format!("https://[{h}]:{p}") } else { format!("https://{h}:{p}") })
             })
             .ok_or_else(|| anyhow!("no STORM_API and no KUBERNETES_SERVICE_HOST"))?;
-        let token = std::fs::read_to_string(format!("{SA}/token"))
+        let token = std::fs::read_to_string(format!("{sa}/token"))
             .context("reading the service-account token")?
             .trim()
             .to_string();
-        let ca = std::fs::read(format!("{SA}/ca.crt")).context("reading the service-account ca.crt")?;
+        let ca = std::fs::read(format!("{sa}/ca.crt")).context("reading the service-account ca.crt")?;
         let budget = var("STORM_TIMEOUT").and_then(|t| t.parse().ok()).unwrap_or_else(|| default_budget(suite));
         Ok(Env {
             api: api.trim_end_matches('/').to_string(),
