@@ -367,7 +367,7 @@ impl PersistentVolumeController {
         // again, which is Lost, as upstream.
         let ref_uid = pv["spec"]["claimRef"]["uid"].as_str().unwrap_or("");
         let claim_uid = pvc["metadata"]["uid"].as_str().unwrap_or("");
-        if ref_name.is_empty() || ref_uid.is_empty() {
+        if ref_name.is_empty() || (ref_uid.is_empty() && !claim_uid.is_empty()) {
             return self.bind(namespace, name, pvc, &pv).await;
         }
         if !claim_uid.is_empty() && ref_uid != claim_uid {
