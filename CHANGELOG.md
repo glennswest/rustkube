@@ -4,6 +4,8 @@
 
 <!-- New unreleased changes go here -->
 
+## [v0.16.1] — 2026-09-28
+
 ### 2026-09-28 (conformance, #67)
 - **test:** `test/conformance/run.sh` fetches `kubectl` of the same release
   as `e2e.test` and hands it to the suite. The conformance VM has none on

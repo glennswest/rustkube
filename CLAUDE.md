@@ -81,7 +81,7 @@ among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
 and others are left from the 10-crate layout; k8s-openapi is declared and never
 imported.
 
-## Current Version: `v0.16.0`
+## Current Version: `v0.16.1`
 
 ## Work Plan
 
@@ -312,6 +312,7 @@ Known state on 2026-09-24:
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v0.16.1 | 2026-09-28 | PriorityClass `value`/`preemptionPolicy` immutable; conformance `run.sh` fetches kubectl (#67) |
 | v0.16.0 | 2026-09-28 | VirtualMachine honours `runStrategy` on a failed VMI: recreated with backoff under `Always`/`RerunOnFailure`, left under `Once`/`Manual`; `printableStatus` `CrashLoopBackOff`/`Failed` + `Failure` condition; `Once` starts (#104). Conformance fixes from the #67 runs: LIST item RVs (#111), SA token volumes, impersonation, generateName, Pending on create (#102), selector-watch DELETED, and more (CHANGELOG) |
 | v0.15.3 | 2026-09-26 | Protobuf responses keep nested `kind`/`apiVersion` (roleRef, subjects, ownerReferences) — `oc adm policy remove-*` works. Objects created over protobuf get a real uid — the GC no longer deletes a new Deployment's ReplicaSet (#99). `oc adm` checklist (#69) |
 | v0.15.2 | 2026-09-26 | Watch DELETED events: a custom resource's names its real namespace, not its plural, so informers drop it; DELETED carries the object's last state and honours selectors; a watch with no resourceVersion is served by the watch cache (#100) |
