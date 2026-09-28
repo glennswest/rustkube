@@ -10,6 +10,9 @@
   PATH, so the efbea2d run failed every kubectl spec (sig-cli) before it
   reached the apiserver — the drop from 18 to 12 passed in that chunk.
   Each rig downloads under its own temp name: `vm.sh` starts six at once.
+- **fix(apiserver):** a PriorityClass's `value` and `preemptionPolicy` are
+  immutable (422 on PUT or PATCH), as upstream. They were writable; the
+  PriorityClass endpoints conformance spec found it once #85 served the kind.
 
 ## [v0.16.0] — 2026-09-28
 

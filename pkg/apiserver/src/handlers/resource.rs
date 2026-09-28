@@ -421,7 +421,25 @@ pub(crate) async fn persist_or_finalize(
 /// stays immutable: an update that changes either is a 422, as upstream.
 /// Such updates were written (#67: the ConfigMap and Secret immutability
 /// conformance specs).
+///
+/// A PriorityClass's `value` and `preemptionPolicy` never change after
+/// create, as upstream's `ValidatePriorityClassUpdate`: pods already carry the
+/// value they were admitted with, so a changed class would say one priority
+/// while its pods ran at another. They were writable (#67: the PriorityClass
+/// endpoints conformance spec, reached once #85 served the kind).
 pub(crate) fn check_immutable(key: &str, old: &Value, new: &Value) -> Result<(), ApiError> {
+    if key.starts_with("/registry/priorityclasses/") {
+        if old["value"] != new["value"] {
+            return Err(ApiError::invalid("value: Forbidden: may not be changed in an update."));
+        }
+        // Not defaulted on create here, so absent is upstream's default: a
+        // client that sends the defaulted value back is not changing it.
+        let policy = |v: &Value| v["preemptionPolicy"].as_str().unwrap_or("PreemptLowerPriority").to_string();
+        if policy(old) != policy(new) {
+            return Err(ApiError::invalid("preemptionPolicy: Invalid value: field is immutable"));
+        }
+        return Ok(());
+    }
     let fields: &[&str] = if key.starts_with("/registry/configmaps/") {
         &["data", "binaryData"]
     } else if key.starts_with("/registry/secrets/") {
@@ -2442,5 +2460,16 @@ mod immutable_tests {
         assert!(check_immutable(k, &old, &json!({"immutable": false, "data": {"a": "1"}})).is_err());
         assert!(check_immutable(k, &json!({"data": {"a": "1"}}), &json!({"data": {"a": "2"}})).is_ok());
         assert!(check_immutable("/registry/pods/ns/p", &old, &json!({})).is_ok());
+    }
+
+    #[test]
+    fn a_priority_class_keeps_its_value_and_policy() {
+        let k = "/registry/priorityclasses/high";
+        let old = json!({"value": 1000, "preemptionPolicy": "PreemptLowerPriority", "description": "a"});
+        assert!(check_immutable(k, &old, &json!({"value": 1000, "preemptionPolicy": "PreemptLowerPriority", "description": "b"})).is_ok());
+        assert!(check_immutable(k, &old, &json!({"value": 1001, "preemptionPolicy": "PreemptLowerPriority"})).is_err());
+        assert!(check_immutable(k, &old, &json!({"value": 1000, "preemptionPolicy": "Never"})).is_err());
+        // Absent is the default, both ways round.
+        assert!(check_immutable(k, &json!({"value": 1}), &json!({"value": 1, "preemptionPolicy": "PreemptLowerPriority"})).is_ok());
     }
 }
