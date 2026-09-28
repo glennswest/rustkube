@@ -1,0 +1,23 @@
+[package]
+name = "rustkube-test"
+description = "rustkube's test container: short, medium and long suites against the control plane of a running node, per stormcentral docs/test-standard.md (#96)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# A workspace member, so the one Cargo.lock pins it, but not a default member:
+# `cargo build` at the root (the goldens, sc-build) builds exactly what it did
+# before. Build it with `-p rustkube-test` (test/build.sh does). The control
+# plane is never linked in: it is reached over HTTPS, as any client reaches it.
+[[bin]]
+name = "rustkube-test"
+path = "src/main.rs"
+
+# Only crates the workspace already pins.
+[dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

@@ -2236,6 +2236,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustkube-test"
+version = "0.16.1"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "rustls"
 version = "0.23.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"

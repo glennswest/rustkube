@@ -57,3 +57,4 @@ deploy/terragrunt/tclusters/*/terraform.tfstate*
 
 # Downloaded protoc toolchain (pointed at by PROTOC for cross builds)
 .protoc/
+test/.stage/

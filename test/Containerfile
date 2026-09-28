@@ -1,0 +1,15 @@
+# rustkube-test — rustkube's test image, per stormcentral
+# docs/test-standard.md (#96). One image for all three suites: the Job runs
+# `/test short|medium|long`, and the pods the suites create run `/test idle`
+# from this same image, so nothing is pulled from outside the cluster.
+#
+# test/build.sh builds the static (musl) binary on the build box and stages
+# it in test/.stage/; this packages it. It needs nothing under it: it talks
+# HTTPS to the apiserver, verified with the ServiceAccount's mounted ca.crt.
+#
+# The build context is the repo root (the standard's).
+FROM scratch
+ARG COMMIT=unknown
+LABEL storm.io/test-of="rustkube" storm.io/test-commit="${COMMIT}"
+COPY test/.stage/rustkube-test /test
+ENTRYPOINT ["/test"]

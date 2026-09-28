@@ -10,6 +10,21 @@ members = [
     "cmd/kube-apiserver",
     "cmd/kube-controller-manager",
     "cmd/kube-scheduler",
+    "test",
+]
+# What `cargo build`/`cargo test` at the root mean: everything but the test
+# container (#96), so the goldens and sc-build build what they always did.
+# `-p rustkube-test` builds that one; test/build.sh does.
+default-members = [
+    "pkg/apimachinery",
+    "pkg/storage",
+    "pkg/apiserver",
+    "pkg/scheduler",
+    "pkg/controller-manager",
+    "pkg/cloud",
+    "cmd/kube-apiserver",
+    "cmd/kube-controller-manager",
+    "cmd/kube-scheduler",
 ]
 
 # Release profile (#49). These binaries ship as images sealed into the read-only
