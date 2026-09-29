@@ -200,8 +200,8 @@ impl Controller for ServiceController {
     fn children(&self) -> Option<&'static str> { Some("/api/v1/endpoints") }
     fn dependencies(&self) -> Vec<Dependency> {
         vec![
-            Dependency { path: "/api/v1/pods", route: Arc::new(owned::pod_membership) },
-            Dependency { path: "/apis/discovery.k8s.io/v1/endpointslices", route: Arc::new(owned::owner_keys) },
+            Dependency { path: "/api/v1/pods".into(), route: Arc::new(owned::pod_membership) },
+            Dependency { path: "/apis/discovery.k8s.io/v1/endpointslices".into(), route: Arc::new(owned::owner_keys) },
         ]
     }
     async fn reconcile(&self, svc: &Value, _children: &[Value], deps: &Deps) -> anyhow::Result<()> {

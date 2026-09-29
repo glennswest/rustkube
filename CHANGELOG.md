@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Index namespace provisioning and teardown with separate bounded
+  pools and dynamically discovered shared feeds. Rebuild subscriptions on CRD
+  changes; verify authoritative emptiness before conditional finalization.
 - **perf:** Index PodMigration and HPA workers by named dependencies. Retain
   the existing migration state machine and placeholder HPA behavior while
   avoiding full lists and unchanged status timestamp writes.

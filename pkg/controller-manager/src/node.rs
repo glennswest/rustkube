@@ -256,11 +256,11 @@ impl Controller for NodeLifecycleController {
     fn name(&self) -> &'static str { "node" }
     fn primary(&self) -> &'static str { "/api/v1/nodes" }
     fn dependencies(&self) -> Vec<Dependency> { vec![
-        Dependency { path: "/apis/coordination.k8s.io/v1/leases", route: Arc::new(|delta, primary| {
+        Dependency { path: "/apis/coordination.k8s.io/v1/leases".into(), route: Arc::new(|delta, primary| {
             delta.old.iter().chain(delta.new.iter()).filter(|l| l["metadata"]["namespace"] == "kube-node-lease")
                 .flat_map(|l| owned::keys_at(primary, Index::Name("".into(),l["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
         }) },
-        Dependency { path: "/api/v1/pods", route: Arc::new(|delta, primary| {
+        Dependency { path: "/api/v1/pods".into(), route: Arc::new(|delta, primary| {
             delta.affected.iter().flat_map(|i| match i {
                 Index::Node(name) => owned::keys_at(primary, Index::Name("".into(),name.clone())),
                 _ => Vec::new(),

@@ -927,9 +927,9 @@ impl Controller for Claims<'_> {
     // Local successful PV writes are acknowledged before the next claim can choose.
     fn workers(&self) -> usize { 1 }
     fn dependencies(&self) -> Vec<Dependency> { vec![
-        Dependency { path: "/api/v1/persistentvolumes", route: Arc::new(owned::volume_claims) },
-        Dependency { path: "/apis/storage.k8s.io/v1/storageclasses", route: Arc::new(owned::storage_class_claims) },
-        Dependency { path: "/api/v1/pods", route: Arc::new(owned::claim_users) },
+        Dependency { path: "/api/v1/persistentvolumes".into(), route: Arc::new(owned::volume_claims) },
+        Dependency { path: "/apis/storage.k8s.io/v1/storageclasses".into(), route: Arc::new(owned::storage_class_claims) },
+        Dependency { path: "/api/v1/pods".into(), route: Arc::new(owned::claim_users) },
     ] }
     async fn reconcile(&self, pvc: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
         let classes: HashMap<_,_> = deps.feed(1).list()?.into_iter().filter_map(|c|
@@ -948,7 +948,7 @@ impl Controller for Volumes<'_> {
     fn name(&self) -> &'static str { "persistentvolumes" }
     fn primary(&self) -> &'static str { "/api/v1/persistentvolumes" }
     fn dependencies(&self) -> Vec<Dependency> { vec![Dependency {
-        path: "/api/v1/persistentvolumeclaims", route: Arc::new(|delta, primary| {
+        path: "/api/v1/persistentvolumeclaims".into(), route: Arc::new(|delta, primary| {
             delta.old.iter().chain(delta.new.iter()).flat_map(|pvc| {
                 owned::keys_at(primary, Index::Claim(
                     pvc["metadata"]["namespace"].as_str().unwrap_or("").into(),

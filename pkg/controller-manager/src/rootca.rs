@@ -109,7 +109,7 @@ impl Controller for RootCaPublisher {
     fn name(&self) -> &'static str { "rootca" }
     fn primary(&self) -> &'static str { "/api/v1/namespaces" }
     fn dependencies(&self) -> Vec<Dependency> {
-        vec![Dependency { path: "/api/v1/configmaps", route: Arc::new(|delta, primary| {
+        vec![Dependency { path: "/api/v1/configmaps".into(), route: Arc::new(|delta, primary| {
             let mut result = Vec::new();
             for cm in delta.old.iter().chain(delta.new.iter()) {
                 if cm["metadata"]["name"] != NAME { continue; }

@@ -224,10 +224,10 @@ impl Controller for HpaController {
         let route: owned::Route = Arc::new(|delta, primary| delta.old.iter().chain(delta.new.iter()).flat_map(|o|
             owned::keys_at(primary,Index::Target(o["metadata"]["namespace"].as_str().unwrap_or("").into(),o["kind"].as_str().unwrap_or("").into(),o["metadata"]["name"].as_str().unwrap_or("").into()))).collect());
         vec![
-            Dependency { path: "/apis/apps/v1/deployments", route: route.clone() },
-            Dependency { path: "/apis/apps/v1/replicasets", route: route.clone() },
-            Dependency { path: "/apis/apps/v1/statefulsets", route },
-            Dependency { path: "/api/v1/pods", route: Arc::new(|delta,primary| {
+            Dependency { path: "/apis/apps/v1/deployments".into(), route: route.clone() },
+            Dependency { path: "/apis/apps/v1/replicasets".into(), route: route.clone() },
+            Dependency { path: "/apis/apps/v1/statefulsets".into(), route },
+            Dependency { path: "/api/v1/pods".into(), route: Arc::new(|delta,primary| {
                 let mut keys = Vec::new();
                 for pod in delta.old.iter().chain(delta.new.iter()) {
                     for owner in pod["metadata"]["ownerReferences"].as_array().into_iter().flatten() {

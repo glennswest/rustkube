@@ -219,22 +219,22 @@ impl Controller for AttachDetachController {
     fn name(&self) -> &'static str { "attachdetach" }
     fn primary(&self) -> &'static str { "/api/v1/persistentvolumes" }
     fn dependencies(&self) -> Vec<Dependency> { vec![
-        Dependency { path: "/api/v1/persistentvolumeclaims", route: Arc::new(|delta, primary| {
+        Dependency { path: "/api/v1/persistentvolumeclaims".into(), route: Arc::new(|delta, primary| {
             delta.affected.iter().flat_map(|i| match i {
                 Index::Volume(name) => owned::keys_at(primary, Index::Name("".into(),name.clone())),
                 _ => Vec::new(),
             }).collect()
         }) },
-        Dependency { path: "/api/v1/pods", route: Arc::new(|delta, primary| {
+        Dependency { path: "/api/v1/pods".into(), route: Arc::new(|delta, primary| {
             delta.affected.iter().flat_map(|i| match i {
                 Index::Claim(..) => owned::keys_at(primary, i.clone()), _ => Vec::new(),
             }).collect()
         }) },
-        Dependency { path: "/apis/storage.k8s.io/v1/csidrivers", route: Arc::new(|delta, primary| {
+        Dependency { path: "/apis/storage.k8s.io/v1/csidrivers".into(), route: Arc::new(|delta, primary| {
             delta.old.iter().chain(delta.new.iter()).flat_map(|driver|
                 owned::keys_at(primary, Index::Driver(driver["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
         }) },
-        Dependency { path: "/apis/storage.k8s.io/v1/volumeattachments", route: Arc::new(|delta, primary| {
+        Dependency { path: "/apis/storage.k8s.io/v1/volumeattachments".into(), route: Arc::new(|delta, primary| {
             delta.old.iter().chain(delta.new.iter()).flat_map(|va| {
                 let name = va["spec"]["source"]["persistentVolumeName"].as_str().unwrap_or("");
                 let mut keys = owned::keys_at(primary, Index::Name("".into(),name.into()));

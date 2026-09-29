@@ -16,7 +16,7 @@ pub type Route = Arc<dyn Fn(&Delta, &Feed) -> Vec<Key> + Send + Sync>;
 
 /// A watched collection besides the primary and its owned children.
 pub struct Dependency {
-    pub path: &'static str,
+    pub path: String,
     pub route: Route,
 }
 

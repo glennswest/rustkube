@@ -636,11 +636,11 @@ impl Controller for MigrationController {
     fn name(&self) -> &'static str { "migration" }
     fn primary(&self) -> &'static str { "/apis/rustkube.io/v1alpha1/podmigrations" }
     fn dependencies(&self) -> Vec<Dependency> { vec![
-        Dependency { path: "/api/v1/pods", route: Arc::new(|delta, primary| {
+        Dependency { path: "/api/v1/pods".into(), route: Arc::new(|delta, primary| {
             delta.old.iter().chain(delta.new.iter()).flat_map(|p| owned::keys_at(primary,Index::Pod(
                 p["metadata"]["namespace"].as_str().unwrap_or("").into(),p["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
         }) },
-        Dependency { path: "/api/v1/nodes", route: Arc::new(|delta,primary| {
+        Dependency { path: "/api/v1/nodes".into(), route: Arc::new(|delta,primary| {
             delta.old.iter().chain(delta.new.iter()).flat_map(|n| owned::keys_at(primary,Index::Node(n["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
         }) },
     ] }

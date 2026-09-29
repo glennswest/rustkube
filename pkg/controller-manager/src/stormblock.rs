@@ -269,7 +269,7 @@ impl Controller for Claims<'_> {
     fn name(&self) -> &'static str { "stormblock-claims" }
     fn primary(&self) -> &'static str { "/api/v1/persistentvolumeclaims" }
     fn dependencies(&self) -> Vec<Dependency> { vec![Dependency {
-        path: "/api/v1/persistentvolumes", route: Arc::new(owned::volume_claims),
+        path: "/api/v1/persistentvolumes".into(), route: Arc::new(owned::volume_claims),
     }] }
     async fn reconcile(&self, pvc: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> { self.0.provision_claim(pvc).await }
 }

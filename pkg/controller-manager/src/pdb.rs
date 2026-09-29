@@ -104,7 +104,7 @@ impl Controller for PdbController {
     fn name(&self) -> &'static str { "pdb" }
     fn primary(&self) -> &'static str { "/apis/policy/v1/poddisruptionbudgets" }
     fn dependencies(&self) -> Vec<Dependency> {
-        vec![Dependency { path: "/api/v1/pods", route: Arc::new(owned::pod_membership) }]
+        vec![Dependency { path: "/api/v1/pods".into(), route: Arc::new(owned::pod_membership) }]
     }
     async fn reconcile(&self, pdb: &Value, _children: &[Value], deps: &Deps) -> anyhow::Result<()> {
         self.reconcile_pdb(pdb, &owned::selected_pods(pdb, deps.feed(0))?).await

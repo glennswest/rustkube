@@ -344,7 +344,7 @@ impl crate::owned::Controller for DaemonSetController {
     }
     fn dependencies(&self) -> Vec<crate::owned::Dependency> {
         vec![crate::owned::Dependency {
-            path: "/api/v1/nodes",
+            path: "/api/v1/nodes".into(),
             route: Arc::new(route_node),
         }]
     }
