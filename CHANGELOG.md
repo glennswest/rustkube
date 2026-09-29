@@ -9,6 +9,8 @@
 - Multi-master correctness: datastore snapshot pagination, explicit watch
   expiration/lag errors, unique election identities and conditional placement
   updates. Three-master failure validation remains pending (#149).
+- Lease candidates observe renewal changes using local monotonic time,
+  avoiding premature takeover caused by master clock offsets.
 - Event-driven architecture and C2NR0Q2 release baseline in
   `docs/event-driven-design.md`; #143–#147 track implementation and validation.
   Indexed object workers remain pending; no subsecond performance claim yet.

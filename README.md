@@ -52,7 +52,8 @@ LIST reads use the shared datastore's consistent snapshot; continuation pages
 pin that snapshot even when a load balancer sends them to another API server.
 Expired history returns 410 so clients relist. Controller and scheduler
 leadership uses Kubernetes Leases; watch queues are local, reconstructible
-state. Three-master failure testing remains required before rollout (#149).
+state. Lease expiration uses local elapsed time rather than comparing master
+wall clocks. Three-master failure testing remains required before rollout (#149).
 
 **API groups served** (and advertised in `/api`, `/apis`):
 `v1`, `apps/v1`, `batch/v1`, `autoscaling/v2`, `policy/v1`,

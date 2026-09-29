@@ -261,6 +261,10 @@ identities must also be unique. Standbys do no controller mutations. The
 15-second lease and its renewal timing are intentional failure-detection
 semantics, not latency gates in a healthy create/bind path. Measure takeover
 time separately; do not promise subsecond failover by silently shortening it.
+Candidates measure an unchanged foreign lease using local monotonic elapsed
+time. Remote `renewTime` values indicate a changed record, not trusted local
+time. This follows the [client-go lease observation approach](https://github.com/kubernetes/client-go/blob/master/tools/leaderelection/leaderelection.go),
+which tolerates clock offsets but still assumes bounded clock-rate differences.
 
 Lease election alone is not fencing: an old leader can pause with a request
 already in flight. Placement and destructive operations therefore need UID

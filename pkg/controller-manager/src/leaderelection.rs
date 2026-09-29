@@ -28,18 +28,16 @@ pub struct LeaderElector {
     identity: String,
     get_path: String,
     create_path: String,
+    observation: std::sync::Mutex<apimachinery::lease::Observation>,
 }
 
 impl LeaderElector {
     pub fn new(api: Arc<ApiClient>, name: &str, namespace: &str, identity: &str) -> Self {
         Self {
             api,
-            get_path: format!(
-                "/apis/coordination.k8s.io/v1/namespaces/{namespace}/leases/{name}"
-            ),
-            create_path: format!(
-                "/apis/coordination.k8s.io/v1/namespaces/{namespace}/leases"
-            ),
+            observation: Default::default(),
+            get_path: format!("/apis/coordination.k8s.io/v1/namespaces/{namespace}/leases/{name}"),
+            create_path: format!("/apis/coordination.k8s.io/v1/namespaces/{namespace}/leases"),
             name: name.to_string(),
             namespace: namespace.to_string(),
             identity: identity.to_string(),
@@ -89,7 +87,10 @@ impl LeaderElector {
             });
             return match self.api.create(&self.create_path, &body).await {
                 Ok(v) if v["kind"] == "Lease" => {
-                    info!("leaderelection: created lease, leading as {}", self.identity);
+                    info!(
+                        "leaderelection: created lease, leading as {}",
+                        self.identity
+                    );
                     true
                 }
                 // Lost the create race (409) or other error — a Status object.
@@ -97,6 +98,9 @@ impl LeaderElector {
             };
         }
 
+        if !resp.status().is_success() {
+            return false;
+        }
         let lease: serde_json::Value = match resp.json().await {
             Ok(v) => v,
             Err(e) => {
@@ -105,24 +109,43 @@ impl LeaderElector {
             }
         };
 
+        if lease["kind"] != "Lease"
+            || lease["metadata"]["resourceVersion"]
+                .as_str()
+                .is_none_or(str::is_empty)
+        {
+            return false;
+        }
         let spec = &lease["spec"];
         let holder = spec["holderIdentity"].as_str().unwrap_or("");
-        let renew_time = spec["renewTime"].as_str().unwrap_or("");
-        let lease_dur = spec["leaseDurationSeconds"].as_i64().unwrap_or(LEASE_DURATION_SECS);
+        let lease_dur = spec["leaseDurationSeconds"]
+            .as_i64()
+            .unwrap_or(LEASE_DURATION_SECS);
         let transitions = spec["leaseTransitions"].as_i64().unwrap_or(0);
-        let acquire_time = spec["acquireTime"].as_str().unwrap_or(&now_micro).to_string();
-        let rv = lease["metadata"]["resourceVersion"].as_str().unwrap_or("").to_string();
+        let acquire_time = spec["acquireTime"]
+            .as_str()
+            .unwrap_or(&now_micro)
+            .to_string();
+        let rv = lease["metadata"]["resourceVersion"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
 
         let held_by_us = holder == self.identity;
 
-        // Expired if renewTime + leaseDuration is in the past (or unparseable).
-        let expired = match chrono::DateTime::parse_from_rfc3339(renew_time) {
-            Ok(rt) => now.signed_duration_since(rt.with_timezone(&Utc)).num_seconds() > lease_dur,
-            Err(_) => true,
-        };
+        // Remote wall-clock timestamps only signal renewal; measure elapsed
+        // time locally to avoid premature takeover when master clocks differ.
+        if lease_dur <= 0 {
+            return false;
+        }
+        let expired = self.observation.lock().unwrap().expired(
+            spec,
+            Duration::from_secs(lease_dur as u64),
+            std::time::Instant::now(),
+        );
 
         // A valid lease held by someone else — we stay a follower.
-        if !held_by_us && !expired {
+        if !held_by_us && !holder.is_empty() && !expired {
             return false;
         }
 
@@ -131,7 +154,7 @@ impl LeaderElector {
         let (new_acquire, new_transitions) = if held_by_us {
             (acquire_time, transitions)
         } else {
-            (now_micro.clone(), transitions + 1)
+            (now_micro.clone(), transitions.saturating_add(1))
         };
         let body = serde_json::json!({
             "apiVersion": "coordination.k8s.io/v1",
@@ -143,7 +166,7 @@ impl LeaderElector {
             },
             "spec": {
                 "holderIdentity": self.identity,
-                "leaseDurationSeconds": lease_dur,
+                "leaseDurationSeconds": LEASE_DURATION_SECS,
                 "acquireTime": new_acquire,
                 "renewTime": now_micro,
                 "leaseTransitions": new_transitions
