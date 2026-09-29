@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Include datastore logs and request/store counters in API-rig
+  failure reports; retain PDB-specific diagnostics despite startup log volume.
 - **docs:** Retain final-validation failures #153/#154 alongside successful
   reruns; closure remains pending the intermittent-failure investigation.
 - **test:** Preserve object observations on selector-test failure and expose

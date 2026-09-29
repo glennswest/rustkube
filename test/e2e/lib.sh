@@ -152,11 +152,15 @@ start_scheduler() {
 report() {
   echo "---- $FAIL failed"
   if [ "$FAIL" -ne 0 ]; then
-    echo "---- apiserver log (tail)"; tail -40 "$W/apiserver.log"
+    echo "---- apiserver log (tail)"; tail -80 "$W/apiserver.log"
+    echo "---- datastore log (tail)"; tail -80 "$W/fastetcd.log"
+    echo "---- request/store counters at failure"
+    curl --max-time 3 -sk "$API/metrics" | grep -E '^(apiserver_current_inflight|apiserver_request_total|rustkube_store_)' || true
     # Without kubevirt's CRDs every namespace's VM LIST is a 404; that noise
     # would fill the tail.
     [ -f "$W/cm.log" ] && { echo "---- controller-manager log (tail, 404 LISTs dropped)"
-      grep -v 'reflector LIST failed.*404 Not Found' "$W/cm.log" | tail -60; }
+      grep -v 'reflector LIST failed.*404 Not Found' "$W/cm.log" | tail -60;
+      grep 'reconciling PDB membership' "$W/cm.log" | tail -30; }
   fi
   exit "$FAIL"
 }

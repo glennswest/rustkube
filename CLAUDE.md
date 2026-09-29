@@ -273,9 +273,10 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       tests and burst/capacity-release API-rig checks pass at 226a388.
 - [ ] Final run at 9a24ce9: 409 unit tests pass, but PDB startup membership
       stalled in the selector rig (#153). At 1b6f951, one diagnostic plus ten
-      fresh repetitions pass; normal-logging repetition is in progress.
-      Safety/CSI/DaemonSet/VM rigs pass, but short ConfigMap POST timed out
-      (#154). Resolve these intermittent failures before closing #146.
+      fresh repetitions and 20 normal-logging repetitions pass. Short rerun
+      also passes 5/5. Safety/CSI/DaemonSet/VM rigs pass, but one short
+      ConfigMap POST timed out (#154). Add datastore/metrics failure evidence
+      and repeat the short suite to identify the shared stall before closure.
 - [ ] Final audit: create expectations and dependency recovery passed on dev;
       add delayed-write history-expiry fencing, then validate final head.
       Check write overlays, cache recovery barriers,
