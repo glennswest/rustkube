@@ -136,7 +136,10 @@ report() {
   echo "---- $FAIL failed"
   if [ "$FAIL" -ne 0 ]; then
     echo "---- apiserver log (tail)"; tail -40 "$W/apiserver.log"
-    [ -f "$W/cm.log" ] && { echo "---- controller-manager log (tail)"; tail -20 "$W/cm.log"; }
+    # Without kubevirt's CRDs every namespace's VM LIST is a 404; that noise
+    # would fill the tail.
+    [ -f "$W/cm.log" ] && { echo "---- controller-manager log (tail, 404 LISTs dropped)"
+      grep -v 'reflector LIST failed.*404 Not Found' "$W/cm.log" | tail -60; }
   fi
   exit "$FAIL"
 }
