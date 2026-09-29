@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **chore:** Merge turbomode into main at 908d078 (#163). Full locked workspace builds/tests on both branch and merge commit passed: 418 tests, four datastore-dependent tests ignored, doc tests passed. Runtime/cache acceptance remains on existing issues; no golden requested.
 - **docs:** Update main integration status under #163; retain datastore snapshot, latency and multi-master acceptance gaps and the explicit no-golden instruction.
 - **docs:** Record owner-authorized #163 merge plan and whole-workspace verification gates; retain pending acceptance and no-golden scope.
 - **docs:** Record audit verification: 41 CLI flags covered, 26 relative links valid; remote sc-build at 635855d passed 409 tests with four datastore-dependent tests ignored. Close documentation corrections #112/#117.

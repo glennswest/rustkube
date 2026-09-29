@@ -395,8 +395,8 @@ remote command exit and test output.
 These results do not establish latency SLOs, three-master failure recovery,
 real node execution or PVC backing-allocation reclamation. Those remain the
 live acceptance matrix in #147/#149 and the node/QA companion issues. The
-version remains the unreleased turbomode branch; version/tag/golden promotion
-follows that integration, as required by the owner's no-golden instruction.
+implementation is integrated into main by #163 and remains unreleased;
+version/tag/golden promotion is outside that issue's no-golden scope.
 
 ### Final-validation investigation (still open)
 

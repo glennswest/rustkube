@@ -100,11 +100,19 @@ Owner instruction #163 supersedes the earlier branch-only restriction below.
 No golden or release is requested; unfinished acceptance stays on its issues.
 - [x] Read #163 and open issues; fetched main is already in turbomode history.
 - [x] Merge origin/main into turbomode: already up to date; no conflicts.
-- [ ] Push and run sc-build with cargo build --workspace --locked and
-      cargo test --workspace --locked (including the test-container crate).
-- [ ] Refresh branch-status documentation, merge with --no-ff into main,
-      push and verify the pushed main head with the same whole-workspace suite.
-- [ ] Record counts and remaining acceptance issues, then close #163.
+- [x] turbomode ae000d5: sc-build cargo build --workspace --locked &&
+      cargo test --workspace --locked passed (51 seconds, remote exit 0).
+- [x] Refreshed branch-status docs; merged with --no-ff and pushed main
+      at 908d078. Same whole-workspace build/tests passed (48 seconds,
+      remote exit 0). No conflicts; main was already a turbomode ancestor.
+- [x] Both runs: 418 passed (apimachinery 91, apiserver 198,
+      controller-manager 61, scheduler 59, test container 9); four storage
+      tests ignored because they require a datastore. Doc tests passed.
+      Local build-history append is read-only; remote results above passed.
+- [x] Merge scope complete; closure report prepared for #163. Continue
+      #142–#149 on main; #146/fastetcd#50 snapshot safety, #147 latency,
+      #149 multi-master, and #153–#155 investigations remain unverified.
+      Existing owner decisions #140/#161/#162 are unchanged by this merge.
 Version remains v0.18.0 plus unreleased changes: this is the requested branch
 integration, not completion or release of the pending turbomode feature work.
 
