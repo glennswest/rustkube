@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Add real API/store checks for all GC propagation modes, per-event
+  expiry, finalizer-held namespace teardown, burst scheduling without CPU
+  overcommit, and capacity-release wakeups. Requeue after resolving an old
+  create expectation so already-observed recovery cannot strand a replica.
 - **fix:** Retain ambiguous controller create expectations by owner/collection.
   Resolve or retry the same named object before another generated child;
   retire expectations on owner deletion. Test a committed POST with a lost

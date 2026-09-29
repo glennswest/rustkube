@@ -125,3 +125,7 @@ added to the suite.
 isolation, negative selectors, idle writes and UID replacement against the
 API/store rig. Run through `sc-build`; it does not need a kubelet. The shared
 rig respects the build volume target and scratch paths.
+
+`e2e/indexed-safety.sh` checks GC propagation, Event expiry, namespace
+finalization and scheduler burst/reservation accounting on the same disposable
+rig. It uses stand-in Nodes and does not claim real-node performance.

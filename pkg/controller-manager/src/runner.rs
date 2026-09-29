@@ -265,6 +265,7 @@ impl ApiClient {
                 anyhow::ensure!(create_owner(&existing) == pending.owner,"ambiguous create name belongs to another owner");
                 self.informers.acknowledge(&format!("{}{}",self.base_url,pending.path),&existing);
                 self.pending_creates.lock().unwrap().remove(&group);
+                apimachinery::reactor::requeue_after(std::time::Duration::ZERO);
                 return Ok(existing);
             }
             anyhow::ensure!(response.status().as_u16() == 404,"cannot resolve ambiguous create: {}",response.status());
@@ -276,6 +277,7 @@ impl ApiClient {
                 .is_some_and(|s| s.is_client_error() && (s.as_u16() != 409 || previous.is_none()) && s.as_u16() != 408 && s.as_u16() != 429),
         };
         if definitive { self.pending_creates.lock().unwrap().remove(&group); }
+        if previous.is_some() && result.is_ok() { apimachinery::reactor::requeue_after(std::time::Duration::ZERO); }
         result
     }
 
