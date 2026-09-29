@@ -2,7 +2,7 @@
 
 The owner switched work back to stormcentral. This is unfinished engineering,
 not a validated release. All implementation and harness changes are committed
-and pushed on branches named `turbomode`; no live scale test has run.
+and pushed; rustkube was integrated into main under #163. No live scale test has run.
 
 ## Updated rustkube checkpoint — 2026-09-29
 
@@ -11,11 +11,14 @@ validation without waiting for a live target. All rustkube controller families
 and scheduling now use indexed object workers. The build-host access problem
 did not reproduce from stormcentral; the five-crate handoff command and the
 API/store regression rigs pass. See [the current verification record](event-driven-design.md#verification-on-dev--2026-09-29).
-Safe-cache acceptance is now blocked by fastetcd#50: the isolated LIST
-snapshot probe at 981dcdb fails 165/255 observations without any controllers.
-The datastore owner must fix the snapshot/revision contract before #146 can
-close. The original inventory and resume order below are historical;
-rustkube steps 2–3 have advanced. Live scale and multi-master acceptance remain #147/#149.
+fastetcd#50 is fixed in v1.6.1. Rustkube's pinned rig now passes concurrent
+complete/paginated LIST consistency and exact WATCH replay, plus the indexed
+controller/scheduler matrix and 418 workspace tests. Twenty fresh short runs
+pass; the original #153/#154 incidents remain open without a proven cause.
+The original inventory and resume order below are historical; rustkube steps
+2–3 are complete within the owner's dev acceptance boundary. Live scale and
+multi-master acceptance remain #147/#149. WATCH timeoutSeconds is separately
+tracked in #165; the snapshot probe uses a strict client observation deadline.
 Owner instruction #163 supersedes the branch-only restriction: integrate into
 main after whole-workspace checks on turbomode and main, then continue open
 turbomode issues on main. Do not request a golden for this integration.

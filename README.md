@@ -225,9 +225,13 @@ authoritative absence checks before destructive cleanup.
 Every controller/scheduler mutation checks a monotonic leadership deadline.
 See [the event-driven design](docs/event-driven-design.md) for the execution
 model and verified unit/API-rig cases. Live scale, latency, multi-master and
-runtime/storage acceptance remain tracked in #147/#149; these changes remain unreleased. Safe-cache acceptance is also blocked by
-[fastetcd#50](https://github.com/glennswest/fastetcd/issues/50): an isolated
-regression finds LIST contents inconsistent with their advertised revision.
+runtime/storage acceptance remain tracked in #147/#149; these changes remain
+unreleased. Safe snapshots require the datastore correction in **fastetcd
+v1.6.1** ([fastetcd#50](https://github.com/glennswest/fastetcd/issues/50)), or
+an equivalent correct etcd implementation. The pinned API rig verifies
+concurrent complete/paginated LISTs and exact WATCH replay after them; this
+does not upgrade any deployed datastore. Historical intermittent failures
+#153/#154 remain under investigation.
 
 Deployment (rolling updates), ReplicaSet, StatefulSet, DaemonSet (every
 eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices), Namespace (default

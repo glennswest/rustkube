@@ -95,27 +95,26 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Resume #146 acceptance after fastetcd v1.6.1 — 2026-09-29
-- [x] Read #146, project instructions, open issues and #163; continue on main.
-      fastetcd#50 is closed with its snapshot fix in v1.6.1.
-- [x] Handoff five-crate tests at 9f622fa: 409 passed, four datastore tests
-      ignored, doc tests passed; sc-build remote exit 0 in 34 seconds.
-- [x] Pin the disposable API rig to fastetcd v1.6.1.
-- [ ] Verify extended snapshot regression with pinned pages and exact WATCH
-      replay; rerun the controller/scheduler matrix. At 226d84e, 185 LISTs
-      passed but the probe awaited unsupported timeoutSeconds stream closure;
-      use a client deadline and still require exact expected events.
-- [ ] Harden rig listener selection after #166 peer startup transport error:
-      choose ports after compilation, outside the host ephemeral range.
-      Preserve the failed attempt; this alone does not prove its exact cause.
-- [ ] Correct DaemonSet heartbeat test startup barrier (#164): placement
-      precedes final status accounting. Wait for expected status, then compare
-      revisions; retain both objects on failure and rerun the matrix.
-- [ ] Investigate #153 startup membership and #154 POST timeout with retained
-      evidence; do not equate successful repetitions with a diagnosed fix.
-- [ ] Update acceptance docs and issue evidence; close #146 only if verified.
-      Live validation remains #147/#149. Preserve the no-golden instruction.
-
+### #146 dev acceptance — COMPLETE 2026-09-29
+- [x] Read #146, instructions and #163; continued on main. fastetcd#50 fixed
+      in v1.6.1; pin API rigs to that release and report its exact commit.
+- [x] Baseline 9f622fa: five-crate tests 409 passed, four storage tests ignored,
+      docs passed; sc-build exit 0, 34 s. Full workspace at 226d84e: 418 passed,
+      four ignored, docs passed; twenty fresh short rigs 5/5 each, exit 0, 510 s.
+- [x] 52188fb: 174 complete/paginated LIST snapshots match 400 creates;
+      exact WATCH suffixes at distinct early/middle/late revisions and selector
+      14/14 pass; sc-build exit 0, 139 s.
+- [x] Matrix: safety 11/11 and CSI expansion 14/14 at 52bbb89; DaemonSet
+      10/10, VM 10/10 and short 5/5 at ec59f74 (exit 0, 206 s).
+- [x] Corrected DaemonSet test status-convergence barrier (#164, closed).
+      Hardened listener selection after compilation, outside ephemeral ports;
+      original peer transport error #166 remains undiagnosed and open.
+- [x] Investigated #153 startup membership and #154 POST timeout. Fresh
+      checks pass; original causes remain unproven. Preserve both open issues.
+      #165 tracks ignored WATCH timeoutSeconds; probe uses client deadlines.
+- [x] Updated README, design, handoff, test docs and changelog; #146 closure
+      report records dev acceptance and retained incidents. Live validation
+      stays #147/#149. No production code/version change or golden requested.
 
 ### Merge turbomode into main (#163) — 2026-09-29
 Owner instruction #163 supersedes the earlier branch-only restriction below.
@@ -293,7 +292,7 @@ when each piece landed.
       and the rustkube synthetic rig cannot close upstream acceptance.
 - [ ] Keep #3 open until implementation and upstream acceptance are verified.
 
-### Turbomode indexed workers (#146) — acceptance BLOCKED on fastetcd#50
+### Turbomode indexed workers (#146) — dev acceptance complete
 Owner #163 authorizes integration into main; no goldens. Design: docs/event-driven-design.md;
 handoff: docs/turbomode-handoff.md.
 
@@ -303,9 +302,9 @@ they require a running datastore). The branch already
 contains the routed dependency runner and DaemonSet migration. Master update
 on #146 authorizes remaining implementation now; live-target selection is
 not a blocker for this work. Live validation belongs to #147/#149.
-Implementation and dev unit/API-rig work below are complete; acceptance is
-blocked by fastetcd#50. Resume with the isolated snapshot regression after the
-datastore fix, then #147/#149 runtime validation. Do not claim live acceptance.
+Implementation and dev acceptance are complete against fastetcd v1.6.1.
+The follow-up verification above supersedes the former fastetcd#50 blocker.
+Continue live acceptance in #147/#149; do not claim those gates passed.
 - [x] origin/main merged into turbomode (de8c912); handoff step 2 on dev:
       `cargo test --locked` for the five crates passes (87/197/56/57, storage 4 ignored)
 - [x] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
@@ -347,17 +346,14 @@ datastore fix, then #147/#149 runtime validation. Do not claim live acceptance.
 - [x] Isolate an upstream consistency violation: 981dcdb's
       `test/e2e/list-snapshot-race.sh` has no controllers/scheduler and detects
       165 inconsistent LIST snapshots out of 255, against 400 accepted creates.
-- [ ] **Blocked by fastetcd#50:** Range contents and response revision are
-      sampled separately. A LIST can omit writes at/below its advertised RV,
-      and the following WATCH skips them. Hand the fix to fastetcd; do not
-      hide this with poll sweeps or change the datastore from this checkout.
-- [ ] After fastetcd#50 is fixed, rerun the isolated regression and the full
-      unit/API-rig matrix. Confirm #153's startup convergence and investigate
-      #154's separate POST timeout; their passing reruns do not prove a fix.
-      Close #146 only after the snapshot/cache contract is verified.
+- [x] fastetcd#50 fixed by its owning project in v1.6.1; rustkube's pinned
+      snapshot/pagination/WATCH probe verifies that contract at 52188fb.
+- [x] Rechecked units, startup membership and full API-rig case matrix;
+      investigated #154 POST path and twenty fresh short runs. #153/#154
+      remain historical incidents with no proven individual root cause.
 - [x] Earlier rig failures #151 (bootstrap UID) and #152 (port/binary setup)
       fixed and closed with successful sc-build evidence. #155 records the
-      now-isolated snapshot failure and follows fastetcd#50.
+      original snapshot failure; post-fix acceptance evidence is recorded above.
 
 ### VM runStrategy on a failed VMI (#104) — COMPLETE 2026-09-28
 - [x] Failed VMI recreated for `Always`/`RerunOnFailure`/`running: true`

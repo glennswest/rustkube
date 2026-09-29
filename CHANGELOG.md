@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Record #146 dev acceptance against fastetcd v1.6.1: 418 workspace tests, 174 consistent complete/paginated snapshots with exact WATCH suffixes, selector/safety/CSI/DaemonSet/VM checks and twenty short repetitions. Preserve undiagnosed #153/#154/#166 incidents and #165 timeout limitation; live #147/#149 remain open, no golden or release requested.
 - **test:** Sample distinct early, middle and late LIST revisions for exact WATCH replay, preventing duplicate empty snapshots from weakening the handoff check.
 - **test:** Choose disposable rig listener ports immediately before startup and outside the host ephemeral range; avoid the compilation-time reservation gap and outbound connection collisions (#166). Silence detached-checkout advice in source pin logs.
 - **test:** Wait for DaemonSet status to count newly placed Pods before asserting heartbeat-only writes leave its revision unchanged; preserve before/after objects on failure (#164).

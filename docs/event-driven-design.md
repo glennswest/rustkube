@@ -3,8 +3,10 @@
 Status: all controller families and scheduling use object workers, integrated into main under #163. Unit/doc and disposable API/store rig tests run through
 `sc-build`; the verification record below identifies checked commits and
 cases. Live validation remains #147/#149, awaiting the owner-selected target.
-Safe-cache acceptance is blocked by [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50),
-reproduced below. The #163 merge does not establish runtime acceptance or authorize a golden.
+The snapshot blocker [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50)
+is fixed in v1.6.1 and verified through the pinned rustkube API rig below.
+Historical intermittent incidents #153/#154 remain open. Dev acceptance does
+not establish live runtime acceptance or authorize a golden.
 
 Current implementation: Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA
 have indexed per-object workers (eight concurrent keys per controller).
@@ -409,10 +411,11 @@ original failure. Twenty further fresh repetitions with normal logging also pass
 At `1b6f951`, the separate safety (11), CSI expansion (14), DaemonSet (10)
 and VM (10) checks passed, then the short suite timed out posting a ConfigMap
 in `watch-sees-writes` (#154). Its result was two passes and could-not-run;
-it is not a successful short run. Investigate both failures before closing
-#146. Earlier successful runs above remain evidence of those specific runs.
+it is not a successful short run. The follow-up investigation below preserves
+both incidents; successful reruns do not establish their causes. Earlier
+successful runs above remain evidence of those specific runs.
 
-### Isolated blocker: fastetcd#50
+### Original isolated blocker: fastetcd#50 (fixed in v1.6.1)
 
 `981dcdb` adds `bash test/e2e/list-snapshot-race.sh`: four writers create 400
 ConfigMaps while readers capture complete LISTs. With no controllers or
@@ -436,3 +439,51 @@ passed at `e5c4544`. Keep the original #153/#154 failures visible. The Range
 race explains how startup membership can be missed, but does not establish
 the cause of #154's POST timeout. After the owning fix, rerun the isolated
 probe, five-crate units and all API-rig cases before closing #146.
+
+### Follow-up after fastetcd v1.6.1 — 2026-09-29
+
+Continue on main under #163. The disposable rig now pins fastetcd v1.6.1
+(`8bb6c625f047b35cf39cb4983fe7598949c33e1c`), with an explicit source-ref
+override for comparisons. No production datastore or controller code was
+changed in this acceptance pass. Version remains v0.18.0 plus unreleased
+feature work; test/documentation changes do not cut a release or golden.
+
+| Commit | sc-build checks | Result |
+|---|---|---|
+| `9f622fa` | Handoff five-crate locked unit/doc command | 409 passed, four datastore tests ignored; exit 0, 34 s |
+| `52bbb89` | Original LIST probe, selectors, safety, CSI expansion, then DaemonSet/VM/short | 284/284 snapshots vs 400 creates; selectors 14, safety 11, CSI expansion 14 passed. DaemonSet heartbeat check failed (#164); VM/short were not reached. Exit 1, 262 s |
+| `226d84e` | Extended complete/paginated LIST probe | 185/185 snapshots matched 400 creates, then client timed out waiting for WATCH EOF because timeoutSeconds is ignored (#165); exit 1, 107 s |
+| `978b29e` | Replay probe rerun | Datastore peer startup transport error before assertions (#166); exit 100, 63 s |
+| `ec59f74` | LIST/WATCH, DaemonSet, VM, short | 184/184 snapshots, three exact WATCH suffixes (400/400, 400/400, 396/396); DaemonSet 10, VM 10, short 5 passed; exit 0, 206 s |
+| `52188fb` | Distinct early/middle/late LIST/WATCH boundaries, then selector rig | 174/174 snapshots vs 400 creates, three exact WATCH suffixes; selectors 14/14; exit 0, 139 s |
+| `226d84e` | `cargo test --workspace --locked` then 20 fresh short rigs | 418 passed, four storage tests ignored, doc tests passed; all 20 short runs 5/5; exit 0, 510 s |
+
+Commands use `bash test/e2e/{list-snapshot-race,indexed-selectors,indexed-safety,volume-expansion,daemonset-nodes,vm-runstrategy}.sh` and
+`bash test/e2e/test-container.sh short`, sequentially inside disposable builds.
+The strengthened probe samples distinct early, middle and late revisions and
+requires exact name/revision equality between WATCH output and the remaining
+acknowledged writes. Missing, duplicate and unexpected events fail; a client
+deadline ends observation because server timeoutSeconds is not implemented.
+
+The DaemonSet test now waits for both Pod placement and full status accounting
+before asserting heartbeat-only updates leave its revision unchanged. Pod
+creation occurs before its status write; sampling immediately after placement
+was racing convergence. #164 was closed with the corrected 10/10 run.
+Listener selection now occurs after compilation, outside the host's outbound
+ephemeral range. #166 remains open because its log lacks the underlying OS
+error; the mitigation and successful rerun do not prove the original cause.
+
+For #153, post-fix startup membership, relabelling, negative selectors and UID
+replacement pass. The datastore race supplied a concrete missed-membership
+mechanism; the old PDB failure did not preserve enough evidence to prove that
+was its cause. For #154, review of the original log and POST path found no
+informer acknowledgement wait: authorization/admission read the store, then
+create uses an atomic CAS. The original trace cannot distinguish transport,
+store read or transaction delay. Twenty fresh short runs and the separate
+final run did not reproduce the timeout. Both historical incidents remain
+open; neither is described as fixed by these passing runs.
+
+These checks establish the implemented single-server dev acceptance boundary
+for #146, including the repaired LIST/WATCH snapshot contract. The live
+scale/runtime and multi-master failure matrix remain #147/#149 under the
+owner's existing direction, and cannot be inferred from this evidence.
