@@ -306,3 +306,49 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
         }
     }
 }
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+    use axum::{body::Body, extract::{Query, State}, http::StatusCode, response::{IntoResponse, Response}, routing::get, Json, Router};
+    use std::sync::atomic::{AtomicBool,AtomicUsize,Ordering};
+    struct Probe { calls: Arc<AtomicUsize> }
+    #[async_trait::async_trait]
+    impl Controller for Probe {
+        fn name(&self) -> &'static str { "probe" }
+        fn primary(&self) -> &'static str { "/primary" }
+        fn dependencies(&self) -> Vec<Dependency> { vec![Dependency {path:"/dependency".into(),route:Arc::new(same_namespace)}] }
+        async fn reconcile(&self, _: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
+            self.calls.fetch_add(1,Ordering::SeqCst); Ok(())
+        }
+    }
+    fn response(query: HashMap<String,String>) -> Response {
+        if query.get("watch").is_some_and(|v|v=="true") {
+            let body=Body::from_stream(futures::stream::once(async {Ok::<_,std::convert::Infallible>(axum::body::Bytes::from_static(b"{\"type\":\"BOOKMARK\",\"object\":{\"metadata\":{\"resourceVersion\":\"1\"}}}\n"))})
+                .chain(futures::stream::pending()));
+            Response::new(body)
+        } else { Json(serde_json::json!({"metadata":{"resourceVersion":"1"},"items":[{"metadata":{"name":"one","uid":"one","resourceVersion":"1"}}]})).into_response() }
+    }
+    async fn primary(Query(query): Query<HashMap<String,String>>) -> Response { response(query) }
+    async fn dependency(State(failed): State<Arc<AtomicBool>>, Query(query): Query<HashMap<String,String>>) -> Response {
+        if failed.load(Ordering::SeqCst) { StatusCode::SERVICE_UNAVAILABLE.into_response() } else { response(query) }
+    }
+    #[tokio::test]
+    async fn unavailable_dependency_blocks_work_and_recovery_wakes_it() {
+        let failed=Arc::new(AtomicBool::new(true));
+        let calls=Arc::new(AtomicUsize::new(0));
+        let app=Router::new().route("/primary",get(primary)).route("/dependency",get(dependency)).with_state(failed.clone());
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move { axum::serve(listener,app).await.unwrap() });
+        let probe=Probe {calls:calls.clone()};
+        let worker=tokio::spawn(async move { run(&ApiClient::new(&format!("http://{addr}")),&probe).await });
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(calls.load(Ordering::SeqCst),0,"a failed feed must never look empty/ready");
+        failed.store(false,Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(3),async {
+            while calls.load(Ordering::SeqCst)==0 { tokio::time::sleep(Duration::from_millis(10)).await; }
+        }).await.expect("feed recovery must wake queued work");
+        worker.abort(); server.abort();
+    }
+}
