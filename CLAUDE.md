@@ -245,7 +245,10 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       Pod labels → Service/PDB, PVC/PV → binder…), children optional
 - [x] DaemonSet (Node eligibility + owned Pods), implemented at 826a8a4;
       live regression script committed, runtime verification pending
-- [ ] Service/EndpointSlice, PDB (selector → Pod membership)
+- [x] Service/EndpointSlice, PDB: selector-indexed Pod membership, UID-safe
+      endpoint cleanup, CAS/no-op writes; remote regression validation pending.
+- [x] Baseline 79c1a9e: handoff five-crate command passed on dev (four
+      datastore-dependent storage tests ignored).
 - [ ] PV binder, stormblock, attach/detach (claim/PV/Pod/VolumeAttachment)
 - [ ] VM, migration; namespace, node lifecycle, CSR, root CA, HPA, gateway, events
 - [ ] GC: fail closed on any unsynced feed

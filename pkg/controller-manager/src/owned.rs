@@ -6,7 +6,7 @@ use apimachinery::informers::Feed;
 use apimachinery::workqueue::WorkQueue;
 use futures::{stream::FuturesUnordered, StreamExt};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,6 +46,11 @@ pub trait Controller: Send + Sync {
     fn workers(&self) -> usize {
         8
     }
+    /// Cleanup after a primary UID disappears. Children are still selected by
+    /// that UID, never by a potentially recreated primary's name.
+    async fn deleted(&self, _key: &Key, _children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
+        Ok(())
+    }
     async fn reconcile(&self, object: &Value, children: &[Value], deps: &Deps)
         -> anyhow::Result<()>;
 }
@@ -70,13 +75,78 @@ pub fn same_namespace(delta: &Delta, primary: &Feed) -> Vec<Key> {
     keys
 }
 
+
+pub fn owner_keys(delta: &Delta, primary: &Feed) -> Vec<Key> {
+    let mut keys = HashSet::new();
+    for object in delta.old.iter().chain(delta.new.iter()) {
+        for owner in object["metadata"]["ownerReferences"].as_array().into_iter().flatten() {
+            let (Some(uid), Some(name)) = (owner["uid"].as_str(), owner["name"].as_str()) else { continue };
+            if uid.is_empty() { continue; }
+            keys.insert(primary.key_for_uid(uid).unwrap_or_else(|| Key {
+                namespace: object["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                name: name.into(), uid: uid.into(),
+            }));
+        }
+    }
+    keys.into_iter().collect()
+}
+
+/// Route Pod changes through selectors, including the old labels on removal.
+pub fn pod_membership(delta: &Delta, primary: &Feed) -> Vec<Key> {
+    let mut result = HashSet::new();
+    for pod in delta.old.iter().chain(delta.new.iter()) {
+        let ns = pod["metadata"]["namespace"].as_str().unwrap_or("");
+        let labels = &pod["metadata"]["labels"];
+        let mut candidates = primary.select(&Index::SelectorFallback(ns.into())).unwrap_or_default();
+        for (label, value) in labels.as_object().into_iter().flatten() {
+            if let Some(value) = value.as_str() {
+                candidates.extend(primary.select(&Index::Selector(ns.into(), label.clone(), value.into())).unwrap_or_default());
+            }
+        }
+        for object in candidates {
+            if apimachinery::informer::pod_selector(&object).is_some_and(|s| apimachinery::selector::matches(&s, labels)) {
+                if let Ok(key) = Key::of(&object) { result.insert(key); }
+            }
+        }
+    }
+    result.into_iter().collect()
+}
+
+/// Read candidates via one positive selector clause, then apply the complete
+/// selector. Empty/negative selectors necessarily consider the namespace.
+pub fn selected_pods(object: &Value, pods: &Feed) -> anyhow::Result<Vec<Value>> {
+    let Some(selector) = apimachinery::informer::pod_selector(object) else { return Ok(Vec::new()) };
+    let ns = object["metadata"]["namespace"].as_str().unwrap_or("");
+    let anchors = apimachinery::informer::selector_anchors(&selector);
+    let candidates = if anchors.is_empty() {
+        pods.select(&Index::Namespace(ns.into()))?
+    } else {
+        let mut candidates = Vec::new();
+        for (label, value) in anchors { candidates.extend(pods.select(&Index::Label(label, value))?); }
+        candidates
+    };
+    let mut seen = HashSet::new();
+    Ok(candidates.into_iter().filter(|pod| {
+        pod["metadata"]["namespace"].as_str().unwrap_or("") == ns
+            && apimachinery::selector::matches(&selector, &pod["metadata"]["labels"])
+            && Key::of(pod).is_ok_and(|key| seen.insert(key))
+    }).collect())
+}
+
 pub async fn run(api: &ApiClient, controller: &dyn Controller) {
     let ready = WorkQueue::<Key>::new();
     let changed = ready.clone();
+    let primary_ref = Arc::new(std::sync::Mutex::new(None::<std::sync::Weak<Feed>>));
+    let reset_primary = primary_ref.clone();
     let primary = api.informers.subscribe(
         &api.client,
         format!("{}{}", api.base_url, controller.primary()),
-        move |changes, _| {
+        move |changes, reset| {
+            if reset {
+                if let Some(feed) = reset_primary.lock().unwrap().as_ref().and_then(|f| f.upgrade()) {
+                    for key in all_keys(&feed) { changed.add(key); }
+                }
+            }
             for change in changes {
                 for object in change.old.iter().chain(change.new.iter()) {
                     if let Ok(key) = Key::of(object) {
@@ -86,6 +156,7 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
             }
         },
     );
+    *primary_ref.lock().unwrap() = Some(Arc::downgrade(&primary.feed));
     let children = controller.children().map(|path| {
         let changed = ready.clone();
         let owners = primary.feed.clone();
@@ -99,13 +170,7 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
                     }
                 }
                 for change in changes {
-                    for index in &change.affected {
-                        if let Index::Owner(uid) = index {
-                            if let Some(key) = owners.key_for_uid(uid) {
-                                changed.add(key);
-                            }
-                        }
-                    }
+                    for key in owner_keys(change, &owners) { changed.add(key); }
                 }
             },
         )
@@ -159,12 +224,16 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
                     let (result,failed) = apimachinery::reactor::scope_object(move |delay| {
                         queue.add_at(key.clone(),tokio::time::Instant::now()+delay);
                     },async {
-                        let Some(object) = primary.get(work.key())? else { return Ok(()) };
+                        let object = primary.get(work.key())?;
+                        for feed in &deps.feeds { feed.ensure_synced()?; }
                         let children = match &children {
                             Some(feed) => feed.select(&Index::Owner(work.key().uid.clone()))?,
                             None => Vec::new(),
                         };
-                        controller.reconcile(&object,&children,&deps).await
+                        match object {
+                            Some(object) => controller.reconcile(&object,&children,&deps).await,
+                            None => controller.deleted(work.key(), &children, &deps).await,
+                        }
                     }).await;
                     (work,result,failed)
                 });

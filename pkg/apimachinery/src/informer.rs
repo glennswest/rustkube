@@ -38,6 +38,9 @@ pub enum Index {
     Node(String),
     Claim(String, String),
     Label(String, String),
+    /// Equality anchor for a selector; namespace prevents cross-namespace wakes.
+    Selector(String, String, String),
+    SelectorFallback(String),
 }
 
 fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
@@ -69,7 +72,46 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
             }
         }
     }
+    if let Some(selector) = pod_selector(object) {
+        let anchors = selector_anchors(&selector);
+        if anchors.is_empty() {
+            result.insert(Index::SelectorFallback(key.namespace.clone()));
+        } else {
+            for (label, value) in anchors {
+                result.insert(Index::Selector(key.namespace.clone(), label, value));
+            }
+        }
+    }
     result
+}
+
+/// Normalize the two Pod selector schemas without conflating absent and empty.
+pub fn pod_selector(object: &Value) -> Option<Value> {
+    let selector = &object["spec"]["selector"];
+    if !selector.is_object() { return None; }
+    match object["kind"].as_str() {
+        Some("Service") => Some(serde_json::json!({"matchLabels": selector})),
+        Some("PodDisruptionBudget") => Some(selector.clone()),
+        _ => None,
+    }
+}
+
+/// One required positive clause suffices as an inverse-index anchor. Negative
+/// and empty selectors use a namespace-local fallback, then exact matching.
+pub fn selector_anchors(selector: &Value) -> Vec<(String, String)> {
+    if let Some(labels) = selector["matchLabels"].as_object() {
+        if let Some((key, value)) = labels.iter().find(|(_, value)| value.is_string()) {
+            return vec![(key.clone(), value.as_str().unwrap().into())];
+        }
+    }
+    for expr in selector["matchExpressions"].as_array().into_iter().flatten() {
+        if expr["operator"] == "In" {
+            if let (Some(key), Some(values)) = (expr["key"].as_str(), expr["values"].as_array()) {
+                return values.iter().filter_map(|v| v.as_str().map(|v| (key.into(), v.into()))).collect();
+            }
+        }
+    }
+    Vec::new()
 }
 
 #[derive(Clone, Debug)]
@@ -327,6 +369,28 @@ mod tests {
     }
     fn event(kind: &str, object: Value) -> Value {
         json!({"type":kind,"object":object})
+    }
+
+    #[test]
+    fn selector_indexes_preserve_negative_empty_and_old_membership() {
+        let service = serde_json::json!({"kind":"Service", "metadata":{"name":"web","namespace":"ns","uid":"svc"},
+            "spec":{"selector":{"app":"web"}}});
+        let pdb = serde_json::json!({"kind":"PodDisruptionBudget", "metadata":{"name":"budget","namespace":"ns","uid":"pdb"},
+            "spec":{"selector":{"matchExpressions":[{"key":"env","operator":"NotIn","values":["dev"]}]}}});
+        let mut store = Store::default();
+        store.reset(&json!({"items":[service.clone(),pdb]})).unwrap();
+        assert_eq!(store.select(&Index::Selector("ns".into(),"app".into(),"web".into())).unwrap().len(), 1);
+        assert_eq!(store.select(&Index::SelectorFallback("ns".into())).unwrap().len(), 1);
+        assert!(store.select(&Index::Selector("other".into(),"app".into(),"web".into())).unwrap().is_empty());
+        let mut changed = service;
+        changed["metadata"]["resourceVersion"] = json!("opaque");
+        changed["spec"]["selector"]["app"] = json!("api");
+        let change = store.apply(&event("MODIFIED", changed)).unwrap().unwrap();
+        assert!(change.affected.contains(&Index::Selector("ns".into(),"app".into(),"web".into())));
+        assert!(store.select(&Index::Selector("ns".into(),"app".into(),"web".into())).unwrap().is_empty());
+        assert_eq!(store.select(&Index::Selector("ns".into(),"app".into(),"api".into())).unwrap().len(), 1);
+        assert_eq!(selector_anchors(&json!({"matchExpressions":[{"key":"env","operator":"In","values":["prod","stage"]}]})).len(), 2);
+        assert!(selector_anchors(&json!({})).is_empty());
     }
 
     #[test]

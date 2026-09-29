@@ -9,7 +9,7 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use crate::owned::{self, Controller, Dependency, Deps};
 
 pub struct PdbController {
     api: Arc<ApiClient>,
@@ -21,48 +21,11 @@ impl PdbController {
     }
 
     pub async fn run(&self) {
-        info!("PodDisruptionBudget controller started");
-        let worker = self.api.watches.worker("pdb");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile_all().await {
-                    apimachinery::reactor::failed();
-                    error!("PDB reconcile error: {e}");
-                }
-            }).await;
-        }
+        owned::run(&self.api, self).await;
     }
 
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        for ns in ns_list["items"].as_array().cloned().unwrap_or_default() {
-            let name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(name).await {
-                debug!("PDB reconcile in {name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let pdbs: Value = self
-            .api
-            .list(&format!(
-                "/apis/policy/v1/namespaces/{namespace}/poddisruptionbudgets"
-            ))
-            .await?;
-        let pdbs = pdbs["items"].as_array().cloned().unwrap_or_default();
-        if pdbs.is_empty() {
-            return Ok(());
-        }
-        let pods: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-            .await?;
-        let pods = pods["items"].as_array().cloned().unwrap_or_default();
-
-        for pdb in &pdbs {
+    async fn reconcile_pdb(&self, pdb: &Value, pods: &[Value]) -> anyhow::Result<()> {
+        let namespace = pdb["metadata"]["namespace"].as_str().unwrap_or("default");
             let matched: Vec<&Value> = pods
                 .iter()
                 .filter(|p| selector_matches(&pdb["spec"]["selector"], &p["metadata"]["labels"]))
@@ -89,7 +52,8 @@ impl PdbController {
                 "expectedPods": expected,
                 "observedGeneration": pdb["metadata"]["generation"].as_u64().unwrap_or(1),
             });
-            let _ = self
+            if updated["status"] == pdb["status"] { return Ok(()); }
+            self
                 .api
                 .update(
                     &format!(
@@ -97,8 +61,7 @@ impl PdbController {
                     ),
                     &updated,
                 )
-                .await;
-        }
+                .await?;
         Ok(())
     }
 }
@@ -134,4 +97,16 @@ fn is_ready(pod: &Value) -> bool {
         .as_array()
         .map(|cs| cs.iter().any(|c| c["type"] == "Ready" && c["status"] == "True"))
         .unwrap_or(false)
+}
+
+#[async_trait::async_trait]
+impl Controller for PdbController {
+    fn name(&self) -> &'static str { "pdb" }
+    fn primary(&self) -> &'static str { "/apis/policy/v1/poddisruptionbudgets" }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![Dependency { path: "/api/v1/pods", route: Arc::new(owned::pod_membership) }]
+    }
+    async fn reconcile(&self, pdb: &Value, _children: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        self.reconcile_pdb(pdb, &owned::selected_pods(pdb, deps.feed(0))?).await
+    }
 }

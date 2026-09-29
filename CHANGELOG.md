@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Migrate Service/EndpointSlice and PDB to bounded indexed workers;
+  route old/new Pod labels via namespace-scoped selector anchors and preserve
+  negative/empty selectors. Check all dependency sync barriers, reseed shared
+  feeds, guard endpoint cleanup by UID/revision, and skip unchanged writes.
 - **docs:** Resume #146 implementation under the master clarification; keep
   live-target selection and live acceptance in #147/#149, not as an
   implementation blocker. Revalidate the pushed five-crate baseline first.

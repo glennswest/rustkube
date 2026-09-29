@@ -41,6 +41,11 @@ pub struct Feed {
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 impl Feed {
+    pub fn ensure_synced(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.store.lock().unwrap().is_synced(), "informer is not synchronized");
+        Ok(())
+    }
+
     pub fn key_for_uid(&self, uid: &str) -> Option<Key> {
         self.store.lock().unwrap().key_for_uid(uid)
     }
@@ -201,9 +206,12 @@ impl Hub {
             feed
         };
         // A subscriber joining an already-synchronized feed must get its seed.
-        let synced = feed.store.lock().unwrap().is_synced();
-        if synced {
-            callback(&[], true);
+        let seed = feed.store.lock().unwrap().values();
+        if let Ok(objects) = seed {
+            let changes: Vec<_> = objects.into_iter().map(|object| Delta {
+                old: None, new: Some(object), affected: Default::default(),
+            }).collect();
+            callback(&changes, true);
         }
         Subscription {
             feed,
