@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased — turbomode (not yet built or measured)
+## Unreleased — turbomode (runtime acceptance pending)
+
+### 2026-09-29
+- **docs:** Reconcile #146 work plan with the committed DaemonSet migration,
+  record the required baseline validation and pending owner choice of live
+  test target, and correct private-volume build instructions.
 
 - Deployment, ReplicaSet, StatefulSet, Job and CronJob now use bounded
   per-object workers, shared indexed watches, write acknowledgements and

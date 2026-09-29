@@ -33,9 +33,9 @@ sc-build                              # cargo build && cargo test at the pushed 
 sc-build 'cargo test -p apiserver'    # any command
 ```
 
-dev.g8.lo's `/tmp` is not writable by the build user: prefix commands with
-`mkdir -p $HOME/tmp && export TMPDIR=$HOME/tmp &&` (etcd-client's build
-script needs a temp dir). `protoc` is required (`pkg/apimachinery/build.rs`).
+`sc-build` supplies a private build volume, including HOME and TMPDIR, and
+deletes it after the job. Do not override those paths or retain a checkout.
+`protoc` is required (`pkg/apimachinery/build.rs`).
 
 ## Workspace Structure
 
@@ -147,11 +147,19 @@ when each piece landed.
 ### Turbomode indexed workers (#146) — IN PROGRESS 2026-09-29, branch `turbomode`
 Branch only: no merge to main, no goldens. Design: docs/event-driven-design.md;
 handoff: docs/turbomode-handoff.md.
+
+Resume checkpoint 2026-09-29: validate pushed fc67179 with the handoff
+five-crate `sc-build` command, then record its result. The branch already
+contains the routed dependency runner and DaemonSet migration. Owner decision
+required before live validation: C2NR0Q2 or an isolated dev cluster. Stop for
+that choice as requested; do not close #146 or claim runtime acceptance.
+Remaining implementation and safety audits below are still required.
 - [x] origin/main merged into turbomode (de8c912); handoff step 2 on dev:
       `cargo test --locked` for the five crates passes (87/197/56/57, storage 4 ignored)
-- [ ] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
+- [x] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
       Pod labels → Service/PDB, PVC/PV → binder…), children optional
-- [ ] DaemonSet (Node eligibility + owned Pods)
+- [x] DaemonSet (Node eligibility + owned Pods), implemented at 826a8a4;
+      live regression script committed, runtime verification pending
 - [ ] Service/EndpointSlice, PDB (selector → Pod membership)
 - [ ] PV binder, stormblock, attach/detach (claim/PV/Pod/VolumeAttachment)
 - [ ] VM, migration; namespace, node lifecycle, CSR, root CA, HPA, gateway, events
