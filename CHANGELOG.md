@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Record #8 implementation gaps, existing arch-label/filter code,
+  gate/webhook prerequisites and the required mixed-architecture test target.
 - **docs:** Audit #3 scheduler parity gaps and record the unresolved upstream
   version/acceptance-cluster decision before implementation. Remote sc-build
   at 58ea6d2 compiled kube-scheduler and passed 57 scheduler tests; upstream

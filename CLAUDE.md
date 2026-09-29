@@ -144,6 +144,23 @@ when each piece landed.
       vm-runstrategy) are the
       start of it
 
+### Multi-arch image placement (#8) — acceptance target needed, 2026-09-29
+- [x] Read #8; inspect built-in admission and scheduler affinity/gate handling.
+      The scheduler has an arch affinity unit test. rustkube-node registration
+      code sets arch/os labels; deployment on mixed hardware is not verified.
+- [ ] Owner identifies an isolated mixed amd64/arm64 acceptance cluster and
+      the supported deployment route for the changed control plane.
+- [ ] Implement safe scheduling-gate handling (#87) before enabling gated
+      placement; webhook-based admission additionally requires #82.
+- [ ] Implement image resolution (indexes and single-image config), private
+      pull-secret authentication, bounded credential-scoped cache, intersection
+      across workload images, exclusions and affinity injection that preserves
+      existing constraints. Failed inspection must not silently release a gate.
+- [ ] Verify registry failure/recovery, conflicting image architectures, init
+      containers, existing affinity, private secrets and excluded namespaces.
+- [ ] Run real mixed-architecture placement acceptance; keep #8 open until
+      admission, enforcement and runtime results are all verified.
+
 ### Scheduler drop-in parity (#3) — needs owner baseline, 2026-09-29
 - [x] Baseline at 58ea6d2: sc-build compiled kube-scheduler and passed all
       57 scheduler unit tests plus doc tests (remote exit 0). Local build-log
