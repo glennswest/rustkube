@@ -144,6 +144,21 @@ when each piece landed.
       vm-runstrategy) are the
       start of it
 
+### Certificate lifecycle (#20) — scope decision needed, 2026-09-29
+- [x] Read #20 and inspect TLS reload, renewal tooling and current stormcert
+      integration. Expiry metrics and serving reload exist; #93 still permits
+      mismatched serving pairs. Client identities/trust reload remain #105.
+- [x] Identify existing renewal owner: stormcert-agent has a renewal loop;
+      stormcos#119 tracks wiring it into the golden. Do not duplicate it here.
+- [ ] Owner reconciles #20's operator/CA-rotation roadmap with stormcert
+      ownership and the ten-year CA decision recorded in stormcos#119.
+      Canonical CA selection also remains open in stormcert#49.
+- [ ] Once scope is settled, finish the rustkube reload obligations (#93/#105)
+      and coordinate external delivery/renewal through their owning issues.
+- [ ] Verify renewal without authentication loss, malformed/mismatched pair
+      retention and the selected trust/key rollover contract before closure.
+      cert-manager compatibility is optional and has not been implemented.
+
 ### Multi-arch image placement (#8) — acceptance target needed, 2026-09-29
 - [x] Baseline sc-build at 89f36a8: apiserver 197 and scheduler 57 unit tests
       passed, doc tests passed, remote exit 0. Local build-log append was

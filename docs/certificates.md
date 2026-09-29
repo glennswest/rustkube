@@ -1,5 +1,23 @@
 # Certificates
 
+## Deployment ownership
+
+The table below describes this repository's standalone PKI tooling. On
+StormCOS, stormcert issues the files rustkube consumes. Its agent already has
+`renew`, which replays recorded issuances and renews certificates/tokens at
+80% of their lifetime. Enabling that loop in the golden is tracked by
+[stormcos#119](https://github.com/glennswest/stormcos/issues/119); do not infer
+that a running node has renewal enabled merely because the command exists.
+Rustkube's serving-pair validation remains [#93](https://github.com/glennswest/rustkube/issues/93),
+and client-identity/trust reload remains [#105](https://github.com/glennswest/rustkube/issues/105).
+
+As of 2026-09-29, #20 needs a scope decision: its original roadmap calls for
+an in-cluster renewer and CA rotation, while stormcert owns issuance and
+stormcos#119 records the owner's choice of a ten-year node CA over automatic
+rotation. Canonical CA selection is separately pending in
+[stormcert#49](https://github.com/glennswest/stormcert/issues/49).
+No new issuer or trust-root migration should be inferred from this roadmap.
+
 ## What exists
 
 | | how it is issued | renewal |
@@ -135,9 +153,10 @@ rotating the signing key (below).
 - **Service-account signing key rotation.** Every issued token is signed by it,
   so rotating means validating against both keys for the lifetime of the oldest
   token first.
-- **Automatic renewal.** `renew-certs.sh` is run by a person or a timer; there
-  is no controller watching expiry and acting. With the reload in place that is
-  now a small thing to add rather than a redesign — it was the reload that was
-  the blocker.
+- **Renewal integration.** Standalone `renew-certs.sh` is run by a person or
+  timer. StormCOS has stormcert-agent's renewal loop, with deployment tracked
+  by stormcos#119. Rustkube still needs safe serving-pair validation (#93) and
+  client credential/trust reload (#105). A second issuance controller here
+  would overlap stormcert; #20's scope must be reconciled first.
 - **cert-manager CRD compatibility** (#20 phase 3) — `Issuer`/`ClusterIssuer`/
   `Certificate` for workload and Ingress certificates.

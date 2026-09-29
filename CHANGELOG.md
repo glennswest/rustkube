@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Reconcile #20 with stormcert renewal and stormcos#119; distinguish
+  external issuance from rustkube reload gaps and record the CA/scope decision.
 - **docs:** Record #8 implementation gaps, existing arch-label/filter code,
   gate/webhook prerequisites and the required mixed-architecture test target.
   Remote sc-build at 89f36a8 passed 254 apiserver/scheduler unit tests and
