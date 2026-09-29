@@ -145,3 +145,8 @@ The DaemonSet heartbeat regression first waits for both Pod placement and
 status accounting to converge. It then checks that heartbeat-only updates
 leave the DaemonSet revision and placement unchanged; failures print both
 DaemonSet observations.
+
+Disposable API rigs require Linux `/proc/sys/net/ipv4/ip_local_port_range`
+to keep listener candidates outside outbound ephemeral ports. They select
+and check ports after compilation, immediately before starting servers.
+`RK_PORT_OFFSET` remains an explicit port override.

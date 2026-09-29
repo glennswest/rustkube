@@ -16,7 +16,8 @@
 #   RK_FASTETCD_REF  source tag/branch (default v1.6.1, snapshot-safe Range)
 #   RK_FASTETCD  path to a fastetcd server binary
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
-# each; without an override the rig chooses a free block for this build.
+# each; without an override the rig chooses a free block outside the host
+# ephemeral range just before starting servers (Linux /proc required).
 set -u
 mkdir -p "$PWD/tmp"
 : "${TMPDIR:=$PWD/tmp}"
@@ -25,27 +26,6 @@ W=$(mktemp -d)
 cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
 
-if [ -n "${RK_PORT_OFFSET:-}" ]; then
-  OFF=$RK_PORT_OFFSET
-else
-  OFF=$(python3 - <<'PORTS'
-import random, socket
-for offset in random.sample(range(16000), 100):
-    sockets = []
-    try:
-        for port in (36443+offset, 32379+offset, 32380+offset, 32381+offset):
-            sock = socket.socket(); sockets.append(sock); sock.bind(('127.0.0.1', port))
-        print(offset); break
-    except OSError: pass
-    finally:
-        for sock in sockets: sock.close()
-else: raise SystemExit('no free test port block')
-PORTS
-  ) || exit 100
-fi
-PORT=$((36443 + OFF))
-ETCD=$((32379 + OFF))
-API=https://127.0.0.1:$PORT
 FAIL=0
 pass() { echo "PASS  $*"; }
 fail() { echo "FAIL  $*"; FAIL=$((FAIL + 1)); }
@@ -64,7 +44,7 @@ if [ -n "${RK_FASTETCD:-}" ]; then
   FASTETCD=$RK_FASTETCD
   [ -x "$FASTETCD" ] || { echo "RK_FASTETCD=$FASTETCD is not executable"; exit 100; }
 else
-  git clone -q --depth 1 --branch "${RK_FASTETCD_REF:-v1.6.1}" https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
+  git -c advice.detachedHead=false clone -q --depth 1 --branch "${RK_FASTETCD_REF:-v1.6.1}" https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
   echo "rig: fastetcd $(git -C "$W/fastetcd" rev-parse HEAD) (${RK_FASTETCD_REF:-v1.6.1})"
   (cd "$W/fastetcd" && cargo build -q -p fastetcd-server) || exit 100
   FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/debug/fastetcd
@@ -97,6 +77,34 @@ openssl req -newkey rsa:2048 -nodes -keyout "$W/apiserver.key" -out "$W/apiserve
 printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:kubernetes,DNS:kubernetes.default.svc\n' >"$W/san.ext"
 openssl x509 -req -in "$W/apiserver.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" -CAcreateserial \
   -out "$W/apiserver.crt" -days 2 -extfile "$W/san.ext" 2>/dev/null
+
+if [ -n "${RK_PORT_OFFSET:-}" ]; then
+  OFF=$RK_PORT_OFFSET
+else
+  OFF=$(python3 - <<'PORTS'
+import pathlib, random, socket
+# Do not select a listener from Linux's outbound ephemeral range: another
+# connection can claim it after this check and before the server binds.
+ephemeral=pathlib.Path('/proc/sys/net/ipv4/ip_local_port_range').read_text().split()
+lo,hi=map(int,ephemeral)
+candidates=[offset for offset in range(-22000,16000)
+    if all(not lo <= port+offset <= hi for port in (36443,32379,32380,32381))]
+for offset in random.sample(candidates, min(100,len(candidates))):
+    sockets = []
+    try:
+        for port in (36443+offset, 32379+offset, 32380+offset, 32381+offset):
+            sock = socket.socket(); sockets.append(sock); sock.bind(('127.0.0.1', port))
+        print(offset); break
+    except OSError: pass
+    finally:
+        for sock in sockets: sock.close()
+else: raise SystemExit('no free test port block')
+PORTS
+  ) || exit 100
+fi
+PORT=$((36443 + OFF))
+ETCD=$((32379 + OFF))
+API=https://127.0.0.1:$PORT
 
 # --- start --------------------------------------------------------------------
 # Keep the datastore on the build's private disposable drive too.
