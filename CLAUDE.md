@@ -246,7 +246,8 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] DaemonSet (Node eligibility + owned Pods), implemented at 826a8a4;
       live regression script committed, runtime verification pending
 - [x] Service/EndpointSlice, PDB: selector-indexed Pod membership, UID-safe
-      endpoint cleanup, CAS/no-op writes; remote regression validation pending.
+      endpoint cleanup, CAS/no-op writes; unit tests pass. Real rig exposed
+      UID-less bootstrap endpoints; repair committed, rerun pending.
 - [x] Baseline 79c1a9e: handoff five-crate command passed on dev (four
       datastore-dependent storage tests ignored).
 - [x] PV binder: serialized indexed claim workers and per-PV lifecycle;

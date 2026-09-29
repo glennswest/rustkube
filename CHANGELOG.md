@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **fix:** Real indexed-worker tests found UID-less bootstrap Endpoints and
+  EndpointSlices. Assign/repair identity, preserve it across boot, and merge
+  master addresses with CAS; synchronized informers can now accept the feed.
 - **perf:** Index PV binding by storage class and claim/volume/Pod references;
   serialize claim selection with acknowledged PV writes and independently
   reconcile volume lifecycle. Only a claim GET 404 proves absence; finalizer
