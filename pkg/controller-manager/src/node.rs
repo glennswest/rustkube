@@ -7,7 +7,9 @@ use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
+use crate::owned::{self, Controller, Dependency, Deps};
+use apimachinery::informer::Index;
 
 const NODE_MONITOR_GRACE_PERIOD: Duration = Duration::from_secs(40);
 
@@ -21,35 +23,14 @@ impl NodeLifecycleController {
     }
 
     pub async fn run(&self) {
-        info!("Node lifecycle controller started");
-        let worker = self.api.watches.worker("node");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile_all().await {
-                    apimachinery::reactor::failed();
-                    error!("Node lifecycle reconcile error: {e}");
-                }
-            }).await;
-        }
+        owned::run(&self.api, self).await;
     }
 
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let node_list: Value = self.api.list("/api/v1/nodes").await?;
-        let nodes = node_list["items"].as_array().cloned().unwrap_or_default();
-
-        let lease_list: Value = self
-            .api
-            .list("/apis/coordination.k8s.io/v1/namespaces/kube-node-lease/leases")
-            .await?;
-        let leases = lease_list["items"].as_array().cloned().unwrap_or_default();
-
+    async fn reconcile_node(&self, node: &Value, leases: &[Value], pods: &[Value]) -> anyhow::Result<()> {
         let now = chrono::Utc::now();
-
-        for node in &nodes {
             let node_name = node["metadata"]["name"].as_str().unwrap_or("");
             if node_name.is_empty() {
-                continue;
+                return Ok(());
             }
 
             // Find the corresponding lease
@@ -163,11 +144,9 @@ impl NodeLifecycleController {
             }
 
             // NoExecute means "get off", so something has to do the moving.
-            if let Err(e) = self.evict_for_taints(node, node_name).await {
+            if let Err(e) = self.evict_for_taints(node, node_name, pods).await {
                 debug!("taint eviction on {node_name}: {e}");
             }
-        }
-
         Ok(())
     }
 }
@@ -214,7 +193,7 @@ impl NodeLifecycleController {
     /// blip into an outage. Pods that are not yet due are simply left; the
     /// next pass reconsiders them, which is what makes the deadline work
     /// without a timer.
-    async fn evict_for_taints(&self, node: &Value, node_name: &str) -> anyhow::Result<()> {
+    async fn evict_for_taints(&self, node: &Value, node_name: &str, pods: &[Value]) -> anyhow::Result<()> {
         let taints: Vec<Value> = node["spec"]["taints"]
             .as_array()
             .map(|a| a.iter().filter(|t| t["effect"].as_str() == Some("NoExecute")).cloned().collect())
@@ -235,8 +214,7 @@ impl NodeLifecycleController {
                 .unwrap_or(0)
         };
 
-        let pods: Value = self.api.list("/api/v1/pods").await?;
-        for pod in pods["items"].as_array().cloned().unwrap_or_default() {
+        for pod in pods {
             if pod["spec"]["nodeName"].as_str() != Some(node_name) {
                 continue;
             }
@@ -265,10 +243,34 @@ impl NodeLifecycleController {
                 );
                 let _ = self
                     .api
-                    .delete(&format!("/api/v1/namespaces/{ns}/pods/{name}"))
+                    .delete_observed(&format!("/api/v1/namespaces/{ns}/pods/{name}"), pod)
                     .await;
             }
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Controller for NodeLifecycleController {
+    fn name(&self) -> &'static str { "node" }
+    fn primary(&self) -> &'static str { "/api/v1/nodes" }
+    fn dependencies(&self) -> Vec<Dependency> { vec![
+        Dependency { path: "/apis/coordination.k8s.io/v1/leases", route: Arc::new(|delta, primary| {
+            delta.old.iter().chain(delta.new.iter()).filter(|l| l["metadata"]["namespace"] == "kube-node-lease")
+                .flat_map(|l| owned::keys_at(primary, Index::Name("".into(),l["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
+        }) },
+        Dependency { path: "/api/v1/pods", route: Arc::new(|delta, primary| {
+            delta.affected.iter().flat_map(|i| match i {
+                Index::Node(name) => owned::keys_at(primary, Index::Name("".into(),name.clone())),
+                _ => Vec::new(),
+            }).collect()
+        }) },
+    ] }
+    async fn reconcile(&self, node: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        let name = node["metadata"]["name"].as_str().unwrap_or("");
+        let leases = deps.feed(0).select(&Index::Name("kube-node-lease".into(),name.into()))?;
+        let pods = deps.feed(1).select(&Index::Node(name.into()))?;
+        self.reconcile_node(node,&leases,&pods).await
     }
 }

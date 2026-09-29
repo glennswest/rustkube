@@ -10,7 +10,9 @@ Collection watches and snapshots are shared; successful writes use local
 acknowledgement overlays until observed or superseded by a consistent LIST
 begun after the write. Deletion uses observed UID/revision preconditions.
 PV binding uses serialized claim workers, storage-class candidate indexes, and
-independent per-volume lifecycle workers. Other controller migrations and
+independent per-volume lifecycle workers. Stormblock provisioning/reclaim
+and node lifecycle also use object workers; Node expiry and eviction
+deadlines are unchanged, with Lease/Pod events routed by Node name. Other controller migrations and
 runtime validation remain open.
 
 ## Objective and boundary

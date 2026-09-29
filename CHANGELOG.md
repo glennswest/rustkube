@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Index stormblock provisioning/reclaim per claim/volume and node
+  lifecycle per Node, with Lease and assigned-Pod routes. Preserve semantic
+  expiry/eviction deadlines and use conditional Pod deletion.
 - **fix:** Real indexed-worker tests found UID-less bootstrap Endpoints and
   EndpointSlices. Assign/repair identity, preserve it across boot, and merge
   master addresses with CAS; synchronized informers can now accept the feed.
