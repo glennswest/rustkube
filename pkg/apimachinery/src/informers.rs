@@ -35,6 +35,7 @@ impl Drop for Inner {
     }
 }
 pub struct Feed {
+    url: String,
     store: Mutex<Store>,
     subscribers: Mutex<HashMap<u64, Callback>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -79,7 +80,20 @@ impl Feed {
             callback(&changes, reset);
         }
     }
-    fn receive(&self, event: Change) {
+    /// False when the observation could not be applied: the store is then
+    /// unsynchronized and the reflector relists to repair it.
+    fn receive(&self, event: Change) -> bool {
+        let summary = match &event {
+            Change::Applied { event, .. } => Some(format!(
+                "{} {}/{} uid={} rv={}",
+                event["type"].as_str().unwrap_or("?"),
+                event["object"]["metadata"]["namespace"].as_str().unwrap_or(""),
+                event["object"]["metadata"]["name"].as_str().unwrap_or("?"),
+                event["object"]["metadata"]["uid"].as_str().unwrap_or("-"),
+                event["object"]["metadata"]["resourceVersion"].as_str().unwrap_or("-"),
+            )),
+            _ => None,
+        };
         let (changes, reset) = {
             let mut store = self.store.lock().unwrap();
             match event {
@@ -101,7 +115,7 @@ impl Feed {
                 }
                 Change::Unavailable => {
                     store.unavailable();
-                    return;
+                    return true;
                 }
                 Change::Connected => {
                     store.resumed();
@@ -110,10 +124,15 @@ impl Feed {
             }
         };
         match changes {
-            Ok(changes) => self.notify(&changes, reset),
+            Ok(changes) => {
+                self.notify(&changes, reset);
+                true
+            }
             Err(error) => {
                 self.store.lock().unwrap().unavailable();
-                tracing::warn!(%error,"indexed informer rejected observation");
+                tracing::warn!(url = %self.url, %error, event = summary.as_deref().unwrap_or("snapshot"),
+                    "indexed informer rejected observation; relisting");
+                false
             }
         }
     }
@@ -157,6 +176,7 @@ impl Hub {
                 .entry(url.clone())
                 .or_insert_with(|| {
                     let feed = Arc::new(Feed {
+                        url: url.clone(),
                         store: Mutex::new(Store::default()),
                         subscribers: Mutex::new(HashMap::new()),
                         task: Mutex::new(None),
@@ -166,9 +186,7 @@ impl Hub {
                     let url = url.clone();
                     let task = tokio::spawn(async move {
                         crate::reflector::run_events(client, url, move |event| {
-                            if let Some(feed) = weak.upgrade() {
-                                feed.receive(event);
-                            }
+                            weak.upgrade().is_none_or(|feed| feed.receive(event))
                         })
                         .await;
                     });
@@ -237,6 +255,7 @@ mod tests {
     #[test]
     fn acknowledged_noop_status_does_not_create_a_reconcile_loop() {
         let feed = Feed {
+            url: "test".into(),
             store: Mutex::new(Store::default()),
             subscribers: Mutex::new(HashMap::new()),
             task: Mutex::new(None),

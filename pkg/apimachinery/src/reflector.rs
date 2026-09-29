@@ -178,6 +178,9 @@ impl Frames {
 
 /// A watch event or recovery snapshot invokes `changed` synchronously. The
 /// callback should only enqueue; it must not run a reconcile or spawn a task.
+/// It returns whether it could apply the change: a snapshot or event its
+/// consumer rejected forces a recovery LIST, because the consumer's view is
+/// no longer complete and nothing else would ever repair it.
 /// Drop the owning task to cancel the stream and all retries.
 #[derive(Clone, Debug)]
 pub enum Change {
@@ -196,13 +199,16 @@ pub enum Change {
 }
 
 pub async fn run(client: reqwest::Client, url: String, changed: impl Fn() + Send + Sync) {
-    run_events(client, url, move |event| match event {
-        Change::Reset { .. }
-        | Change::Applied {
-            semantic_change: true,
-            ..
-        } => changed(),
-        _ => {}
+    run_events(client, url, move |event| {
+        match event {
+            Change::Reset { .. }
+            | Change::Applied {
+                semantic_change: true,
+                ..
+            } => changed(),
+            _ => {}
+        }
+        true
     })
     .await;
 }
@@ -210,7 +216,7 @@ pub async fn run(client: reqwest::Client, url: String, changed: impl Fn() + Send
 pub async fn run_events(
     client: reqwest::Client,
     url: String,
-    changed: impl Fn(Change) + Send + Sync,
+    changed: impl Fn(Change) -> bool + Send + Sync,
 ) {
     let mut observed = Observed::default();
     let mut retry = Duration::from_millis(100);
@@ -222,10 +228,16 @@ pub async fn run_events(
                 Ok(v)
             }) {
                 Ok(snapshot) => {
-                    changed(Change::Reset {
+                    if !changed(Change::Reset {
                         snapshot,
                         started: list_started,
-                    });
+                    }) {
+                        observed.revision.clear();
+                        tracing::warn!(%url, "reflector snapshot rejected; relisting");
+                        tokio::time::sleep(retry).await;
+                        retry = (retry * 2).min(Duration::from_secs(30));
+                        continue;
+                    }
                     retry = Duration::from_millis(100);
                 }
                 Err(error) => {
@@ -261,7 +273,7 @@ async fn watch(
     client: &reqwest::Client,
     url: &str,
     observed: &mut Observed,
-    changed: &(impl Fn(Change) + Send + Sync),
+    changed: &(impl Fn(Change) -> bool + Send + Sync),
 ) -> anyhow::Result<()> {
     let response = client
         .get(url)
@@ -293,10 +305,15 @@ async fn watch(
         };
         for event in events {
             match observed.apply(event.clone()) {
-                Ok(semantic_change) => changed(Change::Applied {
-                    event,
-                    semantic_change,
-                }),
+                Ok(semantic_change) => {
+                    if !changed(Change::Applied {
+                        event,
+                        semantic_change,
+                    }) {
+                        observed.revision.clear();
+                        anyhow::bail!("watch event rejected by its consumer; relisting");
+                    }
+                }
                 Err(error) => {
                     observed.revision.clear();
                     return Err(error);
@@ -414,6 +431,34 @@ mod transport_tests {
         assert_eq!(state.lists.load(Ordering::SeqCst), 2);
         let revisions = state.revisions.lock().unwrap().clone();
         assert_eq!(&revisions[..2], &["10", "11"]);
+        task.abort();
+        server.abort();
+    }
+
+    /// A consumer that cannot apply an event (its view is now incomplete)
+    /// gets a recovery LIST, and the watch resumes from that LIST's revision
+    /// rather than from the rejected event's.
+    #[tokio::test]
+    async fn a_rejected_event_forces_a_relist() {
+        let state = Arc::new(Server::default());
+        let (url, server) = serve(
+            Router::new()
+                .route("/pods", get(endpoint))
+                .with_state(state.clone()),
+        )
+        .await;
+        let task = tokio::spawn(run_events(reqwest::Client::new(), url, |change| {
+            !matches!(change, Change::Applied { .. })
+        }));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while state.revisions.lock().unwrap().len() < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(state.lists.load(Ordering::SeqCst) >= 2);
+        assert_eq!(&state.revisions.lock().unwrap()[..2], &["10", "12"]);
         task.abort();
         server.abort();
     }
