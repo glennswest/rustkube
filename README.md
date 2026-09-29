@@ -390,6 +390,7 @@ apiserver starts: `apiserver.crt`/`.key` (CN `apiserver`; SANs the
 | [docs/certificates.md](docs/certificates.md) | TLS, reload, renewal, offline-minted tokens |
 | [docs/storage.md](docs/storage.md) | who does what to a PVC — rustkube, stormblock, stormblock-csi |
 | [docs/metrics.md](docs/metrics.md) | every metric and what it answers |
+| [docs/scale.md](docs/scale.md) | planned control-plane scale measurements and execution prerequisites (#66) |
 | [docs/conformance.md](docs/conformance.md) | running the Kubernetes conformance suite, and what it found |
 | [docs/releasing.md](docs/releasing.md) | release artifacts |
 | [docs/oc-compatibility.md](docs/oc-compatibility.md) | what `oc` can ask, and what is answered |

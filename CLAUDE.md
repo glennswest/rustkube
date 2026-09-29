@@ -242,12 +242,10 @@ Remaining implementation and safety audits below are still required.
       `sub`, not the token. Claim contract in docs/certificates.md
 - The token itself is stormcert's (stormcert#5)
 
-### Phase 4: Scale & Conformance
-
 ### Scale measurement (#66) — awaiting execution decision, 2026-09-29
 - [x] Read issue history: the old 250-node curve used truncated controller
       LISTs; pagination was fixed in v0.12.0, but the full-read curve is absent.
-- [ ] Document a reproducible 10/100/1000-node measurement plan, keeping fake
+- [x] Document the 10/100/1000-node protocol in docs/scale.md, keeping fake
       Nodes alive with Leases and checking the full Pod population.
 - [ ] Owner selects an isolated test environment and fresh-binary delivery
       route outside build slots (#140); turbomode live target is also pending
@@ -255,6 +253,7 @@ Remaining implementation and safety audits below are still required.
 - [ ] Run and publish CPU/request/latency/datastore curves and Deployment
       scale-to-Pod-creation latency; keep #66 open until measurements exist.
 
+### Phase 4: Scale & Conformance
 - [ ] 1000+ node testing (#66) — the controllers still list whole collections per watch-driven pass,
       which is what will break first
 - [x] K8s conformance test suite (#67) — closed 2026-09-28; first run on dev,

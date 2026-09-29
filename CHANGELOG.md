@@ -3,8 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
-- **docs:** Record #66 measurement work plan and the unresolved execution
-  environment and artifact-delivery decision.
+- **docs:** Document the #66 scale protocol: complete populations, Lease
+  heartbeats, CPU/API/datastore curves and Deployment scale latency. Execution
+  environment and artifact delivery still need an owner decision.
 - **docs:** Reconcile #146 work plan with the committed DaemonSet migration,
   record passing five-crate `sc-build` validation at fc67179 (four storage
   integration tests ignored) and the pending owner choice of live test
