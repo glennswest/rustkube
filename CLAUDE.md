@@ -144,6 +144,21 @@ when each piece landed.
       vm-runstrategy) are the
       start of it
 
+### Scheduler drop-in parity (#3) — needs owner baseline, 2026-09-29
+- [x] Read #3 and audit scheduler CLI, scheduling loop, score functions and
+      unused plugin traits against the recorded scope.
+- [ ] Owner selects the exact upstream Kubernetes version and an isolated
+      otherwise-upstream acceptance cluster with real kubelets. README API
+      posture is 1.36; research targets 1.32 and 1.37. No baseline is selected.
+- [ ] Implement kubeconfig/configuration profiles, framework/default scoring
+      parity, priority/backoff/unschedulable queues and nomination, preemption
+      (#84), scheduling gates (#87), and Pod scheduling events/status (#138).
+      Coordinate indexed scheduling/reservations with #145/#146.
+- [ ] Build/test on dev via sc-build, then compare placement against upstream
+      on identical inputs, including infeasible and failure cases. Unit tests
+      and the rustkube synthetic rig cannot close upstream acceptance.
+- [ ] Keep #3 open until implementation and upstream acceptance are verified.
+
 ### Turbomode indexed workers (#146) — IN PROGRESS 2026-09-29, branch `turbomode`
 Branch only: no merge to main, no goldens. Design: docs/event-driven-design.md;
 handoff: docs/turbomode-handoff.md.

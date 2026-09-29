@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Audit #3 scheduler parity gaps and record the unresolved upstream
+  version/acceptance-cluster decision before implementation.
 - **docs:** Document the #66 scale protocol: complete populations, Lease
   heartbeats, CPU/API/datastore curves and Deployment scale latency. Execution
   environment and artifact delivery still need an owner decision. Five-crate

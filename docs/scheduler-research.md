@@ -5,6 +5,23 @@
 > [scheduler-upstream.md](scheduler-upstream.md) (e.g. the EBS/GCE/Azure
 > volume-limit plugins, deleted in v1.32), the newer document wins.
 
+## Implementation checkpoint — 2026-09-29 (#3)
+
+Full drop-in parity is not implemented. The CLI has explicit TLS/token flags
+but no kubeconfig or scheduler configuration/profile loading. The scheduling
+loop uses fixed filter/score calls and coalesces whole passes; plugin traits
+are unused. Preemption (#84), scheduling gates (#87), Pod scheduling
+Events/status (#138), priority/backoff queues and nomination remain open.
+Indexed scheduling and reservation work is tracked by #145/#146.
+
+Before implementing version-specific parity, the owner must select an exact
+upstream release: the README advertises a 1.36 API posture, this research
+originally targets 1.32, and scheduler-upstream.md discusses 1.37. These
+research documents do not establish a single acceptance baseline. The owner
+must also designate an isolated otherwise-upstream cluster with real kubelets
+and a supported way to deploy the built scheduler. No upstream acceptance run
+has been made; the rustkube synthetic rig cannot satisfy that requirement.
+
 Implementation-oriented spec for the Rust `kube-scheduler` replacement, from a
 deep, adversarially-verified research pass (25/25 claims confirmed 3-0 against
 primary sources: kubernetes.io, version-pinned kubernetes/kubernetes source,
