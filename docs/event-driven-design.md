@@ -202,6 +202,18 @@ semantic backoff, grace period or starting deadline. No 100 ms replacement
 poll loop, no periodic safety sweep hiding missing event routes. A bounded
 recovery retry is acceptable only after an actual failure.
 
+Two disguised polls were found and removed on the rig (#144): the feed passed
+every 45 s heartbeat BOOKMARK to subscribers as an empty notification, and
+subscribers that wake on any call (garbage-collector and namespace discovery,
+the scheduler's pending Pods) ran on each one; and a routine watch reconnect
+counted as a reset, requeueing every object whenever a watch timed out. A
+feed now delivers nothing for a heartbeat or revision-only echo, and resets
+only on a new snapshot or on reconnecting after an outage.
+`test/e2e/deadlines.sh` holds each semantic deadline to its moment (cron start,
+Job `activeDeadlineSeconds`, Event TTL, Lease grace, ReplicaSet recreation
+backoff; measured at +0.1–1.8 s) and requires an idle control plane to make no
+API requests for a minute, longer than one heartbeat.
+
 ## Leadership, concurrency and failure
 
 Controller families run concurrently; namespace provisioning is independent

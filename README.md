@@ -210,7 +210,9 @@ created once. With `--dev-anonymous-admin` it also binds `system:anonymous` to
 One process, leader-elected on the Lease `kube-system/kube-controller-manager`.
 Collection LIST/WATCH streams enqueue deduplicated work as
 state changes. Controllers run concurrently on Tokio; a change during a
-reconcile queues another pass. Successful idle passes have no poll interval.
+reconcile queues another pass. Successful idle passes have no poll interval:
+watch heartbeats and routine reconnects wake nothing, and an idle control
+plane makes no API requests (`test/e2e/deadlines.sh`).
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
 and migration deadlines, Event TTL), API recovery and leader Leases.
 

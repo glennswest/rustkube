@@ -23,8 +23,8 @@ pub fn set_leader(is_leader: bool) {
 
 /// How long one controller's reconcile pass took, and whether it failed.
 ///
-/// Deliberately **not** `workqueue_*`: these controllers are poll loops with
-/// no queue, and exporting `workqueue_depth` as a constant zero would be a
+/// Deliberately **not** `workqueue_*`: the per-object work queues export no
+/// depth yet (#90), and a `workqueue_depth` of constant zero would be a
 /// number that reads as a fact. The shape differs from upstream, so the name
 /// does too.
 pub fn record_reconcile(controller: &'static str, seconds: f64, ok: bool) {

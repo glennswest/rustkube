@@ -111,9 +111,10 @@ impl CronJobController {
 
         // What start, if any, is owed right now.
         //
-        // Not "does the schedule match this instant": the controller ticks
-        // every five seconds and a schedule fires on a minute, so asking only
-        // about *now* loses every run the controller was not awake for — a
+        // Not "does the schedule match this instant": the controller wakes at
+        // the next scheduled start (the requeue below) and on changes, and a
+        // wake can be late, so asking only about *now* loses every run the
+        // controller was not awake for — a
         // restart, a slow reconcile, a node that was paused. The window since
         // the last run is what gets evaluated, and only the most recent missed
         // start is acted on.

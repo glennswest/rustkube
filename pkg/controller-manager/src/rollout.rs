@@ -91,8 +91,9 @@ pub fn plan_recreate(desired: u64, new: &RsView, olds: &[RsView]) -> Plan {
 /// `RollingUpdate`: step the new ReplicaSet up and the old ones down while
 /// holding both invariants at the top of this module.
 ///
-/// One step per call. The controller runs on an interval, so convergence is
-/// the loop's job — which is also what makes it safe: each pass re-reads the
+/// One step per call. The controller runs again whenever the Deployment or
+/// one of its ReplicaSets changes, so convergence is that sequence of passes'
+/// job — which is also what makes it safe: each pass re-reads the
 /// world, so a pod that failed to become ready simply stalls the rollout
 /// instead of the controller marching on from a stale plan.
 pub fn plan_rolling(
