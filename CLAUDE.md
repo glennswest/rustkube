@@ -98,7 +98,8 @@ clone requests. README's configuration tables come from the three CLI sources.
 ### Resume #146 acceptance after fastetcd v1.6.1 — 2026-09-29
 - [x] Read #146, project instructions, open issues and #163; continue on main.
       fastetcd#50 is closed with its snapshot fix in v1.6.1.
-- [ ] Run the handoff five-crate tests on the pushed head before new changes.
+- [x] Handoff five-crate tests at 9f622fa: 409 passed, four datastore tests
+      ignored, doc tests passed; sc-build remote exit 0 in 34 seconds.
 - [ ] Pin the disposable API rig to fastetcd v1.6.1 for reproducible snapshot
       acceptance; rerun the isolated LIST race and controller/scheduler matrix.
 - [ ] Investigate #153 startup membership and #154 POST timeout with retained

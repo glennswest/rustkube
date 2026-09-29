@@ -133,3 +133,9 @@ rig. It uses stand-in Nodes and does not claim real-node performance.
 `bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
 and resourceVersion agree with acknowledged writes. It runs without
 controllers, isolating the datastore/API contract required by informer caches.
+
+The disposable rig builds fastetcd **v1.6.1** by default, which fixes the
+Range snapshot/revision race (fastetcd#50), and prints its source commit.
+`RK_FASTETCD_REF` selects another tag/branch for comparison; `RK_FASTETCD`
+still accepts a prebuilt binary. All builds remain inside sc-build's private
+volume. The pin is a test dependency, not a deployed datastore upgrade.

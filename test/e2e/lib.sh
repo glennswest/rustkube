@@ -13,6 +13,7 @@
 # it (no toolchain, no build slot):
 #   RK_BIN       directory holding kube-apiserver, kube-controller-manager and
 #                kube-scheduler (test/conformance/stage.sh builds and publishes it)
+#   RK_FASTETCD_REF  source tag/branch (default v1.6.1, snapshot-safe Range)
 #   RK_FASTETCD  path to a fastetcd server binary
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
 # each; without an override the rig chooses a free block for this build.
@@ -63,7 +64,8 @@ if [ -n "${RK_FASTETCD:-}" ]; then
   FASTETCD=$RK_FASTETCD
   [ -x "$FASTETCD" ] || { echo "RK_FASTETCD=$FASTETCD is not executable"; exit 100; }
 else
-  git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
+  git clone -q --depth 1 --branch "${RK_FASTETCD_REF:-v1.6.1}" https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
+  echo "rig: fastetcd $(git -C "$W/fastetcd" rev-parse HEAD) (${RK_FASTETCD_REF:-v1.6.1})"
   (cd "$W/fastetcd" && cargo build -q -p fastetcd-server) || exit 100
   FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/debug/fastetcd
 fi

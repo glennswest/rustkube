@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Pin disposable API rigs to fastetcd v1.6.1 and report its commit; allow explicit source-ref comparison for snapshot regression. Baseline #146 unit/doc tests pass (409, four ignored).
 - **docs:** Resume #146 on main after fastetcd v1.6.1; record snapshot and controller acceptance gates and intermittent-failure investigation.
 - **chore:** Merge turbomode into main at 908d078 (#163). Full locked workspace builds/tests on both branch and merge commit passed: 418 tests, four datastore-dependent tests ignored, doc tests passed. Runtime/cache acceptance remains on existing issues; no golden requested.
 - **docs:** Update main integration status under #163; retain datastore snapshot, latency and multi-master acceptance gaps and the explicit no-golden instruction.
