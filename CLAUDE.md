@@ -95,17 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Shared watches and work queues (#143) — IN PROGRESS 2026-09-29
-WorkQueue, reflector, reactor::WatchHub and informers::Hub are on main with
-unit/fake-HTTP tests. Remaining per the handoff: integration coverage.
-- [ ] `apimachinery/src/turbomode_tests.rs`: scripted API server driving the
-      real Hub/WatchHub/reflector — one shared LIST+WATCH per collection,
-      late-subscriber seed, watch outage (unsynced, never empty; resume from
-      RV without LIST), in-stream 410 relist with gap deltas, LIST outage
-      backoff, immediate-EOF no hot loop, malformed frame relist, last
-      subscriber cancels the stream, event during reconcile → exactly one
-      more pass, idle watch → no wakeups
-- [ ] sc-build apimachinery tests; docs/changelog; close #143
+### Shared watches and work queues (#143) — COMPLETE 2026-09-29
+WorkQueue, reflector, reactor::WatchHub and informers::Hub were on main with
+unit/fake-HTTP tests; this added the integration coverage the handoff named.
+- [x] `apimachinery/src/turbomode_tests.rs` (82d75f6): 8 tests, scripted API
+      server over HTTP — sharing/seed, outage (unsynced, resume from RV), 410
+      and malformed-frame relists, LIST/EOF backoff, cancellation, one extra
+      pass per busy pass, idle watch wakes nothing. 20/20 repeats on dev;
+      five mutations (no relist, dropped dirty, no abort, outage stays synced,
+      EOF hot loop) each fail a test
+- [x] de33401: whole workspace 439 passed, 4 datastore tests ignored, exit 0.
+      Controller poll loops are #144; live latency #147. No golden (#163)
 
 ### Watch-cache revision waiters (#148) — COMPLETE 2026-09-29
 Notify-based wait, register-before-check, bounded store fallback and
