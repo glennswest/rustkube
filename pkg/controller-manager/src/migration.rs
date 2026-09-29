@@ -19,7 +19,6 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
 
 pub struct MigrationController {
@@ -33,13 +32,17 @@ impl MigrationController {
 
     pub async fn run(&self) {
         info!("Migration controller started");
-        let mut interval = time::interval(Duration::from_secs(2));
-
+        let worker = self.api.watches.worker("migration");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                debug!("Migration reconcile: {e}");
-            }
+            let _work = worker.next().await;
+            worker
+                .run(async {
+                    if let Err(e) = self.reconcile_all().await {
+                        apimachinery::reactor::failed();
+                        debug!("Migration reconcile: {e}");
+                    }
+                })
+                .await;
         }
     }
 
@@ -71,9 +74,7 @@ impl MigrationController {
 
         for migration in &migrations {
             let name = migration["metadata"]["name"].as_str().unwrap_or("?");
-            let phase = migration["status"]["phase"]
-                .as_str()
-                .unwrap_or("Pending");
+            let phase = migration["status"]["phase"].as_str().unwrap_or("Pending");
 
             // Skip terminal states
             if phase == "Completed" || phase == "Failed" {
@@ -84,45 +85,23 @@ impl MigrationController {
                 warn!("Failed to reconcile migration {namespace}/{name}: {e}");
                 // Update status to Failed
                 let _ = self
-                    .update_migration_status(
-                        namespace,
-                        name,
-                        "Failed",
-                        &e.to_string(),
-                        None,
-                    )
+                    .update_migration_status(namespace, name, "Failed", &e.to_string(), None)
                     .await;
             }
         }
         Ok(())
     }
 
-    async fn reconcile_migration(
-        &self,
-        namespace: &str,
-        migration: &Value,
-    ) -> anyhow::Result<()> {
+    async fn reconcile_migration(&self, namespace: &str, migration: &Value) -> anyhow::Result<()> {
         let name = migration["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("migration missing name"))?;
-        let phase = migration["status"]["phase"]
-            .as_str()
-            .unwrap_or("Pending");
-        let pod_name = migration["spec"]["podName"]
-            .as_str()
-            .unwrap_or("");
-        let source_node = migration["spec"]["sourceNode"]
-            .as_str()
-            .unwrap_or("");
-        let target_node = migration["spec"]["targetNode"]
-            .as_str()
-            .unwrap_or("");
-        let strategy = migration["spec"]["strategy"]
-            .as_str()
-            .unwrap_or("auto");
-        let timeout_secs = migration["spec"]["timeout"]
-            .as_u64()
-            .unwrap_or(300);
+        let phase = migration["status"]["phase"].as_str().unwrap_or("Pending");
+        let pod_name = migration["spec"]["podName"].as_str().unwrap_or("");
+        let source_node = migration["spec"]["sourceNode"].as_str().unwrap_or("");
+        let target_node = migration["spec"]["targetNode"].as_str().unwrap_or("");
+        let strategy = migration["spec"]["strategy"].as_str().unwrap_or("auto");
+        let timeout_secs = migration["spec"]["timeout"].as_u64().unwrap_or(300);
         let delete_source = migration["spec"]["deleteSourcePod"]
             .as_bool()
             .unwrap_or(true);
@@ -130,10 +109,11 @@ impl MigrationController {
         // Check timeout
         if let Some(start_time) = migration["status"]["startTime"].as_str() {
             if let Ok(started) = chrono::DateTime::parse_from_rfc3339(start_time) {
+                apimachinery::reactor::requeue_deadline(started.with_timezone(&chrono::Utc), timeout_secs);
                 let elapsed = chrono::Utc::now()
                     .signed_duration_since(started)
                     .num_seconds();
-                if elapsed > timeout_secs as i64 {
+                if elapsed >= 0 && elapsed as u64 >= timeout_secs {
                     return Err(anyhow::anyhow!(
                         "migration timed out after {elapsed}s (limit {timeout_secs}s)"
                     ));
@@ -143,12 +123,17 @@ impl MigrationController {
 
         match phase {
             "Pending" => {
-                self.phase_pending(namespace, name, pod_name, source_node, target_node, strategy)
-                    .await
+                self.phase_pending(
+                    namespace,
+                    name,
+                    pod_name,
+                    source_node,
+                    target_node,
+                    strategy,
+                )
+                .await
             }
-            "Checkpointing" => {
-                self.phase_checkpointing(namespace, name, pod_name).await
-            }
+            "Checkpointing" => self.phase_checkpointing(namespace, name, pod_name).await,
             "Transferring" => {
                 self.phase_transferring(namespace, name, pod_name, target_node, migration)
                     .await
@@ -158,8 +143,15 @@ impl MigrationController {
                     .await
             }
             "Verifying" => {
-                self.phase_verifying(namespace, name, pod_name, target_node, delete_source, source_node)
-                    .await
+                self.phase_verifying(
+                    namespace,
+                    name,
+                    pod_name,
+                    target_node,
+                    delete_source,
+                    source_node,
+                )
+                .await
             }
             _ => {
                 debug!("Unknown migration phase: {phase}");
@@ -183,9 +175,7 @@ impl MigrationController {
         // Validate source pod exists
         let pod_resp = self
             .api
-            .get(&format!(
-                "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-            ))
+            .get(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
             .await?;
 
         if !pod_resp.status().is_success() {
@@ -217,8 +207,7 @@ impl MigrationController {
             .as_array()
             .map(|conds| {
                 conds.iter().any(|c| {
-                    c["type"].as_str() == Some("Ready")
-                        && c["status"].as_str() == Some("True")
+                    c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True")
                 })
             })
             .unwrap_or(false);
@@ -230,9 +219,7 @@ impl MigrationController {
         // Determine effective strategy
         let effective_strategy = if strategy == "auto" {
             // Determine from runtime class annotation
-            let runtime_class = pod["spec"]["runtimeClassName"]
-                .as_str()
-                .unwrap_or("");
+            let runtime_class = pod["spec"]["runtimeClassName"].as_str().unwrap_or("");
             match runtime_class {
                 "vm-cloud-hypervisor" | "vm-qemu" => "live",
                 "vm-firecracker" => "snapshot",
@@ -300,9 +287,7 @@ impl MigrationController {
         // Check if kubelet has written the checkpoint ref annotation
         let pod_resp = self
             .api
-            .get(&format!(
-                "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-            ))
+            .get(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
             .await?;
 
         if !pod_resp.status().is_success() {
@@ -310,10 +295,9 @@ impl MigrationController {
         }
 
         let pod: Value = pod_resp.json().await?;
-        let checkpoint_ref = pod["metadata"]["annotations"]["rustkube.io/checkpoint-ref"]
-            .as_str();
-        let migration_endpoint = pod["metadata"]["annotations"]["rustkube.io/migration-endpoint"]
-            .as_str();
+        let checkpoint_ref = pod["metadata"]["annotations"]["rustkube.io/checkpoint-ref"].as_str();
+        let migration_endpoint =
+            pod["metadata"]["annotations"]["rustkube.io/migration-endpoint"].as_str();
 
         if checkpoint_ref.is_some() || migration_endpoint.is_some() {
             // Checkpoint or migration endpoint is ready — advance to Transferring
@@ -346,9 +330,7 @@ impl MigrationController {
     ) -> anyhow::Result<()> {
         let pod_resp = self
             .api
-            .get(&format!(
-                "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-            ))
+            .get(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
             .await?;
 
         if !pod_resp.status().is_success() {
@@ -450,18 +432,14 @@ impl MigrationController {
         target_node: &str,
         migration: &Value,
     ) -> anyhow::Result<()> {
-        let strategy = migration["status"]["message"]
-            .as_str()
-            .unwrap_or("");
+        let strategy = migration["status"]["message"].as_str().unwrap_or("");
 
         // For evacuate, create a new pod on the target node
         if strategy.contains("evacuate") || strategy.contains("strategy=evacuate") {
             // Get the source pod spec
             let pod_resp = self
                 .api
-                .get(&format!(
-                    "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-                ))
+                .get(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
                 .await?;
 
             if pod_resp.status().is_success() {
@@ -470,9 +448,7 @@ impl MigrationController {
                 // Delete source pod first
                 let _ = self
                     .api
-                    .delete(&format!(
-                        "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-                    ))
+                    .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
                     .await;
 
                 // Create new pod on target node
@@ -492,10 +468,7 @@ impl MigrationController {
 
                 let _ = self
                     .api
-                    .create(
-                        &format!("/api/v1/namespaces/{namespace}/pods"),
-                        &pod,
-                    )
+                    .create(&format!("/api/v1/namespaces/{namespace}/pods"), &pod)
                     .await;
             }
         }
@@ -526,9 +499,7 @@ impl MigrationController {
         // Check if new pod is running on target node
         let pod_resp = self
             .api
-            .get(&format!(
-                "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-            ))
+            .get(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
             .await?;
 
         if !pod_resp.status().is_success() {
@@ -546,8 +517,7 @@ impl MigrationController {
                 .as_array()
                 .map(|conds| {
                     conds.iter().any(|c| {
-                        c["type"].as_str() == Some("Ready")
-                            && c["status"].as_str() == Some("True")
+                        c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True")
                     })
                 })
                 .unwrap_or(false);
@@ -649,9 +619,7 @@ impl MigrationController {
             match self
                 .api
                 .create(
-                    &format!(
-                        "/apis/rustkube.io/v1alpha1/namespaces/{namespace}/podmigrations"
-                    ),
+                    &format!("/apis/rustkube.io/v1alpha1/namespaces/{namespace}/podmigrations"),
                     &migration,
                 )
                 .await
@@ -695,9 +663,8 @@ impl MigrationController {
         start_time: Option<&str>,
         completion_time: Option<&str>,
     ) -> anyhow::Result<()> {
-        let path = format!(
-            "/apis/rustkube.io/v1alpha1/namespaces/{namespace}/podmigrations/{name}"
-        );
+        let path =
+            format!("/apis/rustkube.io/v1alpha1/namespaces/{namespace}/podmigrations/{name}");
 
         // Get current resource
         let resp = self.api.get(&path).await?;

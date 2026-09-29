@@ -10,8 +10,8 @@ use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 pub struct DaemonSetController {
@@ -44,13 +44,15 @@ impl DaemonSetController {
 
     pub async fn run(&self) {
         info!("DaemonSet controller started");
-        let mut interval = time::interval(Duration::from_secs(3));
-
+        let worker = self.api.watches.worker("daemonset");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("DaemonSet reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("DaemonSet reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

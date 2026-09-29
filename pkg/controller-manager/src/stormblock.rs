@@ -30,7 +30,6 @@ use crate::events::EventRecorder;
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
 /// The class this provisions for. A claim of any other class belongs to
@@ -64,12 +63,15 @@ impl StormblockProvisioner {
 
     pub async fn run(&self) {
         info!("stormblock provisioner started");
-        let mut interval = time::interval(Duration::from_secs(2));
+        let worker = self.api.watches.worker("stormblock");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile().await {
-                error!("stormblock provisioner: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile().await {
+                    apimachinery::reactor::failed();
+                    error!("stormblock provisioner: {e}");
+                }
+            }).await;
         }
     }
 

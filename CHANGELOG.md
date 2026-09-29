@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — turbomode (not yet built or measured)
+
+- Shared revisioned watches, coalescing async work queues, complete paginated
+  reads and failure retry; controller/scheduler work wakes on dependency changes.
+- Semantic deadline requeues replace controller poll clocks; scheduling no
+  longer gates lease renewal. Incomplete GC/namespace observations fail closed.
+- Multi-master correctness: datastore snapshot pagination, explicit watch
+  expiration/lag errors, unique election identities and conditional placement
+  updates. Three-master failure validation remains pending (#149).
+- Event-driven architecture and C2NR0Q2 release baseline in
+  `docs/event-driven-design.md`; #143–#147 track implementation and validation.
+  Indexed object workers remain pending; no subsecond performance claim yet.
+
+
 ## [Unreleased]
 
 <!-- New unreleased changes go here -->

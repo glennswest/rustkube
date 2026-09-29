@@ -9,7 +9,6 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
 pub struct PdbController {
@@ -23,12 +22,15 @@ impl PdbController {
 
     pub async fn run(&self) {
         info!("PodDisruptionBudget controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
+        let worker = self.api.watches.worker("pdb");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("PDB reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("PDB reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

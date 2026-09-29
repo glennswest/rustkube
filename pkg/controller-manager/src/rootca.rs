@@ -17,7 +17,6 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
 pub const NAME: &str = "kube-root-ca.crt";
@@ -54,12 +53,15 @@ impl RootCaPublisher {
 
     pub async fn run(&self) {
         info!("Root CA publisher started ({NAME} in every namespace)");
-        let mut interval = time::interval(Duration::from_secs(5));
+        let worker = self.api.watches.worker("rootca");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Root CA publisher: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("Root CA publisher: {e}");
+                }
+            }).await;
         }
     }
 

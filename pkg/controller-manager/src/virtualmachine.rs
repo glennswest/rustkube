@@ -40,7 +40,7 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 pub struct VirtualMachineController {
@@ -58,12 +58,15 @@ impl VirtualMachineController {
 
     pub async fn run(&self) {
         info!("VirtualMachine controller started");
-        let mut interval = time::interval(Duration::from_secs(2));
+        let worker = self.api.watches.worker("virtualmachine");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("VirtualMachine reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("VirtualMachine reconcile error: {e}");
+                }
+            }).await;
         }
     }
 
@@ -134,6 +137,12 @@ impl VirtualMachineController {
                         // Delete now, create on the next tick once it is gone:
                         // the replacement has the same name, so it cannot be
                         // created while the finished one is still there.
+                        if !due {
+                            if let Some(at) = start_failure["retryAfterTimestamp"].as_str()
+                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
+                                apimachinery::reactor::requeue_at_time(at.with_timezone(&chrono::Utc));
+                            }
+                        }
                         if due {
                             self.delete_vmi(namespace, name, vm, vmi).await;
                         }

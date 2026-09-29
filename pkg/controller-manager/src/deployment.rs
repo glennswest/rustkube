@@ -27,7 +27,6 @@ use crate::rollout::{self, RsView};
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 /// The annotation `kubectl rollout history` reads.
@@ -48,13 +47,15 @@ impl DeploymentController {
 
     pub async fn run(&self) {
         info!("Deployment controller started");
-        let mut interval = time::interval(Duration::from_secs(2));
-
+        let worker = self.api.watches.worker("deployment");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Deployment reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("Deployment reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

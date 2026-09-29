@@ -87,7 +87,10 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
     // Under `as=PartialObjectMetadata`, every event object (and the type on
     // bookmarks/tombstones) is a meta.k8s.io/v1 PartialObjectMetadata.
     let (api_version, kind) = if metadata_only {
-        ("meta.k8s.io/v1".to_string(), "PartialObjectMetadata".to_string())
+        (
+            "meta.k8s.io/v1".to_string(),
+            "PartialObjectMetadata".to_string(),
+        )
     } else {
         (api_version, kind)
     };
@@ -100,7 +103,14 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         if let Some((items, list_rev)) = initial {
             for obj in &items {
                 if let Some(line) = render_initial_added(
-                    obj, &label_selector, &field_selector, &api_version, &kind, list_rev, metadata_only, transform,
+                    obj,
+                    &label_selector,
+                    &field_selector,
+                    &api_version,
+                    &kind,
+                    list_rev,
+                    metadata_only,
+                    transform,
                 ) {
                     if tx.send(Ok(line)).await.is_err() {
                         return;
@@ -126,6 +136,7 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         idle.tick().await; // consume the immediate first tick
         loop {
             tokio::select! {
+                _ = tx.closed() => return,
                 maybe = rx.recv() => match maybe {
                     Some(event) => {
                         last_rev = event.revision();
@@ -136,6 +147,7 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
                                 return;
                             }
                         }
+                        if matches!(event, WatchEvent::Error { .. }) { return; }
                         // Real activity resets the heartbeat so bookmarks only
                         // fill quiet gaps (matching upstream behavior).
                         idle.reset();
@@ -165,8 +177,8 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
 
 /// Serialize a `{type, object}` watch event to a newline-terminated line.
 fn render_line(event_type: &str, object: Value) -> String {
-    let mut line = serde_json::to_string(&json!({"type": event_type, "object": object}))
-        .unwrap_or_default();
+    let mut line =
+        serde_json::to_string(&json!({"type": event_type, "object": object})).unwrap_or_default();
     line.push('\n');
     line
 }
@@ -182,7 +194,9 @@ fn render_event(
     transform: Option<fn(Value) -> Value>,
 ) -> Option<String> {
     let (event_type, mut object) = match event {
-        WatchEvent::Added { value, revision, .. } => {
+        WatchEvent::Added {
+            value, revision, ..
+        } => {
             let mut obj: Value = serde_json::from_slice(value).unwrap_or(json!({}));
             inject_resource_version(&mut obj, *revision);
             if !selector::matches_selectors(&obj, label_sel, field_sel) {
@@ -197,7 +211,12 @@ fn render_event(
             }
             ("ADDED", obj)
         }
-        WatchEvent::Modified { value, revision, prev_value, .. } => {
+        WatchEvent::Modified {
+            value,
+            revision,
+            prev_value,
+            ..
+        } => {
             let mut obj: Value = serde_json::from_slice(value).unwrap_or(json!({}));
             inject_resource_version(&mut obj, *revision);
             // Upstream's selector semantics: to a watcher of `app=web`, a
@@ -225,7 +244,11 @@ fn render_event(
             }
             (event_type, obj)
         }
-        WatchEvent::Deleted { revision, key, prev_value } => {
+        WatchEvent::Deleted {
+            revision,
+            key,
+            prev_value,
+        } => {
             // The object's last state, when the watch cache held it (#100):
             // what upstream sends, and what selectors are applied to — a
             // watcher of `app=web` hears about the deletion of a web pod and
@@ -264,6 +287,16 @@ fn render_event(
                     json!({"apiVersion": api_version, "kind": kind, "metadata": meta}),
                 ));
             }
+        }
+        WatchEvent::Error { code, message, .. } => {
+            return Some(render_line(
+                "ERROR",
+                json!({
+                    "apiVersion": "v1", "kind": "Status", "status": "Failure",
+                    "reason": if *code == 410 { "Expired" } else { "ServiceUnavailable" },
+                    "code": code, "message": message,
+                }),
+            ));
         }
         WatchEvent::Bookmark { revision } => {
             return Some(render_bookmark(*revision, false, api_version, kind));
@@ -346,7 +379,11 @@ fn render_bookmark(revision: u64, initial_end: bool, api_version: &str, kind: &s
 /// informer keyed on namespace/name never dropped the object (#100).
 fn split_key(key: &str) -> (Option<String>, String) {
     let parts: Vec<&str> = key.trim_start_matches('/').split('/').collect();
-    let resource_len = if parts.get(1).is_some_and(|seg| seg.contains('.')) { 2 } else { 1 };
+    let resource_len = if parts.get(1).is_some_and(|seg| seg.contains('.')) {
+        2
+    } else {
+        1
+    };
     match parts.get(1 + resource_len..).unwrap_or(&[]) {
         [namespace, name] => (Some(namespace.to_string()), name.to_string()),
         [name] => (None, name.to_string()),
@@ -412,12 +449,8 @@ impl WatchParams {
         for (key, val) in form_urlencoded::parse(query.as_bytes()) {
             match key.as_ref() {
                 "watch" => params.watch = val == "true" || val == "1",
-                "allowWatchBookmarks" => {
-                    params.allow_watch_bookmarks = val == "true" || val == "1"
-                }
-                "sendInitialEvents" => {
-                    params.send_initial_events = val == "true" || val == "1"
-                }
+                "allowWatchBookmarks" => params.allow_watch_bookmarks = val == "true" || val == "1",
+                "sendInitialEvents" => params.send_initial_events = val == "true" || val == "1",
                 "resourceVersion" => params.resource_version = val.parse().ok(),
                 "limit" => params.limit = val.parse().ok(),
                 "continue" => {
@@ -452,7 +485,10 @@ mod tests {
         assert!(WatchParams::from_query("watch=true").wants_initial_state());
         assert!(WatchParams::from_query("watch=true&resourceVersion=0").wants_initial_state());
         assert!(!WatchParams::from_query("watch=true&resourceVersion=42").wants_initial_state());
-        assert!(WatchParams::from_query("watch=true&resourceVersion=42&sendInitialEvents=true").wants_initial_state());
+        assert!(
+            WatchParams::from_query("watch=true&resourceVersion=42&sendInitialEvents=true")
+                .wants_initial_state()
+        );
     }
 
     #[test]
@@ -470,7 +506,8 @@ mod tests {
 
     #[test]
     fn selectors_and_watch_flags_decode() {
-        let q = "watch=true&labelSelector=app%3Dnginx%2Ctier%3Dweb&fieldSelector=metadata.name%3Dfoo";
+        let q =
+            "watch=true&labelSelector=app%3Dnginx%2Ctier%3Dweb&fieldSelector=metadata.name%3Dfoo";
         let p = WatchParams::from_query(q);
         assert!(p.watch);
         assert_eq!(p.label_selector.as_deref(), Some("app=nginx,tier=web"));
@@ -516,7 +553,10 @@ mod tests {
         assert_eq!(p["kind"], "PartialObjectMetadata");
         assert_eq!(p["metadata"]["name"], "ciliumidentities.cilium.io");
         assert_eq!(p["metadata"]["resourceVersion"], "42");
-        assert!(p.get("spec").is_none() && p.get("status").is_none(), "spec/status dropped");
+        assert!(
+            p.get("spec").is_none() && p.get("status").is_none(),
+            "spec/status dropped"
+        );
     }
 
     #[test]
@@ -544,10 +584,18 @@ mod tests {
         let cases = [
             ("/registry/pods/default/web-1", Some("default"), "web-1"),
             ("/registry/nodes/n1", None, "n1"),
-            ("/registry/kubevirt.io/virtualmachineinstances/default/web-1", Some("default"), "web-1"),
+            (
+                "/registry/kubevirt.io/virtualmachineinstances/default/web-1",
+                Some("default"),
+                "web-1",
+            ),
             ("/registry/demo.io/gadgets/g1", None, "g1"),
             // The CRD object itself: a built-in, whose *name* has dots.
-            ("/registry/customresourcedefinitions/widgets.demo.io", None, "widgets.demo.io"),
+            (
+                "/registry/customresourcedefinitions/widgets.demo.io",
+                None,
+                "widgets.demo.io",
+            ),
         ];
         for (key, ns, name) in cases {
             let (got_ns, got_name) = split_key(key);
@@ -564,7 +612,10 @@ mod tests {
         }
     }
 
-    fn render(ev: &apimachinery::watch::WatchEvent, label: Option<&str>) -> Option<serde_json::Value> {
+    fn render(
+        ev: &apimachinery::watch::WatchEvent,
+        label: Option<&str>,
+    ) -> Option<serde_json::Value> {
         super::render_event(
             ev,
             &label.map(str::to_string),
@@ -577,10 +628,37 @@ mod tests {
         .map(|line| serde_json::from_str(line.trim()).unwrap())
     }
 
+    #[test]
+    fn expired_watch_is_status_even_with_selectors_and_metadata_projection() {
+        let event = apimachinery::watch::WatchEvent::Error {
+            code: 410,
+            message: "watch history expired".into(),
+            revision: 35,
+        };
+        let line = super::render_event(
+            &event,
+            &Some("app=absent".into()),
+            &Some("metadata.name=absent".into()),
+            "v1",
+            "Pod",
+            true,
+            Some(|_| panic!("Status must bypass object transforms")),
+        )
+        .unwrap();
+        let rendered: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(rendered["type"], "ERROR");
+        assert_eq!(rendered["object"]["kind"], "Status");
+        assert_eq!(rendered["object"]["code"], 410);
+        assert_eq!(rendered["object"]["reason"], "Expired");
+    }
+
     /// The case stormconsole found: a VMI deleted in `default`.
     #[test]
     fn a_custom_resource_tombstone_is_droppable() {
-        let ev = deleted("/registry/kubevirt.io/virtualmachineinstances/default/web-1", None);
+        let ev = deleted(
+            "/registry/kubevirt.io/virtualmachineinstances/default/web-1",
+            None,
+        );
         let e = render(&ev, None).unwrap();
         assert_eq!(e["type"], "DELETED");
         assert_eq!(e["object"]["kind"], "VirtualMachineInstance");
@@ -599,7 +677,10 @@ mod tests {
                           "labels": { "app": "web" }, "finalizers": ["f"] },
             "status": { "phase": "Running" },
         });
-        let ev = deleted("/registry/kubevirt.io/virtualmachineinstances/default/web-1", Some(last));
+        let ev = deleted(
+            "/registry/kubevirt.io/virtualmachineinstances/default/web-1",
+            Some(last),
+        );
         let e = render(&ev, None).unwrap();
         assert_eq!(e["type"], "DELETED");
         assert_eq!(e["object"]["metadata"]["namespace"], "default");
@@ -608,14 +689,20 @@ mod tests {
         assert_eq!(e["object"]["status"]["phase"], "Running");
 
         assert!(render(&ev, Some("app=web")).is_some());
-        assert!(render(&ev, Some("app=db")).is_none(), "a watcher of app=db heard about a web VMI");
+        assert!(
+            render(&ev, Some("app=db")).is_none(),
+            "a watcher of app=db heard about a web VMI"
+        );
     }
 
     fn modified(prev: Option<&str>, now: &str) -> apimachinery::watch::WatchEvent {
-        let obj = |app: &str| serde_json::to_vec(&serde_json::json!({
-            "apiVersion": "kubevirt.io/v1", "kind": "VirtualMachineInstance",
-            "metadata": { "name": "web-1", "namespace": "default", "labels": { "app": app } },
-        })).unwrap();
+        let obj = |app: &str| {
+            serde_json::to_vec(&serde_json::json!({
+                "apiVersion": "kubevirt.io/v1", "kind": "VirtualMachineInstance",
+                "metadata": { "name": "web-1", "namespace": "default", "labels": { "app": app } },
+            }))
+            .unwrap()
+        };
         apimachinery::watch::WatchEvent::Modified {
             key: "/registry/kubevirt.io/virtualmachineinstances/default/web-1".into(),
             value: obj(now),
@@ -629,15 +716,33 @@ mod tests {
     #[test]
     fn a_selector_watch_sees_objects_leave_and_enter() {
         let ty = |ev, sel| render(&ev, sel).map(|e| e["type"].as_str().unwrap().to_string());
-        assert_eq!(ty(modified(Some("web"), "db"), Some("app=web")).as_deref(), Some("DELETED"));
+        assert_eq!(
+            ty(modified(Some("web"), "db"), Some("app=web")).as_deref(),
+            Some("DELETED")
+        );
         let e = render(&modified(Some("web"), "db"), Some("app=web")).unwrap();
-        assert_eq!(e["object"]["metadata"]["labels"]["app"], "db", "DELETED carries the new state");
-        assert_eq!(ty(modified(Some("db"), "web"), Some("app=web")).as_deref(), Some("ADDED"));
-        assert_eq!(ty(modified(Some("web"), "web"), Some("app=web")).as_deref(), Some("MODIFIED"));
+        assert_eq!(
+            e["object"]["metadata"]["labels"]["app"], "db",
+            "DELETED carries the new state"
+        );
+        assert_eq!(
+            ty(modified(Some("db"), "web"), Some("app=web")).as_deref(),
+            Some("ADDED")
+        );
+        assert_eq!(
+            ty(modified(Some("web"), "web"), Some("app=web")).as_deref(),
+            Some("MODIFIED")
+        );
         assert_eq!(ty(modified(Some("db"), "db"), Some("app=web")), None);
         // No previous state: matching is MODIFIED, not matching is dropped.
-        assert_eq!(ty(modified(None, "web"), Some("app=web")).as_deref(), Some("MODIFIED"));
+        assert_eq!(
+            ty(modified(None, "web"), Some("app=web")).as_deref(),
+            Some("MODIFIED")
+        );
         assert_eq!(ty(modified(None, "db"), Some("app=web")), None);
-        assert_eq!(ty(modified(Some("db"), "web"), None).as_deref(), Some("MODIFIED"));
+        assert_eq!(
+            ty(modified(Some("db"), "web"), None).as_deref(),
+            Some("MODIFIED")
+        );
     }
 }

@@ -20,7 +20,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
 pub struct AttachDetachController {
@@ -34,12 +33,15 @@ impl AttachDetachController {
 
     pub async fn run(&self) {
         info!("AttachDetach controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
+        let worker = self.api.watches.worker("attachdetach");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile().await {
-                error!("AttachDetach reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile().await {
+                    apimachinery::reactor::failed();
+                    error!("AttachDetach reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

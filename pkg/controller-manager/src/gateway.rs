@@ -16,7 +16,6 @@ use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 pub struct GatewayController {
@@ -30,13 +29,15 @@ impl GatewayController {
 
     pub async fn run(&self) {
         info!("Gateway API controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
-
+        let worker = self.api.watches.worker("gateway");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Gateway API reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("Gateway API reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

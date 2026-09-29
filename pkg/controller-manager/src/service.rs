@@ -8,7 +8,6 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
 pub struct ServiceController {
@@ -22,13 +21,15 @@ impl ServiceController {
 
     pub async fn run(&self) {
         info!("Service controller started");
-        let mut interval = time::interval(Duration::from_secs(3));
-
+        let worker = self.api.watches.worker("service");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Service reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("Service reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

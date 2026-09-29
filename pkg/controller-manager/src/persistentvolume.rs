@@ -32,7 +32,6 @@ use apimachinery::quantity::parse_bytes;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info};
 
 /// Set on a PVC to name the provisioner that must act on it. The current
@@ -76,12 +75,15 @@ impl PersistentVolumeController {
 
     pub async fn run(&self) {
         info!("PersistentVolume controller started");
-        let mut interval = time::interval(Duration::from_secs(3));
+        let worker = self.api.watches.worker("persistentvolume");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile().await {
-                error!("PersistentVolume reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile().await {
+                    apimachinery::reactor::failed();
+                    error!("PersistentVolume reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

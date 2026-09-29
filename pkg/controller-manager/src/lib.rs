@@ -1,10 +1,9 @@
 //! controller-manager: the built-in Kubernetes controllers.
 //!
-//! Reconciliation loops that drive cluster state toward desired state. Each
-//! controller **polls**: on a fixed interval it lists the resources it owns
-//! through the API server (following `continue` tokens to the end) and
-//! creates, updates or deletes dependents to match. Nothing uses a watch, an
-//! informer cache or a work queue (#66).
+//! Shared revisioned watches enqueue deduplicated reconciliation passes.
+//! The compatibility adapter retains authoritative paginated API reads;
+//! indexed per-object workers and cache reads are tracked in #146. Timers
+//! represent semantic deadlines or failure recovery, not successful idle work.
 
 pub mod attachdetach;
 pub mod backoff;

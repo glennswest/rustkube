@@ -1,6 +1,6 @@
 //! scheduler: pod and VirtualMachineInstance placement.
 //!
-//! Once a second, lists pods with an empty `spec.nodeName` (and unplaced
+//! Watch events enqueue placement of pods with an empty `spec.nodeName` (and unplaced
 //! VirtualMachineInstances), runs the fixed filter and score functions in
 //! [`filter`] and [`score`], and binds each to the best node. It does not
 //! preempt ([`preemption`] is not called, #84) and ignores `schedulingGates`

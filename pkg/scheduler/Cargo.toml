@@ -18,3 +18,5 @@ reqwest = { workspace = true }
 axum = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
+
+uuid = { workspace = true }

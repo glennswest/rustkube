@@ -30,26 +30,7 @@ use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{debug, info, warn};
-
-/// How often a full sweep starts.
-const GC_INTERVAL: Duration = Duration::from_secs(30);
-
-/// How long to wait before sweeping again when the last sweep changed
-/// something.
-///
-/// A cascade is a chain — a Deployment holds a ReplicaSet holds Pods — and one
-/// sweep can only advance it by a level, because the next level's state is
-/// whatever the apiserver had when the sweep started. At one level per 30s a
-/// two-deep foreground delete takes a minute and a half to disappear, which
-/// reads as a stuck object. Upstream converges in milliseconds because it
-/// watches; sweeping again straight away is the polling equivalent.
-const GC_SETTLE: Duration = Duration::from_secs(2);
-
-/// Cap on consecutive follow-up sweeps, so a delete that cannot make progress
-/// (a finalizer nobody will ever clear) does not become a busy loop.
-const GC_MAX_FOLLOW_UPS: usize = 6;
 
 /// Events older than this are reaped (upstream default ~1h).
 const EVENT_TTL: chrono::Duration = chrono::Duration::hours(1);
@@ -144,16 +125,10 @@ impl GarbageCollector {
 
     pub async fn run(&self) {
         info!("Starting garbage collector");
+        let worker = self.api.watches.worker("garbage-collector");
         loop {
-            // Sweep until a sweep changes nothing: each pass can only advance
-            // a cascade one level, and a level per interval is how an object
-            // sits in Terminating for minutes.
-            let mut follow_ups = 0;
-            while self.collect().await && follow_ups < GC_MAX_FOLLOW_UPS {
-                follow_ups += 1;
-                tokio::time::sleep(GC_SETTLE).await;
-            }
-            tokio::time::sleep(GC_INTERVAL).await;
+            let _work = worker.next().await;
+            worker.run(self.collect()).await;
         }
     }
 
@@ -173,7 +148,8 @@ impl GarbageCollector {
                 Ok(l) => l,
                 Err(e) => {
                     debug!("gc: cannot list {}: {e}", resource.list_path());
-                    continue;
+                    apimachinery::reactor::failed();
+                    return false;
                 }
             };
             let Some(items) = list["items"].as_array() else {
@@ -220,12 +196,13 @@ impl GarbageCollector {
     /// custom resources alike.
     async fn discover(&self) -> Vec<Resource> {
         let mut out = Vec::new();
-        if let Ok(core) = self.api.list("/api/v1").await {
-            out.extend(parse_resource_list("v1", &core));
+        match self.api.list("/api/v1").await {
+            Ok(core) => out.extend(parse_resource_list("v1", &core)),
+            Err(_) => return Vec::new(),
         }
         let groups = match self.api.list("/apis").await {
             Ok(g) => g,
-            Err(_) => return out,
+            Err(_) => return Vec::new(),
         };
         let mut versions: Vec<String> = Vec::new();
         for group in groups["groups"].as_array().cloned().unwrap_or_default() {
@@ -238,8 +215,9 @@ impl GarbageCollector {
             }
         }
         for gv in versions {
-            if let Ok(list) = self.api.list(&format!("/apis/{gv}")).await {
-                out.extend(parse_resource_list(&gv, &list));
+            match self.api.list(&format!("/apis/{gv}")).await {
+                Ok(list) => out.extend(parse_resource_list(&gv, &list)),
+                Err(_) => return Vec::new(),
             }
         }
         out
@@ -463,7 +441,11 @@ impl GarbageCollector {
                 .or_else(|| ev["metadata"]["creationTimestamp"].as_str());
             let stale = ts
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|t| now.signed_duration_since(t.with_timezone(&chrono::Utc)) > EVENT_TTL)
+                .map(|t| {
+                    let expiry = t.with_timezone(&chrono::Utc) + EVENT_TTL;
+                    apimachinery::reactor::requeue_at_time(expiry);
+                    now >= expiry
+                })
                 .unwrap_or(false);
             if !stale {
                 continue;
@@ -532,7 +514,10 @@ mod tests {
     fn paths_are_built_for_core_and_grouped_resources() {
         let pods = resource("v1", "pods", "Pod", true);
         assert_eq!(pods.list_path(), "/api/v1/pods");
-        assert_eq!(pods.object_path("kube-system", "p1"), "/api/v1/namespaces/kube-system/pods/p1");
+        assert_eq!(
+            pods.object_path("kube-system", "p1"),
+            "/api/v1/namespaces/kube-system/pods/p1"
+        );
 
         let rs = resource("apps/v1", "replicasets", "ReplicaSet", true);
         assert_eq!(rs.list_path(), "/apis/apps/v1/replicasets");
@@ -573,6 +558,9 @@ mod tests {
         let got = parse_resource_list("cilium.io/v2", &list);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].kind, "CiliumNetworkPolicy");
-        assert_eq!(got[0].list_path(), "/apis/cilium.io/v2/ciliumnetworkpolicies");
+        assert_eq!(
+            got[0].list_path(),
+            "/apis/cilium.io/v2/ciliumnetworkpolicies"
+        );
     }
 }

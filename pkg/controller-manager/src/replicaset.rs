@@ -9,7 +9,6 @@ use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 pub struct ReplicaSetController {
@@ -30,13 +29,15 @@ impl ReplicaSetController {
 
     pub async fn run(&self) {
         info!("ReplicaSet controller started");
-        let mut interval = time::interval(Duration::from_secs(2));
-
+        let worker = self.api.watches.worker("replicaset");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("ReplicaSet reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("ReplicaSet reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

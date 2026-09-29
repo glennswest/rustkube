@@ -48,6 +48,11 @@ custom resources under `/registry/{group}/{plural}/…` (#76). `resourceVersion`
 is the store's `mod_revision`. Every write is a compare-and-swap; a PATCH
 without a `resourceVersion` retries the CAS the way upstream's
 `GuaranteedUpdate` does (#77). A watch cache sits in front of watches.
+LIST reads use the shared datastore's consistent snapshot; continuation pages
+pin that snapshot even when a load balancer sends them to another API server.
+Expired history returns 410 so clients relist. Controller and scheduler
+leadership uses Kubernetes Leases; watch queues are local, reconstructible
+state. Three-master failure testing remains required before rollout (#149).
 
 **API groups served** (and advertised in `/api`, `/apis`):
 `v1`, `apps/v1`, `batch/v1`, `autoscaling/v2`, `policy/v1`,
@@ -192,9 +197,17 @@ created once. With `--dev-anonymous-admin` it also binds `system:anonymous` to
 ## What the controller manager runs
 
 One process, leader-elected on the Lease `kube-system/kube-controller-manager`.
-Every controller reconciles by **listing its objects on a fixed interval**
-(2–30 s) and following `continue` tokens to the end; none uses a watch or an
-informer cache (#66).
+On `turbomode`, collection LIST/WATCH streams enqueue deduplicated work as
+state changes. Controllers run concurrently on Tokio; a change during a
+reconcile queues another pass. Successful idle passes have no poll interval.
+Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
+and migration deadlines, Event TTL), API recovery and leader Leases.
+
+This is the first migration step: reconcilers still make authoritative,
+fully paginated LISTs per pass. Indexed per-object workers and safe cached
+reads are tracked in #146. See [the event-driven design](docs/event-driven-design.md)
+for the subsecond target, failure rules and release baseline. The branch has
+not yet been built or performance-validated.
 
 Deployment (rolling updates), ReplicaSet, StatefulSet, DaemonSet (every
 eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices), Namespace (default
@@ -221,8 +234,10 @@ node-IPAM controller.
 
 ## What the scheduler does
 
-Leader-elected on `kube-system/kube-scheduler`. It polls for pods with no
-`spec.nodeName` every second and binds each to the best feasible node.
+Leader-elected on `kube-system/kube-scheduler`. Dependency watch events wake
+placement of Pods with no `spec.nodeName` and unplaced VMIs. Placement remains
+serialized to preserve resource accounting; lease renewal runs independently
+and losing leadership cancels the scheduling worker.
 
 - **Filters:** node Ready, not unschedulable, taints/tolerations,
   `nodeSelector`, required node affinity (which is how `kubernetes.io/arch`
@@ -236,7 +251,8 @@ Leader-elected on `kube-system/kube-scheduler`. It polls for pods with no
 
 It **does not preempt**: `preemption.rs` computes victims but nothing calls it
 (#84). It **ignores `schedulingGates`** and binds gated pods (#87). There is
-no scheduling queue with backoff and no `nominatedNodeName`. `plugins.rs`
+no per-Pod priority/backoff queue or `nominatedNodeName`; the current work
+queue coalesces scheduling passes. `plugins.rs`
 defines plugin traits the loop does not use.
 
 ## Configuration

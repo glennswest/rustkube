@@ -36,6 +36,13 @@ pub enum WatchEvent {
     Bookmark {
         revision: u64,
     },
+    /// Terminal stream status. Consumers must reconnect/relist rather than
+    /// silently continue after a gap, cancellation or lost store connection.
+    Error {
+        code: u16,
+        message: String,
+        revision: u64,
+    },
 }
 
 impl WatchEvent {
@@ -45,7 +52,7 @@ impl WatchEvent {
             Self::Added { revision, .. } => *revision,
             Self::Modified { revision, .. } => *revision,
             Self::Deleted { revision, .. } => *revision,
-            Self::Bookmark { revision } => *revision,
+            Self::Bookmark { revision } | Self::Error { revision, .. } => *revision,
         }
     }
 }

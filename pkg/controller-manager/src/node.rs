@@ -6,7 +6,7 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
+use std::time::Duration;
 use tracing::{debug, error, info};
 
 const NODE_MONITOR_GRACE_PERIOD: Duration = Duration::from_secs(40);
@@ -22,13 +22,15 @@ impl NodeLifecycleController {
 
     pub async fn run(&self) {
         info!("Node lifecycle controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
-
+        let worker = self.api.watches.worker("node");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Node lifecycle reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("Node lifecycle reconcile error: {e}");
+                }
+            }).await;
         }
     }
 
@@ -60,6 +62,8 @@ impl NodeLifecycleController {
                     // Check renewTime
                     if let Some(renew_time) = l["spec"]["renewTime"].as_str() {
                         if let Ok(t) = chrono::DateTime::parse_from_rfc3339(renew_time) {
+                            apimachinery::reactor::requeue_at_time(t.with_timezone(&chrono::Utc)
+                                + chrono::Duration::seconds(NODE_MONITOR_GRACE_PERIOD.as_secs() as i64));
                             let elapsed = now.signed_duration_since(t);
                             elapsed.num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
                         } else {
@@ -74,6 +78,8 @@ impl NodeLifecycleController {
                     // Give new nodes time to register their first lease
                     if let Some(created) = node["metadata"]["creationTimestamp"].as_str() {
                         if let Ok(t) = chrono::DateTime::parse_from_rfc3339(created) {
+                            apimachinery::reactor::requeue_at_time(t.with_timezone(&chrono::Utc)
+                                + chrono::Duration::seconds(NODE_MONITOR_GRACE_PERIOD.as_secs() as i64));
                             let elapsed = now.signed_duration_since(t);
                             elapsed.num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
                         } else {
@@ -241,6 +247,10 @@ impl NodeLifecycleController {
             let phase = pod["status"]["phase"].as_str().unwrap_or("Pending");
             if phase == "Succeeded" || phase == "Failed" {
                 continue;
+            }
+            if let apimachinery::taint::Verdict::EvictIn(seconds, _) =
+                apimachinery::taint::verdict_for(&pod, &taints, age) {
+                apimachinery::reactor::requeue_after(Duration::from_secs(seconds.max(1) as u64));
             }
             if let apimachinery::taint::Verdict::Evict(key) =
                 apimachinery::taint::verdict_for(&pod, &taints, age)

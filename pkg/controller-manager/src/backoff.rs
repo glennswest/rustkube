@@ -72,12 +72,14 @@ impl CreateBackoff {
 
     /// Whether a create is allowed for `key` at `now` (no active backoff window).
     pub fn allowed(&self, key: &str, now: Instant) -> bool {
-        self.inner
-            .lock()
-            .unwrap()
-            .get(key)
-            .map(|e| now >= e.next)
-            .unwrap_or(true)
+        let entries = self.inner.lock().unwrap();
+        if let Some(entry) = entries.get(key) {
+            if entry.next > now {
+                apimachinery::reactor::requeue_after(entry.next.duration_since(now));
+                return false;
+            }
+        }
+        true
     }
 
     /// Exponential delay: `base * 2^(failures-1)`, capped at `max`. `failures` is

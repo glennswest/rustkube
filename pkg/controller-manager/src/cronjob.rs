@@ -7,7 +7,6 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 pub struct CronJobController {
@@ -32,13 +31,15 @@ impl CronJobController {
 
     pub async fn run(&self) {
         info!("CronJob controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
-
+        let worker = self.api.watches.worker("cronjob");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("CronJob reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("CronJob reconcile error: {e}");
+                }
+            }).await;
         }
     }
 
@@ -168,6 +169,9 @@ impl CronJobController {
         // the last run is what gets evaluated, and only the most recent missed
         // start is acted on.
         let now = chrono::Utc::now();
+        if let Ok(next) = apimachinery::cron::next_start(schedule, now) {
+            apimachinery::reactor::requeue_at_time(next);
+        }
         let created = cj["metadata"]["creationTimestamp"]
             .as_str()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())

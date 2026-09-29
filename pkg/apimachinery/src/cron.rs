@@ -67,6 +67,48 @@ pub fn matches(schedule: &str, at: &DateTime<Utc>) -> bool {
     }
 }
 
+/// Next calendar occurrence strictly after `after`. Search calendar days
+/// before hours/minutes, so an annual schedule does not scan every minute.
+/// Eight years covers leap-day schedules across a non-leap century.
+pub fn next_start(schedule: &str, after: DateTime<Utc>) -> Result<DateTime<Utc>, Invalid> {
+    validate(schedule)?;
+    let fields: Vec<_> = schedule.split_whitespace().collect();
+    let mut minutes: Vec<_> = parse_field(fields[0], 0, 59).into_iter().collect();
+    let mut hours: Vec<_> = parse_field(fields[1], 0, 23).into_iter().collect();
+    minutes.sort_unstable();
+    hours.sort_unstable();
+    let dom = parse_field(fields[2], 1, 31);
+    let months = parse_field(fields[3], 1, 12);
+    let dow = parse_field(fields[4], 0, 7);
+    for offset in 0..=366 * 8 {
+        let Some(day) = after
+            .date_naive()
+            .checked_add_signed(Duration::days(offset))
+        else {
+            break;
+        };
+        let weekday = day.weekday().num_days_from_sunday();
+        let weekday_matches = dow.contains(&weekday) || (weekday == 0 && dow.contains(&7));
+        let day_matches = if !is_any(fields[2]) && !is_any(fields[4]) {
+            dom.contains(&day.day()) || weekday_matches
+        } else {
+            dom.contains(&day.day()) && weekday_matches
+        };
+        if !months.contains(&day.month()) || !day_matches {
+            continue;
+        }
+        for hour in &hours {
+            for minute in &minutes {
+                let at = day.and_hms_opt(*hour, *minute, 0).unwrap().and_utc();
+                if at > after {
+                    return Ok(at);
+                }
+            }
+        }
+    }
+    Err(Invalid::ImpossibleDate)
+}
+
 /// Why a schedule can never fire.
 #[derive(Debug, PartialEq)]
 pub enum Invalid {
@@ -92,7 +134,10 @@ impl std::fmt::Display for Invalid {
                 write!(f, "the {field} field {value:?} matches nothing")
             }
             Invalid::ImpossibleDate => {
-                write!(f, "no date satisfies the day-of-month and month fields together")
+                write!(
+                    f,
+                    "no date satisfies the day-of-month and month fields together"
+                )
             }
         }
     }
@@ -142,9 +187,7 @@ pub fn validate(schedule: &str) -> Result<(), Invalid> {
                     continue;
                 }
                 for d in 1..=31u32 {
-                    if days.contains(&d)
-                        && chrono::NaiveDate::from_ymd_opt(year, m, d).is_some()
-                    {
+                    if days.contains(&d) && chrono::NaiveDate::from_ymd_opt(year, m, d).is_some() {
                         possible = true;
                         break 'outer;
                     }
@@ -198,7 +241,10 @@ pub fn missed_starts(
         .and_then(|t| t.with_nanosecond(0))
         .unwrap_or(since)
         + Duration::minutes(1);
-    let end = now.with_second(0).and_then(|t| t.with_nanosecond(0)).unwrap_or(now);
+    let end = now
+        .with_second(0)
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(now);
 
     while t <= end {
         if matches(schedule, &t) {
@@ -296,8 +342,14 @@ mod tests {
         let t = Utc.with_ymd_and_hms(2026, 9, 26, 10, 7, 0).unwrap();
         assert!(matches("*/1 * * * ?", &t));
         // `?` in day-of-month leaves day-of-week alone deciding: a Saturday.
-        assert!(matches("0 10 ? * 6", &Utc.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap()));
-        assert!(!matches("0 10 ? * 1", &Utc.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap()));
+        assert!(matches(
+            "0 10 ? * 6",
+            &Utc.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap()
+        ));
+        assert!(!matches(
+            "0 10 ? * 1",
+            &Utc.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap()
+        ));
     }
     use chrono::TimeZone;
 
@@ -443,7 +495,10 @@ mod tests {
         let created = Utc.with_ymd_and_hms(2026, 8, 28, 12, 30, 0).unwrap();
         let now = Utc.with_ymd_and_hms(2026, 8, 28, 12, 45, 0).unwrap();
         // Hourly on the hour: nothing between 12:30 and 12:45.
-        assert_eq!(start_to_run("0 * * * *", None, created, now, None).unwrap(), None);
+        assert_eq!(
+            start_to_run("0 * * * *", None, created, now, None).unwrap(),
+            None
+        );
         // Every fifteen minutes: 12:45 is due.
         assert_eq!(
             start_to_run("*/15 * * * *", None, created, now, None).unwrap(),
@@ -456,22 +511,34 @@ mod tests {
     #[test]
     fn unsatisfiable_schedules_are_rejected() {
         assert!(validate("* * * * *").is_ok());
-        assert!(validate("0 0 29 2 *").is_ok(), "29 Feb exists in a leap year");
+        assert!(
+            validate("0 0 29 2 *").is_ok(),
+            "29 Feb exists in a leap year"
+        );
 
         assert_eq!(validate("* * * *"), Err(Invalid::WrongFieldCount(4)));
         assert_eq!(validate(""), Err(Invalid::WrongFieldCount(0)));
         assert_eq!(
             validate("70 * * * *"),
-            Err(Invalid::EmptyField { field: "minute", value: "70".into() })
+            Err(Invalid::EmptyField {
+                field: "minute",
+                value: "70".into()
+            })
         );
         assert_eq!(
             validate("*/0 * * * *"),
-            Err(Invalid::EmptyField { field: "minute", value: "*/0".into() })
+            Err(Invalid::EmptyField {
+                field: "minute",
+                value: "*/0".into()
+            })
         );
         // A backwards range matches nothing.
         assert_eq!(
             validate("5-2 * * * *"),
-            Err(Invalid::EmptyField { field: "minute", value: "5-2".into() })
+            Err(Invalid::EmptyField {
+                field: "minute",
+                value: "5-2".into()
+            })
         );
         assert_eq!(validate("0 0 30 2 *"), Err(Invalid::ImpossibleDate));
         assert_eq!(validate("0 0 31 4 *"), Err(Invalid::ImpossibleDate));
@@ -484,6 +551,27 @@ mod tests {
         let msg = validate("70 * * * *").unwrap_err().to_string();
         assert!(msg.contains("minute"), "{msg}");
         assert!(msg.contains("70"), "{msg}");
-        assert!(validate("0 0 30 2 *").unwrap_err().to_string().contains("no date"));
+        assert!(validate("0 0 30 2 *")
+            .unwrap_err()
+            .to_string()
+            .contains("no date"));
+    }
+}
+
+#[cfg(test)]
+mod next_tests {
+    use super::*;
+    #[test]
+    fn next_occurrence_is_strict_and_handles_leap_days() {
+        let at = DateTime::parse_from_rfc3339("2026-09-29T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            next_start("*/5 * * * *", at).unwrap(),
+            at + Duration::minutes(5)
+        );
+        let leap = next_start("0 0 29 2 *", at).unwrap();
+        assert_eq!(leap.to_rfc3339(), "2028-02-29T00:00:00+00:00");
+        assert!(next_start("0 0 30 2 *", at).is_err());
     }
 }

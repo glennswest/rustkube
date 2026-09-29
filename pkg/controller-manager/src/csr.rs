@@ -14,7 +14,6 @@ use crate::runner::ApiClient;
 use base64::Engine;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 
 const CSR_PATH: &str = "/apis/certificates.k8s.io/v1/certificatesigningrequests";
@@ -36,12 +35,15 @@ impl CsrController {
             "CSR controller started (signing {})",
             if self.ca.is_some() { "enabled" } else { "disabled" }
         );
-        let mut interval = time::interval(Duration::from_secs(5));
+        let worker = self.api.watches.worker("csr");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile().await {
-                error!("CSR reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile().await {
+                    apimachinery::reactor::failed();
+                    error!("CSR reconcile error: {e}");
+                }
+            }).await;
         }
     }
 

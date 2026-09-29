@@ -8,15 +8,15 @@
 //! `resourceVersion` == etcd `mod_revision`; optimistic concurrency is done
 //! with a Txn comparing `mod_revision`, exactly as upstream kube does.
 
+use apimachinery::store::{KvStore, LeaseId, ListResult, WatchStream};
+use apimachinery::watch::WatchEvent;
+use apimachinery::{Error, Result};
 use async_trait::async_trait;
 use etcd_client::EventType;
 use etcd_client::{
     Certificate, Client, Compare, CompareOp, ConnectOptions, GetOptions, Identity, TlsOptions, Txn,
     TxnOp, WatchOptions,
 };
-use apimachinery::store::{KvStore, LeaseId, ListResult, WatchStream};
-use apimachinery::watch::WatchEvent;
-use apimachinery::{Error, Result};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -174,6 +174,16 @@ impl KvStore for EtcdStore {
         limit: usize,
         continue_token: Option<&str>,
     ) -> Result<ListResult> {
+        self.list_at(prefix, limit, continue_token, None).await
+    }
+
+    async fn list_at(
+        &self,
+        prefix: &str,
+        limit: usize,
+        continue_token: Option<&str>,
+        pinned: Option<u64>,
+    ) -> Result<ListResult> {
         let mut client = self.client.clone();
 
         // Prefix scan over [start_key, range_end). On continuation, resume just
@@ -187,11 +197,28 @@ impl KvStore for EtcdStore {
             None => prefix.as_bytes().to_vec(),
         };
 
-        let opts = GetOptions::new()
+        let mut opts = GetOptions::new()
             .with_range(prefix_range_end(prefix))
             .with_limit(limit as i64);
-        let resp = client.get(start_key, Some(opts)).await.map_err(etcd_err)?;
-        let revision = resp.header().map(|h| h.revision() as u64).unwrap_or(0);
+        if let Some(revision) = pinned {
+            let revision = i64::try_from(revision)
+                .map_err(|_| Error::Invalid("revision out of range".into()))?;
+            opts = opts.with_revision(revision);
+        }
+        let resp = client.get(start_key, Some(opts)).await.map_err(|error| {
+            if let Some(revision) = pinned {
+                if error
+                    .to_string()
+                    .contains("required revision has been compacted")
+                {
+                    return Error::Gone(revision);
+                }
+            }
+            etcd_err(error)
+        })?;
+        // etcd's response header is current even for a historical Range.
+        let revision =
+            pinned.unwrap_or_else(|| resp.header().map(|h| h.revision() as u64).unwrap_or(0));
 
         let items: Vec<(String, Vec<u8>, u64)> = resp
             .kvs()
@@ -211,10 +238,12 @@ impl KvStore for EtcdStore {
             None
         };
 
+        let remaining = Some((resp.count().max(0) as u64).saturating_sub(items.len() as u64));
         Ok(ListResult {
             items,
             continue_token,
             revision,
+            remaining,
         })
     }
 
@@ -236,8 +265,27 @@ impl KvStore for EtcdStore {
             // and live events arrive on the same stream.
             let _watcher = watcher;
             loop {
-                match stream.message().await {
+                let response = tokio::select! {
+                    _ = tx.closed() => return,
+                    response = stream.message() => response,
+                };
+                match response {
                     Ok(Some(resp)) => {
+                        if resp.canceled() || resp.compact_revision() > 0 {
+                            let compacted = resp.compact_revision() > 0;
+                            let _ = tx
+                                .send(WatchEvent::Error {
+                                    code: if compacted { 410 } else { 503 },
+                                    message: if compacted {
+                                        "watch history compacted".into()
+                                    } else {
+                                        "datastore cancelled watch".into()
+                                    },
+                                    revision: resp.compact_revision().max(0) as u64,
+                                })
+                                .await;
+                            return;
+                        }
                         for event in resp.events() {
                             let Some(kv) = event.kv() else { continue };
                             let key = String::from_utf8_lossy(kv.key()).to_string();
@@ -339,6 +387,45 @@ mod tests {
     /// (e.g. `docker run -p 2379:2379 fastetcd`) and are ignored by default.
     fn test_endpoints() -> Vec<String> {
         vec![std::env::var("RK_TEST_ETCD").unwrap_or_else(|_| "http://127.0.0.1:2379".to_string())]
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a running etcd/fastetcd on :2379"]
+    async fn pagination_keeps_snapshot_across_clients_and_concurrent_writes() {
+        let first = EtcdStore::connect(&test_endpoints(), None).await.unwrap();
+        let second = EtcdStore::connect(&test_endpoints(), None).await.unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let prefix = format!("/test/mvcc-{}-{nonce}/", std::process::id());
+        let a = format!("{prefix}a");
+        let b = format!("{prefix}b");
+        first.put(&a, b"a", None).await.unwrap();
+        let old_b = first.put(&b, b"old", None).await.unwrap();
+        let page = second.list(&prefix, 1, None).await.unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.remaining, Some(1));
+        assert!(page.revision >= old_b);
+        first.put(&b, b"new", Some(old_b)).await.unwrap();
+        let next = first
+            .list_at(
+                &prefix,
+                1,
+                page.continue_token.as_deref(),
+                Some(page.revision),
+            )
+            .await
+            .unwrap();
+        assert_eq!(next.revision, page.revision);
+        assert_eq!(next.items[0].1, b"old");
+        assert_eq!(next.items[0].2, old_b);
+        assert_eq!(next.remaining, Some(0));
+        assert!(next.continue_token.is_none());
+        let current = second.list(&prefix, 10, None).await.unwrap();
+        assert_eq!(current.items[1].1, b"new");
+        first.delete(&a, None).await.unwrap();
+        first.delete(&b, None).await.unwrap();
     }
 
     #[tokio::test]

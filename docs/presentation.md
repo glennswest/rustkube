@@ -71,7 +71,7 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
                                            │  auth → RBAC → admission → storage
                                            │  one watch cache per prefix
                                            │
-             kube-controller-manager ──────┤  poll + list every 2–30 s,
+             kube-controller-manager ──────┤  watch-driven work queues,
              kube-scheduler ───────────────┤  write back through the API
                                            │
                                            └──HTTPS :10250──▶ kubelet (rustkube-node)

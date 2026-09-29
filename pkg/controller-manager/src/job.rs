@@ -7,7 +7,6 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 pub struct JobController {
@@ -21,13 +20,15 @@ impl JobController {
 
     pub async fn run(&self) {
         info!("Job controller started");
-        let mut interval = time::interval(Duration::from_secs(2));
-
+        let worker = self.api.watches.worker("job");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Job reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("Job reconcile error: {e}");
+                }
+            }).await;
         }
     }
 
@@ -130,9 +131,10 @@ impl JobController {
                 if let Ok(start) = chrono::DateTime::parse_from_rfc3339(
                     &start_time.replace('Z', "+00:00"),
                 ) {
+                    apimachinery::reactor::requeue_deadline(start.with_timezone(&chrono::Utc), deadline);
                     let elapsed = chrono::Utc::now()
                         .signed_duration_since(start.with_timezone(&chrono::Utc));
-                    if elapsed.num_seconds() as u64 > deadline {
+                    if elapsed.num_seconds() >= 0 && elapsed.num_seconds() as u64 >= deadline {
                         // Kill active pods and mark failed
                         for pod in &owned_pods {
                             let phase = pod["status"]["phase"].as_str().unwrap_or("");
@@ -262,7 +264,7 @@ impl JobController {
                 "reason": reason,
                 "lastTransitionTime": now.clone()
             });
-            if ctype == "Complete" {
+            if ctype == "Complete" && updated["status"]["completionTime"].is_null() {
                 updated["status"]["completionTime"] = json!(now);
             }
             let conditions = updated["status"]
@@ -271,7 +273,9 @@ impl JobController {
                 .entry("conditions")
                 .or_insert_with(|| json!([]));
             if let Some(arr) = conditions.as_array_mut() {
-                arr.push(cond);
+                if let Some(old) = arr.iter_mut().find(|c| c["type"] == ctype) {
+                    if old["status"] != "True" || old["reason"] != reason { *old = cond; }
+                } else { arr.push(cond); }
             }
         }
 

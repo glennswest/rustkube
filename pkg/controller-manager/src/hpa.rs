@@ -9,7 +9,6 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 pub struct HpaController {
@@ -23,13 +22,15 @@ impl HpaController {
 
     pub async fn run(&self) {
         info!("HPA controller started");
-        let mut interval = time::interval(Duration::from_secs(15));
-
+        let worker = self.api.watches.worker("hpa");
         loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("HPA reconcile error: {e}");
-            }
+            let _work = worker.next().await;
+            worker.run(async {
+                if let Err(e) = self.reconcile_all().await {
+                    apimachinery::reactor::failed();
+                    error!("HPA reconcile error: {e}");
+                }
+            }).await;
         }
     }
 
@@ -163,7 +164,7 @@ impl HpaController {
         updated_hpa["status"] = json!({
             "currentReplicas": current_replicas,
             "desiredReplicas": desired,
-            "lastScaleTime": now,
+            "lastScaleTime": if desired != current_replicas { json!(now) } else { hpa["status"]["lastScaleTime"].clone() },
             "currentMetrics": [],
             "conditions": [{
                 "type": "ScalingActive",

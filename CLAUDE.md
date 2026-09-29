@@ -49,7 +49,7 @@ pkg/
   storage/            etcd v3 client (etcd-client) — keys are opaque here
   apiserver/          REST API (axum), auth, RBAC, built-in admission, watch cache, CRDs
   scheduler/          fixed filter/score functions, volume binding, VMI placement
-  controller-manager/ the built-in controllers (poll + list, no informers)
+  controller-manager/ the built-in controllers (watch-driven passes; indexed workers pending #146)
   cloud/              EMPTY — a doc comment, no code, nothing depends on it
 ```
 
@@ -218,7 +218,7 @@ when each piece landed.
 - The token itself is stormcert's (stormcert#5)
 
 ### Phase 4: Scale & Conformance
-- [ ] 1000+ node testing (#66) — the controllers list everything every tick,
+- [ ] 1000+ node testing (#66) — the controllers still list whole collections per watch-driven pass,
       which is what will break first
 - [x] K8s conformance test suite (#67) — closed 2026-09-28; first run on dev,
       `test/conformance/run.sh`: e2e.test v1.36.x `[Conformance]` (443) against
