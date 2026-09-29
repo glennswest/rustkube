@@ -401,3 +401,6 @@ apiserver starts: `apiserver.crt`/`.key` (CN `apiserver`; SANs the
 ## License
 
 Apache-2.0
+
+On `turbomode`, PV binding also uses indexed claim/volume workers; claim
+selection is serialized so acknowledged reservations precede the next claim.

@@ -9,7 +9,9 @@ have indexed per-object workers (eight concurrent keys per controller).
 Collection watches and snapshots are shared; successful writes use local
 acknowledgement overlays until observed or superseded by a consistent LIST
 begun after the write. Deletion uses observed UID/revision preconditions.
-Other controller migrations and runtime validation remain open.
+PV binding uses serialized claim workers, storage-class candidate indexes, and
+independent per-volume lifecycle workers. Other controller migrations and
+runtime validation remain open.
 
 ## Objective and boundary
 

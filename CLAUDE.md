@@ -249,7 +249,9 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       endpoint cleanup, CAS/no-op writes; remote regression validation pending.
 - [x] Baseline 79c1a9e: handoff five-crate command passed on dev (four
       datastore-dependent storage tests ignored).
-- [ ] PV binder, stormblock, attach/detach (claim/PV/Pod/VolumeAttachment)
+- [x] PV binder: serialized indexed claim workers and per-PV lifecycle;
+      only 404 proves claim absence; remote validation pending
+- [ ] Stormblock, attach/detach (claim/PV/Pod/VolumeAttachment)
 - [x] VM (owned VMI), CSR, root CA (ConfigMap → Namespace); remote checks pending
 - [ ] Migration; namespace, node lifecycle, HPA, gateway, events
 - [ ] GC: fail closed on any unsynced feed

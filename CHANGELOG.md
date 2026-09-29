@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Index PV binding by storage class and claim/volume/Pod references;
+  serialize claim selection with acknowledged PV writes and independently
+  reconcile volume lifecycle. Only a claim GET 404 proves absence; finalizer
+  removal uses observed UID/revision. Add HTTP failure regression coverage.
 - **perf:** Move VM, CSR and root CA publishing to per-object workers. VMIs
   are read by owner UID and deleted conditionally; root CA ConfigMap changes
   route directly to their Namespace. CSR approval acknowledges the next work.

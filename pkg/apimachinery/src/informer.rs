@@ -38,6 +38,10 @@ pub enum Index {
     Owner(String),
     Node(String),
     Claim(String, String),
+    StorageClass(String),
+    Volume(String),
+    Driver(String),
+    Pod(String, String),
     Label(String, String),
     /// Equality anchor for a selector; namespace prevents cross-namespace wakes.
     Selector(String, String, String),
@@ -64,8 +68,24 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
             if let Some(claim) = volume["persistentVolumeClaim"]["claimName"].as_str() {
                 result.insert(Index::Claim(key.namespace.clone(), claim.into()));
             }
+            if !volume["ephemeral"].is_null() {
+                if let Some(name) = volume["name"].as_str() {
+                    result.insert(Index::Claim(key.namespace.clone(), format!("{}-{name}", key.name)));
+                }
+            }
         }
     }
+    if matches!(object["kind"].as_str(), Some("PersistentVolume" | "PersistentVolumeClaim")) {
+        result.insert(Index::StorageClass(object["spec"]["storageClassName"].as_str().unwrap_or("").into()));
+    }
+    if let (Some(ns), Some(name)) = (object["spec"]["claimRef"]["namespace"].as_str(), object["spec"]["claimRef"]["name"].as_str()) {
+        result.insert(Index::Claim(ns.into(), name.into()));
+    }
+    for volume in [object["spec"]["volumeName"].as_str(), object["spec"]["source"]["persistentVolumeName"].as_str()].into_iter().flatten() {
+        result.insert(Index::Volume(volume.into()));
+    }
+    if let Some(driver) = object["spec"]["csi"]["driver"].as_str() { result.insert(Index::Driver(driver.into())); }
+    if let Some(pod) = object["spec"]["podName"].as_str() { result.insert(Index::Pod(key.namespace.clone(), pod.into())); }
     if let Some(labels) = object["metadata"]["labels"].as_object() {
         for (label, value) in labels {
             if let Some(value) = value.as_str() {

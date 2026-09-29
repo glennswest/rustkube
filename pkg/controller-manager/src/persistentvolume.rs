@@ -32,7 +32,9 @@ use apimachinery::quantity::parse_bytes;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::info;
+use crate::owned::{self, Controller, Dependency, Deps};
+use apimachinery::informer::Index;
 
 /// Set on a PVC to name the provisioner that must act on it. The current
 /// spelling and the beta one are both written: external-provisioner has read
@@ -74,85 +76,9 @@ impl PersistentVolumeController {
     }
 
     pub async fn run(&self) {
-        info!("PersistentVolume controller started");
-        let worker = self.api.watches.worker("persistentvolume");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile().await {
-                    apimachinery::reactor::failed();
-                    error!("PersistentVolume reconcile error: {e}");
-                }
-            }).await;
-        }
-    }
-
-    async fn reconcile(&self) -> anyhow::Result<()> {
-        let pv_list: Value = self.api.list("/api/v1/persistentvolumes").await?;
-        let mut pvs = pv_list["items"].as_array().cloned().unwrap_or_default();
-
-        let class_list: Value = self
-            .api
-            .list("/apis/storage.k8s.io/v1/storageclasses")
-            .await?;
-        let classes: HashMap<String, Value> = class_list["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|c| {
-                c["metadata"]["name"]
-                    .as_str()
-                    .map(|n| (n.to_string(), c.clone()))
-            })
-            .collect();
-        let default_class = default_class_name(&classes);
-
-        // Claims first: a bind is written volume-side then claim-side, and the
-        // volume pass below picks up whatever the claim pass decided.
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        for ns in ns_list["items"].as_array().cloned().unwrap_or_default() {
-            let namespace = match ns["metadata"]["name"].as_str() {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-            let pvc_list: Value = self
-                .api
-                .list(&format!(
-                    "/api/v1/namespaces/{namespace}/persistentvolumeclaims"
-                ))
-                .await?;
-            let pvcs = pvc_list["items"].as_array().cloned().unwrap_or_default();
-            if pvcs.is_empty() {
-                continue;
-            }
-            // Only paid for when the namespace actually has claims.
-            let pod_list: Value = self
-                .api
-                .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-                .await?;
-            let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-
-            for pvc in &pvcs {
-                if let Err(e) = self
-                    .sync_claim(&namespace, pvc, &mut pvs, &classes, default_class.as_deref(), &pods)
-                    .await
-                {
-                    let name = pvc["metadata"]["name"].as_str().unwrap_or("?");
-                    debug!("PVC {namespace}/{name}: {e}");
-                }
-            }
-        }
-
-        // Volumes: re-read, because the claim pass just wrote claimRefs.
-        let pv_list: Value = self.api.list("/api/v1/persistentvolumes").await?;
-        for pv in pv_list["items"].as_array().cloned().unwrap_or_default() {
-            if let Err(e) = self.sync_volume(&pv).await {
-                let name = pv["metadata"]["name"].as_str().unwrap_or("?");
-                debug!("PV {name}: {e}");
-            }
-        }
-        Ok(())
+        let claims = Claims(self);
+        let volumes = Volumes(self);
+        tokio::join!(owned::run(&self.api, &claims), owned::run(&self.api, &volumes));
     }
 
     /// One claim: protect it, resolve its class, bind it, or hand it to a
@@ -193,6 +119,7 @@ impl PersistentVolumeController {
 
         if !has_finalizer(pvc, PVC_PROTECTION) {
             self.add_finalizer(&path, pvc, PVC_PROTECTION).await?;
+            return Ok(()); // acknowledgement wakes this key with its new revision
         }
 
         // Resolve the class once, and write it back: a claim that got the
@@ -338,7 +265,7 @@ impl PersistentVolumeController {
                 .await;
             return self.set_claim_phase(&path, pvc, "Lost").await;
         }
-        let pv: Value = resp.json().await?;
+        let pv: Value = resp.error_for_status()?.json().await?;
 
         // The volume may name a different claim — a stale volumeName on a
         // claim that was rebuilt. That is Lost too, not a silent share.
@@ -534,6 +461,7 @@ impl PersistentVolumeController {
 
         if !has_finalizer(pv, PV_PROTECTION) {
             self.add_finalizer(&path, pv, PV_PROTECTION).await?;
+            return Ok(());
         }
 
         let phase_now = pv["status"]["phase"].as_str().unwrap_or("");
@@ -617,7 +545,7 @@ impl PersistentVolumeController {
             ))
             .await
         {
-            Ok(r) => r.status().is_success(),
+            Ok(r) => r.status().as_u16() != 404,
             // A failed GET is not evidence of absence: treating an unreachable
             // apiserver as "the claim is gone" would release bound volumes
             // across the cluster on a blip.
@@ -641,7 +569,7 @@ impl PersistentVolumeController {
             .cloned()
             .unwrap_or_default();
         finalizers.push(json!(finalizer));
-        let patch = json!({"metadata": {"finalizers": finalizers}});
+        let patch = json!({"metadata": {"resourceVersion": obj["metadata"]["resourceVersion"], "uid": obj["metadata"]["uid"], "finalizers": finalizers}});
         self.api.patch(path, &patch).await?;
         Ok(())
     }
@@ -664,7 +592,7 @@ impl PersistentVolumeController {
             .collect();
         // A merge patch, which replaces the list: a strategic merge would
         // merge it and the finalizer would still be there.
-        let patch = json!({"metadata": {"finalizers": finalizers}});
+        let patch = json!({"metadata": {"resourceVersion": obj["metadata"]["resourceVersion"], "uid": obj["metadata"]["uid"], "finalizers": finalizers}});
         self.api.patch_merge(path, &patch).await?;
         Ok(())
     }
@@ -987,5 +915,64 @@ mod tests {
         assert_eq!(pod_using_claim(&[running.clone()], "c1").as_deref(), Some("user"));
         assert_eq!(pod_using_claim(&[done], "c1"), None);
         assert_eq!(pod_using_claim(&[running], "other"), None);
+    }
+}
+
+struct Claims<'a>(&'a PersistentVolumeController);
+struct Volumes<'a>(&'a PersistentVolumeController);
+#[async_trait::async_trait]
+impl Controller for Claims<'_> {
+    fn name(&self) -> &'static str { "persistentvolume-claims" }
+    fn primary(&self) -> &'static str { "/api/v1/persistentvolumeclaims" }
+    // Local successful PV writes are acknowledged before the next claim can choose.
+    fn workers(&self) -> usize { 1 }
+    fn dependencies(&self) -> Vec<Dependency> { vec![
+        Dependency { path: "/api/v1/persistentvolumes", route: Arc::new(owned::volume_claims) },
+        Dependency { path: "/apis/storage.k8s.io/v1/storageclasses", route: Arc::new(owned::storage_class_claims) },
+        Dependency { path: "/api/v1/pods", route: Arc::new(owned::claim_users) },
+    ] }
+    async fn reconcile(&self, pvc: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        let classes: HashMap<_,_> = deps.feed(1).list()?.into_iter().filter_map(|c|
+            c["metadata"]["name"].as_str().map(|n| (n.to_string(), c.clone()))).collect();
+        let default = default_class_name(&classes);
+        let class = claim_class(pvc, default.as_deref()).unwrap_or_default();
+        let mut pvs = deps.feed(0).select(&Index::StorageClass(class))?;
+        let ns = pvc["metadata"]["namespace"].as_str().unwrap_or("default");
+        let name = pvc["metadata"]["name"].as_str().unwrap_or("");
+        let pods = deps.feed(2).select(&Index::Claim(ns.into(), name.into()))?;
+        self.0.sync_claim(ns, pvc, &mut pvs, &classes, default.as_deref(), &pods).await
+    }
+}
+#[async_trait::async_trait]
+impl Controller for Volumes<'_> {
+    fn name(&self) -> &'static str { "persistentvolumes" }
+    fn primary(&self) -> &'static str { "/api/v1/persistentvolumes" }
+    fn dependencies(&self) -> Vec<Dependency> { vec![Dependency {
+        path: "/api/v1/persistentvolumeclaims", route: Arc::new(|delta, primary| {
+            delta.old.iter().chain(delta.new.iter()).flat_map(|pvc| {
+                owned::keys_at(primary, Index::Claim(
+                    pvc["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                    pvc["metadata"]["name"].as_str().unwrap_or("").into()))
+            }).collect()
+        }),
+    }] }
+    async fn reconcile(&self, pv: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> { self.0.sync_volume(pv).await }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    #[tokio::test]
+    async fn only_not_found_can_release_a_claim() {
+        use axum::{routing::get, Router, http::StatusCode};
+        for (code, exists) in [(200,true),(403,true),(500,true),(404,false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let app = Router::new().fallback(get(move || async move { StatusCode::from_u16(code).unwrap() }));
+            let task = tokio::spawn(async move { axum::serve(listener,app).await.unwrap() });
+            let controller = PersistentVolumeController::new(Arc::new(ApiClient::new(&format!("http://{addr}"))));
+            assert_eq!(controller.claim_exists("ns","claim").await, exists, "HTTP {code}");
+            task.abort();
+        }
     }
 }

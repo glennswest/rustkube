@@ -76,6 +76,39 @@ pub fn same_namespace(delta: &Delta, primary: &Feed) -> Vec<Key> {
 }
 
 
+pub fn keys_at(primary: &Feed, index: Index) -> Vec<Key> {
+    primary.select(&index).unwrap_or_default().iter().filter_map(|o| Key::of(o).ok()).collect()
+}
+
+/// Pod volume use wakes the named PVC, including its old claims after edits/deletion.
+pub fn claim_users(delta: &Delta, primary: &Feed) -> Vec<Key> {
+    delta.affected.iter().flat_map(|i| match i {
+        Index::Claim(ns, name) => keys_at(primary, Index::Name(ns.clone(), name.clone())),
+        _ => Vec::new(),
+    }).collect()
+}
+
+pub fn volume_claims(delta: &Delta, primary: &Feed) -> Vec<Key> {
+    let mut keys = Vec::new();
+    for pv in delta.old.iter().chain(delta.new.iter()) {
+        let name = pv["metadata"]["name"].as_str().unwrap_or("");
+        keys.extend(keys_at(primary, Index::Volume(name.into())));
+        let ns = pv["spec"]["claimRef"]["namespace"].as_str().unwrap_or("");
+        let claim = pv["spec"]["claimRef"]["name"].as_str().unwrap_or("");
+        if !claim.is_empty() { keys.extend(keys_at(primary, Index::Name(ns.into(),claim.into()))); }
+        keys.extend(keys_at(primary, Index::StorageClass(pv["spec"]["storageClassName"].as_str().unwrap_or("").into())));
+    }
+    keys
+}
+
+pub fn storage_class_claims(delta: &Delta, primary: &Feed) -> Vec<Key> {
+    let mut keys = keys_at(primary, Index::StorageClass("".into()));
+    for class in delta.old.iter().chain(delta.new.iter()) {
+        keys.extend(keys_at(primary, Index::StorageClass(class["metadata"]["name"].as_str().unwrap_or("").into())));
+    }
+    keys
+}
+
 pub fn owner_keys(delta: &Delta, primary: &Feed) -> Vec<Key> {
     let mut keys = HashSet::new();
     for object in delta.old.iter().chain(delta.new.iter()) {
