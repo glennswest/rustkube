@@ -66,9 +66,10 @@ def bound_on(node):
 def finish(name):
     p = get(ns+'/pods/'+name); p.setdefault('status', {})['phase'] = 'Succeeded'
     req('PUT', ns+'/pods/'+name+'/status', p)
-def pod(name, selector=None, claim=None, cpu='600m'):
+def pod(name, selector=None, claim=None, cpu='600m', on=None):
     spec = {'containers': [{'name': 'c', 'image': 'unused',
             'resources': {'requests': {'cpu': cpu, 'memory': '64Mi'}}}]}
+    if on: spec['nodeName'] = on
     if selector: spec['nodeSelector'] = selector
     if claim: spec['volumes'] = [{'name': 'v', 'persistentVolumeClaim': {'claimName': claim}}]
     req('POST', ns+'/pods', {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': name}, 'spec': spec})
@@ -122,7 +123,12 @@ try:
     hold('released CPU spent exactly once', lambda: bound_on('capacity-one') == [waiting], 2)
 
     # Dependency wakeups for storage.
-    node('volume-node', {'pool': 'vol', 'kubernetes.io/hostname': 'volume-node'}, '8')
+    # The volume's node is the busier one (10% CPU free against 40% on
+    # capacity-one), so least-requested scoring picks capacity-one first while
+    # v1's claim is missing. A reservation left from that attempt would pin v1
+    # there and it could never bind to its volume's node.
+    node('volume-node', {'pool': 'vol', 'kubernetes.io/hostname': 'volume-node'}, '2')
+    pod('filler', cpu='1800m', on='volume-node')
     pod('v1', claim='late', cpu='100m')
     hold('v1 waits for its missing claim', lambda: not pods()['v1']['spec'].get('nodeName'), 2)
     req('POST', '/api/v1/persistentvolumes', {'apiVersion': 'v1', 'kind': 'PersistentVolume',
