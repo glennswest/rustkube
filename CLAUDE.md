@@ -269,7 +269,9 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] Scheduler: one serialized Pod/VMI queue, indexed storage reads, shared
       acknowledged-write accounting and retained bind/volume assumptions;
       optional VMI feed enabled by CRD observation. Remote validation pending.
-- [ ] audit: write overlays/create expectations, cache recovery barriers,
+- [ ] Final audit: create expectations and dependency recovery passed on dev;
+      add delayed-write history-expiry fencing, then validate final head.
+      Check write overlays, cache recovery barriers,
       destructive cleanup preconditions
 
 ### VM runStrategy on a failed VMI (#104) — COMPLETE 2026-09-28

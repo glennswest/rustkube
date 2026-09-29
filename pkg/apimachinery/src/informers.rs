@@ -39,6 +39,7 @@ pub struct Feed {
     store: Mutex<Store>,
     subscribers: Mutex<HashMap<u64, Callback>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    relist: Arc<tokio::sync::Notify>,
 }
 impl Feed {
     pub fn ensure_synced(&self) -> anyhow::Result<()> {
@@ -185,15 +186,22 @@ impl Hub {
                         store: Mutex::new(Store::default()),
                         subscribers: Mutex::new(HashMap::new()),
                         task: Mutex::new(None),
+                        relist: Arc::new(tokio::sync::Notify::new()),
                     });
                     let weak = Arc::downgrade(&feed);
                     let client = client.clone();
                     let url = url.clone();
+                    let relist = feed.relist.clone();
                     let task = tokio::spawn(async move {
-                        crate::reflector::run_events(client, url, move |event| {
-                            weak.upgrade().is_none_or(|feed| feed.receive(event))
-                        })
-                        .await;
+                        loop {
+                            let weak = weak.clone();
+                            tokio::select! {
+                                _ = crate::reflector::run_events(client.clone(), url.clone(), move |event| {
+                                    weak.upgrade().is_none_or(|feed| feed.receive(event))
+                                }) => return,
+                                _ = relist.notified() => {},
+                            }
+                        }
                     });
                     *feed.task.lock().unwrap() = Some(task);
                     feed
@@ -222,17 +230,21 @@ impl Hub {
     }
 
     /// Called for every successful object write before returning to the caller.
-    pub fn acknowledge(&self, url: &str, object: &Value) {
+    pub fn acknowledge(&self, url: &str, object: &Value, started: std::time::Instant) {
         let Some(collection) = collection_url(url, object) else {
             return;
         };
         let feed = self.inner.feeds.lock().unwrap().get(&collection).cloned();
         if let Some(feed) = feed {
-            let change = feed.store.lock().unwrap().acknowledge(object.clone());
+            let change = feed.store.lock().unwrap().acknowledge_since(object.clone(), started);
             match change {
                 Ok(Some(change)) => feed.notify(&[change], false),
                 Ok(None) => {}
-                Err(error) => tracing::warn!(%error,"cannot record successful write in informer"),
+                Err(error) => {
+                    feed.store.lock().unwrap().unavailable();
+                    feed.relist.notify_one();
+                    tracing::warn!(%error,"cannot record successful write; relisting informer");
+                }
             }
         }
     }
@@ -267,6 +279,7 @@ mod tests {
             store: Mutex::new(Store::default()),
             subscribers: Mutex::new(HashMap::new()),
             task: Mutex::new(None),
+                        relist: Arc::new(tokio::sync::Notify::new()),
         };
         let count = Arc::new(AtomicU64::new(0));
         let observed = count.clone();

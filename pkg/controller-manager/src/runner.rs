@@ -251,6 +251,7 @@ impl ApiClient {
     /// A timed-out create may still commit. Keep its original name/body and
     /// resolve/retry that same atomic create before generating another child.
     pub async fn create(&self, path: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
         let name = body["metadata"]["name"].as_str().ok_or_else(|| anyhow::anyhow!("controller create requires an explicit name"))?;
         let owner = create_owner(body);
         let group = format!("{path}/{}", if owner.is_empty() { name } else { &owner });
@@ -263,7 +264,7 @@ impl ApiClient {
             if response.status().is_success() {
                 let existing: serde_json::Value = response.json().await?;
                 anyhow::ensure!(create_owner(&existing) == pending.owner,"ambiguous create name belongs to another owner");
-                self.informers.acknowledge(&format!("{}{}",self.base_url,pending.path),&existing);
+                self.informers.acknowledge(&format!("{}{}",self.base_url,pending.path),&existing,started);
                 self.pending_creates.lock().unwrap().remove(&group);
                 apimachinery::reactor::requeue_after(std::time::Duration::ZERO);
                 return Ok(existing);
@@ -291,6 +292,7 @@ impl ApiClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -306,7 +308,7 @@ impl ApiClient {
         .await;
         if let Ok(value) = &result {
             self.informers
-                .acknowledge(&format!("{}{}", self.base_url, path), value);
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -320,6 +322,7 @@ impl ApiClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -335,7 +338,7 @@ impl ApiClient {
         .await;
         if let Ok(value) = &result {
             self.informers
-                .acknowledge(&format!("{}{}", self.base_url, path), value);
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -360,6 +363,7 @@ impl ApiClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -375,7 +379,7 @@ impl ApiClient {
         .await;
         if let Ok(value) = &result {
             self.informers
-                .acknowledge(&format!("{}{}", self.base_url, path), value);
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -389,6 +393,7 @@ impl ApiClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -405,7 +410,7 @@ impl ApiClient {
         .await;
         if let Ok(value) = &result {
             self.informers
-                .acknowledge(&format!("{}{}", self.base_url, path), value);
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -480,6 +485,7 @@ impl ApiClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -496,7 +502,7 @@ impl ApiClient {
         .await;
         if let Ok(value) = &result {
             self.informers
-                .acknowledge(&format!("{}{}", self.base_url, path), value);
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }

@@ -400,7 +400,7 @@ impl PersistentVolumeController {
 
         let claim_path = format!("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}");
         let patch = json!({
-            "metadata": {"annotations": {
+            "metadata": {"uid": pvc["metadata"]["uid"], "resourceVersion": pvc["metadata"]["resourceVersion"], "annotations": {
                 ANN_BIND_COMPLETED: "yes",
                 ANN_BOUND_BY_CONTROLLER: "yes",
             }},

@@ -390,10 +390,9 @@ impl MigrationController {
                 let mut pod: Value = pod_resp.json().await?;
 
                 // Delete source pod first
-                let _ = self
-                    .api
-                    .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
-                    .await;
+                self.api.delete_observed(
+                    &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"), &pod,
+                ).await?;
 
                 // Create new pod on target node
                 pod["spec"]["nodeName"] = json!(target_node);

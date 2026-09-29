@@ -180,6 +180,7 @@ impl ApiClient {
     }
 
     pub async fn update(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -194,7 +195,7 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value);
+            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -228,6 +229,7 @@ impl ApiClient {
 
     /// PATCH a resource with a strategic-merge patch.
     pub async fn patch(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -243,7 +245,7 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value);
+            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -259,6 +261,7 @@ impl ApiClient {
     /// kubelet already patches a VMI's status this way; the scheduler writes
     /// to the same subresource and has to speak the same content type.
     pub async fn patch_merge(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -274,7 +277,7 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value);
+            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -284,6 +287,7 @@ impl ApiClient {
 
     /// POST (create) returning the decoded body.
     pub async fn create(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
@@ -298,7 +302,7 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value);
+            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }

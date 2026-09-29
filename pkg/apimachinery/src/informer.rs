@@ -180,6 +180,7 @@ pub struct Store {
     /// Successful writes are visible locally until their exact watch event.
     overlays: HashMap<Key, Value>,
     seen: VecDeque<(String, String)>,
+    history_evicted_at: Option<std::time::Instant>,
     acknowledged_at: HashMap<Key, std::time::Instant>,
 }
 impl Store {
@@ -201,6 +202,7 @@ impl Store {
             .ok_or_else(|| anyhow::anyhow!("not a LIST"))?;
         let mut replacement = Store::default();
         replacement.seen = self.seen.clone();
+        replacement.history_evicted_at = self.history_evicted_at;
         for object in items {
             replacement.put(object.clone())?;
             if let Some(rv) = revision(object) {
@@ -211,6 +213,7 @@ impl Store {
         }
         while replacement.seen.len() > 4096 {
             replacement.seen.pop_front();
+            replacement.history_evicted_at = Some(std::time::Instant::now());
         }
         // Unacknowledged writes survive relists; clearing requires the exact
         // revision or a separately established read-after-write barrier.
@@ -283,7 +286,14 @@ impl Store {
         self.reset(list)
     }
 
+    #[cfg(test)]
     pub fn acknowledge(&mut self, object: Value) -> anyhow::Result<Option<Delta>> {
+        self.acknowledge_since(object, std::time::Instant::now())
+    }
+
+    /// A delayed response must not rewind a watch after its revision fell out
+    /// of the bounded history. Such a response requires a fresh LIST barrier.
+    pub fn acknowledge_since(&mut self, object: Value, started: std::time::Instant) -> anyhow::Result<Option<Delta>> {
         let key = Key::of(&object)?;
         let rv =
             revision(&object).ok_or_else(|| anyhow::anyhow!("write response has no revision"))?;
@@ -293,6 +303,11 @@ impl Store {
             .any(|(uid, seen)| uid == &key.uid && seen == rv)
         {
             return Ok(None);
+        }
+        if self.history_evicted_at.is_some_and(|at| at >= started) {
+            self.synced = false;
+            self.initialized = false;
+            anyhow::bail!("write observation history expired; a fresh snapshot is required");
         }
         let change = self.put(object.clone())?;
         self.acknowledged_at
@@ -312,6 +327,7 @@ impl Store {
         self.seen.push_back((key.uid.clone(), rv.into()));
         while self.seen.len() > 4096 {
             self.seen.pop_front();
+            self.history_evicted_at = Some(std::time::Instant::now());
         }
         if let Some(overlay) = self.overlays.get(&key) {
             if revision(overlay) != Some(rv) {
@@ -416,6 +432,26 @@ mod tests {
     }
     fn event(kind: &str, object: Value) -> Value {
         json!({"type":kind,"object":object})
+    }
+
+    #[test]
+    fn delayed_write_after_history_eviction_cannot_rewind_or_resurrect() {
+        let mut store = Store::default();
+        store.reset(&json!({"items":[]})).unwrap();
+        let started = std::time::Instant::now();
+        let written = object("uid", "write", "owner");
+        store.apply(&json!({"type":"ADDED","object":written})).unwrap();
+        store.apply(&json!({"type":"DELETED","object":object("uid","deleted","owner")})).unwrap();
+        for n in 0..4096 {
+            store.apply(&json!({"type":"MODIFIED","object":object("other",&format!("rv-{n}"),"owner")})).unwrap();
+        }
+        assert!(store.acknowledge_since(written, started).is_err());
+        assert!(!store.is_synced());
+        store.resumed();
+        assert!(!store.is_synced(), "reconnect alone cannot repair expired history");
+        store.reset_started_at(&json!({"items":[]}),std::time::Instant::now()).unwrap();
+        assert!(store.values().unwrap().is_empty());
+        assert!(store.acknowledge_since(object("new","new-rv","owner"),std::time::Instant::now()).is_ok());
     }
 
     #[test]

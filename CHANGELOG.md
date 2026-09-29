@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **fix:** Relist before reading a delayed write whose watch history expired;
+  bounded history must never rewind or resurrect an object. Fence claim
+  binding and migration source deletion with observed UID/revision.
 - **test:** Verify with a fake HTTP feed that unavailable dependencies prevent
   any object reconciliation, and recovery immediately makes the key runnable.
 - **test:** Add real API/store checks for all GC propagation modes, per-event

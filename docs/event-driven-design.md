@@ -362,3 +362,9 @@ backing storage to make cleanup pass. Unreachable storage or incomplete inventor
 fails verification. Cleanup failures retain exact resource identities and
 evidence for investigation. Track these acceptance runs under #147 and
 rustkube-node#102; neither issue closes on harness creation alone.
+
+Write-response history is bounded. Each API mutation records its request start;
+if its revision has already fallen out of watch history before the response
+arrives, the feed becomes unreadable and immediately relists. Reconnecting a
+watch alone cannot clear this barrier. This prevents a late acknowledgement
+from resurrecting a deleted UID or replacing newer state.
