@@ -148,8 +148,9 @@ when each piece landed.
 Branch only: no merge to main, no goldens. Design: docs/event-driven-design.md;
 handoff: docs/turbomode-handoff.md.
 
-Resume checkpoint 2026-09-29: validate pushed fc67179 with the handoff
-five-crate `sc-build` command, then record its result. The branch already
+Resume checkpoint 2026-09-29: pushed fc67179 passed the handoff five-crate
+`sc-build` command (exit 0; four storage integration tests ignored because
+they require a running datastore). The branch already
 contains the routed dependency runner and DaemonSet migration. Owner decision
 required before live validation: C2NR0Q2 or an isolated dev cluster. Stop for
 that choice as requested; do not close #146 or claim runtime acceptance.

@@ -4,8 +4,9 @@
 
 ### 2026-09-29
 - **docs:** Reconcile #146 work plan with the committed DaemonSet migration,
-  record the required baseline validation and pending owner choice of live
-  test target, and correct private-volume build instructions.
+  record passing five-crate `sc-build` validation at fc67179 (four storage
+  integration tests ignored) and the pending owner choice of live test
+  target, and correct private-volume build instructions.
 
 - Deployment, ReplicaSet, StatefulSet, Job and CronJob now use bounded
   per-object workers, shared indexed watches, write acknowledgements and

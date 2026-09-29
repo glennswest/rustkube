@@ -204,7 +204,7 @@ reconcile queues another pass. Successful idle passes have no poll interval.
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
 and migration deadlines, Event TTL), API recovery and leader Leases.
 
-Deployment, ReplicaSet, StatefulSet, Job and CronJob use bounded per-object
+Deployment, ReplicaSet, StatefulSet, DaemonSet, Job and CronJob use bounded per-object
 workers and shared owner indexes. Successful writes remain visible locally
 until acknowledged by the watch or a later consistent snapshot. Destructive
 actions carry observed UID/revision preconditions. Other reconcilers still
@@ -212,7 +212,9 @@ use authoritative paginated LISTs per pass; their migration remains in #146.
 Every controller/scheduler mutation checks a monotonic leadership deadline.
 See [the event-driven design](docs/event-driven-design.md)
 for the subsecond target, failure rules and release baseline. The branch has
-not yet been built or performance-validated.
+passed five-crate unit/doc tests through `sc-build` at `fc67179` on
+2026-09-29 (four storage integration tests ignored). Runtime and performance
+validation remain pending the owner-selected target.
 
 Deployment (rolling updates), ReplicaSet, StatefulSet, DaemonSet (every
 eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices), Namespace (default
