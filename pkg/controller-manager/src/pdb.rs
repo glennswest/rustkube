@@ -30,6 +30,9 @@ impl PdbController {
             .iter()
             .filter(|p| selector_matches(&pdb["spec"]["selector"], &p["metadata"]["labels"]))
             .collect();
+        tracing::debug!(namespace, name = pdb["metadata"]["name"].as_str().unwrap_or(""),
+            kind = pdb["kind"].as_str().unwrap_or(""), candidates = pods.len(), matched = matched.len(),
+            revision = pdb["metadata"]["resourceVersion"].as_str().unwrap_or(""), "reconciling PDB membership");
         let expected = matched.len() as i64;
         let healthy = matched.iter().filter(|p| is_ready(p)).count() as i64;
 

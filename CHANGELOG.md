@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Preserve object observations on selector-test failure and expose
+  PDB candidate counts at debug level to diagnose a startup convergence race.
 - **chore:** Format migrated Rust modules with rustfmt on the build box.
 - **docs:** Refresh controller/scheduler behavior, handoff checkpoints and
   verification evidence; separate completed dev checks from #147/#149 live

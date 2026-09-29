@@ -26,6 +26,8 @@ def eventually(label, test):
         if test():
             print('PASS', label, flush=True); checks += 1; return
         time.sleep(.1)
+    for path in (pdbpath+'/web', pdbpath+'/negative', ns+'/pods/p'):
+        print('FAIL observation', path, json.dumps(get(path)), flush=True)
     raise AssertionError(label)
 def create(path, kind, name, spec, **extra):
     return request('POST', path, dict(apiVersion='v1' if '/api/v1/' in path else 'policy/v1',

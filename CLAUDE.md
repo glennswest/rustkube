@@ -271,6 +271,8 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       acknowledged-write accounting and retained bind/volume assumptions;
       optional VMI feed enabled by CRD observation. Shared accounting unit
       tests and burst/capacity-release API-rig checks pass at 226a388.
+- [ ] Final run at 9a24ce9: 409 unit tests pass, but PDB startup membership
+      stalled in the selector rig. Diagnose with object/worker observations.
 - [ ] Final audit: create expectations and dependency recovery passed on dev;
       add delayed-write history-expiry fencing, then validate final head.
       Check write overlays, cache recovery barriers,
