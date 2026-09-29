@@ -31,3 +31,6 @@ pub mod reactor;
 pub mod lease;
 pub mod informer;
 pub mod informers;
+
+#[cfg(test)]
+mod turbomode_tests;
