@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Replace scheduler namespace passes with a shared prioritized Pod/VMI
+  object queue, indexed storage dependencies, incremental placed accounting
+  and retained bind/volume reservations. Failed or lagging observations cannot
+  free assumed capacity; CRD discovery gates optional VMI observation.
 - **perf:** Index Gateway/HTTPRoute reference workers and per-event retention.
   GC routes changed owners/dependents through shared discovered feeds, refuses
   unsynchronized observations, and confirms destructive absence/finalization

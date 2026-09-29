@@ -404,3 +404,7 @@ Apache-2.0
 
 On `turbomode`, PV binding also uses indexed claim/volume workers; claim
 selection is serialized so acknowledged reservations precede the next claim.
+
+The `turbomode` scheduler uses a shared Pod/VMI object queue and incremental
+capacity accounting. Bind acknowledgements and volume-wait reservations are
+charged before the next placement; storage reads use shared informer indexes.

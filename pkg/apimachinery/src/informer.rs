@@ -88,6 +88,7 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
     }
     if let Some(driver) = object["spec"]["csi"]["driver"].as_str() { result.insert(Index::Driver(driver.into())); }
     if let Some(pod) = object["spec"]["podName"].as_str() { result.insert(Index::Pod(key.namespace.clone(), pod.into())); }
+    if let Some(class) = object["storageClassName"].as_str() { result.insert(Index::StorageClass(class.into())); }
     if let Some(name) = object["spec"]["scaleTargetRef"]["name"].as_str() {
         result.insert(Index::Target(key.namespace.clone(),object["spec"]["scaleTargetRef"]["kind"].as_str().unwrap_or("Deployment").into(),name.into()));
     }

@@ -89,6 +89,12 @@ impl<K: Clone + Eq + Hash> WorkQueue<K> {
     }
 
     pub async fn next(self: &Arc<Self>) -> Work<K> {
+        self.next_by(|_,_| std::cmp::Ordering::Equal).await
+    }
+
+    /// Select a ready key by priority without changing deduplication or the
+    /// processing/dirty protocol. Equal priorities retain FIFO order.
+    pub async fn next_by(self: &Arc<Self>, compare: impl Fn(&K,&K) -> std::cmp::Ordering) -> Work<K> {
         loop {
             // enable before examining state: supports multiple waiting workers
             // without losing notify_one between the check and the await.
@@ -115,7 +121,8 @@ impl<K: Clone + Eq + Hash> WorkQueue<K> {
                         }
                     }
                 }
-                if let Some(key) = state.ready.pop_front() {
+                let next = state.ready.iter().enumerate().min_by(|(_,a),(_,b)| compare(a,b)).map(|(i,_)| i);
+                if let Some(key) = next.and_then(|i| state.ready.remove(i)) {
                     let entry = state.entries.get_mut(&key).unwrap();
                     entry.queued = false;
                     entry.processing = true;

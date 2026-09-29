@@ -266,7 +266,9 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] GC: indexed resource workers fail closed on any unsynced feed; confirm
       owner absence and finalizer-dependent membership with authoritative reads
       and apply destructive UID/revision preconditions. Remote checks pending
-- [ ] scheduler indexed queue + reservations (with #145)
+- [x] Scheduler: one serialized Pod/VMI queue, indexed storage reads, shared
+      acknowledged-write accounting and retained bind/volume assumptions;
+      optional VMI feed enabled by CRD observation. Remote validation pending.
 - [ ] audit: write overlays/create expectations, cache recovery barriers,
       destructive cleanup preconditions
 

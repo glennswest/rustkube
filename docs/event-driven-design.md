@@ -23,7 +23,12 @@ named reference indexes and remain status-only. GC uses owner indexes across
 discovered shared feeds; all feeds must be synchronized. Background owner
 absence needs GET confirmation, and owner finalization deliberately retains
 authoritative paginated membership checks. Event retention is per-event with
-an expiry deadline.
+an expiry deadline. The scheduler uses one serialized Pod/VMI queue and
+shared incremental capacity accounting; acknowledged writes replace bind
+assumptions without double counting, and volume waits retain their charge.
+Unknown write outcomes retain assumptions until observed binding/deletion or
+a different durable object revision fences the outstanding CAS. Optional VMI
+observation is gated on CRD discovery, never on a swallowed failed LIST.
 
 ## Objective and boundary
 
