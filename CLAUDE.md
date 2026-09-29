@@ -145,6 +145,9 @@ when each piece landed.
       start of it
 
 ### Multi-arch image placement (#8) — acceptance target needed, 2026-09-29
+- [x] Baseline sc-build at 89f36a8: apiserver 197 and scheduler 57 unit tests
+      passed, doc tests passed, remote exit 0. Local build-log append was
+      read-only. No image-admission or mixed-hardware acceptance was run.
 - [x] Read #8; inspect built-in admission and scheduler affinity/gate handling.
       The scheduler has an arch affinity unit test. rustkube-node registration
       code sets arch/os labels; deployment on mixed hardware is not verified.

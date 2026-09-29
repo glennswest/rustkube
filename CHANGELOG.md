@@ -5,6 +5,8 @@
 ### 2026-09-29
 - **docs:** Record #8 implementation gaps, existing arch-label/filter code,
   gate/webhook prerequisites and the required mixed-architecture test target.
+  Remote sc-build at 89f36a8 passed 254 apiserver/scheduler unit tests and
+  doc tests; this does not establish image-aware admission acceptance.
 - **docs:** Audit #3 scheduler parity gaps and record the unresolved upstream
   version/acceptance-cluster decision before implementation. Remote sc-build
   at 58ea6d2 compiled kube-scheduler and passed 57 scheduler tests; upstream
