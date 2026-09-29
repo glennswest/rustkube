@@ -99,7 +99,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [x] Compare history since 2026-09-18 and current source with README and every docs page.
 - [x] Verify CLI defaults, listeners, API limitations, built-in stormblock PVC ownership and delivery tooling; distinguish turbomode from shipped behavior.
 - [x] Track unsupported promises: existing #90/#114/#140, newly filed #156/#157; storage corrections address #112/#117.
-- [ ] Push refreshed docs/changelog and verify links, CLI coverage and remote checks.
+- [x] Pushed refresh 635855d and review b906e58. All 41 CLI flags covered;
+      26 relative documentation link targets resolve. sc-build at 635855d:
+      five libraries 409 passed, 4 datastore-dependent tests ignored, doc tests
+      passed; remote exit 0 in 33 seconds (local log append read-only).
+      #112/#117 closed with documentation evidence; #114 workflow removal and
+      #156/#157 tooling gaps remain open. No code/version change or golden.
 
 ### History (condensed)
 
