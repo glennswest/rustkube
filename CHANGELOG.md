@@ -4,7 +4,9 @@
 
 ### 2026-09-29
 - **docs:** Reconcile #20 with stormcert renewal and stormcos#119; distinguish
-  external issuance from rustkube reload gaps and record the CA/scope decision.
+  external issuance from rustkube reload gaps and record the pending CA/scope
+  decision. sc-build at 6f7e318 passed 3 cert-helper and 197 apiserver tests;
+  the CSR filter matched no tests. Rotation acceptance remains unverified.
 - **docs:** Record #8 implementation gaps, existing arch-label/filter code,
   gate/webhook prerequisites and the required mixed-architecture test target.
   Remote sc-build at 89f36a8 passed 254 apiserver/scheduler unit tests and

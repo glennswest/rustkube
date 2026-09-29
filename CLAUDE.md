@@ -145,6 +145,9 @@ when each piece landed.
       start of it
 
 ### Certificate lifecycle (#20) — scope decision needed, 2026-09-29
+- [x] sc-build at 6f7e318: 3 cert-helper and 197 apiserver tests passed;
+      the controller-manager csr:: filter matched no tests. Remote exit 0,
+      local build-log append read-only. No renewal/rollover acceptance run.
 - [x] Read #20 and inspect TLS reload, renewal tooling and current stormcert
       integration. Expiry metrics and serving reload exist; #93 still permits
       mismatched serving pairs. Client identities/trust reload remain #105.
