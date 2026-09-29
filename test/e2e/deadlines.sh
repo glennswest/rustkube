@@ -6,7 +6,8 @@
 # few seconds ahead with nothing else changing, and requires the action to
 # happen after the deadline (not early) and soon after it (a wake, not a slow
 # sweep). The last check counts the controller-manager's API requests over a
-# quiet window: an idle control plane should make none.
+# quiet minute, longer than the 45 s watch heartbeat: an idle control plane
+# makes none (retries of an unserved API aside).
 . "$(dirname "$0")/lib.sh"
 start_controller_manager
 export API ADMIN
@@ -159,15 +160,17 @@ scrape() {
 sleep 10   # let the cleanup above settle
 scrape >"$W/idle.before"
 idle_from=$(date -u +%H:%M:%S)
-sleep 20
+sleep 60   # longer than the 45 s watch heartbeat
 scrape >"$W/idle.after"
 idle_to=$(date -u +%H:%M:%S)
 # The first scrape itself completes inside the window and is counted once.
-idle=$(awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) { n+=d; print "  +" d, $1 > "/dev/stderr" } } END { printf "%d\n", n-1 }' \
+# Retries of an API the rig does not serve (KubeVirt, 404, backing off to
+# 30 s) are error retries, listed but not counted.
+idle=$(awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) { print "  +" d, $1 > "/dev/stderr"; if ($1 !~ /code="404"/) n+=d } } END { printf "%d\n", n-1 }' \
   "$W/idle.before" "$W/idle.after")
-if [ "$idle" -le 5 ]; then pass "idle control plane: $idle API requests in 20 s"
+if [ "$idle" -le 0 ]; then pass "idle control plane: $idle API requests in 60 s"
 else
-  fail "idle control plane made $idle API requests in 20 s"
+  fail "idle control plane made $idle API requests in 60 s"
   echo "---- controller-manager warnings $idle_from..$idle_to"
   sed 's/\x1b\[[0-9;]*m//g' "$W/cm.log" | awk -v a="$idle_from" -v b="$idle_to" 'substr($1,12,8) >= a && substr($1,12,8) <= b' |
     grep -v 'not synchronized' | head -40
