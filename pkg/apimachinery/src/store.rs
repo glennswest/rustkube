@@ -15,6 +15,8 @@ pub struct ListResult {
     pub continue_token: Option<String>,
     /// The current store revision at the time of the list.
     pub revision: u64,
+    /// Number of matching keys beyond this page, if known.
+    pub remaining: Option<u64>,
 }
 
 /// Stream of watch events from the store.
@@ -45,6 +47,25 @@ pub trait KvStore: Send + Sync + 'static {
         limit: usize,
         continue_token: Option<&str>,
     ) -> Result<ListResult>;
+
+    /// Read a page at a fixed datastore revision. Production backends must
+    /// implement MVCC; the default only permits an unchanged current snapshot
+    /// and fails closed if a test/alternate backend cannot retain history.
+    async fn list_at(
+        &self,
+        prefix: &str,
+        limit: usize,
+        continue_token: Option<&str>,
+        revision: Option<u64>,
+    ) -> Result<ListResult> {
+        let page = self.list(prefix, limit, continue_token).await?;
+        if let Some(revision) = revision {
+            if page.revision != revision {
+                return Err(crate::Error::Gone(revision));
+            }
+        }
+        Ok(page)
+    }
 
     /// Watch for changes to keys with a given prefix, starting from a revision.
     async fn watch(&self, prefix: &str, start_revision: u64) -> Result<WatchStream>;

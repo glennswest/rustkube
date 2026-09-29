@@ -3,8 +3,8 @@
 ## Project Overview
 
 RustKube is a Kubernetes **control plane** in Rust — `kube-apiserver`,
-`kube-controller-manager`, `kube-scheduler` — wire-compatible with kubectl,
-oc, helm and client-go. Target scale: 100–1000+ nodes (largest run: a
+`kube-controller-manager`, `kube-scheduler` — serving a subset of the wire API used by kubectl,
+oc, helm and client-go; full drop-in parity is not established. Target scale: 100–1000+ nodes (largest run: a
 synthetic 250 nodes, #66). **README.md describes what the code does; read it
 first.** It was rewritten from the code on 2026-09-24 (#80) — keep it that way:
 a behaviour change updates the README in the same commit.
@@ -33,9 +33,9 @@ sc-build                              # cargo build && cargo test at the pushed 
 sc-build 'cargo test -p apiserver'    # any command
 ```
 
-dev.g8.lo's `/tmp` is not writable by the build user: prefix commands with
-`mkdir -p $HOME/tmp && export TMPDIR=$HOME/tmp &&` (etcd-client's build
-script needs a temp dir). `protoc` is required (`pkg/apimachinery/build.rs`).
+`sc-build` supplies a private build volume, including HOME and TMPDIR, and
+deletes it after the job. Do not override those paths or retain a checkout.
+`protoc` is required (`pkg/apimachinery/build.rs`).
 
 ## Workspace Structure
 
@@ -49,7 +49,7 @@ pkg/
   storage/            etcd v3 client (etcd-client) — keys are opaque here
   apiserver/          REST API (axum), auth, RBAC, built-in admission, watch cache, CRDs
   scheduler/          fixed filter/score functions, volume binding, VMI placement
-  controller-manager/ the built-in controllers (poll + list, no informers)
+  controller-manager/ the built-in controllers (bounded indexed object workers on turbomode)
   cloud/              EMPTY — a doc comment, no code, nothing depends on it
 ```
 
@@ -64,6 +64,7 @@ Objects are `serde_json::Value` throughout; no k8s-openapi types are used.
 
 ```
 Cargo.toml → workspace.package.version
+Cargo.lock → versions of all workspace packages (keep in sync)
 ```
 
 ## Key Dependencies
@@ -83,7 +84,40 @@ imported.
 
 ## Current Version: `v0.18.0`
 
+The #163 integration brings unreleased indexed workers/informers to **main**.
+Do not describe branch code as installed or conformant. GitHub Actions is
+disabled by owner decision (#114); use sc-build and the approved component
+golden path, never persistent dev storage. Issue #163 does not authorize
+golden promotion. See docs/releasing.md and docs/changes-since-2026-09-18.md.
+PVCs of class `stormblock` are the kubelet's built-in blank-clone driver;
+CSI is the third-party path. Sbregistry supplies blank templates, not PVC
+clone requests. README's configuration tables come from the three CLI sources.
+
 ## Work Plan
+
+### Merge turbomode into main (#163) — 2026-09-29
+Owner instruction #163 supersedes the earlier branch-only restriction below.
+No golden or release is requested; unfinished acceptance stays on its issues.
+- [x] Read #163 and open issues; fetched main is already in turbomode history.
+- [x] Merge origin/main into turbomode: already up to date; no conflicts.
+- [ ] Push and run sc-build with cargo build --workspace --locked and
+      cargo test --workspace --locked (including the test-container crate).
+- [ ] Refresh branch-status documentation, merge with --no-ff into main,
+      push and verify the pushed main head with the same whole-workspace suite.
+- [ ] Record counts and remaining acceptance issues, then close #163.
+Version remains v0.18.0 plus unreleased changes: this is the requested branch
+integration, not completion or release of the pending turbomode feature work.
+
+### Documentation audit — 2026-09-29
+- [x] Compare history since 2026-09-18 and current source with README and every docs page.
+- [x] Verify CLI defaults, listeners, API limitations, built-in stormblock PVC ownership and delivery tooling; distinguish turbomode from shipped behavior.
+- [x] Track unsupported promises: existing #90/#114/#140, newly filed #156/#157; storage corrections address #112/#117.
+- [x] Pushed refresh 635855d and review b906e58. All 41 CLI flags covered;
+      26 relative documentation link targets resolve. sc-build at 635855d:
+      five libraries 409 passed, 4 datastore-dependent tests ignored, doc tests
+      passed; remote exit 0 in 33 seconds (local log append read-only).
+      #112/#117 closed with documentation evidence; #114 workflow removal and
+      #156/#157 tooling gaps remain open. No code/version change or golden.
 
 ### History (condensed)
 
@@ -97,12 +131,12 @@ never wired (webhooks, aggregation, preemption) or never written (the cloud
 provider). What exists now is in the README; the release history below says
 when each piece landed.
 
-### Found by the docs pass (#80), open
+### Findings from the docs pass (#80)
 - [ ] Admission webhooks are never called (#82)
 - [ ] Aggregation proxies nothing (#83)
 - [ ] Scheduler never preempts (#84); ignores `schedulingGates` (#87)
 - [x] PriorityClass / TokenReview missing from `/apis` (#85) — fixed in
-      6fd2722; closes when the conformance rerun confirms
+      6fd2722; discovery was exercised by the efbea2d conformance run.
 - [ ] No `/scale` subresource; `kubectl scale` fails (#86)
 - [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88)
 - [ ] HPA placeholder: no metrics, never scales down (#89)
@@ -117,7 +151,10 @@ when each piece landed.
 - [x] GC deleted a live Deployment's ReplicaSet (#99): protobuf creates were
       stored with `uid: ""`; fixed in v0.15.3
 - [ ] NotFound names the store key (#109); unserved resources answer an empty
-      list (#110); LIST items carry no `resourceVersion` (#111)
+      list (#110).
+- [x] LIST items carry resourceVersion and continuation pages request the
+      first page's revision (64963b2, #111). The still-open issue label does
+      not mean this code is absent; fastetcd snapshot correctness is #50 there.
 - [ ] RBAC escalation prevention (#98); until then Namespace writes stay
       cluster-scoped (#97)
 - [ ] Secrets: `stringData` not folded into `data` (#101)
@@ -128,7 +165,13 @@ when each piece landed.
       and only system burn or stress tests of the system in the qa."**
       rustkube's tests live in its own `test/` container, never stormcos_qa
 - [ ] Test containers per the stormcos test standard (#96) — IN PROGRESS
-      2026-09-28. `test/` crate `rustkube-test` (workspace member, excluded
+      2026-09-29: sc-build at a4dba9c compiled rustkube-test and passed all
+      9 unit tests (remote exit 0; local build-log append read-only). Real
+      short suite at main@d7bc1f8 was refused with HTTP 400 before any Job:
+      C2NR0Q2's apiserver unavailable after three errored runs. It is the only
+      registered test host; last install 11.52 failed. Blocked on
+      stormcentral#63; retry the real suite after API recovery. No live pass
+      and no run ID. Prior work, 2026-09-28: `test/` crate `rustkube-test` (workspace member, excluded
       from default-members), `/test short|medium|long`, JSON lines, exit
       0/1/2. Runs as stormcentral's `storm-test` SA: `*` in its namespace
       only, no cluster reads. [x] short, medium, long written (test/README.md)
@@ -143,6 +186,148 @@ when each piece landed.
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted,
       vm-runstrategy) are the
       start of it
+
+### Controller-manager drop-in parity (#2) — acceptance environment needed, 2026-09-29
+- [x] sc-build at 5687d0f compiled kube-controller-manager and passed 58 unit
+      tests plus doc tests (remote exit 0; local build-log append read-only).
+      This baseline run does not verify upstream acceptance.
+- [x] Read #2 and totrust#4; audit CLI, controller runner and HPA. TLS/token,
+      Leases, metrics/health and workload controllers exist. Kubeconfig and
+      signal handling are absent; controller presence does not establish parity.
+- [x] Read totrust/PINS.yaml: the shared acceptance baseline is v1.31.4.
+      This is distinct from rustkube's advertised 1.36 API posture; pin changes
+      belong in totrust and must not be silently chosen in this repository.
+- [ ] Owner identifies an isolated otherwise-upstream cluster with real
+      kubelets and a deployment route for swapping only controller-manager.
+- [ ] Complete kubeconfig, shutdown, ServiceAccount/token lifecycle,
+      ResourceQuota (#124), real HPA (#89) and the controller parity review.
+      Coordinate indexed workers and recovery safety with #146.
+- [ ] Run all-upstream baseline and Rust-CM-only comparison: Deployment ->
+      ReplicaSet -> Pods, scale up/down, owner-reference deletion and failover.
+      Keep #2 open until implementation and upstream acceptance pass.
+
+### Certificate lifecycle (#20) — scope decision needed, 2026-09-29
+- [x] sc-build at 6f7e318: 3 cert-helper and 197 apiserver tests passed;
+      the controller-manager csr:: filter matched no tests. Remote exit 0,
+      local build-log append read-only. No renewal/rollover acceptance run.
+- [x] Read #20 and inspect TLS reload, renewal tooling and current stormcert
+      integration. Expiry metrics and serving reload exist; #93 still permits
+      mismatched serving pairs. Client identities/trust reload remain #105.
+- [x] Identify existing renewal owner: stormcert-agent has a renewal loop;
+      stormcos#119 tracks wiring it into the golden. Do not duplicate it here.
+- [ ] Owner reconciles #20's operator/CA-rotation roadmap with stormcert
+      ownership and the ten-year CA decision recorded in stormcos#119.
+      Canonical CA selection also remains open in stormcert#49.
+- [ ] Once scope is settled, finish the rustkube reload obligations (#93/#105)
+      and coordinate external delivery/renewal through their owning issues.
+- [ ] Verify renewal without authentication loss, malformed/mismatched pair
+      retention and the selected trust/key rollover contract before closure.
+      cert-manager compatibility is optional and has not been implemented.
+
+### Multi-arch image placement (#8) — acceptance target needed, 2026-09-29
+- [x] Baseline sc-build at 89f36a8: apiserver 197 and scheduler 57 unit tests
+      passed, doc tests passed, remote exit 0. Local build-log append was
+      read-only. No image-admission or mixed-hardware acceptance was run.
+- [x] Read #8; inspect built-in admission and scheduler affinity/gate handling.
+      The scheduler has an arch affinity unit test. rustkube-node registration
+      code sets arch/os labels; deployment on mixed hardware is not verified.
+- [ ] Owner identifies an isolated mixed amd64/arm64 acceptance cluster and
+      the supported deployment route for the changed control plane.
+- [ ] Implement safe scheduling-gate handling (#87) before enabling gated
+      placement; webhook-based admission additionally requires #82.
+- [ ] Implement image resolution (indexes and single-image config), private
+      pull-secret authentication, bounded credential-scoped cache, intersection
+      across workload images, exclusions and affinity injection that preserves
+      existing constraints. Failed inspection must not silently release a gate.
+- [ ] Verify registry failure/recovery, conflicting image architectures, init
+      containers, existing affinity, private secrets and excluded namespaces.
+- [ ] Run real mixed-architecture placement acceptance; keep #8 open until
+      admission, enforcement and runtime results are all verified.
+
+### Scheduler drop-in parity (#3) — needs owner baseline, 2026-09-29
+- [x] Baseline at 58ea6d2: sc-build compiled kube-scheduler and passed all
+      57 scheduler unit tests plus doc tests (remote exit 0). Local build-log
+      append was read-only. This does not verify upstream parity.
+- [x] Read #3 and audit scheduler CLI, scheduling loop, score functions and
+      unused plugin traits against the recorded scope.
+- [x] Follow-up during #2: totrust/PINS.yaml supplies the shared acceptance
+      baseline v1.31.4. README posture and research versions do not override it.
+- [ ] Owner identifies an isolated otherwise-upstream acceptance cluster with
+      real kubelets and a deployment route; shared pin changes belong in totrust.
+- [ ] Implement kubeconfig/configuration profiles, framework/default scoring
+      parity, priority/backoff/unschedulable queues and nomination, preemption
+      (#84), scheduling gates (#87), and Pod scheduling events/status (#138).
+      Coordinate indexed scheduling/reservations with #145/#146.
+- [ ] Build/test on dev via sc-build, then compare placement against upstream
+      on identical inputs, including infeasible and failure cases. Unit tests
+      and the rustkube synthetic rig cannot close upstream acceptance.
+- [ ] Keep #3 open until implementation and upstream acceptance are verified.
+
+### Turbomode indexed workers (#146) — acceptance BLOCKED on fastetcd#50
+Owner #163 authorizes integration into main; no goldens. Design: docs/event-driven-design.md;
+handoff: docs/turbomode-handoff.md.
+
+Resume checkpoint 2026-09-29: pushed fc67179 passed the handoff five-crate
+`sc-build` command (exit 0; four storage integration tests ignored because
+they require a running datastore). The branch already
+contains the routed dependency runner and DaemonSet migration. Master update
+on #146 authorizes remaining implementation now; live-target selection is
+not a blocker for this work. Live validation belongs to #147/#149.
+Implementation and dev unit/API-rig work below are complete; acceptance is
+blocked by fastetcd#50. Resume with the isolated snapshot regression after the
+datastore fix, then #147/#149 runtime validation. Do not claim live acceptance.
+- [x] origin/main merged into turbomode (de8c912); handoff step 2 on dev:
+      `cargo test --locked` for the five crates passes (87/197/56/57, storage 4 ignored)
+- [x] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
+      Pod labels → Service/PDB, PVC/PV → binder…), children optional
+- [x] DaemonSet (Node eligibility + owned Pods), implemented at 826a8a4;
+      API-rig node regression passed 10/10 at 72908ec
+- [x] Service/EndpointSlice, PDB: selector-indexed Pod membership, UID-safe
+      endpoint cleanup, CAS/no-op writes; real selector rig passed 14/14 at
+      eff0752 after repairing UID-less bootstrap endpoints.
+- [x] Baseline 79c1a9e: handoff five-crate command passed on dev (four
+      datastore-dependent storage tests ignored).
+- [x] PV binder: serialized indexed claim workers and per-PV lifecycle;
+      only 404 proves claim absence; real CSI expansion passed 14/14 at 72908ec
+- [x] Stormblock claim and reclaim workers; node lifecycle indexed by Lease
+      name and assigned Pod, preserving expiry/toleration deadlines
+- [x] Attach/detach: per-PV workers with indexed claim/Pod/driver/attachment
+      dependencies and conditional detach; unit tests pass
+- [x] VM (owned VMI), CSR, root CA (ConfigMap → Namespace); VM rig 10/10 at eff0752
+- [x] Migration and HPA object workers with named Pod/Node/target routes;
+      HPA remains the #89 placeholder, status timestamp echoes suppressed
+- [x] Namespace: separate provision/teardown object pools, discovered shared
+      feeds, conditional deletes and authoritative finalization confirmation
+- [x] Gateway/HTTPRoute named-reference workers; stable condition timestamps
+- [x] Events: per-event TTL deadlines and conditional deletion
+- [x] GC: indexed resource workers fail closed on any unsynced feed; confirm
+      owner absence and finalizer-dependent membership with authoritative reads
+      and apply destructive UID/revision preconditions. All three propagation
+      modes, Event expiry and namespace finalizers pass at 226a388
+- [x] Scheduler: one serialized Pod/VMI queue, indexed storage reads, shared
+      acknowledged-write accounting and retained bind/volume assumptions;
+      optional VMI feed enabled by CRD observation. Shared accounting unit
+      tests and burst/capacity-release API-rig checks pass at 226a388.
+- [x] Five-crate final implementation tests at 9a24ce9: 409 passed, four
+      datastore integration tests ignored. API safety/CSI/DaemonSet/VM checks
+      pass at 1b6f951. Thirty fresh selector repetitions and ten short-suite
+      repetitions pass; retain original intermittent failures #153/#154.
+- [x] Audit create expectations, cache recovery, delayed acknowledgement
+      history, destructive preconditions and shared resource reservations.
+- [x] Isolate an upstream consistency violation: 981dcdb's
+      `test/e2e/list-snapshot-race.sh` has no controllers/scheduler and detects
+      165 inconsistent LIST snapshots out of 255, against 400 accepted creates.
+- [ ] **Blocked by fastetcd#50:** Range contents and response revision are
+      sampled separately. A LIST can omit writes at/below its advertised RV,
+      and the following WATCH skips them. Hand the fix to fastetcd; do not
+      hide this with poll sweeps or change the datastore from this checkout.
+- [ ] After fastetcd#50 is fixed, rerun the isolated regression and the full
+      unit/API-rig matrix. Confirm #153's startup convergence and investigate
+      #154's separate POST timeout; their passing reruns do not prove a fix.
+      Close #146 only after the snapshot/cache contract is verified.
+- [x] Earlier rig failures #151 (bootstrap UID) and #152 (port/binary setup)
+      fixed and closed with successful sc-build evidence. #155 records the
+      now-isolated snapshot failure and follows fastetcd#50.
 
 ### VM runStrategy on a failed VMI (#104) — COMPLETE 2026-09-28
 - [x] Failed VMI recreated for `Always`/`RerunOnFailure`/`running: true`
@@ -173,7 +358,7 @@ when each piece landed.
 - [x] A watch from revision 0 ("from now") is served by the cache, not the store
 - [x] `test/e2e/watch-deleted.sh` on dev
 
-### Storage (v0.8.0)
+### Storage — current through v0.18.0
 - [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
 - [x] Attach/detach — `VolumeAttachment` for drivers that require it
 - [x] Volume-aware scheduling — PV `nodeAffinity`, `selected-node`,
@@ -217,9 +402,28 @@ when each piece landed.
       `sub`, not the token. Claim contract in docs/certificates.md
 - The token itself is stormcert's (stormcert#5)
 
+### Scale measurement (#66) — awaiting execution decision, 2026-09-29
+- [x] Five-crate `sc-build` at f5d3876: 400 unit tests passed, four storage
+      integration tests ignored, doc tests passed; no scale workload run.
+      Remote exit 0; local runs.jsonl append reported a read-only filesystem.
+- [x] Read issue history: the old 250-node curve used truncated controller
+      LISTs; pagination was fixed in v0.12.0, but the full-read curve is absent.
+- [x] Document the 10/100/1000-node protocol in docs/scale.md, keeping fake
+      Nodes alive with Leases and checking the full Pod population.
+- [ ] Owner selects an isolated test environment and fresh-binary delivery
+      route outside build slots (#140); turbomode live target is also pending
+      on #146. Do not choose or launch a stress workload before that decision.
+- [ ] Run and publish CPU/request/latency/datastore curves and Deployment
+      scale-to-Pod-creation latency; keep #66 open until measurements exist.
+
 ### Phase 4: Scale & Conformance
-- [ ] 1000+ node testing (#66) — the controllers list everything every tick,
-      which is what will break first
+
+The dated entries below preserve the historical investigation; temporary logs
+and staged artifacts are not promised to exist today. Current procedure and
+results are in docs/conformance.md.
+
+- [ ] 1000+ node testing (#66) — indexed workers now exist on turbomode,
+      but their full-population resource/latency and failover curves are unverified
 - [x] K8s conformance test suite (#67) — closed 2026-09-28; first run on dev,
       `test/conformance/run.sh`: e2e.test v1.36.x `[Conformance]` (443) against
       apiserver + controller-manager + scheduler with two heartbeat-kept
@@ -282,8 +486,8 @@ when each piece landed.
     can't write /build/assets under the no-kept-state build rule (#140) —
     owner decides how binaries reach conform.g8.lo (goldens? #96 test
     container?). efbea2d is still staged there.
-- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — CI
-      builds x86_64 musl only; `build-release.sh` can target aarch64 via
+- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — the disabled workflow
+      describes x86_64 musl only (#114); `build-release.sh` can target aarch64 via
       `cross`, and no such build has been recorded
 
 ### `oc` compatibility — the surface that drives completeness

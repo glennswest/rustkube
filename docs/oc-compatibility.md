@@ -27,14 +27,18 @@ State on 2026-09-26, from the code and from running oc against it
   `user.openshift.io` or SelfSubjectReview); `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
 
-# `oc` Command Reference & StromCOS Verification Runbook
+# `oc` command reference and compatibility checklist
 
-> **Note on "stromcos":** This runbook is written parameterized by name/namespace so it
-> applies to whichever Storm-ecosystem component you mean (closest match on file is
-> **stormos**, alongside stormblock, stormfs, stormforce, mkube). Once the component is
-> confirmed, the `<storm-cr>` placeholders in §6 and the functional smoke test in §12 can
-> be filled in with the real CR/API and the whole thing collapsed into a single
-> `verify-stromcos.sh` returning a clean exit code.
+This is the upstream command surface, not a list of implemented features.
+The checklist below records tested API obligations. As of 2026-09-29,
+`/scale` (#86), aggregated discovery (#107), node proxy (#108), OpenShift
+reviews (#106), and kubelet streaming (rustkube-node#56) remain gaps. CSR
+approval PATCH exists (6d0ed10); actual signing requires controller-manager
+cluster-signing files. README and conformance.md describe current behavior.
+
+Part II is a generic diagnostic template with unresolved placeholders, not
+an executable acceptance suite. Component-owned tests now live in `test/`
+(#96); system stress belongs in stormcos_qa, per the owner's recorded decision.
 
 ---
 
@@ -202,9 +206,10 @@ new Deployment's ReplicaSet (#99, fixed in #69).
 
 ---
 
-# Part II — StromCOS Verification Runbook
+# Part II — Historical diagnostic template (not a verified runbook)
 
-Copy-paste ready. Set the vars once; the rest follows.
+Adapt the placeholder namespace, workload and operator names before using
+these diagnostic examples. They are not the component acceptance test.
 
 ```bash
 export NS=stromcos                 # namespace

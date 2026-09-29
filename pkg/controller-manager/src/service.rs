@@ -1,15 +1,15 @@
 //! Service controller.
 //!
-//! Periodically lists Services and Pods, and manages Endpoints objects.
+//! Indexed Service workers observe Pod membership and owned endpoint changes.
 //! For each Service with a selector, finds matching pods and creates/updates
 //! the corresponding Endpoints resource with the pod IPs and ports, and the
 //! matching `discovery.k8s.io/v1` EndpointSlice.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::{Index, Key};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
-use tracing::{debug, error, info};
 
 pub struct ServiceController {
     api: Arc<ApiClient>,
@@ -21,89 +21,7 @@ impl ServiceController {
     }
 
     pub async fn run(&self) {
-        info!("Service controller started");
-        let mut interval = time::interval(Duration::from_secs(3));
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Service reconcile error: {e}");
-            }
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("Service reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let svc_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/services"))
-            .await?;
-        let services = svc_list["items"].as_array().cloned().unwrap_or_default();
-
-        let pod_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-            .await?;
-        let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-
-        for svc in &services {
-            if let Err(e) = self.reconcile_service(namespace, svc, &pods).await {
-                let name = svc["metadata"]["name"].as_str().unwrap_or("?");
-                debug!("Failed to reconcile service {namespace}/{name}: {e}");
-            }
-        }
-        self.remove_orphans(namespace, &services).await;
-        Ok(())
-    }
-
-    /// Delete the Endpoints and EndpointSlices this controller made for a
-    /// Service that is gone.
-    ///
-    /// They carry the Service as their controlling owner, so the garbage
-    /// collector would get to them — on its own schedule, which under load is
-    /// longer than a client waits (#67: the Endpoints conformance spec gives
-    /// it 30 s). Upstream's endpoints controller deletes them itself. Only
-    /// objects whose controller is a Service with a uid no live Service has
-    /// are touched: a selectorless Service's hand-made Endpoints have no such
-    /// owner.
-    async fn remove_orphans(&self, namespace: &str, services: &[Value]) {
-        let live: std::collections::HashSet<&str> =
-            services.iter().filter_map(|s| s["metadata"]["uid"].as_str()).collect();
-        for (list_path, item_path) in [
-            (format!("/api/v1/namespaces/{namespace}/endpoints"),
-             format!("/api/v1/namespaces/{namespace}/endpoints")),
-            (format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices"),
-             format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices")),
-        ] {
-            let Ok(list) = self.api.list(&list_path).await else { continue };
-            for item in list["items"].as_array().into_iter().flatten() {
-                let owner = item["metadata"]["ownerReferences"]
-                    .as_array()
-                    .and_then(|refs| {
-                        refs.iter().find(|r| r["kind"] == "Service" && r["controller"] == true)
-                    });
-                let Some(uid) = owner.and_then(|o| o["uid"].as_str()) else { continue };
-                if uid.is_empty() || live.contains(uid) {
-                    continue;
-                }
-                if let Some(name) = item["metadata"]["name"].as_str() {
-                    debug!("Service controller: deleting {item_path}/{name}, its Service is gone");
-                    let _ = self.api.delete(&format!("{item_path}/{name}")).await;
-                }
-            }
-        }
+        owned::run(&self.api, self).await;
     }
 
     async fn reconcile_service(
@@ -131,9 +49,9 @@ impl ServiceController {
             .filter(|pod| {
                 let labels = pod["metadata"]["labels"].as_object();
                 match labels {
-                    Some(pod_labels) => selector_map.iter().all(|(k, v)| {
-                        pod_labels.get(k) == Some(v)
-                    }),
+                    Some(pod_labels) => selector_map
+                        .iter()
+                        .all(|(k, v)| pod_labels.get(k) == Some(v)),
                     None => false,
                 }
             })
@@ -207,23 +125,7 @@ impl ServiceController {
 
         // Create or update the Endpoints object
         let ep_path = format!("/api/v1/namespaces/{namespace}/endpoints/{svc_name}");
-        let resp = self.api.get(&ep_path).await;
-
-        match resp {
-            Ok(r) if r.status().is_success() => {
-                // Update existing
-                self.api.update(&ep_path, &endpoints).await?;
-            }
-            _ => {
-                // Create new
-                self.api
-                    .create(
-                        &format!("/api/v1/namespaces/{namespace}/endpoints"),
-                        &endpoints,
-                    )
-                    .await?;
-            }
-        }
+        self.upsert(&ep_path, endpoints, &["subsets"]).await?;
 
         // Mirror the same backends into an EndpointSlice (discovery.k8s.io/v1) —
         // Cilium / kube-proxy-replacement use slices as the modern default (#22).
@@ -267,20 +169,126 @@ impl ServiceController {
         });
         let slice_path =
             format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices/{svc_name}");
-        match self.api.get(&slice_path).await {
-            Ok(r) if r.status().is_success() => {
-                self.api.update(&slice_path, &slice).await?;
-            }
-            _ => {
+        self.upsert(&slice_path, slice, &["addressType", "endpoints", "ports"])
+            .await?;
+
+        Ok(())
+    }
+    async fn upsert(&self, path: &str, mut desired: Value, fields: &[&str]) -> anyhow::Result<()> {
+        let response = self.api.get(path).await?;
+        if response.status().as_u16() == 404 {
+            self.api
+                .create(path.rsplit_once('/').unwrap().0, &desired)
+                .await?;
+            return Ok(());
+        }
+        let current: Value = response.error_for_status()?.json().await?;
+        let owner = &desired["metadata"]["ownerReferences"][0]["uid"];
+        anyhow::ensure!(
+            current["metadata"]["ownerReferences"]
+                .as_array()
+                .is_some_and(|refs| refs
+                    .iter()
+                    .any(|r| &r["uid"] == owner && r["controller"] == true)),
+            "refusing to overwrite endpoints owned by another Service UID"
+        );
+        if fields
+            .iter()
+            .all(|field| current[*field] == desired[*field])
+            && current["metadata"]["labels"] == desired["metadata"]["labels"]
+        {
+            return Ok(());
+        }
+        desired["metadata"]["resourceVersion"] = current["metadata"]["resourceVersion"].clone();
+        self.api.update(path, &desired).await?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Controller for ServiceController {
+    fn name(&self) -> &'static str {
+        "service"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/services"
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/api/v1/endpoints")
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![
+            Dependency {
+                path: "/api/v1/pods".into(),
+                route: Arc::new(owned::pod_membership),
+            },
+            Dependency {
+                path: "/apis/discovery.k8s.io/v1/endpointslices".into(),
+                route: Arc::new(owned::owner_keys),
+            },
+        ]
+    }
+    async fn reconcile(&self, svc: &Value, _children: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        if !svc["metadata"]["deletionTimestamp"].is_null() {
+            return Ok(());
+        }
+        let mut pods = owned::selected_pods(svc, deps.feed(0))?;
+        // Hash-index iteration is unordered; stable endpoint order avoids writes on every wake.
+        pods.sort_by(|a, b| {
+            a["metadata"]["uid"]
+                .as_str()
+                .cmp(&b["metadata"]["uid"].as_str())
+        });
+        self.reconcile_service(
+            svc["metadata"]["namespace"].as_str().unwrap_or("default"),
+            svc,
+            &pods,
+        )
+        .await
+    }
+    async fn deleted(&self, key: &Key, children: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        // A stale informer must not authorize collection of a still-live owner.
+        let path = format!("/api/v1/namespaces/{}/services/{}", key.namespace, key.name);
+        let response = self.api.get(&path).await?;
+        if response.status().as_u16() != 404 {
+            let current: Value = response.error_for_status()?.json().await?;
+            anyhow::ensure!(
+                current["metadata"]["uid"].as_str() != Some(&key.uid),
+                "Service still exists"
+            );
+        }
+        let slices = deps.feed(1).select(&Index::Owner(key.uid.clone()))?;
+        for (plural, items) in [
+            ("/api/v1", children),
+            ("/apis/discovery.k8s.io/v1", slices.as_slice()),
+        ] {
+            for item in items {
+                if !item["metadata"]["ownerReferences"]
+                    .as_array()
+                    .is_some_and(|refs| {
+                        refs.iter().any(|r| {
+                            r["kind"] == "Service"
+                                && r["controller"] == true
+                                && r["uid"].as_str() == Some(key.uid.as_str())
+                        })
+                    })
+                {
+                    continue;
+                }
+                let resource = if plural == "/api/v1" {
+                    "endpoints"
+                } else {
+                    "endpointslices"
+                };
+                let name = item["metadata"]["name"].as_str().unwrap_or("");
                 self.api
-                    .create(
-                        &format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices"),
-                        &slice,
+                    .delete_observed(
+                        &format!("{plural}/namespaces/{}/{resource}/{name}", key.namespace),
+                        item,
                     )
                     .await?;
             }
         }
-
         Ok(())
     }
 }

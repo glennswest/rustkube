@@ -1,6 +1,6 @@
 //! ReplicaSet controller.
 //!
-//! Periodically lists ReplicaSets and manages Pods to maintain the desired replica count.
+//! Indexed ownership events drive per-ReplicaSet Pod reconciliation.
 //! Creates pods from the template when under-provisioned, deletes excess pods
 //! when over-provisioned.
 
@@ -9,8 +9,7 @@ use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::time::{self, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 pub struct ReplicaSetController {
     api: Arc<ApiClient>,
@@ -29,52 +28,8 @@ impl ReplicaSetController {
     }
 
     pub async fn run(&self) {
-        info!("ReplicaSet controller started");
-        let mut interval = time::interval(Duration::from_secs(2));
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("ReplicaSet reconcile error: {e}");
-            }
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("ReplicaSet reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let rs_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/apps/v1/namespaces/{namespace}/replicasets"
-            ))
-            .await?;
-        let replicasets = rs_list["items"].as_array().cloned().unwrap_or_default();
-
-        let pod_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-            .await?;
-        let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-
-        for rs in &replicasets {
-            if let Err(e) = self.reconcile_replicaset(namespace, rs, &pods).await {
-                let name = rs["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile replicaset {namespace}/{name}: {e}");
-            }
-        }
-        Ok(())
+        info!("ReplicaSet indexed object workers started");
+        crate::owned::run(&self.api, self).await;
     }
 
     async fn reconcile_replicaset(
@@ -143,7 +98,10 @@ impl ReplicaSetController {
             if !pod_name.is_empty() {
                 match self
                     .api
-                    .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
+                    .delete_observed(
+                        &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
+                        pod,
+                    )
                     .await
                 {
                     Ok(_) => info!("GC terminal pod {namespace}/{pod_name} (ReplicaSet {rs_name})"),
@@ -224,7 +182,10 @@ impl ReplicaSetController {
                 if !pod_name.is_empty() {
                     match self
                         .api
-                        .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
+                        .delete_observed(
+                            &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
+                            pod,
+                        )
                         .await
                     {
                         Ok(_) => {
@@ -372,5 +333,29 @@ mod tests {
         let (active, terminal) = classify(&owned);
         assert!(active.is_empty(), "deleting pod must not count as active");
         assert!(terminal.is_empty(), "deleting pod must not be re-deleted");
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::owned::Controller for ReplicaSetController {
+    fn name(&self) -> &'static str {
+        "replicaset"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/apps/v1/replicasets"
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/api/v1/pods")
+    }
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        _deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        self.reconcile_replicaset(namespace, object, children).await
     }
 }

@@ -103,3 +103,33 @@ stand-in Nodes with no kubelet: every check that needs no running pod must
 pass there. Outside a pod, `STORM_SA_DIR` names a directory holding `token`,
 `ca.crt` and `namespace`, and `RUSTKUBE_TEST_IMAGE` the image for workload
 pods.
+
+## Latest acceptance attempt — 2026-09-29
+
+`sc-build 'cargo build --locked -p rustkube-test && cargo test --locked -p rustkube-test'`
+at a4dba9c compiled the test program and passed all nine unit tests.
+The remote command exited 0; the wrapper could not append its local build
+history because that filesystem was read-only.
+
+`stormcentral test run rustkube short --commit d7bc1f8a757ff5aeeb6dc997f8856dd26a92ec09`
+was refused with HTTP 400 before a Job or run ID was created: the only
+registered test machine, C2NR0Q2, had three previous runs fail waiting for its
+apiserver. Its last install was 11.52, failed. This is infrastructure failure,
+not a suite result. Recovery is tracked by
+[stormcentral#63](https://github.com/glennswest/stormcentral/issues/63).
+Retry the short suite through stormcentral after recovery; #96 stays open
+until that real-machine run passes. No hardware-specific assumptions were
+added to the suite.
+
+`e2e/indexed-selectors.sh` exercises Service/PDB Pod relabelling, namespace
+isolation, negative selectors, idle writes and UID replacement against the
+API/store rig. Run through `sc-build`; it does not need a kubelet. The shared
+rig respects the build volume target and scratch paths.
+
+`e2e/indexed-safety.sh` checks GC propagation, Event expiry, namespace
+finalization and scheduler burst/reservation accounting on the same disposable
+rig. It uses stand-in Nodes and does not claim real-node performance.
+
+`bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
+and resourceVersion agree with acknowledged writes. It runs without
+controllers, isolating the datastore/API contract required by informer caches.

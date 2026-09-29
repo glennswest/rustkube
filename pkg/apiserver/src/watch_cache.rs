@@ -17,7 +17,7 @@ use apimachinery::Result;
 use dashmap::DashMap;
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -35,12 +35,13 @@ fn event_kind(ev: &WatchEvent) -> &'static str {
         WatchEvent::Modified { .. } => "MODIFIED",
         WatchEvent::Deleted { .. } => "DELETED",
         WatchEvent::Bookmark { .. } => "BOOKMARK",
+        WatchEvent::Error { .. } => "ERROR",
     }
 }
 
 /// How long a LIST waits for the snapshot to reach a revision this apiserver
 /// wrote, before reading the store instead.
-const MIN_REV_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+const MIN_REV_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
 /// Page size used to seed the snapshot from the store.
 const SEED_PAGE: usize = 1000;
 /// How often the freshness task re-checks the snapshot against the store. Bounds
@@ -69,15 +70,19 @@ pub struct CachePage {
     pub remaining: Option<u64>,
 }
 
-async fn seed_snapshot(
-    store: &Arc<dyn KvStore>,
-    prefix: &str,
-) -> Result<(Snapshot, u64)> {
+async fn seed_snapshot(store: &Arc<dyn KvStore>, prefix: &str) -> Result<(Snapshot, u64)> {
     let mut snapshot = BTreeMap::new();
     let mut continue_token: Option<String> = None;
     let mut rev = 0u64;
     loop {
-        let page = store.list(prefix, SEED_PAGE, continue_token.as_deref()).await?;
+        let page = store
+            .list_at(
+                prefix,
+                SEED_PAGE,
+                continue_token.as_deref(),
+                if rev == 0 { None } else { Some(rev) },
+            )
+            .await?;
         rev = page.revision;
         for (key, bytes, mod_rev) in page.items {
             snapshot.insert(key, (bytes, mod_rev));
@@ -115,6 +120,8 @@ struct PrefixCache {
     snapshot: Mutex<Snapshot>,
     /// Revision the snapshot currently reflects.
     snapshot_rev: AtomicU64,
+    advanced: tokio::sync::Notify,
+    terminated: AtomicBool,
     /// Last time the pump made progress (an event) or the freshness task
     /// re-seeded. Used to distinguish a *quiet* prefix from a *stalled* watch.
     last_progress: Mutex<std::time::Instant>,
@@ -140,13 +147,17 @@ impl WatchCache {
     /// Ensure a single upstream pump exists for `prefix`, returning its cache.
     async fn ensure(&self, prefix: &str) -> Result<Arc<PrefixCache>> {
         if let Some(c) = self.caches.get(prefix) {
-            return Ok(c.clone());
+            if !c.terminated.load(Ordering::SeqCst) {
+                return Ok(c.clone());
+            }
         }
         // Only one creator at a time; re-check under the lock (another task may
         // have created it while we waited).
         let _guard = self.init_lock.lock().await;
         if let Some(c) = self.caches.get(prefix) {
-            return Ok(c.clone());
+            if !c.terminated.load(Ordering::SeqCst) {
+                return Ok(c.clone());
+            }
         }
 
         // Seed a full key→object snapshot from the store (paging through the
@@ -162,29 +173,47 @@ impl WatchCache {
             pump_start_rev: start_rev,
             snapshot: Mutex::new(snapshot),
             snapshot_rev: AtomicU64::new(start_rev),
+            advanced: tokio::sync::Notify::new(),
+            terminated: AtomicBool::new(false),
             last_progress: Mutex::new(std::time::Instant::now()),
         });
 
         // Single upstream watch for this prefix.
         let mut stream = self.store.watch(prefix, start_rev + 1).await?;
+        self.caches.insert(prefix.to_string(), cache.clone());
         let pump = cache.clone();
         let caches = self.caches.clone();
         let prefix_owned = prefix.to_string();
         let prefix_metric = prefix.to_string();
-        tokio::spawn(async move {
+        let pump_task = tokio::spawn(async move {
             while let Some(mut ev) = stream.recv().await {
                 let seq = pump.next_seq.fetch_add(1, Ordering::SeqCst);
+                if matches!(ev, WatchEvent::Error { .. }) {
+                    let _ = pump.tx.send((seq, ev));
+                    break;
+                }
                 // Keep the materialized snapshot current.
                 {
                     let mut snap = pump.snapshot.lock().unwrap();
                     match &mut ev {
-                        WatchEvent::Added { key, value, revision } => {
+                        WatchEvent::Added {
+                            key,
+                            value,
+                            revision,
+                        } => {
                             snap.insert(key.clone(), (value.clone(), *revision));
                         }
                         // The state it replaces goes with the event, so a
                         // selector watch can tell "stopped matching" (#67).
-                        WatchEvent::Modified { key, value, prev_value, revision } => {
-                            let last = snap.insert(key.clone(), (value.clone(), *revision)).map(|(v, _)| v);
+                        WatchEvent::Modified {
+                            key,
+                            value,
+                            prev_value,
+                            revision,
+                        } => {
+                            let last = snap
+                                .insert(key.clone(), (value.clone(), *revision))
+                                .map(|(v, _)| v);
                             if prev_value.is_none() {
                                 *prev_value = last;
                             }
@@ -193,16 +222,19 @@ impl WatchCache {
                         // to the event, before the ring and the fan-out see
                         // it, so every watcher's DELETED carries the object
                         // rather than a name (#100).
-                        WatchEvent::Deleted { key, prev_value, .. } => {
+                        WatchEvent::Deleted {
+                            key, prev_value, ..
+                        } => {
                             let last = snap.remove(key).map(|(v, _)| v);
                             if prev_value.is_none() {
                                 *prev_value = last;
                             }
                         }
-                        WatchEvent::Bookmark { .. } => {}
+                        WatchEvent::Bookmark { .. } | WatchEvent::Error { .. } => {}
                     }
                 }
                 pump.snapshot_rev.store(ev.revision(), Ordering::SeqCst);
+                pump.advanced.notify_waiters();
                 *pump.last_progress.lock().unwrap() = std::time::Instant::now();
 
                 // What the cache holds, under upstream's names. These are
@@ -232,7 +264,18 @@ impl WatchCache {
                 let _ = pump.tx.send((seq, ev));
             }
             // Upstream watch ended — drop the prefix so the next watcher re-opens.
-            caches.remove(&prefix_owned);
+            pump.terminated.store(true, Ordering::SeqCst);
+            pump.advanced.notify_waiters();
+            let seq = pump.next_seq.fetch_add(1, Ordering::SeqCst);
+            let _ = pump.tx.send((
+                seq,
+                WatchEvent::Error {
+                    code: 503,
+                    message: "datastore watch disconnected".into(),
+                    revision: pump.snapshot_rev.load(Ordering::SeqCst),
+                },
+            ));
+            caches.remove_if(&prefix_owned, |_, value| Arc::ptr_eq(value, &pump));
         });
 
         // Freshness task: if the upstream watch *silently stalls* (connection
@@ -245,14 +288,19 @@ impl WatchCache {
             let store = self.store.clone();
             let caches = self.caches.clone();
             let prefix_fresh = prefix.to_string();
+            let abort_pump = pump_task.abort_handle();
             tokio::spawn(async move {
-                let mut tick = tokio::time::interval(std::time::Duration::from_secs(FRESHNESS_SECS));
+                let mut tick =
+                    tokio::time::interval(std::time::Duration::from_secs(FRESHNESS_SECS));
                 tick.tick().await; // consume the immediate first tick
                 let stall = std::time::Duration::from_secs(STALL_SECS);
                 loop {
                     tick.tick().await;
                     // Stop once this prefix's pump has been torn down.
-                    if !caches.contains_key(&prefix_fresh) {
+                    if !caches
+                        .get(&prefix_fresh)
+                        .is_some_and(|entry| Arc::ptr_eq(entry.value(), &fresh))
+                    {
                         break;
                     }
                     // Only suspect a stall if the pump has made NO progress for a
@@ -294,10 +342,30 @@ impl WatchCache {
                                 changed
                             };
                             fresh.snapshot_rev.store(rev, Ordering::SeqCst);
+                            fresh.advanced.notify_waiters();
                             // Count the re-seed as progress so a persistently
                             // quiet prefix re-seeds at most once per STALL window.
                             *fresh.last_progress.lock().unwrap() = std::time::Instant::now();
                             if changed {
+                                // Missing watch events require client relists
+                                // and a new upstream watch, not silent cache
+                                // replacement under existing subscriptions.
+                                fresh.terminated.store(true, Ordering::SeqCst);
+                                fresh.advanced.notify_waiters();
+                                let seq = fresh.next_seq.fetch_add(1, Ordering::SeqCst);
+                                let _ = fresh.tx.send((
+                                    seq,
+                                    WatchEvent::Error {
+                                        code: 410,
+                                        message: "watch cache resynchronized after missed events"
+                                            .into(),
+                                        revision: rev,
+                                    },
+                                ));
+                                caches.remove_if(&prefix_fresh, |_, value| {
+                                    Arc::ptr_eq(value, &fresh)
+                                });
+                                abort_pump.abort();
                                 tracing::warn!(
                                     "watch-cache: re-seeded prefix={prefix_fresh} to rev={rev} — the watch had missed events"
                                 );
@@ -312,7 +380,6 @@ impl WatchCache {
             });
         }
 
-        self.caches.insert(prefix.to_string(), cache.clone());
         tracing::info!(
             "watch-cache: opened upstream watch for prefix={prefix} from rev={start_rev}"
         );
@@ -328,7 +395,7 @@ impl WatchCache {
     /// revision `min_rev` (0: no requirement).
     ///
     /// The pump applies an event milliseconds after the write, so the wait is
-    /// normally a spin or two. If it has not caught up within
+    /// notified as soon as the pump advances. If it has not caught up within
     /// `MIN_REV_WAIT`, the page is read from the store instead: slower, and
     /// never stale.
     pub async fn list(
@@ -339,25 +406,16 @@ impl WatchCache {
         min_rev: u64,
     ) -> Result<CachePage> {
         let cache = self.ensure(prefix).await?;
-        if min_rev > 0 && cache.snapshot_rev.load(Ordering::SeqCst) < min_rev {
-            let deadline = std::time::Instant::now() + MIN_REV_WAIT;
-            while cache.snapshot_rev.load(Ordering::SeqCst) < min_rev {
-                if std::time::Instant::now() >= deadline {
-                    tracing::debug!(
-                        "watch-cache: {prefix} not at rev {min_rev} after {MIN_REV_WAIT:?}; \
-                         listing from the store"
-                    );
-                    let page = self.store.list(prefix, limit, continue_token).await?;
-                    let items = page.items.into_iter().map(|(_, v, r)| (v, r)).collect();
-                    return Ok(CachePage {
-                        items,
-                        continue_key: page.continue_token,
-                        revision: page.revision,
-                        remaining: None,
-                    });
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-            }
+        if !wait_for_revision(&cache, min_rev).await {
+            tracing::debug!("watch-cache: {prefix} not at rev {min_rev} after {MIN_REV_WAIT:?}; listing from the store");
+            let page = self.store.list(prefix, limit, continue_token).await?;
+            let items = page.items.into_iter().map(|(_, v, r)| (v, r)).collect();
+            return Ok(CachePage {
+                items,
+                continue_key: page.continue_token,
+                revision: page.revision,
+                remaining: None,
+            });
         }
         let snap = cache.snapshot.lock().unwrap();
         let rev = cache.snapshot_rev.load(Ordering::SeqCst);
@@ -386,7 +444,12 @@ impl WatchCache {
             next = last_key;
             remaining = Some(left);
         }
-        Ok(CachePage { items, continue_key: next, revision: rev, remaining })
+        Ok(CachePage {
+            items,
+            continue_key: next,
+            revision: rev,
+            remaining,
+        })
     }
 
     /// Watch `prefix` for events after `start_rev`, served from the shared cache
@@ -406,35 +469,27 @@ impl WatchCache {
             start_rev
         };
 
-        // The pump captured only `revision > pump_start_rev`. If the client
-        // wants events from before that, the cache can't reconstruct them —
-        // fall back to a dedicated store watch.
-        if start_rev < cache.pump_start_rev {
-            tracing::debug!(
-                "watch-cache: fallback store watch prefix={prefix} start_rev={start_rev} < pump_start={}",
-                cache.pump_start_rev
-            );
-            // `start_rev + 1`: a Kubernetes watch from resourceVersion N
-            // delivers the events *after* N, and an etcd watch's start
-            // revision is inclusive. Passing N replayed the event at N — the
-            // ADDED of the very object the client just read — and every CRD
-            // fixture in the conformance suite that creates, watches and
-            // deletes a CR saw "expected DELETE, but got ADDED" (#67).
-            return self.store.watch(prefix, start_rev + 1).await;
-        }
-        tracing::debug!("watch-cache: serving prefix={prefix} from shared cache");
-
-        // Subscribe to live BEFORE snapshotting the ring so no event slips
-        // through the gap between the two; dedup the overlap by sequence.
+        // Subscribe before taking a replay snapshot; inspect the replay
+        // boundary under the same lock so an eviction cannot open a gap.
         let mut live = cache.tx.subscribe();
-        let backlog: Vec<(Seq, WatchEvent)> = {
+        let (ring_gap, backlog): (bool, Vec<(Seq, WatchEvent)>) = {
             let ring = cache.ring.lock().unwrap();
-            ring.iter()
-                .filter(|(_, e)| e.revision() > start_rev)
-                .cloned()
-                .collect()
+            let gap = ring
+                .front()
+                .is_some_and(|(seq, event)| *seq > 1 && event.revision() > start_rev);
+            (
+                gap,
+                ring.iter()
+                    .filter(|(_, event)| event.revision() > start_rev)
+                    .cloned()
+                    .collect(),
+            )
         };
-
+        if cache.terminated.load(Ordering::SeqCst) || start_rev < cache.pump_start_rev || ring_gap {
+            // The datastore either replays the full suffix or returns a
+            // terminal 410. Never silently skip an evicted segment.
+            return self.store.watch(prefix, start_rev.saturating_add(1)).await;
+        }
         let (tx, rx) = mpsc::channel(CLIENT_CHANNEL);
         tokio::spawn(async move {
             let mut last_seq = 0u64;
@@ -445,8 +500,16 @@ impl WatchCache {
                 }
             }
             loop {
-                match live.recv().await {
+                let received = tokio::select! {
+                    _ = tx.closed() => return,
+                    received = live.recv() => received,
+                };
+                match received {
                     Ok((seq, ev)) => {
+                        if matches!(ev, WatchEvent::Error { .. }) {
+                            let _ = tx.send(ev).await;
+                            return;
+                        }
                         // Skip anything already sent from the ring (seq) or below
                         // the client's requested revision.
                         if seq > last_seq && ev.revision() > start_rev {
@@ -457,11 +520,75 @@ impl WatchCache {
                     }
                     // Slow client fell behind the broadcast buffer. It may miss
                     // events; upstream clients relist on watch gaps, so continue.
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let _ = tx
+                            .send(WatchEvent::Error {
+                                code: 410,
+                                message: "watch consumer fell behind retained history".into(),
+                                revision: start_rev,
+                            })
+                            .await;
+                        return;
+                    }
                     Err(broadcast::error::RecvError::Closed) => return,
                 }
             }
         });
         Ok(rx)
+    }
+}
+
+/// Subscribe before checking, including when several LISTs await one write.
+async fn wait_for_revision(cache: &PrefixCache, min_rev: u64) -> bool {
+    let deadline = tokio::time::Instant::now() + MIN_REV_WAIT;
+    loop {
+        let advanced = cache.advanced.notified();
+        tokio::pin!(advanced);
+        advanced.as_mut().enable();
+        if cache.terminated.load(Ordering::SeqCst) {
+            return false;
+        }
+        if cache.snapshot_rev.load(Ordering::SeqCst) >= min_rev {
+            return true;
+        }
+        if tokio::time::timeout_at(deadline, advanced).await.is_err() {
+            return cache.snapshot_rev.load(Ordering::SeqCst) >= min_rev;
+        }
+    }
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+    fn cache() -> Arc<PrefixCache> {
+        Arc::new(PrefixCache {
+            tx: broadcast::channel(16).0,
+            ring: Mutex::new(VecDeque::new()),
+            next_seq: AtomicU64::new(1),
+            pump_start_rev: 1,
+            snapshot: Mutex::new(BTreeMap::new()),
+            snapshot_rev: AtomicU64::new(1),
+            advanced: tokio::sync::Notify::new(),
+            terminated: AtomicBool::new(false),
+            last_progress: Mutex::new(std::time::Instant::now()),
+        })
+    }
+    #[tokio::test]
+    async fn advancing_revision_wakes_all_waiters() {
+        let cache = cache();
+        let first = cache.clone();
+        let second = cache.clone();
+        let a = tokio::spawn(async move { wait_for_revision(&first, 2).await });
+        let b = tokio::spawn(async move { wait_for_revision(&second, 2).await });
+        tokio::task::yield_now().await;
+        cache.snapshot_rev.store(2, Ordering::SeqCst);
+        cache.advanced.notify_waiters();
+        assert!(a.await.unwrap());
+        assert!(b.await.unwrap());
+        assert!(wait_for_revision(&cache, 2).await);
+    }
+    #[tokio::test]
+    async fn a_stalled_watch_releases_the_reader_for_store_fallback() {
+        assert!(!wait_for_revision(&cache(), 2).await);
     }
 }

@@ -34,7 +34,7 @@ Upstream gets these free from the Prometheus Go client, so every Kubernetes
 dashboard assumes them, and nothing in Rust provides them.
 
 `kubernetes_build_info{gitVersion,component,goVersion}` — `gitVersion` is the
-crate version without a leading `v` (`0.14.1`), `goVersion` is `rustc`.
+crate version without a leading `v` (`0.18.0`), `goVersion` is `rustc`.
 
 On a non-Linux build (a workstation) the `process_*` family is **absent**
 rather than zero: a zero would be read as a fact.
@@ -63,8 +63,8 @@ Labels are derived from the path's shape, not from a table of known resource
 names, so custom resources are visible too (they used to all land in `other`).
 
 `etcd_request_duration_seconds` covers the fastetcd round trip for `get`,
-`create`, `update` and `delete`. `list` is timed too, but a list is answered
-from the in-memory watch cache, so it measures that, not the store. Watches
+`create`, `update` and `delete`. `list` is timed too: `ApiStorage::list` reads the datastore at the requested
+snapshot revision on this branch, so it includes that store call. Watches
 are not timed.
 
 `apiserver_storage_objects` and `apiserver_watch_events_total` come from the
@@ -94,10 +94,10 @@ moment it happens rather than when they start fighting. The scheduler sets 0
 before it tries to acquire; the controller manager sets 0 only after losing
 the lease, so a standby that has never led has no series.
 
-There are deliberately **no `workqueue_*` metrics**. These controllers are poll
-loops with no queue; exporting `workqueue_depth` as a constant zero would be a
-number that reads as a fact. Where the shape differs from upstream, so does the
-name.
+There are **no `workqueue_*` metrics**. With the turbomode implementation, controllers have
+deduplicated per-object queues and bounded workers, but queue depth, queue
+delay and worker utilization are not instrumented (#90). Do not interpret
+missing series as empty queues or idle workers.
 
 ## scheduler
 
@@ -106,18 +106,23 @@ leader_election_master_status{name="kube-scheduler"}
 scheduler_pending_pods{queue="active"}
 scheduler_pending_virtualmachines{queue="active"}
 scheduler_schedule_attempts_total{result="scheduled"|"unschedulable"|"error"}
-scheduler_e2e_scheduling_duration_seconds{result}
 ```
 
-VMI placements are counted in `scheduler_schedule_attempts_total` too.
-`scheduler_e2e_scheduling_duration_seconds` is recorded only for a pod that is
-scheduled (`result="scheduled"`), and times one scheduling attempt inside a
-pass — not, as upstream, from first seen to bound.
+VMI outcomes are counted in `scheduler_schedule_attempts_total` too. On
+`turbomode`, successful Pod binds and volume waits increment the counter,
+but the Pod placement error arm only logs. Other Pod placement failures are
+therefore missing: this is not a complete denominator for success rates (#90).
+
+`scheduler_e2e_scheduling_duration_seconds{result}` is defined by
+`record_e2e_latency`, but **has no callers** on this branch and is not emitted
+(#90). The previous polling implementation timed successful attempts; do not
+carry that historical claim into the indexed implementation.
 
 Upstream splits `scheduler_pending_pods` across `active`, `backoff` and
-`unschedulable` queues. This scheduler has one queue — the unscheduled pods it
-found this pass — so it reports `active` and nothing else rather than inventing
-empty queues.
+`unschedulable` queues. With the turbomode implementation, this gauge counts pending keys in the shared placement
+state when workload informer events arrive. The queue includes priority ordering
+and API retry deadlines, but the gauge does not split those states: it reports
+only `active`.
 
 A pod that is placed but waiting for its volumes to bind counts as
 `unschedulable`, which is what it is until the volume exists.

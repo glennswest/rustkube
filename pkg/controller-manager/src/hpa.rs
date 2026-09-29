@@ -1,16 +1,17 @@
 //! Horizontal Pod Autoscaler (HPA) controller.
 //!
-//! **A placeholder** (#89). Periodically lists HorizontalPodAutoscalers and
+//! **A placeholder** (#89). Indexed HorizontalPodAutoscaler workers
 //! scales their targets (Deployments, ReplicaSets, StatefulSets), but reads no
 //! metrics: "utilization" is the fraction of the target's pods that are Ready,
 //! whatever resource the HPA names, and the desired count starts at the
 //! current one and only rises, so it never scales down.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::Index;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 pub struct HpaController {
     api: Arc<ApiClient>,
@@ -22,49 +23,10 @@ impl HpaController {
     }
 
     pub async fn run(&self) {
-        info!("HPA controller started");
-        let mut interval = time::interval(Duration::from_secs(15));
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("HPA reconcile error: {e}");
-            }
-        }
+        owned::run(&self.api, self).await;
     }
 
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("HPA reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let hpa_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/autoscaling/v2/namespaces/{namespace}/horizontalpodautoscalers"
-            ))
-            .await?;
-        let hpas = hpa_list["items"].as_array().cloned().unwrap_or_default();
-
-        for hpa in &hpas {
-            if let Err(e) = self.reconcile_hpa(namespace, hpa).await {
-                let name = hpa["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile HPA {namespace}/{name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_hpa(&self, namespace: &str, hpa: &Value) -> anyhow::Result<()> {
+    async fn reconcile_hpa(&self, namespace: &str, hpa: &Value, deps: &Deps) -> anyhow::Result<()> {
         let hpa_name = hpa["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("HPA missing name"))?;
@@ -91,34 +53,22 @@ impl HpaController {
             }
         };
 
-        // Get current target
-        let target: Value = self
-            .api
-            .list(&format!(
-                "/{target_api}/namespaces/{namespace}/{target_resource}"
-            ))
-            .await?;
-        let targets = target["items"].as_array().cloned().unwrap_or_default();
-        let target_obj = targets
-            .iter()
-            .find(|t| t["metadata"]["name"].as_str() == Some(target_name));
-
-        let target_obj = match target_obj {
-            Some(t) => t,
-            None => {
-                debug!("HPA {hpa_name}: target {target_kind}/{target_name} not found");
-                return Ok(());
-            }
+        let i = match target_kind {
+            "Deployment" => 0,
+            "ReplicaSet" => 1,
+            "StatefulSet" => 2,
+            _ => return Ok(()),
         };
-
+        let targets = deps
+            .feed(i)
+            .select(&Index::Name(namespace.into(), target_name.into()))?;
+        let Some(target_obj) = targets.first() else {
+            return Ok(());
+        };
         let current_replicas = target_obj["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
-
-        // Get pods for the target to compute metrics
-        let pod_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-            .await?;
-        let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
+        let pods = deps.feed(3).select(&Index::Owner(
+            target_obj["metadata"]["uid"].as_str().unwrap_or("").into(),
+        ))?;
 
         // Count ready pods owned by target (simplified — real HPA uses metrics API)
         let target_uid = target_obj["metadata"]["uid"].as_str().unwrap_or("");
@@ -163,7 +113,7 @@ impl HpaController {
         updated_hpa["status"] = json!({
             "currentReplicas": current_replicas,
             "desiredReplicas": desired,
-            "lastScaleTime": now,
+            "lastScaleTime": if desired != current_replicas { json!(now) } else { hpa["status"]["lastScaleTime"].clone() },
             "currentMetrics": [],
             "conditions": [{
                 "type": "ScalingActive",
@@ -171,11 +121,15 @@ impl HpaController {
                 "lastTransitionTime": now
             }]
         });
+        owned::preserve_transition_times(&hpa["status"], &mut updated_hpa["status"]);
+        if hpa["status"] == updated_hpa["status"] {
+            return Ok(());
+        }
         let _ = self
             .api
             .update(
                 &format!(
-                    "/apis/autoscaling/v2/namespaces/{namespace}/horizontalpodautoscalers/{hpa_name}"
+                    "/apis/autoscaling/v2/namespaces/{namespace}/horizontalpodautoscalers/{hpa_name}/status"
                 ),
                 &updated_hpa,
             )
@@ -272,5 +226,79 @@ impl HpaController {
         } else {
             0.0
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl Controller for HpaController {
+    fn name(&self) -> &'static str {
+        "hpa"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/autoscaling/v2/horizontalpodautoscalers"
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        let route: owned::Route = Arc::new(|delta, primary| {
+            delta
+                .old
+                .iter()
+                .chain(delta.new.iter())
+                .flat_map(|o| {
+                    owned::keys_at(
+                        primary,
+                        Index::Target(
+                            o["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                            o["kind"].as_str().unwrap_or("").into(),
+                            o["metadata"]["name"].as_str().unwrap_or("").into(),
+                        ),
+                    )
+                })
+                .collect()
+        });
+        vec![
+            Dependency {
+                path: "/apis/apps/v1/deployments".into(),
+                route: route.clone(),
+            },
+            Dependency {
+                path: "/apis/apps/v1/replicasets".into(),
+                route: route.clone(),
+            },
+            Dependency {
+                path: "/apis/apps/v1/statefulsets".into(),
+                route,
+            },
+            Dependency {
+                path: "/api/v1/pods".into(),
+                route: Arc::new(|delta, primary| {
+                    let mut keys = Vec::new();
+                    for pod in delta.old.iter().chain(delta.new.iter()) {
+                        for owner in pod["metadata"]["ownerReferences"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            keys.extend(owned::keys_at(
+                                primary,
+                                Index::Target(
+                                    pod["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                                    owner["kind"].as_str().unwrap_or("").into(),
+                                    owner["name"].as_str().unwrap_or("").into(),
+                                ),
+                            ));
+                        }
+                    }
+                    keys
+                }),
+            },
+        ]
+    }
+    async fn reconcile(&self, hpa: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        self.reconcile_hpa(
+            hpa["metadata"]["namespace"].as_str().unwrap_or("default"),
+            hpa,
+            deps,
+        )
+        .await
     }
 }

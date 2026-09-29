@@ -7,8 +7,7 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 pub struct JobController {
     api: Arc<ApiClient>,
@@ -20,50 +19,8 @@ impl JobController {
     }
 
     pub async fn run(&self) {
-        info!("Job controller started");
-        let mut interval = time::interval(Duration::from_secs(2));
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Job reconcile error: {e}");
-            }
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("Job reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let job_list: Value = self
-            .api
-            .list(&format!("/apis/batch/v1/namespaces/{namespace}/jobs"))
-            .await?;
-        let jobs = job_list["items"].as_array().cloned().unwrap_or_default();
-
-        let pod_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-            .await?;
-        let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-
-        for job in &jobs {
-            if let Err(e) = self.reconcile_job(namespace, job, &pods).await {
-                let name = job["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile job {namespace}/{name}: {e}");
-            }
-        }
-        Ok(())
+        info!("Job indexed object workers started");
+        crate::owned::run(&self.api, self).await;
     }
 
     async fn reconcile_job(
@@ -127,12 +84,16 @@ impl JobController {
         // Check active deadline
         if let Some(deadline) = active_deadline {
             if let Some(start_time) = job["status"]["startTime"].as_str() {
-                if let Ok(start) = chrono::DateTime::parse_from_rfc3339(
-                    &start_time.replace('Z', "+00:00"),
-                ) {
-                    let elapsed = chrono::Utc::now()
-                        .signed_duration_since(start.with_timezone(&chrono::Utc));
-                    if elapsed.num_seconds() as u64 > deadline {
+                if let Ok(start) =
+                    chrono::DateTime::parse_from_rfc3339(&start_time.replace('Z', "+00:00"))
+                {
+                    apimachinery::reactor::requeue_deadline(
+                        start.with_timezone(&chrono::Utc),
+                        deadline,
+                    );
+                    let elapsed =
+                        chrono::Utc::now().signed_duration_since(start.with_timezone(&chrono::Utc));
+                    if elapsed.num_seconds() >= 0 && elapsed.num_seconds() as u64 >= deadline {
                         // Kill active pods and mark failed
                         for pod in &owned_pods {
                             let phase = pod["status"]["phase"].as_str().unwrap_or("");
@@ -141,9 +102,12 @@ impl JobController {
                                 if !pod_name.is_empty() {
                                     let _ = self
                                         .api
-                                        .delete(&format!(
-                                            "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-                                        ))
+                                        .delete_observed(
+                                            &format!(
+                                                "/api/v1/namespaces/{namespace}/pods/{pod_name}"
+                                            ),
+                                            pod,
+                                        )
                                         .await;
                                 }
                             }
@@ -197,8 +161,7 @@ impl JobController {
 
         // Create pods if needed
         if active < parallelism && succeeded + active < completions {
-            let to_create =
-                std::cmp::min(parallelism - active, completions - succeeded - active);
+            let to_create = std::cmp::min(parallelism - active, completions - succeeded - active);
             for _ in 0..to_create {
                 let pod = build_job_pod(namespace, job_name, job_uid, job)?;
                 match self
@@ -262,7 +225,7 @@ impl JobController {
                 "reason": reason,
                 "lastTransitionTime": now.clone()
             });
-            if ctype == "Complete" {
+            if ctype == "Complete" && updated["status"]["completionTime"].is_null() {
                 updated["status"]["completionTime"] = json!(now);
             }
             let conditions = updated["status"]
@@ -271,7 +234,13 @@ impl JobController {
                 .entry("conditions")
                 .or_insert_with(|| json!([]));
             if let Some(arr) = conditions.as_array_mut() {
-                arr.push(cond);
+                if let Some(old) = arr.iter_mut().find(|c| c["type"] == ctype) {
+                    if old["status"] != "True" || old["reason"] != reason {
+                        *old = cond;
+                    }
+                } else {
+                    arr.push(cond);
+                }
             }
         }
 
@@ -334,4 +303,28 @@ fn build_job_pod(
     });
 
     Ok(pod)
+}
+
+#[async_trait::async_trait]
+impl crate::owned::Controller for JobController {
+    fn name(&self) -> &'static str {
+        "job"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/batch/v1/jobs"
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/api/v1/pods")
+    }
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        _deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        self.reconcile_job(namespace, object, children).await
+    }
 }

@@ -1,5 +1,10 @@
 # Draining, eviction & multi-arch — verified research (for #7, #8)
 
+> Historical upstream research, not a description of implemented RustKube
+> behavior. The implementation limits below and README govern current support;
+> image-manifest inspection is absent (#8), and scheduling gates are ignored
+> (#87). Architecture selectors/affinity supplied by callers are enforced.
+
 Adversarially-verified (3-0) against primary sources (kubernetes.io, OpenShift
 docs + GitHub). Targets K8s 1.32 / OpenShift 4.x.
 
@@ -59,6 +64,30 @@ that injects the gate, (c) an operand/webhook that reads image manifest-lists,
 (d) the existing scheduler NodeAffinity plugin. No scheduler-core change —
 *except that this scheduler ignores `schedulingGates` today and binds a gated
 pod at once (#87); (d) exists (`filter.rs`), (b) and (c) do not (#8).*
+
+### Implementation checkpoint — 2026-09-29
+
+This flow remains unimplemented in rustkube. Built-in Pod admission performs
+no registry manifest inspection or architecture-affinity injection. The
+existing scheduler test `affinity_tests::arch_affinity_filters` covers a
+manually supplied architecture requirement; it does not exercise admission,
+registry authentication, caching, gates or a real mixed-architecture cluster.
+Node registration code in rustkube-node sets `kubernetes.io/arch` and
+`kubernetes.io/os`; installed-node verification is still required.
+
+The implementation must intersect architectures across application and init
+container images, handle single-image configs as well as image indexes,
+preserve existing required affinity on every alternative term, and keep
+inspection failures from permitting unsafe placement. Private pull-secret
+lookup, credential-scoped cache behavior and namespace/Pod exclusions need
+coverage. Gate enforcement is tracked by #87; a webhook integration also
+requires #82. Existing affinity enforcement alone does not complete #8.
+
+Acceptance requires an owner-designated isolated cluster with real amd64 and
+arm64 nodes and a supported control-plane deployment route. Verify an
+amd64-only image cannot land on arm64, a compatible multi-arch image can run
+on either, and excluded namespaces receive no injected mutation. No such run
+has been made in this session. Keep #8 open until the full path is verified.
 
 ## OpenShift node placement & descheduler (partly verified)
 

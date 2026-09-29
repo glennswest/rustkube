@@ -13,6 +13,30 @@ use tracing::{info, warn};
 pub struct ApiClient {
     pub base_url: String,
     pub client: reqwest::Client,
+    pub watches: apimachinery::reactor::WatchHub,
+    write_gate: apimachinery::lease::WriteGate,
+    pub informers: apimachinery::informers::Hub,
+    pending_creates: Arc<std::sync::Mutex<std::collections::HashMap<String, PendingCreate>>>,
+}
+
+#[derive(Clone)]
+struct PendingCreate {
+    path: String,
+    body: serde_json::Value,
+    owner: String,
+}
+fn create_owner(body: &serde_json::Value) -> String {
+    body["metadata"]["ownerReferences"]
+        .as_array()
+        .and_then(|refs| {
+            refs.iter()
+                .find(|r| r["controller"] == true)
+                .or_else(|| refs.first())
+        })
+        .and_then(|r| r["uid"].as_str())
+        .or_else(|| body["spec"]["claimRef"]["uid"].as_str())
+        .unwrap_or("")
+        .into()
 }
 
 /// Connection + auth config for the API server (kubeconfig-style).
@@ -36,6 +60,7 @@ pub struct ClientConfig {
 /// a space, so an unencoded token comes back to the server altered and the
 /// list restarts from the beginning — an infinite loop that looks like a
 /// controller doing nothing (#7.6 fixed the decode side of this same trap).
+#[cfg(test)]
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for b in s.bytes() {
@@ -50,10 +75,20 @@ fn percent_encode(s: &str) -> String {
 }
 
 impl ApiClient {
+    fn election_client(&self) -> Self {
+        let mut client = self.clone();
+        client.write_gate = Default::default();
+        client
+    }
+
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
+            watches: Default::default(),
+            write_gate: Default::default(),
+            informers: Default::default(),
+            pending_creates: Default::default(),
         }
     }
 
@@ -82,6 +117,10 @@ impl ApiClient {
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: b.build()?,
+            watches: Default::default(),
+            write_gate: Default::default(),
+            informers: Default::default(),
+            pending_creates: Default::default(),
         })
     }
 
@@ -143,10 +182,26 @@ impl ApiClient {
 
     /// GET a resource.
     pub async fn get(&self, path: &str) -> reqwest::Result<reqwest::Response> {
-        self.client
-            .get(format!("{}{}", self.base_url, path))
-            .send()
-            .await
+        if let Some((parent, _)) = path.split('?').next().unwrap_or(path).rsplit_once('/') {
+            if parent.starts_with("/api/") || parent.starts_with("/apis/") {
+                self.watches
+                    .observe(&self.client, format!("{}{}", self.base_url, parent));
+            }
+        }
+        let result: reqwest::Result<reqwest::Response> = async {
+            self.client
+                .get(format!("{}{}", self.base_url, path))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+        }
+        .await;
+        if let Ok(response) = &result {
+            if !response.status().is_success() && response.status().as_u16() != 404 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result)
     }
 
     /// LIST resources (returns JSON body).
@@ -171,66 +226,147 @@ impl ApiClient {
     /// Found by measuring, not by reading: at 3000 pods the controller CPU
     /// stopped rising with the object count, which is what a silent cap looks
     /// like from outside (#66).
-    pub async fn list(&self, path: &str) -> reqwest::Result<serde_json::Value> {
-        let sep = if path.contains('?') { '&' } else { '?' };
-        let mut merged: Option<serde_json::Value> = None;
-        let mut items: Vec<serde_json::Value> = Vec::new();
-        let mut token: Option<String> = None;
-
-        loop {
-            let url = match &token {
-                Some(c) => format!(
-                    "{}{}{sep}limit=500&continue={}",
-                    self.base_url,
-                    path,
-                    percent_encode(c)
+    pub async fn list(&self, path: &str) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let segments: Vec<_> = path.trim_matches('/').split('/').collect();
+        let discovery = path == "/apis"
+            || path == "/api"
+            || (segments.first() == Some(&"api") && segments.len() == 2)
+            || (segments.first() == Some(&"apis") && segments.len() == 3);
+        if discovery {
+            self.watches.observe(
+                &self.client,
+                format!(
+                    "{}/apis/apiextensions.k8s.io/v1/customresourcedefinitions",
+                    self.base_url
                 ),
-                None => format!("{}{}{sep}limit=500", self.base_url, path),
-            };
-            let page: serde_json::Value =
-                self.client.get(url).send().await?.json().await?;
-
-            if let Some(page_items) = page["items"].as_array() {
-                items.extend(page_items.iter().cloned());
+            );
+            let result = async {
+                Ok(self
+                    .client
+                    .get(&url)
+                    .timeout(std::time::Duration::from_secs(30))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await?)
             }
-            token = page["metadata"]["continue"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-            merged = Some(page);
-            // A page that carries no token is the last one. A response that is
-            // not a list at all (an error Status) has none either, and falls
-            // out here with whatever it said intact for the caller to see.
-            if token.is_none() {
-                break;
-            }
+            .await;
+            return apimachinery::reactor::check(result);
         }
-
-        let mut out = merged.unwrap_or_else(|| serde_json::json!({}));
-        if out["items"].is_array() {
-            out["items"] = serde_json::Value::Array(items);
-            // The token described the page, not the whole. Leaving it would
-            // tell a caller there is more when there is not.
-            if let Some(meta) = out["metadata"].as_object_mut() {
-                meta.remove("continue");
-            }
-        }
-        Ok(out)
+        self.watches.observe(&self.client, url.clone());
+        apimachinery::reactor::check(apimachinery::reflector::list(&self.client, &url).await)
     }
 
-    /// POST (create) a resource.
+    /// A timed-out create may still commit. Keep its original name/body and
+    /// resolve/retry that same atomic create before generating another child.
     pub async fn create(
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
-        self.client
-            .post(format!("{}{}", self.base_url, path))
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await
+    ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
+        let name = body["metadata"]["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("controller create requires an explicit name"))?;
+        let owner = create_owner(body);
+        let group = format!("{path}/{}", if owner.is_empty() { name } else { &owner });
+        let previous = self.pending_creates.lock().unwrap().get(&group).cloned();
+        let pending = previous.clone().unwrap_or_else(|| PendingCreate {
+            path: path.into(),
+            body: body.clone(),
+            owner,
+        });
+        self.pending_creates
+            .lock()
+            .unwrap()
+            .insert(group.clone(), pending.clone());
+        if previous.is_some() {
+            let url = format!(
+                "{}/{}",
+                pending.path,
+                pending.body["metadata"]["name"].as_str().unwrap()
+            );
+            let response = self.get(&url).await?;
+            if response.status().is_success() {
+                let existing: serde_json::Value = response.json().await?;
+                anyhow::ensure!(
+                    create_owner(&existing) == pending.owner,
+                    "ambiguous create name belongs to another owner"
+                );
+                self.informers.acknowledge(
+                    &format!("{}{}", self.base_url, pending.path),
+                    &existing,
+                    started,
+                );
+                self.pending_creates.lock().unwrap().remove(&group);
+                apimachinery::reactor::requeue_after(std::time::Duration::ZERO);
+                return Ok(existing);
+            }
+            anyhow::ensure!(
+                response.status().as_u16() == 404,
+                "cannot resolve ambiguous create: {}",
+                response.status()
+            );
+        }
+        let result = self.send_create(&pending.path, &pending.body).await;
+        let definitive = match &result {
+            Ok(_) => true,
+            Err(error) => error
+                .downcast_ref::<reqwest::Error>()
+                .and_then(|e| e.status())
+                .is_some_and(|s| {
+                    s.is_client_error()
+                        && (s.as_u16() != 409 || previous.is_none())
+                        && s.as_u16() != 408
+                        && s.as_u16() != 429
+                }),
+        };
+        if definitive {
+            self.pending_creates.lock().unwrap().remove(&group);
+        }
+        if previous.is_some() && result.is_ok() {
+            apimachinery::reactor::requeue_after(std::time::Duration::ZERO);
+        }
+        result
+    }
+
+    pub(crate) fn forget_creates(&self, owner: &str) {
+        self.pending_creates
+            .lock()
+            .unwrap()
+            .retain(|_, pending| pending.owner != owner);
+    }
+
+    /// POST (create) a resource.
+    async fn send_create(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        let result: reqwest::Result<serde_json::Value> = async {
+            self.client
+                .post(format!("{}{}", self.base_url, path))
+                .timeout(budget)
+                .json(body)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await
+        }
+        .await;
+        if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
+            if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PUT (update) a resource.
@@ -238,14 +374,29 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
-        self.client
-            .put(format!("{}{}", self.base_url, path))
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await
+    ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        let result: reqwest::Result<serde_json::Value> = async {
+            self.client
+                .put(format!("{}{}", self.base_url, path))
+                .timeout(budget)
+                .json(body)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await
+        }
+        .await;
+        if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
+            if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PUT a resource's **status only**, through the `/status` subresource.
@@ -264,14 +415,29 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
-        self.client
-            .put(format!("{}{}/status", self.base_url, path))
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await
+    ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        let result: reqwest::Result<serde_json::Value> = async {
+            self.client
+                .put(format!("{}{}/status", self.base_url, path))
+                .timeout(budget)
+                .json(body)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await
+        }
+        .await;
+        if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
+            if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PATCH a resource.
@@ -279,23 +445,84 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
-        self.client
-            .patch(format!("{}{}", self.base_url, path))
-            .header("content-type", "application/strategic-merge-patch+json")
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await
+    ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        let result: reqwest::Result<serde_json::Value> = async {
+            self.client
+                .patch(format!("{}{}", self.base_url, path))
+                .timeout(budget)
+                .header("content-type", "application/strategic-merge-patch+json")
+                .json(body)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await
+        }
+        .await;
+        if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
+            if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// DELETE a resource.
-    pub async fn delete(&self, path: &str) -> reqwest::Result<reqwest::Response> {
-        self.client
-            .delete(format!("{}{}", self.base_url, path))
-            .send()
-            .await
+    pub async fn delete_observed(
+        &self,
+        path: &str,
+        observed: &serde_json::Value,
+    ) -> anyhow::Result<reqwest::Response> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        apimachinery::reactor::check(
+            async {
+                let uid = observed["metadata"]["uid"]
+                    .as_str()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("cannot delete unobserved UID"))?;
+                let revision = observed["metadata"]["resourceVersion"]
+                    .as_str()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("cannot delete without observed revision"))?;
+                let response = self
+                    .client
+                    .delete(format!("{}{}", self.base_url, path))
+                    .timeout(budget)
+                    .json(
+                        &serde_json::json!({"apiVersion":"v1","kind":"DeleteOptions",
+                    "preconditions":{"uid":uid,"resourceVersion":revision}}),
+                    )
+                    .send()
+                    .await?;
+                if response.status().as_u16() == 404 {
+                    return Ok(response);
+                }
+                Ok(response.error_for_status()?)
+            }
+            .await,
+        )
+    }
+
+    pub async fn delete(&self, path: &str) -> anyhow::Result<reqwest::Response> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        let result: reqwest::Result<reqwest::Response> = async {
+            self.client
+                .delete(format!("{}{}", self.base_url, path))
+                .timeout(budget)
+                .send()
+                .await
+        }
+        .await;
+        if let Ok(response) = &result {
+            if !response.status().is_success() && response.status().as_u16() != 404 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PATCH with an RFC-7386 merge patch, which **replaces** lists rather
@@ -310,15 +537,30 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
-        self.client
-            .patch(format!("{}{}", self.base_url, path))
-            .header("content-type", "application/merge-patch+json")
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await
+    ) -> anyhow::Result<serde_json::Value> {
+        let started = std::time::Instant::now();
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        let result: reqwest::Result<serde_json::Value> = async {
+            self.client
+                .patch(format!("{}{}", self.base_url, path))
+                .timeout(budget)
+                .header("content-type", "application/merge-patch+json")
+                .json(body)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await
+        }
+        .await;
+        if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
+            if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// DELETE a resource, carrying `meta/v1` DeleteOptions.
@@ -332,13 +574,24 @@ impl ApiClient {
         &self,
         path: &str,
         options: &serde_json::Value,
-    ) -> reqwest::Result<reqwest::Response> {
-        self.client
-            .delete(format!("{}{}", self.base_url, path))
-            .header("content-type", "application/json")
-            .json(options)
-            .send()
-            .await
+    ) -> anyhow::Result<reqwest::Response> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        let result: reqwest::Result<reqwest::Response> = async {
+            self.client
+                .delete(format!("{}{}", self.base_url, path))
+                .timeout(budget)
+                .header("content-type", "application/json")
+                .json(options)
+                .send()
+                .await
+        }
+        .await;
+        if let Ok(response) = &result {
+            if !response.status().is_success() && response.status().as_u16() != 404 {
+                apimachinery::reactor::failed();
+            }
+        }
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 }
 
@@ -360,7 +613,7 @@ impl ControllerManager {
         let host = std::env::var("HOSTNAME")
             .or_else(|_| std::env::var("NODE_NAME"))
             .unwrap_or_else(|_| "kube-controller-manager".to_string());
-        format!("{host}_{}", std::process::id())
+        format!("{host}_{}", uuid::Uuid::new_v4())
     }
 
     pub fn new(api_server_url: &str) -> Self {
@@ -428,9 +681,10 @@ impl ControllerManager {
         });
 
         let api = self.api.clone();
-        let api = self.api.clone();
         tasks.spawn(async move {
-            virtualmachine::VirtualMachineController::new(api).run().await;
+            virtualmachine::VirtualMachineController::new(api)
+                .run()
+                .await;
         });
 
         let api = self.api.clone();
@@ -495,12 +749,16 @@ impl ControllerManager {
 
         let api = self.api.clone();
         tasks.spawn(async move {
-            persistentvolume::PersistentVolumeController::new(api).run().await;
+            persistentvolume::PersistentVolumeController::new(api)
+                .run()
+                .await;
         });
 
         let api = self.api.clone();
         tasks.spawn(async move {
-            crate::attachdetach::AttachDetachController::new(api).run().await;
+            crate::attachdetach::AttachDetachController::new(api)
+                .run()
+                .await;
         });
 
         let api = self.api.clone();
@@ -555,20 +813,30 @@ impl ControllerManager {
         }
 
         let elector = crate::leaderelection::LeaderElector::new(
-            self.api.clone(),
+            Arc::new(self.api.election_client()),
             "kube-controller-manager",
             "kube-system",
             &self.identity,
         );
         info!("Leader election enabled (identity={})", self.identity);
         loop {
+            self.api.write_gate.close();
             elector.acquire().await;
+            self.api.write_gate.start();
             info!("Became leader; starting controllers");
             crate::metrics_server::set_leader(true);
             let mut tasks = self.spawn_all();
             loop {
                 tokio::time::sleep(elector.retry_period()).await;
-                if !elector.try_acquire_or_renew().await {
+                if !tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    elector.try_acquire_or_renew(),
+                )
+                .await
+                .unwrap_or(false)
+                    || !self.api.write_gate.renew()
+                {
+                    self.api.write_gate.close();
                     warn!("Lost leadership; stopping controllers");
                     crate::metrics_server::set_leader(false);
                     tasks.abort_all();
@@ -594,5 +862,66 @@ mod list_tests {
         // Unreserved characters are left alone, so an ordinary token is
         // unchanged and readable in a log.
         assert_eq!(percent_encode("plain-token_1.2~3"), "plain-token_1.2~3");
+    }
+}
+
+#[cfg(test)]
+mod create_expectation_tests {
+    use super::*;
+    use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+    use serde_json::{json, Value};
+    #[derive(Default)]
+    struct Server {
+        object: Option<Value>,
+        posts: usize,
+    }
+    async fn create(
+        State(state): State<Arc<std::sync::Mutex<Server>>>,
+        Json(mut body): Json<Value>,
+    ) -> (StatusCode, Json<Value>) {
+        let mut state = state.lock().unwrap();
+        state.posts += 1;
+        body["metadata"]["uid"] = json!(format!("uid-{}", state.posts));
+        body["metadata"]["resourceVersion"] = json!(format!("rv-{}", state.posts));
+        state.object = Some(body.clone());
+        if state.posts == 1 {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"message":"response lost after commit"})),
+            )
+        } else {
+            (StatusCode::CREATED, Json(body))
+        }
+    }
+    async fn get(State(state): State<Arc<std::sync::Mutex<Server>>>) -> Json<Value> {
+        Json(state.lock().unwrap().object.clone().unwrap())
+    }
+    #[tokio::test]
+    async fn uncertain_create_resolves_the_old_name_before_another_child() {
+        let state = Arc::new(std::sync::Mutex::new(Server::default()));
+        let app = Router::new()
+            .route("/api/v1/namespaces/ns/pods", post(create))
+            .route("/api/v1/namespaces/ns/pods/first", axum::routing::get(get))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = ApiClient::new(&format!("http://{}", listener.local_addr().unwrap()));
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let body = |name| json!({"metadata":{"name":name,"namespace":"ns","ownerReferences":[{"uid":"owner","controller":true}]}});
+        let path = "/api/v1/namespaces/ns/pods";
+        assert!(api.create(path, &body("first")).await.is_err());
+        let resolved = api
+            .create(path, &body("different-random-name"))
+            .await
+            .unwrap();
+        assert_eq!(resolved["metadata"]["name"], "first");
+        assert_eq!(
+            state.lock().unwrap().posts,
+            1,
+            "must not create a second child while the first outcome is unknown"
+        );
+        assert!(api.pending_creates.lock().unwrap().is_empty());
+        api.create(path, &body("next")).await.unwrap();
+        assert_eq!(state.lock().unwrap().posts, 2);
+        task.abort();
     }
 }

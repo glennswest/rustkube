@@ -3,7 +3,7 @@
 //! A **status-only** reconciler for the Gateway API
 //! (gateway.networking.k8s.io/v1): it periodically lists GatewayClass,
 //! Gateway and HTTPRoute objects and writes their conditions. It programs no
-//! proxy, so no traffic is routed (#70, #91).
+//! proxy, so no traffic is routed (#70, #91). Execution uses indexed object workers.
 //!
 //! Reconciles:
 //! - GatewayClass: Validates controller name — and marks every class owned by
@@ -12,12 +12,13 @@
 //!   address (192.168.1.100, #91), updates listener status
 //! - HTTPRoute: Validates parentRefs (Gateway references), resolves backendRefs to Services
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::Index;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{self, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 pub struct GatewayController {
     api: Arc<ApiClient>,
@@ -29,50 +30,23 @@ impl GatewayController {
     }
 
     pub async fn run(&self) {
-        info!("Gateway API controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Gateway API reconcile error: {e}");
-            }
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        // Reconcile GatewayClasses (cluster-scoped)
-        if let Err(e) = self.reconcile_gateway_classes().await {
-            debug!("GatewayClass reconcile error: {e}");
-        }
-
-        // Reconcile Gateways and HTTPRoutes per namespace
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("Gateway API reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_gateway_classes(&self) -> anyhow::Result<()> {
-        let gc_list: Value = self
-            .api
-            .list("/apis/gateway.networking.k8s.io/v1/gatewayclasses")
-            .await?;
-        let gateway_classes = gc_list["items"].as_array().cloned().unwrap_or_default();
-
-        for gc in &gateway_classes {
-            if let Err(e) = self.reconcile_gateway_class(gc).await {
-                let name = gc["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile GatewayClass {name}: {e}");
-            }
-        }
-        Ok(())
+        let class = GatewayWorker {
+            controller: self,
+            kind: "gatewayclasses",
+        };
+        let gateway = GatewayWorker {
+            controller: self,
+            kind: "gateways",
+        };
+        let route = GatewayWorker {
+            controller: self,
+            kind: "httproutes",
+        };
+        tokio::join!(
+            owned::run(&self.api, &class),
+            owned::run(&self.api, &gateway),
+            owned::run(&self.api, &route)
+        );
     }
 
     async fn reconcile_gateway_class(&self, gc: &Value) -> anyhow::Result<()> {
@@ -103,87 +77,26 @@ impl GatewayController {
             }]
         });
 
-        let _ = self
-            .api
-            .update(
+        owned::preserve_transition_times(&gc["status"], &mut updated["status"]);
+        if gc["status"] == updated["status"] {
+            return Ok(());
+        }
+        self.api
+            .update_status(
                 &format!("/apis/gateway.networking.k8s.io/v1/gatewayclasses/{gc_name}"),
                 &updated,
             )
-            .await;
+            .await?;
 
         Ok(())
     }
 
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        // Load all resources we need for reconciliation
-        let gateway_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/gateways"
-            ))
-            .await?;
-        let gateways = gateway_list["items"].as_array().cloned().unwrap_or_default();
-
-        let httproute_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/httproutes"
-            ))
-            .await?;
-        let httproutes = httproute_list["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-
-        let service_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/services"))
-            .await?;
-        let services = service_list["items"].as_array().cloned().unwrap_or_default();
-
-        // Build service lookup map
-        let service_map: HashMap<String, &Value> = services
-            .iter()
-            .filter_map(|svc| {
-                svc["metadata"]["name"]
-                    .as_str()
-                    .map(|name| (name.to_string(), svc))
-            })
-            .collect();
-
-        // Reconcile Gateways
-        for gateway in &gateways {
-            if let Err(e) = self.reconcile_gateway(namespace, gateway).await {
-                let name = gateway["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile Gateway {namespace}/{name}: {e}");
-            }
-        }
-
-        // Build gateway lookup map for HTTPRoute reconciliation
-        let gateway_map: HashMap<String, &Value> = gateways
-            .iter()
-            .filter_map(|gw| {
-                gw["metadata"]["name"]
-                    .as_str()
-                    .map(|name| (name.to_string(), gw))
-            })
-            .collect();
-
-        // Reconcile HTTPRoutes
-        for httproute in &httproutes {
-            if let Err(e) = self
-                .reconcile_httproute(namespace, httproute, &gateway_map, &service_map)
-                .await
-            {
-                let name = httproute["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile HTTPRoute {namespace}/{name}: {e}");
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn reconcile_gateway(&self, namespace: &str, gateway: &Value) -> anyhow::Result<()> {
+    async fn reconcile_gateway(
+        &self,
+        namespace: &str,
+        gateway: &Value,
+        deps: &Deps,
+    ) -> anyhow::Result<()> {
         let gateway_name = gateway["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Gateway missing name"))?;
@@ -191,22 +104,10 @@ impl GatewayController {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Gateway missing gatewayClassName"))?;
 
-        // Check if GatewayClass exists
-        let gc_result = self
-            .api
-            .list("/apis/gateway.networking.k8s.io/v1/gatewayclasses")
-            .await;
-        let gc_exists = match gc_result {
-            Ok(gc_list) => gc_list["items"]
-                .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .any(|gc| gc["metadata"]["name"].as_str() == Some(gateway_class_name))
-                })
-                .unwrap_or(false),
-            Err(_) => false,
-        };
+        let gc_exists = !deps
+            .feed(0)
+            .select(&Index::Name("".into(), gateway_class_name.into()))?
+            .is_empty();
 
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let accepted = gc_exists;
@@ -219,10 +120,7 @@ impl GatewayController {
         let mut listener_statuses = Vec::new();
 
         for listener in &listeners {
-            let listener_name = listener["name"]
-                .as_str()
-                .unwrap_or("unknown")
-                .to_string();
+            let listener_name = listener["name"].as_str().unwrap_or("unknown").to_string();
             let protocol = listener["protocol"].as_str().unwrap_or("HTTP");
 
             // Validate listener protocol
@@ -279,15 +177,19 @@ impl GatewayController {
             "listeners": listener_statuses
         });
 
-        let _ = self
+        owned::preserve_transition_times(&gateway["status"], &mut updated["status"]);
+        if gateway["status"] == updated["status"] {
+            return Ok(());
+        }
+        self
             .api
-            .update(
+            .update_status(
                 &format!(
                     "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/gateways/{gateway_name}"
                 ),
                 &updated,
             )
-            .await;
+            .await?;
 
         if accepted {
             info!("Gateway {namespace}/{gateway_name} accepted");
@@ -317,9 +219,7 @@ impl GatewayController {
 
         for parent_ref in &parent_refs {
             let parent_name = parent_ref["name"].as_str().unwrap_or("");
-            let parent_namespace = parent_ref["namespace"]
-                .as_str()
-                .unwrap_or(namespace);
+            let parent_namespace = parent_ref["namespace"].as_str().unwrap_or(namespace);
             let parent_kind = parent_ref["kind"].as_str().unwrap_or("Gateway");
 
             // Check if parent Gateway exists
@@ -404,20 +304,116 @@ impl GatewayController {
             "parents": parent_statuses
         });
 
-        let _ = self
+        owned::preserve_transition_times(&httproute["status"], &mut updated["status"]);
+        if httproute["status"] == updated["status"] {
+            return Ok(());
+        }
+        self
             .api
-            .update(
+            .update_status(
                 &format!(
                     "/apis/gateway.networking.k8s.io/v1/namespaces/{namespace}/httproutes/{httproute_name}"
                 ),
                 &updated,
             )
-            .await;
+            .await?;
 
         if valid_parents > 0 {
             debug!("HTTPRoute {namespace}/{httproute_name} accepted by {valid_parents} parent(s)");
         }
 
         Ok(())
+    }
+}
+
+struct GatewayWorker<'a> {
+    controller: &'a GatewayController,
+    kind: &'static str,
+}
+#[async_trait::async_trait]
+impl Controller for GatewayWorker<'_> {
+    fn name(&self) -> &'static str {
+        self.kind
+    }
+    fn primary(&self) -> &'static str {
+        match self.kind {
+            "gatewayclasses" => "/apis/gateway.networking.k8s.io/v1/gatewayclasses",
+            "gateways" => "/apis/gateway.networking.k8s.io/v1/gateways",
+            _ => "/apis/gateway.networking.k8s.io/v1/httproutes",
+        }
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        let paths: &[&str] = match self.kind {
+            "gatewayclasses" => &[],
+            "gateways" => &["/apis/gateway.networking.k8s.io/v1/gatewayclasses"],
+            _ => &[
+                "/apis/gateway.networking.k8s.io/v1/gateways",
+                "/api/v1/services",
+            ],
+        };
+        paths
+            .iter()
+            .map(|path| Dependency {
+                path: (*path).into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .old
+                        .iter()
+                        .chain(delta.new.iter())
+                        .flat_map(|o| {
+                            owned::keys_at(
+                                primary,
+                                Index::Reference(
+                                    o["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                                    o["kind"].as_str().unwrap_or("").into(),
+                                    o["metadata"]["name"].as_str().unwrap_or("").into(),
+                                ),
+                            )
+                        })
+                        .collect()
+                }),
+            })
+            .collect()
+    }
+    async fn reconcile(&self, object: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        let ns = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        match self.kind {
+            "gatewayclasses" => self.controller.reconcile_gateway_class(object).await,
+            "gateways" => self.controller.reconcile_gateway(ns, object, deps).await,
+            _ => {
+                let mut gateways = Vec::new();
+                let mut services = Vec::new();
+                for parent in object["spec"]["parentRefs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(name) = parent["name"].as_str() {
+                        gateways.extend(deps.feed(0).select(&Index::Name(ns.into(), name.into()))?);
+                    }
+                }
+                for rule in object["spec"]["rules"].as_array().into_iter().flatten() {
+                    for backend in rule["backendRefs"].as_array().into_iter().flatten() {
+                        if let Some(name) = backend["name"].as_str() {
+                            services
+                                .extend(deps.feed(1).select(&Index::Name(ns.into(), name.into()))?);
+                        }
+                    }
+                }
+                let gateway_map = gateways
+                    .iter()
+                    .filter_map(|o| o["metadata"]["name"].as_str().map(|n| (n.to_string(), o)))
+                    .collect();
+                let service_map = services
+                    .iter()
+                    .filter_map(|o| o["metadata"]["name"].as_str().map(|n| (n.to_string(), o)))
+                    .collect();
+                self.controller
+                    .reconcile_httproute(ns, object, &gateway_map, &service_map)
+                    .await
+            }
+        }
     }
 }

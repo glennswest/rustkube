@@ -15,13 +15,14 @@
 //! when the driver says the volume is off the node — which is why the detach
 //! path must not be clever: delete, and let the driver finish.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::{Index, Key};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 pub struct AttachDetachController {
     api: Arc<ApiClient>,
@@ -33,134 +34,51 @@ impl AttachDetachController {
     }
 
     pub async fn run(&self) {
-        info!("AttachDetach controller started");
-        let mut interval = time::interval(Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile().await {
-                error!("AttachDetach reconcile error: {e}");
-            }
-        }
+        owned::run(&self.api, self).await;
     }
 
-    async fn reconcile(&self) -> anyhow::Result<()> {
-        // Which drivers want an attach at all. A driver that says
-        // `attachRequired: false` is told nothing — creating a
-        // VolumeAttachment for it leaves an object nobody ever removes.
-        let drivers: Value = self.api.list("/apis/storage.k8s.io/v1/csidrivers").await?;
-        let mut attach_required: HashMap<String, bool> = HashMap::new();
-        for d in drivers["items"].as_array().cloned().unwrap_or_default() {
-            if let Some(name) = d["metadata"]["name"].as_str() {
-                // Absent means true, per the CSIDriver defaulting rules.
-                let required = d["spec"]["attachRequired"].as_bool().unwrap_or(true);
-                attach_required.insert(name.to_string(), required);
-            }
-        }
-
-        let pv_list: Value = self.api.list("/api/v1/persistentvolumes").await?;
-        let pvs: HashMap<String, Value> = pv_list["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|pv| {
-                pv["metadata"]["name"]
-                    .as_str()
-                    .map(|n| (n.to_string(), pv.clone()))
-            })
-            .collect();
-        if pvs.is_empty() {
+    async fn reconcile_volume(&self, pv: &Value, deps: &Deps) -> anyhow::Result<()> {
+        let pv_name = pv["metadata"]["name"].as_str().unwrap_or("");
+        let claims = deps.feed(0).select(&Index::Volume(pv_name.into()))?;
+        let Some((driver, handle)) = csi_source(pv) else {
             return Ok(());
-        }
-
-        // What ought to be attached: every (volume, node) a live pod implies.
+        };
+        let drivers = deps
+            .feed(2)
+            .select(&Index::Name("".into(), driver.clone()))?;
+        let required = drivers
+            .first()
+            .map(|d| d["spec"]["attachRequired"].as_bool().unwrap_or(true))
+            .unwrap_or(true);
         let mut desired: HashMap<String, Desired> = HashMap::new();
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        for ns in ns_list["items"].as_array().cloned().unwrap_or_default() {
-            let namespace = match ns["metadata"]["name"].as_str() {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-            let pod_list: Value = self
-                .api
-                .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-                .await?;
-            let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-            if pods.is_empty() {
-                continue;
-            }
-            let pvc_list: Value = self
-                .api
-                .list(&format!(
-                    "/api/v1/namespaces/{namespace}/persistentvolumeclaims"
-                ))
-                .await?;
-            let pvcs: HashMap<String, Value> = pvc_list["items"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|c| {
-                    c["metadata"]["name"]
-                        .as_str()
-                        .map(|n| (n.to_string(), c.clone()))
-                })
-                .collect();
-
-            for pod in &pods {
-                let node = match pod["spec"]["nodeName"].as_str().filter(|n| !n.is_empty()) {
-                    Some(n) => n,
-                    None => continue, // not placed yet: nothing to attach to
-                };
-                // A finished pod releases its volumes. A terminating one has
-                // not: its containers may still be writing.
-                if matches!(
-                    pod["status"]["phase"].as_str().unwrap_or(""),
-                    "Succeeded" | "Failed"
-                ) {
+        for pvc in claims {
+            let ns = pvc["metadata"]["namespace"].as_str().unwrap_or("");
+            let name = pvc["metadata"]["name"].as_str().unwrap_or("");
+            for pod in deps.feed(1).select(&Index::Claim(ns.into(), name.into()))? {
+                if !required
+                    || matches!(
+                        pod["status"]["phase"].as_str(),
+                        Some("Succeeded" | "Failed")
+                    )
+                {
                     continue;
                 }
-                for claim_name in claim_names(pod) {
-                    let pvc = match pvcs.get(&claim_name) {
-                        Some(c) => c,
-                        None => continue,
-                    };
-                    let pv_name = match pvc["spec"]["volumeName"].as_str().filter(|v| !v.is_empty())
-                    {
-                        Some(v) => v,
-                        None => continue, // not bound yet
-                    };
-                    let pv = match pvs.get(pv_name) {
-                        Some(pv) => pv,
-                        None => continue,
-                    };
-                    let (driver, handle) = match csi_source(pv) {
-                        Some(s) => s,
-                        None => continue, // not a CSI volume: nothing to attach
-                    };
-                    if !attach_required.get(&driver).copied().unwrap_or(true) {
-                        continue;
-                    }
-                    let name = attachment_name(&handle, &driver, node);
-                    desired.insert(
-                        name,
-                        Desired {
-                            driver,
-                            node: node.to_string(),
-                            pv: pv_name.to_string(),
-                        },
-                    );
-                }
+                let Some(node) = pod["spec"]["nodeName"].as_str().filter(|n| !n.is_empty()) else {
+                    continue;
+                };
+                desired.insert(
+                    attachment_name(&handle, &driver, node),
+                    Desired {
+                        driver: driver.clone(),
+                        node: node.into(),
+                        pv: pv_name.into(),
+                    },
+                );
             }
         }
-
-        // What is attached now.
-        let existing_list: Value = self
-            .api
-            .list("/apis/storage.k8s.io/v1/volumeattachments")
-            .await?;
+        let existing_list = deps.feed(3).select(&Index::Volume(pv_name.into()))?;
         let mut existing: HashSet<String> = HashSet::new();
-        for va in existing_list["items"].as_array().cloned().unwrap_or_default() {
+        for va in existing_list {
             let name = match va["metadata"]["name"].as_str() {
                 Some(n) => n.to_string(),
                 None => continue,
@@ -177,13 +95,16 @@ impl AttachDetachController {
             // Only CSI attachments this controller could have created. An
             // attachment for a driver we have never heard of belongs to
             // whoever made it.
-            if !attach_required.contains_key(attacher) {
+            if drivers.is_empty() || attacher != driver {
                 continue;
             }
             let node = va["spec"]["nodeName"].as_str().unwrap_or("");
             match self
                 .api
-                .delete(&format!("/apis/storage.k8s.io/v1/volumeattachments/{name}"))
+                .delete_observed(
+                    &format!("/apis/storage.k8s.io/v1/volumeattachments/{name}"),
+                    &va,
+                )
                 .await
             {
                 Ok(_) => info!("Detaching {name} ({attacher} on {node})"),
@@ -210,10 +131,7 @@ impl AttachDetachController {
                 .create("/apis/storage.k8s.io/v1/volumeattachments", &body)
                 .await
             {
-                Ok(_) => info!(
-                    "Attaching {} to {} via {}",
-                    want.pv, want.node, want.driver
-                ),
+                Ok(_) => info!("Attaching {} to {} via {}", want.pv, want.node, want.driver),
                 Err(e) => debug!("could not create VolumeAttachment {name}: {e}"),
             }
         }
@@ -228,6 +146,7 @@ struct Desired {
 }
 
 /// The claims a pod mounts (generic ephemeral volumes included).
+#[cfg(test)]
 fn claim_names(pod: &Value) -> Vec<String> {
     let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
     pod["spec"]["volumes"]
@@ -292,7 +211,10 @@ mod tests {
             h.update(b"volhandlecsi.example.comnode1");
             format!("csi-{:x}", h.finalize())
         };
-        assert_eq!(attachment_name("volhandle", "csi.example.com", "node1"), expected);
+        assert_eq!(
+            attachment_name("volhandle", "csi.example.com", "node1"),
+            expected
+        );
     }
 
     #[test]
@@ -313,6 +235,146 @@ mod tests {
             {"name": "scratch", "ephemeral": {}},
             {"name": "cfg", "configMap": {"name": "x"}}
         ]}});
-        assert_eq!(claim_names(&pod), vec!["c1".to_string(), "web-scratch".to_string()]);
+        assert_eq!(
+            claim_names(&pod),
+            vec!["c1".to_string(), "web-scratch".to_string()]
+        );
+    }
+}
+
+#[async_trait::async_trait]
+impl Controller for AttachDetachController {
+    fn name(&self) -> &'static str {
+        "attachdetach"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/persistentvolumes"
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![
+            Dependency {
+                path: "/api/v1/persistentvolumeclaims".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .affected
+                        .iter()
+                        .flat_map(|i| match i {
+                            Index::Volume(name) => {
+                                owned::keys_at(primary, Index::Name("".into(), name.clone()))
+                            }
+                            _ => Vec::new(),
+                        })
+                        .collect()
+                }),
+            },
+            Dependency {
+                path: "/api/v1/pods".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .affected
+                        .iter()
+                        .flat_map(|i| match i {
+                            Index::Claim(..) => owned::keys_at(primary, i.clone()),
+                            _ => Vec::new(),
+                        })
+                        .collect()
+                }),
+            },
+            Dependency {
+                path: "/apis/storage.k8s.io/v1/csidrivers".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .old
+                        .iter()
+                        .chain(delta.new.iter())
+                        .flat_map(|driver| {
+                            owned::keys_at(
+                                primary,
+                                Index::Driver(
+                                    driver["metadata"]["name"].as_str().unwrap_or("").into(),
+                                ),
+                            )
+                        })
+                        .collect()
+                }),
+            },
+            Dependency {
+                path: "/apis/storage.k8s.io/v1/volumeattachments".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .old
+                        .iter()
+                        .chain(delta.new.iter())
+                        .flat_map(|va| {
+                            let name = va["spec"]["source"]["persistentVolumeName"]
+                                .as_str()
+                                .unwrap_or("");
+                            let mut keys =
+                                owned::keys_at(primary, Index::Name("".into(), name.into()));
+                            if keys.is_empty() {
+                                keys.push(Key {
+                                    namespace: "".into(),
+                                    name: name.into(),
+                                    uid: format!(
+                                        "missing:{}",
+                                        va["metadata"]["uid"].as_str().unwrap_or("")
+                                    ),
+                                });
+                            }
+                            keys
+                        })
+                        .collect()
+                }),
+            },
+        ]
+    }
+    async fn reconcile(&self, pv: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        self.reconcile_volume(pv, deps).await
+    }
+    async fn deleted(&self, key: &Key, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        let response = self
+            .api
+            .get(&format!("/api/v1/persistentvolumes/{}", key.name))
+            .await?;
+        if response.status().is_success() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            response.status().as_u16() == 404,
+            "PV absence not established"
+        );
+        // A missing PV cannot prove a running Pod has released the volume.
+        for pvc in deps.feed(0).select(&Index::Volume(key.name.clone()))? {
+            let ns = pvc["metadata"]["namespace"].as_str().unwrap_or("");
+            let name = pvc["metadata"]["name"].as_str().unwrap_or("");
+            if deps
+                .feed(1)
+                .select(&Index::Claim(ns.into(), name.into()))?
+                .iter()
+                .any(|p| !matches!(p["status"]["phase"].as_str(), Some("Succeeded" | "Failed")))
+            {
+                // The primary PV is gone, so future Pod events cannot find it
+                // in the inverse index. Retain a backed-off cleanup retry.
+                anyhow::bail!("missing PV still has a nonterminal claim user");
+            }
+        }
+        for va in deps.feed(3).select(&Index::Volume(key.name.clone()))? {
+            let driver = va["spec"]["attacher"].as_str().unwrap_or("");
+            if deps
+                .feed(2)
+                .select(&Index::Name("".into(), driver.into()))?
+                .is_empty()
+            {
+                continue;
+            }
+            let name = va["metadata"]["name"].as_str().unwrap_or("");
+            self.api
+                .delete_observed(
+                    &format!("/apis/storage.k8s.io/v1/volumeattachments/{name}"),
+                    &va,
+                )
+                .await?;
+        }
+        Ok(())
     }
 }

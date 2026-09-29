@@ -15,14 +15,33 @@
 #                kube-scheduler (test/conformance/stage.sh builds and publishes it)
 #   RK_FASTETCD  path to a fastetcd server binary
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
-# each, so two runs can share the build box.
+# each; without an override the rig chooses a free block for this build.
 set -u
-mkdir -p "$HOME/tmp" && export TMPDIR="$HOME/tmp"
+mkdir -p "$PWD/tmp"
+: "${TMPDIR:=$PWD/tmp}"
+export TMPDIR
 W=$(mktemp -d)
 cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
 
-OFF=${RK_PORT_OFFSET:-0}
+if [ -n "${RK_PORT_OFFSET:-}" ]; then
+  OFF=$RK_PORT_OFFSET
+else
+  OFF=$(python3 - <<'PORTS'
+import random, socket
+for offset in random.sample(range(16000), 100):
+    sockets = []
+    try:
+        for port in (36443+offset, 32379+offset, 32380+offset, 32381+offset):
+            sock = socket.socket(); sockets.append(sock); sock.bind(('127.0.0.1', port))
+        print(offset); break
+    except OSError: pass
+    finally:
+        for sock in sockets: sock.close()
+else: raise SystemExit('no free test port block')
+PORTS
+  ) || exit 100
+fi
 PORT=$((36443 + OFF))
 ETCD=$((32379 + OFF))
 API=https://127.0.0.1:$PORT
@@ -37,18 +56,18 @@ if [ -n "${RK_BIN:-}" ]; then
     [ -x "$BIN/$b" ] || { echo "RK_BIN=$BIN has no $b"; exit 100; }
   done
 else
-  export CARGO_TARGET_DIR=$HOME/target/rustkube-e2e
   cargo build -q -p kube-apiserver -p kube-controller-manager -p kube-scheduler || exit 100
-  BIN=$CARGO_TARGET_DIR/debug
+  BIN=${CARGO_TARGET_DIR:-$PWD/target}/debug
 fi
 if [ -n "${RK_FASTETCD:-}" ]; then
   FASTETCD=$RK_FASTETCD
   [ -x "$FASTETCD" ] || { echo "RK_FASTETCD=$FASTETCD is not executable"; exit 100; }
 else
   git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
-  (cd "$W/fastetcd" && CARGO_TARGET_DIR=$HOME/target/fastetcd-e2e cargo build -q -p fastetcd-server) || exit 100
-  FASTETCD=$(ls "$HOME"/target/fastetcd-e2e/debug/fastetcd* | grep -v '\.d$' | head -1)
+  (cd "$W/fastetcd" && cargo build -q -p fastetcd-server) || exit 100
+  FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/debug/fastetcd
 fi
+[ -x "$FASTETCD" ] || { echo "fastetcd build produced no executable"; exit 100; }
 
 # --- credentials --------------------------------------------------------------
 openssl genrsa -out "$W/sa.key" 2048 2>/dev/null
@@ -78,20 +97,16 @@ openssl x509 -req -in "$W/apiserver.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" -CAc
   -out "$W/apiserver.crt" -days 2 -extfile "$W/san.ext" 2>/dev/null
 
 # --- start --------------------------------------------------------------------
-# The store on tmpfs when there is one: this data is thrown away, and on a
-# shared build box every fsync to disk queues behind everyone else's builds —
-# namespace creation took over 30 s under the conformance suite's load (#67).
+# Keep the datastore on the build's private disposable drive too.
 DATA=$W/etcd
-if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-  DATA=$(mktemp -d /dev/shm/rustkube-e2e.XXXXXX)
-  trap 'cleanup; rm -rf "$DATA"' EXIT
-fi
 "$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:$ETCD \
   --listen-peer-urls http://127.0.0.1:$((ETCD + 1)) --listen-metrics-url 127.0.0.1:$((ETCD + 2)) \
   >"$W/fastetcd.log" 2>&1 &
+STORE_PID=$!
 # fastetcd first: an apiserver that outwaits its 60s datastore gate boots
 # into a hole.
 for _ in $(seq 180); do
+  kill -0 "$STORE_PID" 2>/dev/null || { cat "$W/fastetcd.log"; exit 100; }
   (exec 3<>/dev/tcp/127.0.0.1/$ETCD) 2>/dev/null && break
   sleep 1
 done
@@ -101,10 +116,12 @@ done
   --etcd-servers http://127.0.0.1:$ETCD --anonymous-auth false \
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
   >"$W/apiserver.log" 2>&1 &
+API_PID=$!
 # Six minutes: on a loaded build box the bootstrap writes alone have taken
 # three.
 ready=
 for _ in $(seq 360); do
+  kill -0 "$API_PID" 2>/dev/null || { cat "$W/apiserver.log"; exit 100; }
   curl -sfk -H "Authorization: Bearer $ADMIN" "$API/readyz" >/dev/null && { ready=1; break; }
   sleep 1
 done
@@ -135,8 +152,15 @@ start_scheduler() {
 report() {
   echo "---- $FAIL failed"
   if [ "$FAIL" -ne 0 ]; then
-    echo "---- apiserver log (tail)"; tail -40 "$W/apiserver.log"
-    [ -f "$W/cm.log" ] && { echo "---- controller-manager log (tail)"; tail -20 "$W/cm.log"; }
+    echo "---- apiserver log (tail)"; tail -80 "$W/apiserver.log"
+    echo "---- datastore log (tail)"; tail -80 "$W/fastetcd.log"
+    echo "---- request/store counters at failure"
+    curl --max-time 3 -sk "$API/metrics" | grep -E '^(apiserver_current_inflight|apiserver_request_total|rustkube_store_)' || true
+    # Without kubevirt's CRDs every namespace's VM LIST is a 404; that noise
+    # would fill the tail.
+    [ -f "$W/cm.log" ] && { echo "---- controller-manager log (tail, 404 LISTs dropped)"
+      grep -v 'reflector LIST failed.*404 Not Found' "$W/cm.log" | tail -60;
+      grep 'reconciling PDB membership' "$W/cm.log" | tail -30; }
   fi
   exit "$FAIL"
 }

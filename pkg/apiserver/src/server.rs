@@ -1249,57 +1249,53 @@ async fn reconcile_kubernetes_service(
     let ep_key = ResourceStorage::namespaced_key("endpoints", "default", "kubernetes");
     let ports = json!([{ "name": "https", "port": secure_port, "protocol": "TCP" }]);
 
-    let mut addresses: Vec<serde_json::Value> = match storage.get(&ep_key).await {
-        Ok(ep) => ep["subsets"][0]["addresses"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
-    if addresses
-        .iter()
-        .any(|a| a["ip"].as_str() == Some(advertise))
-    {
-        return; // already registered
+    for (key, slice) in [(&ep_key, false),
+        (&ResourceStorage::namespaced_key("endpointslices", "default", "kubernetes"), true)] {
+        // Preserve identity and merge against each freshly read revision. A
+        // second master must neither replace the UID nor erase the first IP.
+        for _ in 0..8 {
+            let current = match storage.get(key).await {
+                Ok(value) => Some(value),
+                Err(e) if e.reason == "NotFound" => None,
+                Err(e) => { tracing::warn!(error=%e.message, "cannot read bootstrap endpoint"); break; }
+            };
+            let desired = bootstrap_endpoint(current.as_ref(), slice, advertise, &ports);
+            if current.as_ref() == Some(&desired) { break; }
+            let result = if let Some(current) = &current {
+                let rv = current["metadata"]["resourceVersion"].as_str().and_then(|s| s.parse().ok());
+                storage.update(key, desired, rv).await
+            } else { storage.create(key, desired).await };
+            match result {
+                Ok(_) => break,
+                Err(e) if e.reason == "Conflict" || e.reason == "AlreadyExists" => continue,
+                Err(e) => { tracing::warn!(error=%e.message, "cannot publish bootstrap endpoint"); break; }
+            }
+        }
     }
-    addresses.push(json!({ "ip": advertise }));
-    addresses.sort_by(|a, b| a["ip"].as_str().unwrap_or("").cmp(b["ip"].as_str().unwrap_or("")));
+}
 
-    let endpoints = json!({
-        "apiVersion": "v1",
-        "kind": "Endpoints",
-        "metadata": { "name": "kubernetes", "namespace": "default" },
-        "subsets": [{ "addresses": addresses.clone(), "ports": ports.clone() }]
-    });
-    if storage.get(&ep_key).await.is_ok() {
-        let _ = storage.update(&ep_key, endpoints, None).await;
+fn bootstrap_endpoint(current: Option<&serde_json::Value>, slice: bool, advertise: &str, ports: &serde_json::Value) -> serde_json::Value {
+    let mut object = current.cloned().unwrap_or_else(|| json!({}));
+    object["apiVersion"] = json!(if slice { "discovery.k8s.io/v1" } else { "v1" });
+    object["kind"] = json!(if slice { "EndpointSlice" } else { "Endpoints" });
+    crate::handlers::resource::ensure_metadata_pub(&mut object, "kubernetes", Some("default"));
+    if slice {
+        object["metadata"]["labels"]["kubernetes.io/service-name"] = json!("kubernetes");
+        object["addressType"] = json!("IPv4");
+        let mut endpoints = object["endpoints"].as_array().cloned().unwrap_or_default();
+        if !endpoints.iter().any(|ep| ep["addresses"].as_array().is_some_and(|ips| ips.iter().any(|ip| ip == advertise))) {
+            endpoints.push(json!({"addresses":[advertise],"conditions":{"ready":true}}));
+        }
+        object["endpoints"] = json!(endpoints);
+        object["ports"] = ports.clone();
     } else {
-        let _ = storage.create(&ep_key, endpoints).await;
+        let mut addresses = object["subsets"][0]["addresses"].as_array().cloned().unwrap_or_default();
+        if !addresses.iter().any(|a| a["ip"] == advertise) { addresses.push(json!({"ip":advertise})); }
+        addresses.sort_by(|a,b| a["ip"].as_str().cmp(&b["ip"].as_str()));
+        object["subsets"] = json!([{"addresses":addresses,"ports":ports}]);
     }
+    object
 
-    // Mirror into an EndpointSlice — the modern path Cilium/kube-proxy read.
-    let slice_key =
-        ResourceStorage::namespaced_key("endpointslices", "default", "kubernetes");
-    let slice = json!({
-        "apiVersion": "discovery.k8s.io/v1",
-        "kind": "EndpointSlice",
-        "metadata": {
-            "name": "kubernetes",
-            "namespace": "default",
-            "labels": { "kubernetes.io/service-name": "kubernetes" }
-        },
-        "addressType": "IPv4",
-        "endpoints": addresses.iter().map(|a| json!({
-            "addresses": [a["ip"].as_str().unwrap_or("")],
-            "conditions": { "ready": true }
-        })).collect::<Vec<_>>(),
-        "ports": [{ "name": "https", "port": secure_port, "protocol": "TCP" }]
-    });
-    if storage.get(&slice_key).await.is_ok() {
-        let _ = storage.update(&slice_key, slice, None).await;
-    } else {
-        let _ = storage.create(&slice_key, slice).await;
-    }
 }
 
 /// Name of the ServiceAccount a node's ssh login authenticates as, and of the
@@ -1894,6 +1890,23 @@ fn non_resource_label(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::first_service_ip;
+
+    #[test]
+    fn bootstrap_endpoints_have_stable_uid_and_repair_legacy_objects() {
+        for slice in [false,true] {
+            let ports = serde_json::json!([{"name":"https","port":6443,"protocol":"TCP"}]);
+            let first = super::bootstrap_endpoint(None,slice,"127.0.0.1",&ports);
+            assert!(!first["metadata"]["uid"].as_str().unwrap().is_empty());
+            let second = super::bootstrap_endpoint(Some(&first),slice,"127.0.0.2",&ports);
+            assert_eq!(first["metadata"]["uid"],second["metadata"]["uid"]);
+            let mut legacy = second.clone(); legacy["metadata"]["uid"] = serde_json::Value::Null;
+            let repaired = super::bootstrap_endpoint(Some(&legacy),slice,"127.0.0.1",&ports);
+            assert!(!repaired["metadata"]["uid"].as_str().unwrap().is_empty());
+            assert_eq!(super::bootstrap_endpoint(Some(&second),slice,"127.0.0.2",&ports),second);
+            assert_eq!(if slice { second["endpoints"].as_array().unwrap().len() }
+                else { second["subsets"][0]["addresses"].as_array().unwrap().len() },2);
+        }
+    }
 
     #[test]
     fn service_cidr_yields_dot_one() {

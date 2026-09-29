@@ -1,5 +1,144 @@
 # Changelog
 
+## Unreleased — turbomode (runtime acceptance pending)
+
+### 2026-09-29
+- **docs:** Update main integration status under #163; retain datastore snapshot, latency and multi-master acceptance gaps and the explicit no-golden instruction.
+- **docs:** Record owner-authorized #163 merge plan and whole-workspace verification gates; retain pending acceptance and no-golden scope.
+- **docs:** Record audit verification: 41 CLI flags covered, 26 relative links valid; remote sc-build at 635855d passed 409 tests with four datastore-dependent tests ignored. Close documentation corrections #112/#117.
+
+- **docs:** Clarify the historical oc diagnostic template and current storage work-plan scope during final review.
+
+- **docs:** Refresh README, docs and project context from source/history since September 18: CLI defaults and boolean syntax, API gaps, informer/metrics behavior, conformance and test-container evidence, current stormcos client-certificate wiring, and private-volume golden delivery. Preserve built-in stormblock PVC ownership; correct registry and management API claims (#112/#117). Track legacy release packaging and Terragrunt installation promises in #156/#157; retain disabled workflow removal in #114.
+
+- **docs:** Start a source-backed documentation audit of changes since September 18, including configuration, APIs, ports and delivery.
+
+- **docs:** Record reproduced datastore snapshot inconsistency (165/255
+  LISTs), hand off fastetcd#50 and block #146 acceptance pending its fix.
+  Retain #153/#154 failures despite successful fresh repetitions.
+- **test:** Add a concurrent LIST/snapshot-revision regression without
+  controllers to isolate a datastore consistency race from indexed workers.
+- **test:** Include datastore logs and request/store counters in API-rig
+  failure reports; retain PDB-specific diagnostics despite startup log volume.
+- **docs:** Retain final-validation failures #153/#154 alongside successful
+  reruns; closure remains pending the intermittent-failure investigation.
+- **test:** Preserve object observations on selector-test failure and expose
+  PDB candidate counts at debug level to diagnose a startup convergence race.
+- **chore:** Format migrated Rust modules with rustfmt on the build box.
+- **docs:** Refresh controller/scheduler behavior, handoff checkpoints and
+  verification evidence; separate completed dev checks from #147/#149 live
+  acceptance. Keep turbomode unreleased under the no-golden instruction.
+- **fix:** Retain backed-off detach cleanup when a removed PV still has users;
+  guard PVC class/provisioner patches. Keep ordinary FIFO dequeue constant-time
+  and test priority ties plus dirty-key requeueing.
+- **fix:** Relist before reading a delayed write whose watch history expired;
+  bounded history must never rewind or resurrect an object. Fence claim
+  binding and migration source deletion with observed UID/revision.
+- **test:** Verify with a fake HTTP feed that unavailable dependencies prevent
+  any object reconciliation, and recovery immediately makes the key runnable.
+- **test:** Add real API/store checks for all GC propagation modes, per-event
+  expiry, finalizer-held namespace teardown, burst scheduling without CPU
+  overcommit, and capacity-release wakeups. Requeue after resolving an old
+  create expectation so already-observed recovery cannot strand a replica.
+- **fix:** Retain ambiguous controller create expectations by owner/collection.
+  Resolve or retry the same named object before another generated child;
+  retire expectations on owner deletion. Test a committed POST with a lost
+  response to prevent duplicate replicas during cache lag.
+- **perf:** Replace scheduler namespace passes with a shared prioritized Pod/VMI
+  object queue, indexed storage dependencies, incremental placed accounting
+  and retained bind/volume reservations. Failed or lagging observations cannot
+  free assumed capacity; CRD discovery gates optional VMI observation.
+- **perf:** Index Gateway/HTTPRoute reference workers and per-event retention.
+  GC routes changed owners/dependents through shared discovered feeds, refuses
+  unsynchronized observations, and confirms destructive absence/finalization
+  authoritatively with UID/revision write guards. Gateway remains status-only.
+- **perf:** Index namespace provisioning and teardown with separate bounded
+  pools and dynamically discovered shared feeds. Rebuild subscriptions on CRD
+  changes; verify authoritative emptiness before conditional finalization.
+- **perf:** Index PodMigration and HPA workers by named dependencies. Retain
+  the existing migration state machine and placeholder HPA behavior while
+  avoiding full lists and unchanged status timestamp writes.
+- **fix:** Select an available e2e port block and fail when a rig process exits;
+  overlapping disposable builds must not connect to another job’s datastore.
+- **perf:** Reconcile CSI attachments per PV using claim/Pod/driver/attachment
+  indexes; retain attachments when PV absence or Pod release is unproven and
+  guard detach with the observed attachment UID and revision.
+- **perf:** Index stormblock provisioning/reclaim per claim/volume and node
+  lifecycle per Node, with Lease and assigned-Pod routes. Preserve semantic
+  expiry/eviction deadlines and use conditional Pod deletion.
+- **fix:** Real indexed-worker tests found UID-less bootstrap Endpoints and
+  EndpointSlices. Assign/repair identity, preserve it across boot, and merge
+  master addresses with CAS; synchronized informers can now accept the feed.
+- **perf:** Index PV binding by storage class and claim/volume/Pod references;
+  serialize claim selection with acknowledged PV writes and independently
+  reconcile volume lifecycle. Only a claim GET 404 proves absence; finalizer
+  removal uses observed UID/revision. Add HTTP failure regression coverage.
+- **perf:** Move VM, CSR and root CA publishing to per-object workers. VMIs
+  are read by owner UID and deleted conditionally; root CA ConfigMap changes
+  route directly to their Namespace. CSR approval acknowledges the next work.
+- **fix:** Resolve the e2e store executable by its binary name (`fastetcd`),
+  not its Cargo package name, and fail immediately if absent.
+- **test:** Add real API/store Service/PDB membership, deletion/recreation and
+  idle-write regression checks. Keep all e2e build/scratch/store data on the
+  private build drive. Limit endpoint orphan cleanup to controlling Services.
+- **perf:** Migrate Service/EndpointSlice and PDB to bounded indexed workers;
+  route old/new Pod labels via namespace-scoped selector anchors and preserve
+  negative/empty selectors. Check all dependency sync barriers, reseed shared
+  feeds, guard endpoint cleanup by UID/revision, and skip unchanged writes.
+- **docs:** Resume #146 implementation under the master clarification; keep
+  live-target selection and live acceptance in #147/#149, not as an
+  implementation blocker. Revalidate the pushed five-crate baseline first.
+- **docs:** Retry #96 real test-container validation at main@d7bc1f8:
+  stormcentral refused before Job creation because the test host API is
+  unavailable (stormcentral#63). Remote sc-build at a4dba9c compiled the
+  test program and passed all 9 unit tests; live acceptance remains open.
+- **docs:** Audit #2 controller-manager parity gaps and the totrust v1.31.4
+  acceptance pin; record the missing upstream test environment and correct
+  the controller inventory for the turbomode branch. sc-build at 5687d0f
+  compiled kube-controller-manager and passed 58 unit tests plus doc tests.
+  Correct the earlier #3 baseline uncertainty using the shared pin.
+- **docs:** Reconcile #20 with stormcert renewal and stormcos#119; distinguish
+  external issuance from rustkube reload gaps and record the pending CA/scope
+  decision. sc-build at 6f7e318 passed 3 cert-helper and 197 apiserver tests;
+  the CSR filter matched no tests. Rotation acceptance remains unverified.
+- **docs:** Record #8 implementation gaps, existing arch-label/filter code,
+  gate/webhook prerequisites and the required mixed-architecture test target.
+  Remote sc-build at 89f36a8 passed 254 apiserver/scheduler unit tests and
+  doc tests; this does not establish image-aware admission acceptance.
+- **docs:** Audit #3 scheduler parity gaps and record the unresolved upstream
+  version/acceptance-cluster decision before implementation. Remote sc-build
+  at 58ea6d2 compiled kube-scheduler and passed 57 scheduler tests; upstream
+  acceptance remains unrun.
+- **docs:** Document the #66 scale protocol: complete populations, Lease
+  heartbeats, CPU/API/datastore curves and Deployment scale latency. Execution
+  environment and artifact delivery still need an owner decision. Five-crate
+  `sc-build` at f5d3876 passed 400 unit tests (four storage tests ignored);
+  these are baseline checks, not scale measurements.
+- **docs:** Reconcile #146 work plan with the committed DaemonSet migration,
+  record passing five-crate `sc-build` validation at fc67179 (four storage
+  integration tests ignored) and the pending owner choice of live test
+  target, and correct private-volume build instructions.
+
+- Deployment, ReplicaSet, StatefulSet, Job and CronJob now use bounded
+  per-object workers, shared indexed watches, write acknowledgements and
+  UID/revision-conditional deletion. Other controller migrations remain open.
+- Mutation requests reject expired leadership terms and use request budgets
+  bounded by the remaining term. Late renewal cannot revive an expired term.
+
+- Shared revisioned watches, coalescing async work queues, complete paginated
+  reads and failure retry; controller/scheduler work wakes on dependency changes.
+- Semantic deadline requeues replace controller poll clocks; scheduling no
+  longer gates lease renewal. Incomplete GC/namespace observations fail closed.
+- Multi-master correctness: datastore snapshot pagination, explicit watch
+  expiration/lag errors, unique election identities and conditional placement
+  updates. Three-master failure validation remains pending (#149).
+- Lease candidates observe renewal changes using local monotonic time,
+  avoiding premature takeover caused by master clock offsets.
+- Event-driven architecture and C2NR0Q2 release baseline in
+  `docs/event-driven-design.md`; #143–#147 track implementation and validation.
+  Indexed object workers remain pending; no subsecond performance claim yet.
+
+
 ## [Unreleased]
 
 <!-- New unreleased changes go here -->

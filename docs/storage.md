@@ -13,16 +13,17 @@ volume bytes. Those come from StormBlock, by one of two paths:
   plane hands the claim to the driver's `external-provisioner` sidecar by
   annotation and never calls the driver itself ([the chain](#the-chain-end-to-end)).
 
-This document is the contract between the four repos, so that a change on one
+This document describes the contract between these components, so that a change on one
 side is made against what the other side actually does.
 
-## The four pieces
+## Component ownership
 
 | repo | what it is | what it owns |
 |---|---|---|
 | **rustkube** (here) | control plane | binding, phases, protection finalizers, attach objects, placement |
 | **stormblock** | the engine | slabs, goldens, clones, NVMe-oF/TCP export, filesystem templates |
-| **stormblock-registry** (sbregistry) | the registry/orchestrator | golden volume per digest, CoW clones for root-dirs, PVCs and PXE media |
+| **stormblock-registry** (sbregistry) | the registry/orchestrator | golden volume per digest; CoW clones for container roots and PXE/firmware boots; cuts and names the PVC blank ladder (#112) |
+| **rustkube-node** | kubelet with the built-in PVC driver | clones PVC blanks directly through stormblock, attaches via ublk, reclaims node-owned clones |
 | **stormblock-csi** | the CSI driver + wander operator | `CreateVolume`/`DeleteVolume`, stage/publish, capacity publishing, replica placement |
 
 ## The chain, end to end
@@ -134,7 +135,9 @@ provisioner `stormblock.storm.io` (this path); stormblock-csi's defines
 applied, both would act on the same claims (#92).
 
 **Deleting the backing clone is the node's job.** stormblock's management API
-is loopback, so only the node holding a volume can delete it: the kubelet's
+defaults to `0.0.0.0:9090`, not loopback. It authenticates with a per-node
+bearer token (stormblock#107); a token minted on one node grants no authority
+on a peer (#117). With that node's credentials, the kubelet's
 `reclaim_released` deletes the clone and then the PV (rustkube-node#46). The
 control plane only reports that the node will.
 
@@ -210,9 +213,10 @@ protobuf codec dropped Go's inline embeds (a PV read by client-go had no
   `pv.kubernetes.io/provisioned-by` gets a `VolumeFailedDelete` warning and
   stays `Released`, which is the truth, rather than a phase that implies
   something is happening.
-- **It does not assume StormBlock.** Every signal above is the upstream one, so
-  an OpenShift CSI driver, a vendor driver, or `hostPath` PVs behave the same.
-  StormBlock is the driver we run, not a special case in the code.
+- **Generic binding and attachment use Kubernetes storage objects.**
+  Third-party CSI drivers use their sidecars. The `stormblock` class is an
+  explicit built-in special case in `stormblock.rs`; its node driver clones
+  blanks directly and never calls sbregistry to clone the PVC.
 
 ## Cross-checks that matter
 

@@ -32,48 +32,16 @@ pub(crate) fn metric_resource(key: &str) -> String {
     }
 }
 
-/// How long this apiserver remembers its own writes, for read-your-writes on
-/// LIST. Far longer than the watch cache takes to apply an event (ms); after
-/// it, a write is assumed seen.
-const RECENT_WRITES_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
-
-/// Generic resource storage — handles any K8s resource type.
+/// Generic resource storage backed by the shared datastore.
 pub struct ResourceStorage {
     store: Arc<dyn KvStore>,
     watch_cache: Arc<WatchCache>,
-    /// This apiserver's writes in the last `RECENT_WRITES_WINDOW`: key and the
-    /// store revision the write produced. See [`ResourceStorage::list`].
-    recent_writes: std::sync::Mutex<std::collections::VecDeque<(std::time::Instant, String, u64)>>,
 }
 
 impl ResourceStorage {
     pub fn new(store: Arc<dyn KvStore>) -> Self {
         let watch_cache = Arc::new(WatchCache::new(store.clone()));
-        Self { store, watch_cache, recent_writes: Default::default() }
-    }
-
-    /// Remember a write so a LIST that follows it sees it.
-    fn note_write(&self, key: &str, rev: u64) {
-        let now = std::time::Instant::now();
-        let mut w = self.recent_writes.lock().unwrap();
-        while w.front().is_some_and(|(t, _, _)| now.duration_since(*t) > RECENT_WRITES_WINDOW) {
-            w.pop_front();
-        }
-        w.push_back((now, key.to_string(), rev));
-    }
-
-    /// The newest revision this apiserver wrote under `prefix` recently: what
-    /// a LIST of `prefix` must reflect to include its own writes.
-    fn written_under(&self, prefix: &str) -> u64 {
-        let now = std::time::Instant::now();
-        self.recent_writes
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(t, k, _)| now.duration_since(*t) <= RECENT_WRITES_WINDOW && k.starts_with(prefix))
-            .map(|(_, _, r)| *r)
-            .max()
-            .unwrap_or(0)
+        Self { store, watch_cache }
     }
 
     /// The resource name inside a store key or prefix, for the `type` label on
@@ -159,12 +127,10 @@ impl ResourceStorage {
     /// Each item carries its own `resourceVersion` — the revision that last
     /// wrote it, which a client compares with what a later write returns
     /// (#111). The continue token is `{revision}:{last key}`: every page of
-    /// one paged LIST reports the first page's revision, as upstream does and
-    /// the chunking conformance specs check. The pages themselves are read
-    /// from the current snapshot, so a later page can hold objects newer than
-    /// that revision — upstream's "inconsistent continue", which a watch from
-    /// the list's revision tolerates (it replays, it does not miss). A bare
-    /// key (a token from before this) still works.
+    /// one paged LIST reads the same MVCC snapshot, including when pages hit
+    /// different API servers. Compacted snapshots return 410. The first page
+    /// is a linearizable datastore read, independent of a replica's cache.
+    /// A legacy bare-key token starts from the current snapshot.
     pub async fn list_page(
         &self,
         prefix: &str,
@@ -176,30 +142,26 @@ impl ResourceStorage {
             None => (None, None),
         };
         let _timer = apimachinery::metrics::StoreTimer::new("list", Self::resource_of(prefix));
-        // Served from the shared watch cache's in-memory snapshot (seeded once
-        // from the store), so relist storms don't fan out to fastetcd — but
-        // never from a snapshot older than this apiserver's own last write
-        // under the prefix. A client that creates and then lists must find
-        // what it created; the cache applying the write a few milliseconds
-        // later is not an excuse the conformance suite accepts (#67).
-        let min_rev = self.written_under(prefix);
+        // An API server's local recent-write table cannot establish freshness
+        // for writes accepted by another master. Read the shared datastore,
+        // pinning continuation pages to the first page's actual revision.
         let page = self
-            .watch_cache
-            .list(prefix, limit, continue_token, min_rev)
+            .store
+            .list_at(prefix, limit, continue_token, pinned)
             .await
             .map_err(ApiError::from)?;
 
         let mut items = Vec::with_capacity(page.items.len());
-        for (bytes, mod_rev) in &page.items {
-            let mut obj: Value = serde_json::from_slice(bytes)
-                .map_err(|e| ApiError::internal(&e.to_string()))?;
+        for (_, bytes, mod_rev) in &page.items {
+            let mut obj: Value =
+                serde_json::from_slice(bytes).map_err(|e| ApiError::internal(&e.to_string()))?;
             inject_resource_version(&mut obj, *mod_rev);
             items.push(obj);
         }
         let revision = pinned.unwrap_or(page.revision);
         Ok(ListPage {
             items,
-            continue_token: page.continue_key.map(|k| format!("{revision}:{k}")),
+            continue_token: page.continue_token.map(|k| format!("{revision}:{k}")),
             revision,
             remaining: page.remaining,
         })
@@ -212,8 +174,7 @@ impl ResourceStorage {
         // the store's mod_revision on read (#33). Baking it in makes later reads
         // return a stale RV.
         strip_resource_version(&mut obj);
-        let bytes =
-            serde_json::to_vec(&obj).map_err(|e| ApiError::internal(&e.to_string()))?;
+        let bytes = serde_json::to_vec(&obj).map_err(|e| ApiError::internal(&e.to_string()))?;
         // Atomic create-if-not-exists: CAS against revision 0 (the store treats
         // an absent key as revision 0) fails with Conflict if the key exists, so
         // two concurrent creates can't both win.
@@ -227,7 +188,6 @@ impl ResourceStorage {
             Err(e) => return Err(ApiError::from(e)),
         };
 
-        self.note_write(key, rev);
         inject_resource_version(&mut obj, rev);
         Ok(obj)
     }
@@ -244,15 +204,13 @@ impl ResourceStorage {
         // used for the CAS (prev_revision) but must not be baked into storage, or
         // the next read returns a stale RV and optimistic concurrency breaks (#33).
         strip_resource_version(&mut obj);
-        let bytes =
-            serde_json::to_vec(&obj).map_err(|e| ApiError::internal(&e.to_string()))?;
+        let bytes = serde_json::to_vec(&obj).map_err(|e| ApiError::internal(&e.to_string()))?;
         let rev = self
             .store
             .put(key, &bytes, prev_revision)
             .await
             .map_err(ApiError::from)?;
 
-        self.note_write(key, rev);
         inject_resource_version(&mut obj, rev);
         Ok(obj)
     }
@@ -260,12 +218,10 @@ impl ResourceStorage {
     /// Delete a resource by key.
     pub async fn delete(&self, key: &str, prev_revision: Option<u64>) -> Result<(), ApiError> {
         let _timer = apimachinery::metrics::StoreTimer::new("delete", Self::resource_of(key));
-        let rev = self
-            .store
+        self.store
             .delete(key, prev_revision)
             .await
             .map_err(ApiError::from)?;
-        self.note_write(key, rev);
         Ok(())
     }
 
@@ -298,8 +254,14 @@ fn parse_continue(token: &str) -> (Option<u64>, &str) {
 mod continue_tests {
     #[test]
     fn a_continue_token_pins_the_revision() {
-        assert_eq!(super::parse_continue("42:/registry/pods/a/p1"), (Some(42), "/registry/pods/a/p1"));
-        assert_eq!(super::parse_continue("/registry/pods/a/p:1"), (None, "/registry/pods/a/p:1"));
+        assert_eq!(
+            super::parse_continue("42:/registry/pods/a/p1"),
+            (Some(42), "/registry/pods/a/p1")
+        );
+        assert_eq!(
+            super::parse_continue("/registry/pods/a/p:1"),
+            (None, "/registry/pods/a/p:1")
+        );
         assert_eq!(super::parse_continue(":/x"), (None, ":/x"));
     }
 }
@@ -370,11 +332,20 @@ mod tests {
             "/registry/metal3.io/baremetalhosts/ns/h1"
         );
         // Same plural, different group: disjoint prefixes.
-        let (pa, pb) = (ResourceStorage::cluster_prefix(&a), ResourceStorage::cluster_prefix(&b));
+        let (pa, pb) = (
+            ResourceStorage::cluster_prefix(&a),
+            ResourceStorage::cluster_prefix(&b),
+        );
         assert!(!pa.starts_with(&pb) && !pb.starts_with(&pa));
 
-        assert_eq!(metric_resource("/registry/metal3.io/baremetalhosts/ns/h1"), "baremetalhosts.metal3.io");
-        assert_eq!(metric_resource("/registry/metal3.io/baremetalhosts/"), "baremetalhosts.metal3.io");
+        assert_eq!(
+            metric_resource("/registry/metal3.io/baremetalhosts/ns/h1"),
+            "baremetalhosts.metal3.io"
+        );
+        assert_eq!(
+            metric_resource("/registry/metal3.io/baremetalhosts/"),
+            "baremetalhosts.metal3.io"
+        );
         assert_eq!(metric_resource("/registry/pods/default/p"), "pods");
         assert_eq!(metric_resource("/registry/"), "unknown");
     }

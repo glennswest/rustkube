@@ -8,10 +8,12 @@ predates it.
 > **It cannot install a current rustkube as written.** cloud-init installs the
 > newest `x86_64` RPM from the **latest** GitHub release
 > (`install-latest-rpm glennswest/rustkube`), and no release since **v0.7.30**
-> carries an RPM: CI attaches musl tarballs and scratch images only
+> carries an RPM: the retained packaging tooling produces musl tarballs and scratch images
 > ([releasing.md](releasing.md)). A fresh provision fails at that step until
 > CI publishes the `kubernetes-rs` RPM again (`deploy/packaging/nfpm.yaml`) or
-> the template installs the tarballs. Checked 2026-09-24 (#80).
+> the template installs the tarballs. Rechecked against the templates on 2026-09-29; repair or retirement is
+> tracked in #157. GitHub Actions is disabled (#114); this is a legacy
+> runbook, not a supported current installation procedure.
 
 Unit: `deploy/terragrunt/masters/` → `master1/2/3.g8.lo` (192.168.8.51/.52/.53,
 VMIDs 2000–2002). Each master runs a fastetcd raft member, kube-apiserver,
@@ -39,8 +41,7 @@ deploy/terragrunt/
   (`git::ssh://git@github.com/glennswest/terraform-modules.git//modules/proxmox-fedora-vm?ref=v0.3.0`)
   — units never copy `.tf`; they reference the module by tag.
 - The `masters/` unit supersedes the older single-node `fastetcd/` + `rustkube/`
-  units still mentioned in `deploy/terragrunt/README.md` (that README is stale;
-  use this doc).
+  units; `deploy/terragrunt/README.md` points here.
 
 ---
 

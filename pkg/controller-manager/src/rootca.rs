@@ -10,15 +10,16 @@
 //! already trusts the apiserver with (`--certificate-authority`). With
 //! neither there is nothing true to publish, and the controller does not run.
 //!
-//! Polls like the other controllers: every namespace that is not terminating
+//! Indexed Namespace workers observe ConfigMap changes: every namespace that is not terminating
 //! gets the ConfigMap if it has none, and has it put back if its `ca.crt` was
 //! changed.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::{Index, Key};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::time::{self, Duration};
-use tracing::{debug, error, info};
+use tracing::info;
 
 pub const NAME: &str = "kube-root-ca.crt";
 const KEY: &str = "ca.crt";
@@ -53,30 +54,7 @@ impl RootCaPublisher {
     }
 
     pub async fn run(&self) {
-        info!("Root CA publisher started ({NAME} in every namespace)");
-        let mut interval = time::interval(Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.reconcile_all().await {
-                error!("Root CA publisher: {e}");
-            }
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let list = self.api.list("/api/v1/namespaces").await?;
-        for ns in list["items"].as_array().cloned().unwrap_or_default() {
-            let terminating = !ns["metadata"]["deletionTimestamp"].is_null()
-                || ns["status"]["phase"].as_str() == Some("Terminating");
-            let Some(name) = ns["metadata"]["name"].as_str() else { continue };
-            if terminating {
-                continue;
-            }
-            if let Err(e) = self.reconcile(name).await {
-                debug!("Root CA publisher: {name}: {e}");
-            }
-        }
-        Ok(())
+        owned::run(&self.api, self).await;
     }
 
     async fn reconcile(&self, namespace: &str) -> anyhow::Result<()> {
@@ -123,5 +101,46 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("Contains a CA bundle"));
+    }
+}
+
+#[async_trait::async_trait]
+impl Controller for RootCaPublisher {
+    fn name(&self) -> &'static str {
+        "rootca"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/namespaces"
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![Dependency {
+            path: "/api/v1/configmaps".into(),
+            route: Arc::new(|delta, primary| {
+                let mut result = Vec::new();
+                for cm in delta.old.iter().chain(delta.new.iter()) {
+                    if cm["metadata"]["name"] != NAME {
+                        continue;
+                    }
+                    let ns = cm["metadata"]["namespace"].as_str().unwrap_or("");
+                    for object in primary
+                        .select(&Index::Name("".into(), ns.into()))
+                        .unwrap_or_default()
+                    {
+                        if let Ok(key) = Key::of(&object) {
+                            result.push(key);
+                        }
+                    }
+                }
+                result
+            }),
+        }]
+    }
+    async fn reconcile(&self, ns: &Value, _children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
+        if !ns["metadata"]["deletionTimestamp"].is_null() || ns["status"]["phase"] == "Terminating"
+        {
+            return Ok(());
+        }
+        self.reconcile(ns["metadata"]["name"].as_str().unwrap_or(""))
+            .await
     }
 }
