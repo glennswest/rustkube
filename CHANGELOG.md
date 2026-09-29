@@ -5,7 +5,9 @@
 ### 2026-09-29
 - **docs:** Document the #66 scale protocol: complete populations, Lease
   heartbeats, CPU/API/datastore curves and Deployment scale latency. Execution
-  environment and artifact delivery still need an owner decision.
+  environment and artifact delivery still need an owner decision. Five-crate
+  `sc-build` at f5d3876 passed 400 unit tests (four storage tests ignored);
+  these are baseline checks, not scale measurements.
 - **docs:** Reconcile #146 work plan with the committed DaemonSet migration,
   record passing five-crate `sc-build` validation at fc67179 (four storage
   integration tests ignored) and the pending owner choice of live test

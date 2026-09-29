@@ -243,6 +243,9 @@ Remaining implementation and safety audits below are still required.
 - The token itself is stormcert's (stormcert#5)
 
 ### Scale measurement (#66) — awaiting execution decision, 2026-09-29
+- [x] Five-crate `sc-build` at f5d3876: 400 unit tests passed, four storage
+      integration tests ignored, doc tests passed; no scale workload run.
+      Remote exit 0; local runs.jsonl append reported a read-only filesystem.
 - [x] Read issue history: the old 250-node curve used truncated controller
       LISTs; pagination was fixed in v0.12.0, but the full-read curve is absent.
 - [x] Document the 10/100/1000-node protocol in docs/scale.md, keeping fake
