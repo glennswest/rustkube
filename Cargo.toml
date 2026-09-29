@@ -89,7 +89,9 @@ hyper-util = { version = "0.1", features = ["full"] }
 
 # TLS (rustls only — no OpenSSL)
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "tls12"] }
-tokio-rustls = { version = "0.26" }
+# default-features off: tokio-rustls's defaults turn on rustls's aws-lc-rs
+# provider, a C library that a cross build needs target libc headers for (#68).
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
 rustls-pemfile = { version = "2" }
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 x509-parser = { version = "0.16" }
@@ -119,7 +121,10 @@ anyhow = { version = "1" }
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 metrics = { version = "0.24" }
-metrics-exporter-prometheus = { version = "0.16" }
+# No default features: only `install_recorder` is used (the handle is rendered
+# by our own /metrics). The defaults add a push-gateway client whose
+# hyper-rustls pulls in aws-lc-rs, a second crypto provider in C (#68).
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
 
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
