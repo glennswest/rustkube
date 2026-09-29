@@ -233,10 +233,12 @@ handoff: docs/turbomode-handoff.md.
 Resume checkpoint 2026-09-29: pushed fc67179 passed the handoff five-crate
 `sc-build` command (exit 0; four storage integration tests ignored because
 they require a running datastore). The branch already
-contains the routed dependency runner and DaemonSet migration. Owner decision
-required before live validation: C2NR0Q2 or an isolated dev cluster. Stop for
-that choice as requested; do not close #146 or claim runtime acceptance.
-Remaining implementation and safety audits below are still required.
+contains the routed dependency runner and DaemonSet migration. Master update
+on #146 authorizes remaining implementation now; live-target selection is
+not a blocker for this work. Live validation belongs to #147/#149.
+Current pass: rerun handoff step 2 on the pushed head, migrate remaining
+controllers and scheduler in reviewable increments, audit informer safety,
+and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] origin/main merged into turbomode (de8c912); handoff step 2 on dev:
       `cargo test --locked` for the five crates passes (87/197/56/57, storage 4 ignored)
 - [x] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
