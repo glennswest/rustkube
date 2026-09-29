@@ -14,7 +14,8 @@ use crate::runner::ApiClient;
 use base64::Engine;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
+use crate::owned::{self, Controller, Deps};
 
 const CSR_PATH: &str = "/apis/certificates.k8s.io/v1/certificatesigningrequests";
 const KUBELET_CLIENT_SIGNER: &str = "kubernetes.io/kube-apiserver-client-kubelet";
@@ -31,29 +32,13 @@ impl CsrController {
     }
 
     pub async fn run(&self) {
-        info!(
-            "CSR controller started (signing {})",
-            if self.ca.is_some() { "enabled" } else { "disabled" }
-        );
-        let worker = self.api.watches.worker("csr");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile().await {
-                    apimachinery::reactor::failed();
-                    error!("CSR reconcile error: {e}");
-                }
-            }).await;
-        }
+        owned::run(&self.api, self).await;
     }
 
-    async fn reconcile(&self) -> anyhow::Result<()> {
-        let list = self.api.list(CSR_PATH).await?;
-        let items = list["items"].as_array().cloned().unwrap_or_default();
-        for csr in &items {
+    async fn reconcile_csr(&self, csr: &Value) -> anyhow::Result<()> {
             let name = csr["metadata"]["name"].as_str().unwrap_or("").to_string();
             if name.is_empty() {
-                continue;
+                return Ok(());
             }
             let spec = &csr["spec"];
             let status = &csr["status"];
@@ -63,7 +48,7 @@ impl CsrController {
             // 1) Approve eligible, undecided CSRs.
             if !approved && !denied && self.should_auto_approve(spec) {
                 self.approve(&name, csr).await;
-                continue; // sign on the next pass, once the approval is persisted
+                return Ok(()); // approval acknowledgement queues signing
             }
 
             // 2) Sign approved CSRs that have no issued certificate yet.
@@ -72,7 +57,6 @@ impl CsrController {
                     self.sign(&name, csr, ca_cert, ca_key).await;
                 }
             }
-        }
         Ok(())
     }
 
@@ -145,4 +129,13 @@ fn sign_csr(csr_pem: &str, ca_cert_pem: &str, ca_key_pem: &str) -> anyhow::Resul
     let csr = CertificateSigningRequestParams::from_pem(csr_pem)?;
     let cert = csr.params.signed_by(&csr.public_key, &ca_cert, &ca_key)?;
     Ok(cert.pem())
+}
+
+#[async_trait::async_trait]
+impl Controller for CsrController {
+    fn name(&self) -> &'static str { "csr" }
+    fn primary(&self) -> &'static str { CSR_PATH }
+    async fn reconcile(&self, csr: &Value, _children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
+        self.reconcile_csr(csr).await
+    }
 }

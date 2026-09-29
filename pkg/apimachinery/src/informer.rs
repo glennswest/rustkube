@@ -34,6 +34,7 @@ impl Key {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Index {
     Namespace(String),
+    Name(String, String),
     Owner(String),
     Node(String),
     Claim(String, String),
@@ -44,7 +45,7 @@ pub enum Index {
 }
 
 fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
-    let mut result = HashSet::from([Index::Namespace(key.namespace.clone())]);
+    let mut result = HashSet::from([Index::Namespace(key.namespace.clone()), Index::Name(key.namespace.clone(), key.name.clone())]);
     if let Some(owners) = object["metadata"]["ownerReferences"].as_array() {
         for owner in owners {
             if let Some(uid) = owner["uid"].as_str() {

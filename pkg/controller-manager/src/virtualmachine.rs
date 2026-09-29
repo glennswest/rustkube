@@ -40,7 +40,8 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
+use crate::owned::{self, Controller, Deps};
 
 pub struct VirtualMachineController {
     api: Arc<ApiClient>,
@@ -56,57 +57,16 @@ impl VirtualMachineController {
     }
 
     pub async fn run(&self) {
-        info!("VirtualMachine controller started");
-        let worker = self.api.watches.worker("virtualmachine");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile_all().await {
-                    apimachinery::reactor::failed();
-                    error!("VirtualMachine reconcile error: {e}");
-                }
-            }).await;
-        }
+        owned::run(&self.api, self).await;
     }
 
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        for ns in ns_list["items"].as_array().cloned().unwrap_or_default() {
-            let name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(name).await {
-                // Debug, not error: a cluster with no kubevirt.io CRDs applied
-                // answers 404 here on every tick, and that is not a fault.
-                debug!("VirtualMachine reconcile in {name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let vms: Value = self
-            .api
-            .list(&format!(
-                "/apis/kubevirt.io/v1/namespaces/{namespace}/virtualmachines"
-            ))
-            .await?;
-        let vms = vms["items"].as_array().cloned().unwrap_or_default();
-        if vms.is_empty() {
-            return Ok(());
-        }
-
-        let vmis: Value = self
-            .api
-            .list(&format!(
-                "/apis/kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances"
-            ))
-            .await?;
-        let vmis = vmis["items"].as_array().cloned().unwrap_or_default();
-
-        for vm in &vms {
+    async fn reconcile_vm(&self, vm: &Value, vmis: &[Value]) -> anyhow::Result<()> {
+        if !vm["metadata"]["deletionTimestamp"].is_null() { return Ok(()); }
+        let namespace = vm["metadata"]["namespace"].as_str().unwrap_or("default");
             let name = vm["metadata"]["name"].as_str().unwrap_or("");
             let uid = vm["metadata"]["uid"].as_str().unwrap_or("");
             if name.is_empty() {
-                continue;
+                return Ok(());
             }
             // The VMI this VM owns: named after it *and* owned by it. Name
             // alone would adopt a hand-applied VMI that happens to share the
@@ -158,7 +118,6 @@ impl VirtualMachineController {
             if let Err(e) = self.write_status(namespace, name, vm, status).await {
                 warn!("VirtualMachine {namespace}/{name} status: {e}");
             }
-        }
         Ok(())
     }
 
@@ -222,7 +181,7 @@ impl VirtualMachineController {
         }
         let path =
             format!("/apis/kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances/{name}");
-        match self.api.delete(&path).await {
+        match self.api.delete_observed(&path, vmi).await {
             Ok(_) => {
                 info!("VirtualMachine {namespace}/{name}: stopped");
                 self.recorder
@@ -541,5 +500,15 @@ mod tests {
         assert_eq!(printable_status(true, Some(&failed), false), "Failed");
         assert_eq!(printable_status(true, Some(&done), false), "Stopped");
         assert_eq!(printable_status(true, Some(&done), true), "Starting");
+    }
+}
+
+#[async_trait::async_trait]
+impl Controller for VirtualMachineController {
+    fn name(&self) -> &'static str { "virtualmachine" }
+    fn primary(&self) -> &'static str { "/apis/kubevirt.io/v1/virtualmachines" }
+    fn children(&self) -> Option<&'static str> { Some("/apis/kubevirt.io/v1/virtualmachineinstances") }
+    async fn reconcile(&self, vm: &Value, children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
+        self.reconcile_vm(vm, children).await
     }
 }

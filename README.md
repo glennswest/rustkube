@@ -204,7 +204,7 @@ reconcile queues another pass. Successful idle passes have no poll interval.
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
 and migration deadlines, Event TTL), API recovery and leader Leases.
 
-Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service and PDB use bounded per-object
+Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA use bounded per-object
 workers and shared owner indexes. Successful writes remain visible locally
 until acknowledged by the watch or a later consistent snapshot. Destructive
 actions carry observed UID/revision preconditions. Other reconcilers still

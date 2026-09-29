@@ -4,7 +4,7 @@ Status: partial migration; five-crate unit/doc tests pass through `sc-build`
 at `fc67179` on 2026-09-29 (four storage integration tests ignored). Live
 validation awaits the owner-selected target. Branch: `turbomode`.
 
-Current implementation: Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service and PDB
+Current implementation: Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA
 have indexed per-object workers (eight concurrent keys per controller).
 Collection watches and snapshots are shared; successful writes use local
 acknowledgement overlays until observed or superseded by a consistent LIST

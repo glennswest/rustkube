@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Move VM, CSR and root CA publishing to per-object workers. VMIs
+  are read by owner UID and deleted conditionally; root CA ConfigMap changes
+  route directly to their Namespace. CSR approval acknowledges the next work.
 - **fix:** Resolve the e2e store executable by its binary name (`fastetcd`),
   not its Cargo package name, and fail immediately if absent.
 - **test:** Add real API/store Service/PDB membership, deletion/recreation and

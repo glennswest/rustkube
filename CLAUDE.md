@@ -250,7 +250,8 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] Baseline 79c1a9e: handoff five-crate command passed on dev (four
       datastore-dependent storage tests ignored).
 - [ ] PV binder, stormblock, attach/detach (claim/PV/Pod/VolumeAttachment)
-- [ ] VM, migration; namespace, node lifecycle, CSR, root CA, HPA, gateway, events
+- [x] VM (owned VMI), CSR, root CA (ConfigMap → Namespace); remote checks pending
+- [ ] Migration; namespace, node lifecycle, HPA, gateway, events
 - [ ] GC: fail closed on any unsynced feed
 - [ ] scheduler indexed queue + reservations (with #145)
 - [ ] audit: write overlays/create expectations, cache recovery barriers,
