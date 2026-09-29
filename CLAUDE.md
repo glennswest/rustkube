@@ -128,7 +128,11 @@ when each piece landed.
       and only system burn or stress tests of the system in the qa."**
       rustkube's tests live in its own `test/` container, never stormcos_qa
 - [ ] Test containers per the stormcos test standard (#96) — IN PROGRESS
-      2026-09-28. `test/` crate `rustkube-test` (workspace member, excluded
+      2026-09-29: retry the outstanding real short-suite run on every eligible
+      stormcentral test machine using main@d7bc1f8 (test container source
+      matches this branch). Verify build/unit tests through sc-build after
+      pushing. Record per-machine results; if infrastructure blocks the run,
+      route the issue behind the owning defect. Prior work, 2026-09-28: `test/` crate `rustkube-test` (workspace member, excluded
       from default-members), `/test short|medium|long`, JSON lines, exit
       0/1/2. Runs as stormcentral's `storm-test` SA: `*` in its namespace
       only, no cluster reads. [x] short, medium, long written (test/README.md)

@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Resume #96 real test-container validation through stormcentral
+  at main@d7bc1f8, with per-machine results required before closure.
 - **docs:** Audit #2 controller-manager parity gaps and the totrust v1.31.4
   acceptance pin; record the missing upstream test environment and correct
   the controller inventory for the turbomode branch. sc-build at 5687d0f
