@@ -1,6 +1,6 @@
 //! Pod migration controller.
 //!
-//! Periodically lists PodMigration resources and drives the migration state machine:
+//! Indexed PodMigration workers drive the migration state machine:
 //!   Pending → Checkpointing → Transferring → Restoring → Verifying → Completed
 //!
 //! Communication with kubelets uses pod annotations:
@@ -20,6 +20,8 @@ use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use crate::owned::{self, Controller, Dependency, Deps};
+use apimachinery::informer::Index;
 
 pub struct MigrationController {
     api: Arc<ApiClient>,
@@ -31,65 +33,7 @@ impl MigrationController {
     }
 
     pub async fn run(&self) {
-        info!("Migration controller started");
-        let worker = self.api.watches.worker("migration");
-        loop {
-            let _work = worker.next().await;
-            worker
-                .run(async {
-                    if let Err(e) = self.reconcile_all().await {
-                        apimachinery::reactor::failed();
-                        debug!("Migration reconcile: {e}");
-                    }
-                })
-                .await;
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        // List all namespaces
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("Migration reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let migration_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/rustkube.io/v1alpha1/namespaces/{namespace}/podmigrations"
-            ))
-            .await?;
-        let migrations = migration_list["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-
-        for migration in &migrations {
-            let name = migration["metadata"]["name"].as_str().unwrap_or("?");
-            let phase = migration["status"]["phase"].as_str().unwrap_or("Pending");
-
-            // Skip terminal states
-            if phase == "Completed" || phase == "Failed" {
-                continue;
-            }
-
-            if let Err(e) = self.reconcile_migration(namespace, migration).await {
-                warn!("Failed to reconcile migration {namespace}/{name}: {e}");
-                // Update status to Failed
-                let _ = self
-                    .update_migration_status(namespace, name, "Failed", &e.to_string(), None)
-                    .await;
-            }
-        }
-        Ok(())
+        owned::run(&self.api, self).await;
     }
 
     async fn reconcile_migration(&self, namespace: &str, migration: &Value) -> anyhow::Result<()> {
@@ -683,6 +627,29 @@ impl MigrationController {
         }
 
         let _ = self.api.update(&path, &migration).await;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Controller for MigrationController {
+    fn name(&self) -> &'static str { "migration" }
+    fn primary(&self) -> &'static str { "/apis/rustkube.io/v1alpha1/podmigrations" }
+    fn dependencies(&self) -> Vec<Dependency> { vec![
+        Dependency { path: "/api/v1/pods", route: Arc::new(|delta, primary| {
+            delta.old.iter().chain(delta.new.iter()).flat_map(|p| owned::keys_at(primary,Index::Pod(
+                p["metadata"]["namespace"].as_str().unwrap_or("").into(),p["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
+        }) },
+        Dependency { path: "/api/v1/nodes", route: Arc::new(|delta,primary| {
+            delta.old.iter().chain(delta.new.iter()).flat_map(|n| owned::keys_at(primary,Index::Node(n["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
+        }) },
+    ] }
+    async fn reconcile(&self, migration: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
+        if matches!(migration["status"]["phase"].as_str(),Some("Completed" | "Failed")) { return Ok(()); }
+        let ns = migration["metadata"]["namespace"].as_str().unwrap_or("default");
+        if let Err(e) = self.reconcile_migration(ns,migration).await {
+            self.update_migration_status(ns,migration["metadata"]["name"].as_str().unwrap_or(""),"Failed",&e.to_string(),None).await?;
+        }
         Ok(())
     }
 }

@@ -42,6 +42,7 @@ pub enum Index {
     Volume(String),
     Driver(String),
     Pod(String, String),
+    Target(String, String, String),
     Label(String, String),
     /// Equality anchor for a selector; namespace prevents cross-namespace wakes.
     Selector(String, String, String),
@@ -86,6 +87,12 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
     }
     if let Some(driver) = object["spec"]["csi"]["driver"].as_str() { result.insert(Index::Driver(driver.into())); }
     if let Some(pod) = object["spec"]["podName"].as_str() { result.insert(Index::Pod(key.namespace.clone(), pod.into())); }
+    if let Some(name) = object["spec"]["scaleTargetRef"]["name"].as_str() {
+        result.insert(Index::Target(key.namespace.clone(),object["spec"]["scaleTargetRef"]["kind"].as_str().unwrap_or("Deployment").into(),name.into()));
+    }
+    for field in ["sourceNode", "targetNode"] {
+        if let Some(node) = object["spec"][field].as_str() { result.insert(Index::Node(node.into())); }
+    }
     if let Some(labels) = object["metadata"]["labels"].as_object() {
         for (label, value) in labels {
             if let Some(value) = value.as_str() {

@@ -257,7 +257,9 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] Attach/detach: per-PV workers with indexed claim/Pod/driver/attachment
       dependencies and conditional detach; remote validation pending
 - [x] VM (owned VMI), CSR, root CA (ConfigMap → Namespace); remote checks pending
-- [ ] Migration; namespace, HPA, gateway, events
+- [x] Migration and HPA object workers with named Pod/Node/target routes;
+      HPA remains the #89 placeholder, status timestamp echoes suppressed
+- [ ] Namespace, gateway, events
 - [ ] GC: fail closed on any unsynced feed
 - [ ] scheduler indexed queue + reservations (with #145)
 - [ ] audit: write overlays/create expectations, cache recovery barriers,

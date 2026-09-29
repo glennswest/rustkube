@@ -76,6 +76,26 @@ pub fn same_namespace(delta: &Delta, primary: &Feed) -> Vec<Key> {
 }
 
 
+/// Reuse condition timestamps when the condition's semantic data is stable.
+/// Also handles nested Gateway listeners/parents, whose status echoes must not
+/// continuously schedule more status writes.
+pub fn preserve_transition_times(current: &Value, desired: &mut Value) {
+    match (current, desired) {
+        (Value::Object(old), Value::Object(new)) => {
+            let mut a = old.clone(); let mut b = new.clone();
+            a.remove("lastTransitionTime"); b.remove("lastTransitionTime");
+            if a == b {
+                if let Some(t) = old.get("lastTransitionTime") { new.insert("lastTransitionTime".into(),t.clone()); }
+            }
+            for (k,v) in new.iter_mut() { if let Some(old) = old.get(k) { preserve_transition_times(old,v); } }
+        }
+        (Value::Array(old), Value::Array(new)) => {
+            for (old,new) in old.iter().zip(new.iter_mut()) { preserve_transition_times(old,new); }
+        }
+        _ => {}
+    }
+}
+
 pub fn keys_at(primary: &Feed, index: Index) -> Vec<Key> {
     primary.select(&index).unwrap_or_default().iter().filter_map(|o| Key::of(o).ok()).collect()
 }

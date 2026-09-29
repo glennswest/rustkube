@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Index PodMigration and HPA workers by named dependencies. Retain
+  the existing migration state machine and placeholder HPA behavior while
+  avoiding full lists and unchanged status timestamp writes.
 - **fix:** Select an available e2e port block and fail when a rig process exits;
   overlapping disposable builds must not connect to another job’s datastore.
 - **perf:** Reconcile CSI attachments per PV using claim/Pod/driver/attachment

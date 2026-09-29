@@ -14,8 +14,9 @@ independent per-volume lifecycle workers. Stormblock provisioning/reclaim
 and node lifecycle also use object workers; Node expiry and eviction
 deadlines are unchanged, with Lease/Pod events routed by Node name. CSI
 attach/detach workers select claims and attachments by volume, then Pods by
-claim; deletes carry the observed attachment UID/revision. Other controller migrations and
-runtime validation remain open.
+claim; deletes carry the observed attachment UID/revision. PodMigration and HPA workers route named dependencies; HPA remains the
+non-metrics placeholder (#89). Other controller migrations and runtime
+validation remain open.
 
 ## Objective and boundary
 
