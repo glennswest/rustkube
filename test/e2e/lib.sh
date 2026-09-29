@@ -15,7 +15,7 @@
 #                kube-scheduler (test/conformance/stage.sh builds and publishes it)
 #   RK_FASTETCD  path to a fastetcd server binary
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
-# each, so two runs can share the build box.
+# each; without an override the rig chooses a free block for this build.
 set -u
 mkdir -p "$PWD/tmp"
 : "${TMPDIR:=$PWD/tmp}"
@@ -24,7 +24,24 @@ W=$(mktemp -d)
 cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
 
-OFF=${RK_PORT_OFFSET:-0}
+if [ -n "${RK_PORT_OFFSET:-}" ]; then
+  OFF=$RK_PORT_OFFSET
+else
+  OFF=$(python3 - <<'PORTS'
+import random, socket
+for offset in random.sample(range(16000), 100):
+    sockets = []
+    try:
+        for port in (36443+offset, 32379+offset, 32380+offset, 32381+offset):
+            sock = socket.socket(); sockets.append(sock); sock.bind(('127.0.0.1', port))
+        print(offset); break
+    except OSError: pass
+    finally:
+        for sock in sockets: sock.close()
+else: raise SystemExit('no free test port block')
+PORTS
+  ) || exit 100
+fi
 PORT=$((36443 + OFF))
 ETCD=$((32379 + OFF))
 API=https://127.0.0.1:$PORT
@@ -85,9 +102,11 @@ DATA=$W/etcd
 "$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:$ETCD \
   --listen-peer-urls http://127.0.0.1:$((ETCD + 1)) --listen-metrics-url 127.0.0.1:$((ETCD + 2)) \
   >"$W/fastetcd.log" 2>&1 &
+STORE_PID=$!
 # fastetcd first: an apiserver that outwaits its 60s datastore gate boots
 # into a hole.
 for _ in $(seq 180); do
+  kill -0 "$STORE_PID" 2>/dev/null || { cat "$W/fastetcd.log"; exit 100; }
   (exec 3<>/dev/tcp/127.0.0.1/$ETCD) 2>/dev/null && break
   sleep 1
 done
@@ -97,10 +116,12 @@ done
   --etcd-servers http://127.0.0.1:$ETCD --anonymous-auth false \
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
   >"$W/apiserver.log" 2>&1 &
+API_PID=$!
 # Six minutes: on a loaded build box the bootstrap writes alone have taken
 # three.
 ready=
 for _ in $(seq 360); do
+  kill -0 "$API_PID" 2>/dev/null || { cat "$W/apiserver.log"; exit 100; }
   curl -sfk -H "Authorization: Bearer $ADMIN" "$API/readyz" >/dev/null && { ready=1; break; }
   sleep 1
 done

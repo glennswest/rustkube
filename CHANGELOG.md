@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **fix:** Select an available e2e port block and fail when a rig process exits;
+  overlapping disposable builds must not connect to another job’s datastore.
 - **perf:** Reconcile CSI attachments per PV using claim/Pod/driver/attachment
   indexes; retain attachments when PV absence or Pod release is unproven and
   guard detach with the observed attachment UID and revision.
