@@ -49,6 +49,10 @@ impl Feed {
     pub fn select(&self, index: &Index) -> anyhow::Result<Vec<Value>> {
         self.store.lock().unwrap().select(index)
     }
+    /// Every object; fails while unsynchronized rather than reading empty.
+    pub fn list(&self) -> anyhow::Result<Vec<Value>> {
+        self.store.lock().unwrap().values()
+    }
     pub fn keys(&self) -> anyhow::Result<Vec<Key>> {
         self.store.lock().unwrap().keys()
     }

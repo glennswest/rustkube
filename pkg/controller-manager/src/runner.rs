@@ -573,7 +573,6 @@ impl ControllerManager {
         });
 
         let api = self.api.clone();
-        let api = self.api.clone();
         tasks.spawn(async move {
             virtualmachine::VirtualMachineController::new(api)
                 .run()

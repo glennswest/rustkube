@@ -344,10 +344,15 @@ impl crate::owned::Controller for ReplicaSetController {
     fn primary(&self) -> &'static str {
         "/apis/apps/v1/replicasets"
     }
-    fn children(&self) -> &'static str {
-        "/api/v1/pods"
+    fn children(&self) -> Option<&'static str> {
+        Some("/api/v1/pods")
     }
-    async fn reconcile(&self, object: &Value, children: &[Value]) -> anyhow::Result<()> {
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        _deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
         let namespace = object["metadata"]["namespace"]
             .as_str()
             .unwrap_or("default");

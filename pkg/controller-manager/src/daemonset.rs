@@ -7,12 +7,14 @@
 
 use crate::backoff::CreateBackoff;
 use crate::runner::ApiClient;
+use apimachinery::informer::{Delta, Key};
+use apimachinery::informers::Feed;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 pub struct DaemonSetController {
     api: Arc<ApiClient>,
@@ -43,70 +45,8 @@ impl DaemonSetController {
     }
 
     pub async fn run(&self) {
-        info!("DaemonSet controller started");
-        let worker = self.api.watches.worker("daemonset");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile_all().await {
-                    apimachinery::reactor::failed();
-                    error!("DaemonSet reconcile error: {e}");
-                }
-            }).await;
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        // Get ALL nodes once (full objects, shared across namespaces). A DaemonSet
-        // runs one pod on every node it's ELIGIBLE for — which includes NotReady
-        // nodes (its pods carry the not-ready toleration). Scheduling/GC keys off
-        // node existence + eligibility, not readiness; readiness only affects the
-        // numberReady count. (Keying off readiness churned pods whenever a node
-        // briefly went NotReady — #44.)
-        let node_list: Value = self.api.list("/api/v1/nodes").await?;
-        let nodes = node_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name, &nodes).await {
-                debug!("DaemonSet reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(
-        &self,
-        namespace: &str,
-        nodes: &[Value],
-    ) -> anyhow::Result<()> {
-        let ds_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/apps/v1/namespaces/{namespace}/daemonsets"
-            ))
-            .await?;
-        let daemonsets = ds_list["items"].as_array().cloned().unwrap_or_default();
-
-        let pod_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-            .await?;
-        let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ds in &daemonsets {
-            if let Err(e) = self
-                .reconcile_daemonset(namespace, ds, &pods, nodes)
-                .await
-            {
-                let name = ds["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile daemonset {namespace}/{name}: {e}");
-            }
-        }
-        Ok(())
+        info!("DaemonSet indexed object workers started");
+        crate::owned::run(&self.api, self).await;
     }
 
     async fn reconcile_daemonset(
@@ -196,7 +136,10 @@ impl DaemonSetController {
                 }
                 match self
                     .api
-                    .delete(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"))
+                    .delete_observed(
+                        &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
+                        pod,
+                    )
                     .await
                 {
                     Ok(_) => {
@@ -293,9 +236,10 @@ impl DaemonSetController {
                 if !pod_name.is_empty() {
                     match self
                         .api
-                        .delete(&format!(
-                            "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-                        ))
+                        .delete_observed(
+                            &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
+                            pod,
+                        )
                         .await
                     {
                         Ok(_) => {
@@ -333,8 +277,7 @@ impl DaemonSetController {
             }
         }
 
-        let mut updated = ds.clone();
-        updated["status"] = json!({
+        let status = json!({
             "desiredNumberScheduled": desired,
             "currentNumberScheduled": current_scheduled,
             "updatedNumberScheduled": current_scheduled,
@@ -344,18 +287,81 @@ impl DaemonSetController {
             "numberMisscheduled": misscheduled,
             "observedGeneration": ds["metadata"]["generation"].as_u64().unwrap_or(1)
         });
-
-        let _ = self
-            .api
+        // An unchanged status is not written: the write would only echo back
+        // as a watch event and cost a request per reconcile.
+        if ds["status"] != status {
+            let mut updated = ds.clone();
+            updated["status"] = status;
             // status only: a whole-object PUT would carry a spec read
             // before the last reconcile and revert it.
-            .update_status(
-                &format!("/apis/apps/v1/namespaces/{namespace}/daemonsets/{ds_name}"),
-                &updated,
-            )
-            .await;
+            self.api
+                .update_status(
+                    &format!("/apis/apps/v1/namespaces/{namespace}/daemonsets/{ds_name}"),
+                    &updated,
+                )
+                .await?;
+        }
 
         Ok(())
+    }
+}
+
+/// Node changes that can alter eligibility: a node appearing or going away,
+/// or its labels changing. Heartbeats and conditions wake nothing.
+fn route_node(delta: &Delta, primary: &Feed) -> Vec<Key> {
+    affected_daemonsets(delta, &primary.list().unwrap_or_default())
+}
+
+fn affected_daemonsets(delta: &Delta, daemonsets: &[Value]) -> Vec<Key> {
+    if let (Some(old), Some(new)) = (&delta.old, &delta.new) {
+        if old["metadata"]["labels"] == new["metadata"]["labels"] {
+            return Vec::new();
+        }
+    }
+    daemonsets
+        .iter()
+        .filter(|ds| {
+            delta
+                .old
+                .iter()
+                .chain(delta.new.iter())
+                .any(|node| node_matches_ds(node, ds))
+        })
+        .filter_map(|ds| Key::of(ds).ok())
+        .collect()
+}
+
+#[async_trait::async_trait]
+impl crate::owned::Controller for DaemonSetController {
+    fn name(&self) -> &'static str {
+        "daemonset"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/apps/v1/daemonsets"
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/api/v1/pods")
+    }
+    fn dependencies(&self) -> Vec<crate::owned::Dependency> {
+        vec![crate::owned::Dependency {
+            path: "/api/v1/nodes",
+            route: Arc::new(route_node),
+        }]
+    }
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        // A node list that is not synchronized fails the reconcile: read as
+        // empty it would make every pod "misscheduled" and delete it.
+        let nodes = deps.feed(0).list()?;
+        self.reconcile_daemonset(namespace, object, children, &nodes)
+            .await
     }
 }
 
@@ -474,17 +480,6 @@ fn node_matches_ds(node: &Value, ds: &Value) -> bool {
     sel.iter().all(|(k, v)| labels.get(k) == Some(v))
 }
 
-fn is_node_ready(node: &Value) -> bool {
-    node["status"]["conditions"]
-        .as_array()
-        .map(|conds| {
-            conds.iter().any(|c| {
-                c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True")
-            })
-        })
-        .unwrap_or(false)
-}
-
 fn is_pod_ready(pod: &Value) -> bool {
     pod["status"]["conditions"]
         .as_array()
@@ -549,6 +544,53 @@ mod tests {
         .unwrap();
         let tol = pod["spec"]["tolerations"].as_array().expect("tolerations");
         assert_eq!(tol.len(), 1, "appended to a tolerate-everything spec: {tol:?}");
+    }
+
+    fn node(labels: Value, heartbeat: &str) -> Value {
+        json!({"metadata": {"name": "n1", "uid": "n1", "labels": labels},
+               "status": {"conditions": [{"type": "Ready", "status": "True",
+                                          "lastHeartbeatTime": heartbeat}]}})
+    }
+    fn delta(old: Option<Value>, new: Option<Value>) -> Delta {
+        Delta { old, new, affected: Default::default() }
+    }
+
+    /// A heartbeat changes the node every few seconds and changes nothing a
+    /// DaemonSet decides on; waking every DaemonSet for it would be a poll
+    /// loop by another name.
+    #[test]
+    fn a_node_heartbeat_wakes_no_daemonset() {
+        let dss = [ds(Value::Null)];
+        let d = delta(Some(node(json!({}), "t1")), Some(node(json!({}), "t2")));
+        assert!(affected_daemonsets(&d, &dss).is_empty());
+    }
+
+    /// A node appearing, going away, or relabelled wakes exactly the
+    /// DaemonSets whose nodeSelector matches it before or after.
+    #[test]
+    fn node_membership_changes_wake_matching_daemonsets() {
+        let mut gpu = ds(Value::Null);
+        gpu["metadata"]["name"] = json!("gpu");
+        gpu["metadata"]["uid"] = json!("gpu");
+        gpu["spec"]["template"]["spec"]["nodeSelector"] = json!({"gpu": "yes"});
+        let dss = [ds(Value::Null), gpu];
+        let names = |keys: Vec<Key>| {
+            let mut n: Vec<_> = keys.into_iter().map(|k| k.name).collect();
+            n.sort();
+            n
+        };
+        let plain = node(json!({}), "t");
+        let labelled = node(json!({"gpu": "yes"}), "t");
+        assert_eq!(names(affected_daemonsets(&delta(None, Some(plain.clone())), &dss)), ["d"]);
+        assert_eq!(
+            names(affected_daemonsets(&delta(Some(labelled.clone()), None), &dss)),
+            ["d", "gpu"]
+        );
+        // Losing the label must wake the DaemonSet that matched the old side.
+        assert_eq!(
+            names(affected_daemonsets(&delta(Some(labelled), Some(plain)), &dss)),
+            ["d", "gpu"]
+        );
     }
 
     /// An author's own toleration for one of the defaults is not duplicated.

@@ -508,10 +508,15 @@ impl crate::owned::Controller for CronJobController {
     fn primary(&self) -> &'static str {
         "/apis/batch/v1/cronjobs"
     }
-    fn children(&self) -> &'static str {
-        "/apis/batch/v1/jobs"
+    fn children(&self) -> Option<&'static str> {
+        Some("/apis/batch/v1/jobs")
     }
-    async fn reconcile(&self, object: &Value, children: &[Value]) -> anyhow::Result<()> {
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        _deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
         let namespace = object["metadata"]["namespace"]
             .as_str()
             .unwrap_or("default");

@@ -634,10 +634,15 @@ impl crate::owned::Controller for DeploymentController {
     fn primary(&self) -> &'static str {
         "/apis/apps/v1/deployments"
     }
-    fn children(&self) -> &'static str {
-        "/apis/apps/v1/replicasets"
+    fn children(&self) -> Option<&'static str> {
+        Some("/apis/apps/v1/replicasets")
     }
-    async fn reconcile(&self, object: &Value, children: &[Value]) -> anyhow::Result<()> {
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        _deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
         let namespace = object["metadata"]["namespace"]
             .as_str()
             .unwrap_or("default");

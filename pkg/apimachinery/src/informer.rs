@@ -262,6 +262,10 @@ impl Store {
             .filter_map(|key| self.objects.get(key).cloned())
             .collect())
     }
+    pub fn values(&self) -> anyhow::Result<Vec<Value>> {
+        anyhow::ensure!(self.synced, "informer is not synchronized");
+        Ok(self.objects.values().cloned().collect())
+    }
     pub fn keys(&self) -> anyhow::Result<Vec<Key>> {
         anyhow::ensure!(self.synced, "informer is not synchronized");
         Ok(self.objects.keys().cloned().collect())
