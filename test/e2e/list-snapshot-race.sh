@@ -3,7 +3,7 @@
 . "$(dirname "$0")/lib.sh"
 export API ADMIN
 python3 - <<'PY'
-import concurrent.futures, json, os, ssl, threading, time, urllib.request, urllib.parse
+import concurrent.futures, json, os, socket, ssl, threading, urllib.request, urllib.parse
 base, token = os.environ['API'], os.environ['ADMIN']
 context = ssl._create_unverified_context()
 def request(method, path, body=None):
@@ -71,14 +71,19 @@ for revision,names in sorted(snapshots, key=lambda entry: entry[0]):
         headers={'Authorization':'Bearer '+token,'Accept':'application/json'})
     seen={}
     with urllib.request.urlopen(req,context=context,timeout=10) as response:
-        for line in response:
-            event=json.loads(line)
-            if event['type']=='BOOKMARK':
-                continue
-            assert event['type']=='ADDED', f'unexpected watch event: {event}'
-            obj=event['object']; name=obj['metadata']['name']
-            assert name not in names and name not in seen, f'duplicate LIST/WATCH member: {name}'
-            seen[name]=int(obj['metadata']['resourceVersion'])
+        try:
+            for line in response:
+                event=json.loads(line)
+                if event['type']=='BOOKMARK':
+                    continue
+                assert event['type']=='ADDED', f'unexpected watch event: {event}'
+                obj=event['object']; name=obj['metadata']['name']
+                assert name not in names and name not in seen, f'duplicate LIST/WATCH member: {name}'
+                seen[name]=int(obj['metadata']['resourceVersion'])
+        except socket.timeout:
+            # Rustkube does not yet honor timeoutSeconds. End observation at
+            # the client deadline; missing/extra/repeated events still fail.
+            print(f'WATCH after {revision}: client deadline, received {len(seen)}/{len(expected)} writes',flush=True)
     assert seen==expected, f'WATCH after {revision}: missing={expected.keys()-seen.keys()}, unexpected={seen.keys()-expected.keys()}'
     checked+=1
     if checked==3:

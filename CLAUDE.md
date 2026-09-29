@@ -101,8 +101,10 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [x] Handoff five-crate tests at 9f622fa: 409 passed, four datastore tests
       ignored, doc tests passed; sc-build remote exit 0 in 34 seconds.
 - [x] Pin the disposable API rig to fastetcd v1.6.1.
-- [ ] Extend snapshot regression to pinned pages and exact WATCH replay; for snapshot
-      acceptance; rerun the isolated LIST race and controller/scheduler matrix.
+- [ ] Verify extended snapshot regression with pinned pages and exact WATCH
+      replay; rerun the controller/scheduler matrix. At 226d84e, 185 LISTs
+      passed but the probe awaited unsupported timeoutSeconds stream closure;
+      use a client deadline and still require exact expected events.
 - [ ] Investigate #153 startup membership and #154 POST timeout with retained
       evidence; do not equate successful repetitions with a diagnosed fix.
 - [ ] Update acceptance docs and issue evidence; close #146 only if verified.
