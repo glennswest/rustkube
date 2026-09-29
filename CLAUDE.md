@@ -98,9 +98,11 @@ clone requests. README's configuration tables come from the three CLI sources.
 ### Event-driven scheduler (#145) — IN PROGRESS 2026-09-29
 Wakeups, serialized accounting, separate renewal and term cancellation are
 already on main from #146. Remaining: renewal robustness and fault tests.
-- [ ] Lease renewal: retry transient failures until RENEW_DEADLINE after the
+- [x] Lease renewal: retry transient failures until RENEW_DEADLINE after the
       start of the last successful renewal (upstream renewDeadline), one
-      shared helper for scheduler + controller-manager, paused-clock tests
+      shared helper for scheduler + controller-manager, paused-clock tests.
+      594e19d: sc-build apimachinery 96 / controller-manager 61 / scheduler
+      59 passed, exit 0 (five new hold() tests)
 - [ ] test/e2e/scheduler-failover.sh: two electing schedulers; SIGSTOP the
       leader past lease expiry, standby takes over, resumed stale leader
       binds nothing, no overcommit; PVC/PV arrival wakes a waiting Pod
