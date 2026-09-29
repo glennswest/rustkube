@@ -23,7 +23,7 @@ cannot tell, and what it found (#67).
   `RESULT <passed|failed> <seconds> <name>` line per spec, with the failure
   message and where it failed.
 
-### Where it runs: the conformance VM, not a build slot
+### Historical VM procedure — currently blocked (#140)
 
 A run compiles nothing: it is a test workload, and it used to hold dev's
 build slots for 45–90 minutes per chunk (four at once took dev to load 48 on
@@ -31,7 +31,11 @@ build slots for 45–90 minutes per chunk (four at once took dev to load 48 on
 **once per commit** in one ordinary sc-build, and the suite runs on the
 conformance VM, which has no toolchain:
 
+The following records the old procedure, **not a working command sequence
+under today's build-volume contract**:
+
 ```bash
+# Historical only: stage.sh cannot publish this way now (#140).
 # 1. on the agent VM, from the checkout (pushed first): build and publish
 sc-build test/conformance/stage.sh       # → STAGED /build/assets/conformance/<sha>
 
@@ -192,5 +196,9 @@ From the 2026-09-27 triage (CHANGELOG has each):
   events.k8s.io over protobuf; VolumeAttributesClass; EndpointSlice
   `managed-by`; a DELETE lost to a concurrent write was a 409.
 
-The fixes after 430b268 are verified by unit tests; the next conformance run
-(on the conformance VM, from `stage.sh`) is what confirms them end to end.
+Some fixes after 430b268 were confirmed by the efbea2d run and focused
+reruns above; others have unit/API-rig evidence only. None of these historical
+runs validates current turbomode. Repeating conformance for a new commit
+needs the supported artifact delivery path tracked in #140, then a runtime
+environment appropriate to the tests. Passing API-only tests does not prove
+node, network, storage or multi-master conformance.

@@ -1,5 +1,10 @@
 # Draining, eviction & multi-arch — verified research (for #7, #8)
 
+> Historical upstream research, not a description of implemented RustKube
+> behavior. The implementation limits below and README govern current support;
+> image-manifest inspection is absent (#8), and scheduling gates are ignored
+> (#87). Architecture selectors/affinity supplied by callers are enforced.
+
 Adversarially-verified (3-0) against primary sources (kubernetes.io, OpenShift
 docs + GitHub). Targets K8s 1.32 / OpenShift 4.x.
 

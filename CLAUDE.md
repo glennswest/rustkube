@@ -3,8 +3,8 @@
 ## Project Overview
 
 RustKube is a Kubernetes **control plane** in Rust — `kube-apiserver`,
-`kube-controller-manager`, `kube-scheduler` — wire-compatible with kubectl,
-oc, helm and client-go. Target scale: 100–1000+ nodes (largest run: a
+`kube-controller-manager`, `kube-scheduler` — serving a subset of the wire API used by kubectl,
+oc, helm and client-go; full drop-in parity is not established. Target scale: 100–1000+ nodes (largest run: a
 synthetic 250 nodes, #66). **README.md describes what the code does; read it
 first.** It was rewritten from the code on 2026-09-24 (#80) — keep it that way:
 a behaviour change updates the README in the same commit.
@@ -64,6 +64,7 @@ Objects are `serde_json::Value` throughout; no k8s-openapi types are used.
 
 ```
 Cargo.toml → workspace.package.version
+Cargo.lock → versions of all workspace packages (keep in sync)
 ```
 
 ## Key Dependencies
@@ -83,12 +84,22 @@ imported.
 
 ## Current Version: `v0.18.0`
 
+Current checkout is **turbomode**, with unreleased indexed workers/informers.
+Do not describe branch code as installed or conformant. GitHub Actions is
+disabled by owner decision (#114); use sc-build and the approved component
+golden path, never persistent dev storage. This branch is not approved for
+golden promotion. See docs/releasing.md and docs/changes-since-2026-09-18.md.
+PVCs of class `stormblock` are the kubelet's built-in blank-clone driver;
+CSI is the third-party path. Sbregistry supplies blank templates, not PVC
+clone requests. README's configuration tables come from the three CLI sources.
+
 ## Work Plan
 
 ### Documentation audit — 2026-09-29
-- [ ] Compare history since 2026-09-18 and current source with README and every docs page.
-- [ ] Verify CLI defaults, listeners, API limitations, built-in stormblock PVC ownership and delivery tooling; distinguish turbomode from shipped behavior.
-- [ ] Track unsupported promises in GitHub issues; update documentation and changelog, push and validate.
+- [x] Compare history since 2026-09-18 and current source with README and every docs page.
+- [x] Verify CLI defaults, listeners, API limitations, built-in stormblock PVC ownership and delivery tooling; distinguish turbomode from shipped behavior.
+- [x] Track unsupported promises: existing #90/#114/#140, newly filed #156/#157; storage corrections address #112/#117.
+- [ ] Push refreshed docs/changelog and verify links, CLI coverage and remote checks.
 
 ### History (condensed)
 
@@ -102,12 +113,12 @@ never wired (webhooks, aggregation, preemption) or never written (the cloud
 provider). What exists now is in the README; the release history below says
 when each piece landed.
 
-### Found by the docs pass (#80), open
+### Findings from the docs pass (#80)
 - [ ] Admission webhooks are never called (#82)
 - [ ] Aggregation proxies nothing (#83)
 - [ ] Scheduler never preempts (#84); ignores `schedulingGates` (#87)
 - [x] PriorityClass / TokenReview missing from `/apis` (#85) — fixed in
-      6fd2722; closes when the conformance rerun confirms
+      6fd2722; discovery was exercised by the efbea2d conformance run.
 - [ ] No `/scale` subresource; `kubectl scale` fails (#86)
 - [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88)
 - [ ] HPA placeholder: no metrics, never scales down (#89)
@@ -122,7 +133,10 @@ when each piece landed.
 - [x] GC deleted a live Deployment's ReplicaSet (#99): protobuf creates were
       stored with `uid: ""`; fixed in v0.15.3
 - [ ] NotFound names the store key (#109); unserved resources answer an empty
-      list (#110); LIST items carry no `resourceVersion` (#111)
+      list (#110).
+- [x] LIST items carry resourceVersion and continuation pages request the
+      first page's revision (64963b2, #111). The still-open issue label does
+      not mean this code is absent; fastetcd snapshot correctness is #50 there.
 - [ ] RBAC escalation prevention (#98); until then Namespace writes stay
       cluster-scoped (#97)
 - [ ] Secrets: `stringData` not folded into `data` (#101)
@@ -241,9 +255,9 @@ they require a running datastore). The branch already
 contains the routed dependency runner and DaemonSet migration. Master update
 on #146 authorizes remaining implementation now; live-target selection is
 not a blocker for this work. Live validation belongs to #147/#149.
-Current pass: rerun handoff step 2 on the pushed head, migrate remaining
-controllers and scheduler in reviewable increments, audit informer safety,
-and run unit/e2e validation on dev. Do not claim live runtime acceptance.
+Implementation and dev unit/API-rig work below are complete; acceptance is
+blocked by fastetcd#50. Resume with the isolated snapshot regression after the
+datastore fix, then #147/#149 runtime validation. Do not claim live acceptance.
 - [x] origin/main merged into turbomode (de8c912); handoff step 2 on dev:
       `cargo test --locked` for the five crates passes (87/197/56/57, storage 4 ignored)
 - [x] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
@@ -385,8 +399,13 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       scale-to-Pod-creation latency; keep #66 open until measurements exist.
 
 ### Phase 4: Scale & Conformance
-- [ ] 1000+ node testing (#66) — the controllers still list whole collections per watch-driven pass,
-      which is what will break first
+
+The dated entries below preserve the historical investigation; temporary logs
+and staged artifacts are not promised to exist today. Current procedure and
+results are in docs/conformance.md.
+
+- [ ] 1000+ node testing (#66) — indexed workers now exist on turbomode,
+      but their full-population resource/latency and failover curves are unverified
 - [x] K8s conformance test suite (#67) — closed 2026-09-28; first run on dev,
       `test/conformance/run.sh`: e2e.test v1.36.x `[Conformance]` (443) against
       apiserver + controller-manager + scheduler with two heartbeat-kept
@@ -449,8 +468,8 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
     can't write /build/assets under the no-kept-state build rule (#140) —
     owner decides how binaries reach conform.g8.lo (goldens? #96 test
     container?). efbea2d is still staged there.
-- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — CI
-      builds x86_64 musl only; `build-release.sh` can target aarch64 via
+- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — the disabled workflow
+      describes x86_64 musl only (#114); `build-release.sh` can target aarch64 via
       `cross`, and no such build has been recorded
 
 ### `oc` compatibility — the surface that drives completeness

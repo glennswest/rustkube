@@ -1,20 +1,23 @@
 # Upstream Kubernetes feature inventory & gap-check
 
 A checklist of what a **conformant drop-in Kubernetes** must provide, mapped to
-this repo's code as of v0.15.2 (2026-09-26; the apiserver reports the 1.36 API
-posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
+this repo's v0.18.0 plus `turbomode` code as of 2026-09-29; the apiserver
+reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
+🔴 missing. A checkmark is not a conformance or deployment claim.
 
 > The living parity backlog; conformance is the CNCF e2e `[Conformance]`
-> suite, which has never been run here (#67). Rewritten from the code on
-> 2026-09-24 (#80) — the first version, from 2026-07-15, had not been updated
-> since and about twenty statuses were wrong.
+> suite. It has run against a synthetic control plane without kubelets
+> (#67): 79/433 reported specs passed at 430b268, 75/428 at efbea2d before
+> a missing-kubectl rerun. These are historical partial results, not certification.
+> See [conformance.md](conformance.md) for exact runs and limitations.
 
 ## 1. API groups & resource kinds (apiserver)
 
 | Group / kind | Must-have | Status | Where / note |
 |---|---|---|---|
 | `core/v1` — Pod, Service, Endpoints, Namespace, Node, ConfigMap, Secret, ServiceAccount, Event, PV, PVC | core | ✅ | `server.rs`, `discovery.rs` |
-| `core/v1` — ReplicationController, LimitRange, ResourceQuota, the `pods/binding` subresource | core | 🔴 | not in discovery; a stored ResourceQuota is a blob nothing enforces. The scheduler binds with a PUT of `spec.nodeName` |
+| `core/v1` — PodTemplate, ReplicationController, LimitRange, ResourceQuota | core | 🟡 | objects are served/discovered; no ReplicationController controller (#125), LimitRanger (#131), or quota enforcement (#124) |
+| `core/v1` — `pods/binding` | core | 🔴 | scheduler binds with a conditional PUT of `spec.nodeName` |
 | `apps/v1` — Deployment, ReplicaSet, StatefulSet, DaemonSet | core | ✅ | apiserver + controllers |
 | `apps/v1` — ControllerRevision; the `/scale` subresource | core | 🔴 | ControllerRevision is not in discovery and nothing writes one; `deployments/scale` is advertised with no route (#86) |
 | `batch/v1` — Job, CronJob | core | ✅ | |
@@ -27,9 +30,9 @@ posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 | `networking.k8s.io/v1` — NetworkPolicy, Ingress, IngressClass | core | 🟡 | API served; no Ingress controller. NetworkPolicy is enforced by Cilium |
 | `discovery.k8s.io/v1` — EndpointSlice | core | ✅ | served; the Service controller writes them (v0.7.5, #22) |
 | `policy/v1` — PodDisruptionBudget, Eviction | core | ✅ | `eviction.rs` (429 when blocked), `pdb.rs` (v0.7.18, #7). Not: 500 on multiple matching PDBs, `unhealthyPodEvictionPolicy`, `disruptedPods` |
-| `storage.k8s.io/v1` — StorageClass, CSIDriver, CSINode, VolumeAttachment, CSIStorageCapacity | core | ✅ | v0.7.11 (#24); see [storage.md](storage.md) |
+| `storage.k8s.io/v1` — StorageClass, CSIDriver, CSINode, VolumeAttachment, CSIStorageCapacity, VolumeAttributesClass | core | ✅ | v0.7.11 (#24); see [storage.md](storage.md) |
 | `scheduling.k8s.io/v1` — PriorityClass | core | ✅ | served, in `/apis`, and resolved at pod admission (#85) |
-| `node.k8s.io/v1` — RuntimeClass | optional | 🔴 | |
+| `node.k8s.io/v1` — RuntimeClass | optional | 🔴 | #135 |
 | `certificates.k8s.io/v1` — CSR | core | ✅ | with `/approval` and `/status`; `csr.rs` approves and signs |
 | `events.k8s.io/v1` — Event | optional | ✅ | translated to/from stored core/v1 (v0.7.34, #48) |
 | `flowcontrol.apiserver.k8s.io/v1` (APF) | optional | 🔴 | |
@@ -42,20 +45,20 @@ posture). Status: ✅ implemented · 🟡 partial · 🔴 missing.
 
 | Feature | Must-have | Status | Note |
 |---|---|---|---|
-| REST CRUD + `/status` | core | ✅ | a PUT to `/status` is conditional on the body's `resourceVersion`, as upstream (#78) |
+| REST CRUD + `/status` | core | ✅ | a PUT to `/status` is conditional on the body's `resourceVersion` when supplied (#78); custom-resource main writes can still overwrite status (#128) |
 | Watch (list+watch, chunked) + watch cache | core | ✅ | DELETED carries the last state, selectors apply to it (v0.15.2, #100) |
 | Watch bookmarks, `sendInitialEvents` | core | ✅ | v0.7.25 (#39) |
-| Label & field selectors, pagination | core | ✅ | |
+| Label & field selectors, pagination | core | 🟡 | per-item RVs and pinned pages implemented; snapshot correctness blocked on fastetcd#50; no automatic compaction (#139) |
 | Server-Side Apply (`managedFields`, conflicts) | core | ✅ | v0.7.31–32 (#45) |
-| Strategic-merge / JSON / merge patch | core | ✅ | strategic merge uses a fixed table of `patchMergeKey`s, not per-type schema |
+| Strategic-merge / JSON / merge patch | core | ✅ | strategic merge uses a fixed table of `patchMergeKey`s, not per-type schema; Service ports are wrong (#150) |
 | protobuf wire codec | core | ✅ | both directions (v0.7.14) |
-| TLS listener, serving-cert hot reload | core | ✅ | |
-| AuthN: x509 client cert, ServiceAccount/bearer JWT | core | ✅ | |
+| TLS listener, serving-cert hot reload | core | 🟡 | pair matching missing (#93); client identity/trust do not reload (#105) |
+| AuthN: x509 client cert, ServiceAccount/bearer JWT | core | 🟡 | rejected bearer can fall back to anonymous (#115); TokenRequest ignores requested lifetime/binding |
 | AuthN: OIDC, webhook, bootstrap tokens | core | 🔴 | |
 | AuthZ: RBAC | core | 🟡 | no escalation prevention (#98) |
 | AuthZ: Node authorizer, webhook authorizer | core | 🔴 | `system:nodes` is bound to `cluster-admin` instead |
 | Admission: webhooks | core | 🔴 | not wired (#82) |
-| Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob and PVC access-mode validation. 🔴 LimitRanger, ResourceQuota; DefaultStorageClass is applied by the PV controller instead |
+| Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS. 🔴 LimitRanger (#131), ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
 | Aggregation layer | core | 🔴 | not wired (#83) |
 | API Priority & Fairness, audit logging | optional | 🔴 | |
 | Discovery, `/openapi/v2`, `/openapi/v3` | core | 🟡 | served with GVK paths but **empty schemas**, so `kubectl explain` has nothing to show |
@@ -78,10 +81,12 @@ only, hardcoded address, #91).
 TTL-after-finished, NodeIPAM/route, ClusterRole aggregation, endpoint-slice
 mirroring, ReplicationController.
 
-On `turbomode`, shared watches drive work. Deployment, ReplicaSet,
-StatefulSet, DaemonSet, Job and CronJob use bounded indexed object workers;
-other controllers still perform whole-collection reads per event-driven pass.
-The remaining migration and cache-safety audit is #146.
+On `turbomode`, all controller families use shared informer feeds and bounded
+indexed object workers. GC and namespace finalization retain authoritative
+absence reads before destructive cleanup. Successful-write overlays, UID/RV
+preconditions and ambiguous-create expectations are implemented. Safe-cache
+acceptance remains blocked on fastetcd#50 (#146); scale, multi-master and
+runtime acceptance remain #147/#149.
 
 Drop-in acceptance (#2) remains unverified. The CLI accepts discrete TLS and
 token flags but no kubeconfig; it has no shutdown signal handling. Default
@@ -105,9 +110,12 @@ resource fit (pod-level requests, #73), volume binding (PV node affinity,
 locality, node affinity, pod affinity, topology spread. ✅ priority sort.
 
 🔴 preemption (`preemption.rs` is never called, #84); `schedulingGates` (gated
-pods are scheduled, #87); the activeQ/backoffQ/unschedulable queue and
-`nominatedNodeName`; scheduling profiles; NodePorts and BalancedAllocation;
-upstream's score weights (scores are summed unweighted).
+pods are scheduled, #87); upstream activeQ/backoffQ/unschedulable framework
+parity and `nominatedNodeName`; scheduling profiles; NodePorts and BalancedAllocation;
+upstream's score weights (scores are summed unweighted). On `turbomode`, a
+serialized priority-ordered Pod/VMI queue and API retries are implemented,
+with incremental accounting and retained bind/volume reservations. Scheduling
+Events and PodScheduled=False are absent (#138).
 
 ## 5. Node components
 
@@ -127,8 +135,14 @@ LoadBalancer (`pkg/cloud` is empty), 🔴 Ingress controller, 🟡 Gateway API
 
 ✅ PV/PVC binding, phases, protection, reclaim; ✅ StorageClass, CSIDriver,
 VolumeAttachment; 🟡 dynamic provisioning (the `stormblock` class only; other
-classes are handed to their CSI provisioner); 🔴 volume expansion (#63); 🔴
-VolumeSnapshots (#64).
+classes are handed to their CSI provisioner). The normal `stormblock` PVC
+path is the kubelet's built-in blank-clone driver, not CSI or sbregistry clone
+requests. ✅ expansion admission and preservation of the external-resizer
+handshake (#63), tested with upstream sidecars; node filesystem growth is
+external and not proved by that test. ✅ snapshot CRD/controller API
+compatibility (#64), tested with the upstream snapshot-controller and a
+simulated CSI sidecar; installation and actual snapshots remain external.
+The built-in stormblock class has neither CSI snapshot sidecars nor a resizer.
 
 ## 8. OpenShift divergences (beyond CNCF)
 
@@ -150,13 +164,14 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
 2. Node authorizer (nodes are `cluster-admin` today); RBAC escalation prevention (#98).
 3. `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
-5. Scheduler: preemption (#84), scheduling gates (#87), queue.
-6. The GC deleting a live Deployment's ReplicaSet (#99).
+5. Scheduler: preemption (#84), scheduling gates (#87), Events/status (#138).
+6. Datastore snapshot correctness (fastetcd#50) and safe informer acceptance (#146).
+   The protobuf empty-UID GC defect (#99) was fixed in v0.15.3.
 
 **Then:**
 7. Aggregation (#83) → metrics API → a real HPA (#89).
 8. OpenAPI schemas (`kubectl explain`), CRD schema validation, conversion webhooks.
-9. Informer-based controllers, if scale measurements say so (#66).
+9. Validate the indexed informer implementation at scale and under failover (#66/#147/#149).
 10. API Priority & Fairness, audit, ValidatingAdmissionPolicy.
 11. Ingress/Gateway data plane, Routes (#70, #91), LoadBalancer.
 12. Multi-arch admission (#8), OpenShift extras.

@@ -1,98 +1,93 @@
-# Releasing
+# Building and delivery
 
-Two artifacts per component, both static: a **binary tarball** and a
-**`FROM scratch` container image**. Nothing else is published — no registry, no
-GHCR (see the note at the end). The `kubernetes-rs` RPM/deb that
-`deploy/packaging/nfpm.yaml` describes is built by nothing; the last release
-that carried one was v0.7.30.
+As of 2026-09-29, builds run through **sc-build** after the commit is pushed.
+GitHub Actions is disabled by owner decision (#114). The retained
+`.github/workflows/images.yml` describes an obsolete tag-triggered publication
+path; it does not currently publish releases. Removing that file remains #114.
 
-**stormcos does not consume these.** Its `deploy/build-goldens.sh` builds the
-three binaries from source at a pinned commit and copies them into its
-goldens (see the README's *How it ships*).
-
-## Build
-
-Official release artifacts come from CI (below). To produce the same thing on
-the build box, run `deploy/build-release.sh` through `sc-build`, with `OUT`
-somewhere that survives the scratch checkout:
+## Current delivery
 
 ```bash
-sc-build 'NO_IMAGES=1 OUT=$HOME/rustkube-release deploy/build-release.sh'
+git push
+sc-build                       # cargo build && cargo test at the pushed commit
 ```
 
-It builds `x86_64-unknown-linux-musl` release binaries for the three
-components (`protoc` is required: `pkg/apimachinery/build.rs` compiles the
-protobuf descriptors), refuses to continue if any came out dynamically linked,
-tars each one, and — unless `NO_IMAGES=1` — builds a `FROM scratch` image
-around it with podman. Knobs:
+sc-build fetches the commit onto a private drive as the unprivileged build
+user, runs the command and deletes the drive, pass or fail. Checkout, target,
+HOME and TMPDIR are temporary. There is no persistent checkout on dev and no
+output directory that survives merely because it is outside the checkout.
+A failed build is recorded as a GitHub build-failure issue.
 
-| variable | default | |
+For completed, verified work approved for delivery, request the component
+golden once:
+
+```bash
+stormcentral component build rustkube --url http://stormcentral.g8.lo
+```
+
+This produces an immutable component golden containing the three binaries and
+files the stormcos release request. Stormcos assembles the per-process
+`rustkube-apiserver`, `rustkube-controller-manager` and `rustkube-scheduler`
+stormd goldens around them. See README's **How it ships** for the checked
+stormcos source and runtime flags. A component build or source commit is not
+proof that a node has installed the resulting release.
+
+The `turbomode` branch remains unmerged and unpromoted while cache safety and
+runtime acceptance are outstanding (#146/#147/#149, fastetcd#50). Do not
+request a golden merely to refresh documentation or to run these experiments.
+
+## Retained standalone packaging tooling
+
+`deploy/build-release.sh` builds static musl binaries for all three components,
+checks each with `file`, writes binary tarballs, and optionally builds and saves
+`FROM scratch` images using podman. `protoc` is needed for the protobuf
+schema descriptors. The script reads the version from `Cargo.toml`.
+
+These are the **actual script defaults**, not recommended sc-build paths:
+
+| Variable | Default | Meaning |
 |---|---|---|
-| `OUT` | `/build/rustkube-release/v<version>` | where artifacts go |
-| `TARGETS` | the native `<arch>-unknown-linux-musl` | comma-separated; a non-native target goes through `cross` |
-| `NO_IMAGES` | unset | binaries and tarballs only |
-| `CARGO_TARGET_DIR` | `/build/cargo/rustkube` | |
+| `TARGETS` | `$(uname -m)-unknown-linux-musl` | comma-separated targets; non-native uses `cross` |
+| `OUT` | `/build/rustkube-release/v<version>` | output directory |
+| `CARGO_TARGET_DIR` | `/build/cargo/rustkube` if unset | build output directory |
+| `NO_IMAGES` | unset | any nonempty value skips image creation |
 
-An aarch64 build (`TARGETS=…,aarch64-unknown-linux-musl`) goes through
-`cross`, because `ring` needs a C toolchain for the target and dev has none.
-**No aarch64 build has been recorded as succeeding** (#68).
+The persistent `/build` assumptions and root instructions in the script's
+header are obsolete and tracked in #156. It must be adapted to the private
+build volume and supported artifact export before treating it as a current
+publication recipe. Do not use root, persistent dev mounts, or a HOME override
+to make the old recipe work. Conformance staging has the same class of issue
+in its separate script (#140).
 
-## What comes out, and why it is static
+Outputs, when the packaging script runs successfully:
 
-| | v0.7.35 (Distroless) | v0.8.0 (static musl, scratch) |
-|---|---|---|
-| apiserver | 37.2 MB | **14 MB** |
-| controller-manager | 34.8 MB | **10 MB** |
-| scheduler | 33.1 MB | **8.1 MB** |
+- `rustkube-<component>-v<version>-<arch>-linux-musl.tar.gz`, containing
+  `kube-<component>`;
+- `rustkube-<component>-v<version>-<arch>.docker.tar.gz`, image tag
+  `rustkube-<component>:v<version>-<arch>`.
 
-The Distroless base carried 20 MB of glibc and 5 MB of documentation and locale
-data per component, none of which a control-plane process opens (#50).
+`deploy/images/Dockerfile` places the binary at
+`/usr/local/bin/rustkube-component` and sets that entrypoint. It supplies no
+user directive, shell, init, CA files or runtime configuration. This scratch
+image is different from stormcos's stormd-supervised runtime golden. GHCR is
+not used. `deploy/packaging/nfpm.yaml` remains an RPM/deb description without
+an active packaging path; legacy Terragrunt provisioning still requires that
+RPM (#157).
 
-Size is the smaller half of the argument. stormcos ships each component as a
-**golden** — a sealed filesystem image every node carries whether or not it runs
-that component, so promoting a node to control plane is *starting a container*,
-not installing anything. A base layer is slab on every node in the fleet. And a
-dynamically linked binary starts if and only if its loader and libraries are
-exactly where it expects them; a static binary in a golden has one file to be
-wrong about. stormblock and stormpump made the same call.
+## Architecture and evidence
 
-The build refuses to package a binary `file(1)` does not call `static-pie
-linked` or `statically linked`. A build that silently goes dynamic works perfectly on the build host
-and fails on the node, which is the worst place to find out.
+The retained GitHub workflow describes only x86_64 musl. The standalone script
+accepts aarch64 musl through `cross`, but no successful ARM64 build and runtime
+acceptance has been recorded here (#68). Static linking alone does not prove
+cross-architecture runtime support.
 
-## Verified on dev
+Historical v0.8.0 measurements were approximately 14 MB for the apiserver,
+10 MB for controller-manager and 8.1 MB for scheduler; they are not sizes for
+the current binaries. That release's scratch apiserver answered readyz and
+served namespaces in a podman test. Current verification is recorded against
+specific commits in CLAUDE.md and the test documentation.
 
-The scratch image is not a theory — it serves:
-
-```
-$ podman run --network host rustkube-apiserver:v0.8.0-x86_64 \
-    --etcd-servers http://127.0.0.1:2379 --tls --secure-port 6443
-readyz:  ok
-namespaces: default kube-node-lease kube-public kube-system
-```
-
-`/etc/resolv.conf` and `/etc/hosts` are injected by the kubelet (and by podman),
-so name resolution works with nothing in the image. TLS needs no system trust
-store: rustls carries its roots, and every path that verifies a peer is given an
-explicit CA file.
-
-## CI
-
-`.github/workflows/images.yml` runs on a `v*` tag (or by hand, with a `ref`)
-on ubuntu-latest, x86_64 only: musl build, static check, then
-`docker build -f deploy/images/Dockerfile --build-arg COMPONENT=<c>`. It
-creates the GitHub release if it does not exist and attaches six assets:
-
-```
-rustkube-{apiserver,controller-manager,scheduler}-<tag>-x86_64-linux-musl.tar.gz
-rustkube-{apiserver,controller-manager,scheduler}-<tag>.docker.tar.gz
-```
-
-The two paths are the same build but not the same names: CI tags images
-`rustkube-<c>:<tag>` with no arch and takes the version from the git tag;
-`build-release.sh` tags `rustkube-<c>:v<version>-<arch>` and reads the version
-from `Cargo.toml`. In the image the binary is `/usr/local/bin/rustkube-component`
-and runs as uid 0.
-
-GHCR is deliberately unused, and nothing on a node's start path pulls,
-extracts or verifies an image.
+Version changes update the workspace version and Cargo.lock's workspace
+packages together, with a separate release commit and tag per CLAUDE.md's
+cross-project rules. A tag is version bookkeeping; Actions being disabled,
+it does not trigger a supported build or deployment.

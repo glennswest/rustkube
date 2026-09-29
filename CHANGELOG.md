@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Refresh README, docs and project context from source/history since September 18: CLI defaults and boolean syntax, API gaps, informer/metrics behavior, conformance and test-container evidence, current stormcos client-certificate wiring, and private-volume golden delivery. Preserve built-in stormblock PVC ownership; correct registry and management API claims (#112/#117). Track legacy release packaging and Terragrunt installation promises in #156/#157; retain disabled workflow removal in #114.
+
 - **docs:** Start a source-backed documentation audit of changes since September 18, including configuration, APIs, ports and delivery.
 
 - **docs:** Record reproduced datastore snapshot inconsistency (165/255

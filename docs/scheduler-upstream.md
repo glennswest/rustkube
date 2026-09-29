@@ -1,5 +1,9 @@
 # What upstream actually does, and what we should not build
 
+> Historical upstream research and design input, not implemented RustKube
+> features or the acceptance version pin. See README for current code and
+> scheduler-research.md for the component-swap acceptance prerequisites.
+
 Researched 2026-08-28 against `release-1.37` source, KEP `kep.yaml` files and
 operator bindata — deliberately not against kubernetes.io, because the docs are
 wrong in several load-bearing places. Full reference:
@@ -7,7 +11,7 @@ wrong in several load-bearing places. Full reference:
 
 ## Baseline
 
-Current upstream is **v1.37 "Garhwal"** (2026-08-26). OpenShift 4.22 ships
+The research baseline recorded here was **v1.37 "Garhwal"** (2026-08-26). OpenShift 4.22 ships
 **k8s 1.35**, two releases behind. Anything written against 1.31-era docs is
 stale in ways that matter.
 

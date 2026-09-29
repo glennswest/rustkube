@@ -1,9 +1,14 @@
 # RustKube
 
 **A Kubernetes control plane in Rust**: `kube-apiserver`,
-`kube-controller-manager` and `kube-scheduler`, speaking the Kubernetes API on
-the wire, so `kubectl`, `oc`, `helm` and client-go controllers (Cilium, the CSI
-sidecars) work against it unchanged.
+`kube-controller-manager` and `kube-scheduler`, implementing a subset of the Kubernetes API on
+the wire for `kubectl`, `oc`, `helm` and client-go controllers. Compatibility
+is operation-specific; this is not a conformant or drop-in replacement yet.
+
+This page was checked against the code on **2026-09-29**: v0.18.0 plus
+unreleased `turbomode` changes. See the [September change audit](docs/changes-since-2026-09-18.md)
+for commits, verification limits and tracked gaps. Branch implementation does
+not mean it has shipped in a stormcos release.
 
 It is the control plane only. The datastore, the node agent and DNS are
 separate components:
@@ -13,7 +18,7 @@ separate components:
 | datastore | [fastetcd](https://github.com/glennswest/fastetcd) | an etcd v3 wire-compatible store; the apiserver is its only client, over gRPC (`--etcd-servers`) |
 | node agent | [rustkube-node](https://github.com/glennswest/rustkube-node) | the kubelet; the apiserver proxies `logs`, `exec`, `attach` and `port-forward` to it on `:10250` |
 | certificates | [stormcert](https://github.com/glennswest/stormcert) | writes the serving cert, the CA and the ServiceAccount keypair the apiserver reads |
-| cluster DNS | stormcoredns (CoreDNS as a fallback), deployed from a manifest | rustkube knows nothing about DNS |
+| cluster DNS | stormcoredns, deployed from a manifest | rustkube knows nothing about DNS |
 | where it runs | [stormcos](https://github.com/glennswest/stormcos) | ships each binary as a stormd golden — see [How it ships](#how-it-ships) |
 
 ```
@@ -48,9 +53,12 @@ custom resources under `/registry/{group}/{plural}/…` (#76). `resourceVersion`
 is the store's `mod_revision`. Every write is a compare-and-swap; a PATCH
 without a `resourceVersion` retries the CAS the way upstream's
 `GuaranteedUpdate` does (#77). A watch cache sits in front of watches.
-LIST reads use the shared datastore's consistent snapshot; continuation pages
-pin that snapshot even when a load balancer sends them to another API server.
-Expired history returns 410 so clients relist. Controller and scheduler
+LIST reads go directly to the shared datastore; continuation pages request
+the first page's revision even through another API server. This depends on
+correct datastore snapshots: [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50)
+currently blocks that guarantee. Compacted LIST revisions return 410; automatic
+compaction is absent (#139), and compacted watch error handling is incomplete
+(#127). Controller and scheduler
 leadership uses Kubernetes Leases; watch queues are local, reconstructible
 state. Lease expiration uses local elapsed time rather than comparing master
 wall clocks. Three-master failure testing remains required before rollout (#149).
@@ -91,7 +99,8 @@ different one is a 400), update, delete (with `DeleteOptions`: preconditions,
 `dryRun`, grace period, `propagationPolicy`), `deletecollection` with label
 and field selectors on every generic collection path and for custom resources
 (not across namespaces, and not for namespaces), JSON Patch, merge patch,
-strategic merge patch (with `patchMergeKey` for the lists that need it) and
+strategic merge patch (fixed merge-key table; Service ports use the wrong
+key, #150) and
 server-side apply with `managedFields` ownership and conflicts. The `/status`
 subresource; pod `eviction` gated by PodDisruptionBudgets; namespace
 `/finalize`; CSR `/approval`. A PUT to `/status` (and `/approval`) is
@@ -106,7 +115,8 @@ transparent connection upgrade, so SPDY and WebSocket both pass through. The
 kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
 (rustkube-node#56), so those three answer with the kubelet's 404 today.
 
-**Authentication**, first match wins:
+**Authentication**, first match wins (a rejected bearer token can still fall
+back to anonymous when enabled, #115):
 1. an x509 client certificate verified against `--client-ca-file` — CN is
    the user, each O a group;
 2. a bearer JWT signed with the ServiceAccount key (RS256 with
@@ -240,8 +250,9 @@ Two are placeholders: **HPA** reads no metrics — its "utilization" is the
 fraction of Ready pods, and it never scales down (#89) — and **Gateway API**
 writes status only, with a hardcoded address (#91).
 
-It has no ResourceQuota, ServiceAccount-token, TTL-after-finished or
-node-IPAM controller.
+It has no ResourceQuota, ReplicationController, EndpointSliceMirroring,
+ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or
+node-IPAM controller. Serving a resource object does not implement its controller.
 
 ## What the scheduler does
 
@@ -272,7 +283,10 @@ traits the loop does not use.
 
 ## Configuration
 
-Every binary logs through `RUST_LOG` (default `info`).
+Every binary logs through `RUST_LOG` (default `info`). Configuration is CLI
+flags plus the environment variables listed below; there is no TOML/YAML
+configuration loader. Tables come from `cmd/*/src/main.rs`. Explicit flags
+override environment values.
 
 ### kube-apiserver
 
@@ -289,7 +303,7 @@ Every binary logs through `RUST_LOG` (default `info`).
 | `--anonymous-auth` | | `true` | `false` answers 401 to unauthenticated requests |
 | `--dev-anonymous-admin` | | `false` | **dev only**: anonymous is `cluster-admin` (needs `--anonymous-auth true`) |
 | `--service-account-signing-key-file` | | — | RSA private key (PEM) that signs tokens |
-| `--service-account-key-file` | | — | its public key (SPKI PEM). Both or neither; neither means an ephemeral key that dies with the process |
+| `--service-account-key-file` | | — | its public key (SPKI PEM). RSA requires both files; if either is absent, the code falls back to an ephemeral HS256 key that dies with the process |
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order; created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |
@@ -311,6 +325,10 @@ Every binary logs through `RUST_LOG` (default `info`).
 | `--cluster-signing-cert-file`, `--cluster-signing-key-file` | | — | controller manager only: the CA the CSR controller signs with; without them CSRs are approved but not signed |
 | `--root-ca-file` | | `--certificate-authority` | controller manager only: the CA bundle published as `kube-root-ca.crt` in every namespace; with neither, nothing is published |
 
+`--token` (including `APISERVER_TOKEN`) takes precedence over `--token-file`.
+Boolean value flags (`--leader-elect`, `--anonymous-auth`, `--insecure`,
+`--dev-anonymous-admin`) take `true`/`false`; `--tls` and
+`--insecure-skip-tls-verify` are presence switches.
 Neither takes `--kubeconfig`. A credential file that does not exist yet is
 waited for, not treated as an error, because the whole control plane starts
 at once (#58).
@@ -319,7 +337,7 @@ at once (#58).
 
 | binary | port | protocol | paths |
 |---|---|---|---|
-| kube-apiserver | `--secure-port` (6443) | HTTPS | the API; `/healthz`, `/livez`, `/readyz`, `/version`, `/metrics` |
+| kube-apiserver | `--secure-port` (6443) | HTTPS; HTTP only with `--insecure true` and no TLS pair/`--tls` | the API; `/healthz`, `/livez`, `/readyz`, `/version`, `/metrics` |
 | kube-controller-manager | 10257, fixed | plain HTTP on `0.0.0.0` | `/metrics`, `/healthz` |
 | kube-scheduler | 10259, fixed | plain HTTP on `0.0.0.0` | `/metrics`, `/healthz` |
 
@@ -342,8 +360,9 @@ sc-build 'cargo test -p apiserver'    # any command at the repo root
 `stormbuild` user, runs the command, and deletes the checkout. A failing build
 is filed as a `build-failure` issue here.
 
-Release artifacts — static musl binaries and `FROM scratch` images — are
-described in [docs/releasing.md](docs/releasing.md).
+Release artifacts — static musl binaries and `FROM scratch` images —
+are legacy packaging outputs described in [docs/releasing.md](docs/releasing.md).
+GitHub Actions is disabled by owner decision (#114); it publishes nothing.
 
 **On a node**, rustkube is tested by its test container, `test/`, which
 stormcentral runs as a Job on every test machine per its test standard:
@@ -360,7 +379,7 @@ In stormcos each binary is its own **stormd golden**: a container whose PID 1
 is stormd, which runs the binary from a config baked into the golden. The
 goldens are `rustkube-apiserver`, `rustkube-controller-manager` and
 `rustkube-scheduler`, started by stormpump from `/etc/stormpump/boot.d/30-kube`
-on the `sno` and `storage` profiles. stormcos's `deploy/build-goldens.sh`
+on profiles that enable the control plane. stormcos's `deploy/build-goldens.sh`
 builds the binaries **from source** at a pinned commit
 (`cargo build --release --target x86_64-unknown-linux-musl`) rather than from
 a release.
@@ -370,25 +389,35 @@ produces, `golden-rustkube-<digest>`, and what a stormcos release request
 names — carries the three binaries; the three stormd goldens above are
 assembled around them.
 
-What stormcos passes today:
+The following is the **build configuration**, checked against stormcos
+[`be718e09`](https://github.com/glennswest/stormcos/blob/be718e09b5f25d1c893d9ed9a4ffd852ca3af00a/deploy/build-goldens.sh),
+not proof of the version installed on any node:
 
 - **kube-apiserver:** `--etcd-servers http://127.0.0.1:2379` (plaintext,
   loopback), `--bind-addr 0.0.0.0`, `--advertise-address ${NODE_IP}`, the
   serving pair `/data/stormcert/apiserver.{crt,key}`, the ServiceAccount pair
   `/data/stormcert/sa-token.{key,pub}`, and
-  `--manifest-dir /etc/kubernetes/manifests.d` (Cilium, CoreDNS, the storage
-  class and CSI driver, the VMI CRD). The `sno` profile adds
-  `--dev-anonymous-admin true`. Liveness is `https://127.0.0.1:6443/healthz`.
+  `--manifest-dir /etc/kubernetes/manifests.d` (Cilium, stormcoredns, the storage
+  class and CSI driver declarations, the VMI CRD). Client certificates are
+  verified with `--client-ca-file /data/stormcert/ca.crt`. The `sno` and
+  `bastion` profiles still add `--dev-anonymous-admin true`. Liveness is `https://127.0.0.1:6443/healthz`.
 - **kube-controller-manager, kube-scheduler:**
   `--apiserver https://${NODE_IP}:6443 --certificate-authority /data/stormcert/ca.crt`
-  and **no client credential**, so they reach the apiserver as anonymous.
-  That works only where anonymous is `cluster-admin`, i.e. `sno`; on
-  `storage` they start and are refused (stormcos#76).
+  plus `--client-certificate /data/stormcert/kube-<component>.crt` and
+  `--client-key /data/stormcert/kube-<component>.key` (`controller-manager`
+  or `scheduler`). These authenticate as `system:kube-<component>`; rustkube
+  currently binds both identities to `cluster-admin`. Least privilege and
+  removing the remaining anonymous-admin deployments remain stormcos#76.
+  No cluster-signing flags are supplied here; publishing the root CA does
+  not imply CSR signing is enabled.
 
 The files under `/data/stormcert` are written by stormcert before the
 apiserver starts: `apiserver.crt`/`.key` (CN `apiserver`; SANs the
 `kubernetes…` names, `localhost`, `10.96.0.1`, the node IP and `127.0.0.1`),
-`ca.crt`, `sa-token.key`/`.pub` (RSA-3072), and `node-admin.token`.
+`ca.crt`, `sa-token.key`/`.pub` (RSA-3072), and `node-admin.token`. Separate
+stormcert processes also issue the controller-manager and scheduler client
+pairs. Components wait for their credential files at startup. The current
+stormcos script deliberately has no upstream CoreDNS fallback.
 
 ## Further reading
 

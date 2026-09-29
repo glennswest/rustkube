@@ -13,8 +13,8 @@ style: |
 <!--
 Render: npx @marp-team/marp-cli docs/presentation.md          (HTML)
         npx @marp-team/marp-cli docs/presentation.md --pdf    (PDF)
-Every claim here is drawn from the code as of v0.15.2 and from README.md,
-which was rewritten from the code (#80). The file named on each slide is
+Checked 2026-09-29 against v0.18.0 plus unreleased turbomode and README.md.
+Branch code is not a shipped golden or a conformance claim. The file named on each slide is
 where to check it.
 -->
 
@@ -25,7 +25,7 @@ where to check it.
 `kube-apiserver` · `kube-controller-manager` · `kube-scheduler`
 
 Rust · one cargo workspace · three binaries, static musl
-Version 0.15.2 (`Cargo.toml` `[workspace.package]`)
+Version 0.18.0 + unreleased turbomode (`Cargo.toml` `[workspace.package]`)
 
 ---
 
@@ -36,8 +36,9 @@ one binary per component, no Go toolchain, no distro images, shipped as a
 stormd golden like everything else on the node.
 
 RustKube speaks the **Kubernetes API on the wire** — JSON *and* client-go's
-protobuf — so the tools and controllers written for Kubernetes work against
-it unchanged: `kubectl`, `oc`, `helm`, Cilium, the CSI sidecars.
+protobuf — for existing `kubectl`, `oc`, `helm` and client-go clients.
+Compatibility depends on the operation; it is not yet conformant or a
+drop-in upstream replacement.
 
 It is the control plane only. The datastore (fastetcd), the kubelet
 (rustkube-node) and cluster DNS (stormcoredns) are separate components.
@@ -80,7 +81,8 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 
 - Keys `/registry/{resource}/[{ns}/]{name}`, CRs `/registry/{group}/{plural}/…`
 - `resourceVersion` = fastetcd's `mod_revision`; every write is a CAS
-- Controllers and scheduler are plain API clients — no informers
+- On turbomode, shared informers and indexed object workers drive controllers;
+  scheduler placement is serialized. Snapshot safety is blocked on fastetcd#50.
 
 ---
 
@@ -106,8 +108,8 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 - **AuthN:** x509 client certs (`--client-ca-file`), RS256 ServiceAccount
   JWTs (`--service-account-*-file`), TokenRequest, TokenReview
   (`pkg/apiserver/src/auth.rs`).
-- **AuthZ:** RBAC, plus the four access reviews `oc auth can-i` and
-  `oc policy who-can` use (`rbac_engine.rs`, `handlers/authorization.rs`).
+- **AuthZ:** RBAC, plus Kubernetes access reviews (`oc auth can-i`); OpenShift
+  `oc policy who-can` needs unserved reviews (#106) (`rbac_engine.rs`, `handlers/authorization.rs`).
 - **Admission (built-in):** namespace lifecycle, service IP allocation,
   default ServiceAccount, tolerations, priority, PodSecurity subset,
   `ReadWriteOncePod` (`builtin_admission.rs`).
@@ -119,7 +121,7 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 
 ## Today: controllers and scheduler
 
-**20 controllers** (`pkg/controller-manager/src/runner.rs`): Deployment,
+**Controller families** (`pkg/controller-manager/src/runner.rs`): Deployment,
 ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service (Endpoints +
 EndpointSlices), Namespace cascade, node lifecycle, PDB, garbage collector,
 PersistentVolume binding, attach/detach, the in-kubelet `stormblock`
@@ -158,7 +160,7 @@ Metric names follow upstream's: `docs/metrics.md`.
   release request.
 - stormcos wraps each binary in a **stormd golden** —
   `rustkube-apiserver`, `-controller-manager`, `-scheduler` — started by
-  stormpump from `boot.d/30-kube` on the `sno` and `storage` profiles.
+  stormpump from `boot.d/30-kube` on profiles enabling the control plane.
 - stormd supervises: restart on failure, ready probes (fastetcd's port, then
   the apiserver's `/healthz`), rotated logs on a log volume.
 - **At boot** the apiserver waits for fastetcd, creates the default
@@ -170,16 +172,17 @@ Metric names follow upstream's: `docs/metrics.md`.
 
 ## How it is tested
 
-- **Unit tests:** ~330 across the workspace, `cargo test` via `sc-build`;
-  handlers run against an in-memory store with etcd's CAS semantics
-  (`pkg/apiserver/src/test_store.rs`).
+- **Unit tests:** 409 passed, 4 ignored at 0c455b8 through sc-build (five
+  core libraries); this is not a runtime or conformance pass.
 - **End to end on dev** (`test/e2e/`): a real apiserver and
   controller-manager on a fresh fastetcd —
   - `projects.sh` — `oc` 4.22 as two users and an admin (31 checks)
   - `status-rv.sh` — optimistic concurrency on every status handler (17)
   - `watch-deleted.sh` — DELETED events for CRs and built-ins (7)
-- **Not yet:** the Kubernetes conformance suite (#67), a run past 250
-  synthetic nodes (#66), test containers per the stormcos standard (#96).
+- **Conformance has run:** synthetic nodes, no kubelets; 75/428 passed
+  at efbea2d before the kubectl rerun. Not certification (docs/conformance.md).
+- **Test container exists:** `/test short|medium|long`; real Job acceptance
+  remains #96. Scale and multi-master acceptance remain #66/#147/#149.
 
 ---
 
@@ -192,20 +195,22 @@ Built as modules but **not wired**:
 Missing:
 - `/scale` subresource — `kubectl scale` fails (#86) · `schedulingGates` (#87)
 - a real HPA with a metrics API (#89, needs #83)
-- volume expansion (#63), snapshots (#64), generic ephemeral volumes (#94)
+- generic ephemeral volumes (#94); expansion and snapshot API integration
+  now have upstream-sidecar tests (#63/#64), not full node acceptance
 - RBAC escalation prevention (#98) · Node authorizer
-- informer-based controllers, if scale says so (#66)
+- validation of turbomode informers at scale and under failover (#146/#149)
 
 ---
 
 ## Status and open issues that matter
 
-- **#99 — the GC deletes a live Deployment's ReplicaSet** as "owner gone",
-  repeatedly. Deleting live objects: first in line.
+- **fastetcd#50 / #146 — LIST snapshot revisions are inconsistent.**
+  Blocks safe informer acceptance; code is on turbomode, not promoted.
 - **#98 — no RBAC escalation check.** Contained for projects by keeping
   Namespace writes cluster-scoped; fixing it lifts that limit.
-- **stormcos#76 — the control plane runs anonymous.** Controllers get only a
-  CA; fine on `sno` (dev anonymous-admin), refused on `storage`.
+- **stormcos#76 — partial auth wiring now exists.** Its build script supplies
+  controller client certs; `sno`/`bastion` still grant anonymous-admin.
+  Build configuration is not proof of deployment.
 - **rustkube-node#56** — the kubelet serves no exec/attach/port-forward, so
   `oc rsh`/`cp`/`port-forward` stop at the node.
 - **#82, #86** — webhooks, `kubectl scale`: what a
