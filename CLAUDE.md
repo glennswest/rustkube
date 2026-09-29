@@ -95,6 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Shared watches and work queues (#143) — IN PROGRESS 2026-09-29
+WorkQueue, reflector, reactor::WatchHub and informers::Hub are on main with
+unit/fake-HTTP tests. Remaining per the handoff: integration coverage.
+- [ ] `apimachinery/src/turbomode_tests.rs`: scripted API server driving the
+      real Hub/WatchHub/reflector — one shared LIST+WATCH per collection,
+      late-subscriber seed, watch outage (unsynced, never empty; resume from
+      RV without LIST), in-stream 410 relist with gap deltas, LIST outage
+      backoff, immediate-EOF no hot loop, malformed frame relist, last
+      subscriber cancels the stream, event during reconcile → exactly one
+      more pass, idle watch → no wakeups
+- [ ] sc-build apimachinery tests; docs/changelog; close #143
+
 ### Watch-cache revision waiters (#148) — COMPLETE 2026-09-29
 Notify-based wait, register-before-check, bounded store fallback and
 termination wake were already on main (turbomode merge); this added the tests.
