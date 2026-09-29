@@ -222,7 +222,9 @@ later consistent snapshot. Failed feeds block dependent workers. Ambiguous
 creates retain their original name until resolved; destructive actions carry
 observed UID/revision preconditions. GC and namespace finalization retain
 authoritative absence checks before destructive cleanup.
-Every controller/scheduler mutation checks a monotonic leadership deadline.
+Every controller/scheduler mutation checks a monotonic leadership deadline;
+controller-manager renewal follows the same 10 s retry deadline as the
+scheduler's.
 See [the event-driven design](docs/event-driven-design.md) for the execution
 model and verified unit/API-rig cases. Live scale, latency, multi-master and
 runtime/storage acceptance remain tracked in #147/#149; these changes remain
@@ -264,8 +266,13 @@ placement of Pods with no `spec.nodeName` and unplaced VMIs. Placement remains
 serialized through one priority-ordered Pod/VMI object queue. Incremental
 accounting includes adopted workloads, successful binds and outstanding
 volume/bind reservations before the next placement. Storage dependencies use
-informer indexes. Lease renewal runs independently and losing leadership
-cancels the scheduling worker.
+informer indexes. Lease renewal runs independently (every 2 s); a failed or
+hung attempt is retried, and the term ends — cancelling the scheduling worker
+and its reservations — once no renewal has succeeded for 10 s from its start
+(upstream `renewDeadline`), before a standby can take the 15 s lease. A new
+term rebuilds reservations from bound Pods/VMIs. A Pod waiting on a missing
+claim is charged no capacity and is not pinned to a node until its claim
+exists.
 
 - **Filters:** node Ready, not unschedulable, taints/tolerations,
   `nodeSelector`, required node affinity (which is how `kubernetes.io/arch`

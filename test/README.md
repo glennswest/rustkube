@@ -130,6 +130,13 @@ rig respects the build volume target and scratch paths.
 finalization and scheduler burst/reservation accounting on the same disposable
 rig. It uses stand-in Nodes and does not claim real-node performance.
 
+`e2e/scheduler-failover.sh` runs two electing schedulers: the leader is
+paused past its lease, the standby takes over, the resumed old leader binds
+nothing, the standby is killed and the old leader takes over again — a
+one-CPU stand-in Node is never overcommitted. It then checks that a missing
+claim's arrival, and a claim's binding after selected-node, wake the waiting
+Pod onto its volume's node (#145).
+
 `bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
 and resourceVersion agree with acknowledged writes, including pinned continuation
 pages and exact WATCH replay after distinct early, middle and late snapshots. It runs without

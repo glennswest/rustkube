@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **fix:** Scheduler and controller-manager leadership no longer ends on one failed or slow Lease renewal: attempts retry every 2 s and the term lasts until 10 s after the start of the last successful attempt (upstream renewDeadline), each attempt bounded by the time left (`apimachinery::lease::hold`, #145).
+- **fix:** Scheduler reserves capacity only just before the bind write. A Pod whose claim was missing, or whose selected-node patch failed, kept a reservation that pinned it to its first choice, so it could never bind to the node its PersistentVolume required (#145).
+- **test:** `test/e2e/scheduler-failover.sh`: leader pause/takeover, stale-leader resume, standby kill, no overcommit, claim/volume wakeups (#145).
 - **docs:** Record #146 dev acceptance against fastetcd v1.6.1: 418 workspace tests, 174 consistent complete/paginated snapshots with exact WATCH suffixes, selector/safety/CSI/DaemonSet/VM checks and twenty short repetitions. Preserve undiagnosed #153/#154/#166 incidents and #165 timeout limitation; live #147/#149 remain open, no golden or release requested.
 - **test:** Sample distinct early, middle and late LIST revisions for exact WATCH replay, preventing duplicate empty snapshots from weakening the handoff check.
 - **test:** Choose disposable rig listener ports immediately before startup and outside the host ephemeral range; avoid the compilation-time reservation gap and outbound connection collisions (#166). Silence detached-checkout advice in source pin logs.

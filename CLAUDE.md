@@ -95,18 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Event-driven scheduler (#145) — IN PROGRESS 2026-09-29
-Wakeups, serialized accounting, separate renewal and term cancellation are
-already on main from #146. Remaining: renewal robustness and fault tests.
-- [x] Lease renewal: retry transient failures until RENEW_DEADLINE after the
-      start of the last successful renewal (upstream renewDeadline), one
-      shared helper for scheduler + controller-manager, paused-clock tests.
-      594e19d: sc-build apimachinery 96 / controller-manager 61 / scheduler
-      59 passed, exit 0 (five new hold() tests)
-- [ ] test/e2e/scheduler-failover.sh: two electing schedulers; SIGSTOP the
-      leader past lease expiry, standby takes over, resumed stale leader
-      binds nothing, no overcommit; PVC/PV arrival wakes a waiting Pod
-- [ ] sc-build units + rig; docs/changelog; close #145 with evidence
+### Event-driven scheduler (#145) — COMPLETE 2026-09-29
+Wakeups, serialized accounting, separate renewal and term cancellation were
+already on main from #146; this closed the renewal and fault-test gaps.
+- [x] Lease renewal retries transient failures until 10 s after the start of
+      the last successful attempt (`apimachinery::lease::hold`, scheduler +
+      controller-manager). 594e19d: units 96/61/59 passed, exit 0
+- [x] Found + fixed: a Pod with a missing claim kept a reservation pinning it
+      to its first-choice node (d455412); unit test + rig control proves it
+- [x] test/e2e/scheduler-failover.sh 19/19 on four runs (d455412, c4aec6c),
+      takeover 16–18 s, no overcommit, stale leader bound nothing; the
+      pre-fix control fails; indexed-safety 11/11. Live 3-master gate is #149
 
 ### #146 dev acceptance — COMPLETE 2026-09-29
 - [x] Read #146, instructions and #163; continued on main. fastetcd#50 fixed

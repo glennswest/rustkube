@@ -297,8 +297,12 @@ cluster resourceVersion or relist on 410, without silently starting from now.
 
 Lease ownership uses a unique identity for each process incarnation and
 resourceVersion CAS. Renewal runs independently of busy/idle reconciliation,
-with a request deadline shorter than the lease. A failed/expired renewal
-cancels the entire worker term and its subscriptions. Explicitly configured
+with a request deadline shorter than the lease. A failed or hung attempt is
+retried every 2 s; the term (and the write gate) lasts until 10 s after the
+*start* of the last successful attempt, so a slow success cannot stretch it
+toward the 15 s a candidate waits after observing that renewal
+(`apimachinery::lease::hold`, shared by scheduler and controller-manager).
+An expired term cancels the entire worker term and its subscriptions. Explicitly configured
 identities must also be unique. Standbys do no controller mutations. The
 15-second lease and its renewal timing are intentional failure-detection
 semantics, not latency gates in a healthy create/bind path. Measure takeover
@@ -385,6 +389,8 @@ They used this repository's synthetic API/store rig, not a deployed cluster.
 | `af87b2d` | `cargo test --locked -p apimachinery -p storage -p apiserver -p controller-manager -p scheduler`; test-container short profile on the rig | Passed; short 5/5; four storage integration tests ignored by default |
 | `226a388` | apimachinery/controller-manager/scheduler unit tests; `bash test/e2e/indexed-safety.sh` | Passed; GC propagation, orphaning, Event TTL, namespace finalizer (9), capacity burst and release (2) |
 | `1a4a288` | `cargo test --locked -p controller-manager owned::safety_tests` | Passed; unavailable dependency blocks work, recovery wakes it |
+| `594e19d` | apimachinery/controller-manager/scheduler unit tests | Passed (96/61/59); paused-clock renewal: transient failures keep the term, sustained or hung renewal ends it by 10 s, slow success counts from its start (#145) |
+| `d455412`, `c4aec6c` | `bash test/e2e/scheduler-failover.sh` (4 runs), `bash test/e2e/indexed-safety.sh` | Passed 19/19 each run and 11/11; takeover 16.0–18.4 s after pausing or killing the leader, resumed stale leader bound nothing, no overcommit, claim/volume wakeups 0.02–0.08 s. Control with the pre-fix early reservation fails "claim creation wakes v1" (#145) |
 
 Unit cases additionally cover cache resets and UID replacement, old/new
 selector membership, acknowledged writes, ambiguous create recovery, queue
