@@ -2,6 +2,12 @@
 
 ## Unreleased — turbomode (not yet built or measured)
 
+- Deployment, ReplicaSet, StatefulSet, Job and CronJob now use bounded
+  per-object workers, shared indexed watches, write acknowledgements and
+  UID/revision-conditional deletion. Other controller migrations remain open.
+- Mutation requests reject expired leadership terms and use request budgets
+  bounded by the remaining term. Late renewal cannot revive an expired term.
+
 - Shared revisioned watches, coalescing async work queues, complete paginated
   reads and failure retry; controller/scheduler work wakes on dependency changes.
 - Semantic deadline requeues replace controller poll clocks; scheduling no

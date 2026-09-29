@@ -52,7 +52,7 @@ pub async fn list(client: &reqwest::Client, url: &str) -> anyhow::Result<Value> 
 }
 
 /// Normalize transport-only fields. Status remains significant.
-fn semantic(mut value: Value) -> Value {
+pub(crate) fn semantic(mut value: Value) -> Value {
     if let Some(meta) = value.get_mut("metadata").and_then(Value::as_object_mut) {
         meta.remove("resourceVersion");
         meta.remove("managedFields");
@@ -179,17 +179,57 @@ impl Frames {
 /// A watch event or recovery snapshot invokes `changed` synchronously. The
 /// callback should only enqueue; it must not run a reconcile or spawn a task.
 /// Drop the owning task to cancel the stream and all retries.
+#[derive(Clone, Debug)]
+pub enum Change {
+    /// Complete snapshot, never a partial LIST or an error interpreted as empty.
+    Reset {
+        snapshot: Value,
+        started: std::time::Instant,
+    },
+    Connected,
+    /// Every revision is delivered, even when only transport fields changed.
+    Applied {
+        event: Value,
+        semantic_change: bool,
+    },
+    Unavailable,
+}
+
 pub async fn run(client: reqwest::Client, url: String, changed: impl Fn() + Send + Sync) {
+    run_events(client, url, move |event| match event {
+        Change::Reset { .. }
+        | Change::Applied {
+            semantic_change: true,
+            ..
+        } => changed(),
+        _ => {}
+    })
+    .await;
+}
+
+pub async fn run_events(
+    client: reqwest::Client,
+    url: String,
+    changed: impl Fn(Change) + Send + Sync,
+) {
     let mut observed = Observed::default();
     let mut retry = Duration::from_millis(100);
     loop {
         if observed.revision.is_empty() {
-            match list(&client, &url).await.and_then(|v| observed.replace(v)) {
-                Ok(()) => {
-                    changed();
+            let list_started = std::time::Instant::now();
+            match list(&client, &url).await.and_then(|v| {
+                observed.replace(v.clone())?;
+                Ok(v)
+            }) {
+                Ok(snapshot) => {
+                    changed(Change::Reset {
+                        snapshot,
+                        started: list_started,
+                    });
                     retry = Duration::from_millis(100);
                 }
                 Err(error) => {
+                    changed(Change::Unavailable);
                     tracing::warn!(%url, %error, "reflector LIST failed");
                     tokio::time::sleep(retry).await;
                     retry = (retry * 2).min(Duration::from_secs(30));
@@ -210,6 +250,7 @@ pub async fn run(client: reqwest::Client, url: String, changed: impl Fn() + Send
             }
             Err(error) => tracing::warn!(%url, %error, "reflector WATCH reconnecting"),
         }
+        changed(Change::Unavailable);
         metrics::counter!("rustkube_watch_reconnects_total").increment(1);
         tokio::time::sleep(retry).await;
         retry = (retry * 2).min(Duration::from_secs(30));
@@ -220,7 +261,7 @@ async fn watch(
     client: &reqwest::Client,
     url: &str,
     observed: &mut Observed,
-    changed: &(impl Fn() + Send + Sync),
+    changed: &(impl Fn(Change) + Send + Sync),
 ) -> anyhow::Result<()> {
     let response = client
         .get(url)
@@ -240,6 +281,7 @@ async fn watch(
         anyhow::bail!("watch revision expired");
     }
     let mut stream = response.error_for_status()?.bytes_stream();
+    changed(Change::Connected);
     let mut frames = Frames::default();
     while let Some(chunk) = stream.next().await {
         let events = match frames.push(&chunk?) {
@@ -250,9 +292,11 @@ async fn watch(
             }
         };
         for event in events {
-            match observed.apply(event) {
-                Ok(true) => changed(),
-                Ok(false) => {}
+            match observed.apply(event.clone()) {
+                Ok(semantic_change) => changed(Change::Applied {
+                    event,
+                    semantic_change,
+                }),
                 Err(error) => {
                     observed.revision.clear();
                     return Err(error);

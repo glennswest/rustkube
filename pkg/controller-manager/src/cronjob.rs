@@ -7,7 +7,7 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 pub struct CronJobController {
     api: Arc<ApiClient>,
@@ -30,54 +30,8 @@ impl CronJobController {
     }
 
     pub async fn run(&self) {
-        info!("CronJob controller started");
-        let worker = self.api.watches.worker("cronjob");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile_all().await {
-                    apimachinery::reactor::failed();
-                    error!("CronJob reconcile error: {e}");
-                }
-            }).await;
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("CronJob reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let cj_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/batch/v1/namespaces/{namespace}/cronjobs"
-            ))
-            .await?;
-        let cronjobs = cj_list["items"].as_array().cloned().unwrap_or_default();
-
-        let job_list: Value = self
-            .api
-            .list(&format!("/apis/batch/v1/namespaces/{namespace}/jobs"))
-            .await?;
-        let jobs = job_list["items"].as_array().cloned().unwrap_or_default();
-
-        for cj in &cronjobs {
-            if let Err(e) = self.reconcile_cronjob(namespace, cj, &jobs).await {
-                let name = cj["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile cronjob {namespace}/{name}: {e}");
-            }
-        }
-        Ok(())
+        info!("CronJob indexed object workers started");
+        crate::owned::run(&self.api, self).await;
     }
 
     async fn reconcile_cronjob(
@@ -100,16 +54,12 @@ impl CronJobController {
         let schedule = cj["spec"]["schedule"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("cronjob missing schedule"))?;
-        let concurrency = cj["spec"]["concurrencyPolicy"]
-            .as_str()
-            .unwrap_or("Allow");
+        let concurrency = cj["spec"]["concurrencyPolicy"].as_str().unwrap_or("Allow");
         let suspend = cj["spec"]["suspend"].as_bool().unwrap_or(false);
         let successful_limit = cj["spec"]["successfulJobsHistoryLimit"]
             .as_u64()
             .unwrap_or(3) as usize;
-        let failed_limit = cj["spec"]["failedJobsHistoryLimit"]
-            .as_u64()
-            .unwrap_or(1) as usize;
+        let failed_limit = cj["spec"]["failedJobsHistoryLimit"].as_u64().unwrap_or(1) as usize;
 
         if suspend {
             return Ok(());
@@ -145,8 +95,7 @@ impl CronJobController {
                 .as_array()
                 .map(|conds| {
                     conds.iter().any(|c| {
-                        c["type"].as_str() == Some("Failed")
-                            && c["status"].as_str() == Some("True")
+                        c["type"].as_str() == Some("Failed") && c["status"].as_str() == Some("True")
                     })
                 })
                 .unwrap_or(false);
@@ -193,51 +142,49 @@ impl CronJobController {
             );
         }
 
-        let due = match apimachinery::cron::start_to_run(
-            schedule,
-            last_schedule,
-            created,
-            now,
-            deadline,
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                // Refused rather than guessed. Move the marker to now so the
-                // next pass is a normal one instead of repeating the refusal
-                // forever.
-                warn!("CronJob {namespace}/{cj_name}: cannot catch up ({e:?}); \
-                       resuming from now without running the missed starts");
-                self.recorder
-                    .event(
-                        cj,
-                        "Warning",
-                        "TooManyMissedTimes",
-                        &format!(
-                            "Cannot determine the missed start times ({e:?}); resuming \
+        let due =
+            match apimachinery::cron::start_to_run(schedule, last_schedule, created, now, deadline)
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    // Refused rather than guessed. Move the marker to now so the
+                    // next pass is a normal one instead of repeating the refusal
+                    // forever.
+                    warn!(
+                        "CronJob {namespace}/{cj_name}: cannot catch up ({e:?}); \
+                       resuming from now without running the missed starts"
+                    );
+                    self.recorder
+                        .event(
+                            cj,
+                            "Warning",
+                            "TooManyMissedTimes",
+                            &format!(
+                                "Cannot determine the missed start times ({e:?}); resuming \
                              from now. Set startingDeadlineSeconds to bound how far back \
                              the controller looks."
-                        ),
-                    )
-                    .await;
-                let mut updated_cj = latest.clone();
-                if updated_cj["status"].is_null() {
-                    updated_cj["status"] = json!({});
+                            ),
+                        )
+                        .await;
+                    let mut updated_cj = latest.clone();
+                    if updated_cj["status"].is_null() {
+                        updated_cj["status"] = json!({});
+                    }
+                    updated_cj["status"]["lastScheduleTime"] =
+                        json!(now.format("%Y-%m-%dT%H:%M:%SZ").to_string());
+                    let resp = self
+                        .api
+                        .update_status(
+                            &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
+                            &updated_cj,
+                        )
+                        .await;
+                    if let Some(stored) = written(resp) {
+                        latest = stored;
+                    }
+                    None
                 }
-                updated_cj["status"]["lastScheduleTime"] =
-                    json!(now.format("%Y-%m-%dT%H:%M:%SZ").to_string());
-                let resp = self
-                    .api
-                    .update_status(
-                        &format!("/apis/batch/v1/namespaces/{namespace}/cronjobs/{cj_name}"),
-                        &updated_cj,
-                    )
-                    .await;
-                if let Some(stored) = written(resp) {
-                    latest = stored;
-                }
-                None
-            }
-        };
+            };
 
         if let Some(scheduled_for) = due {
             {
@@ -268,9 +215,12 @@ impl CronJobController {
                             if !job_name.is_empty() {
                                 let _ = self
                                     .api
-                                    .delete(&format!(
-                                        "/apis/batch/v1/namespaces/{namespace}/jobs/{job_name}"
-                                    ))
+                                    .delete_observed(
+                                        &format!(
+                                            "/apis/batch/v1/namespaces/{namespace}/jobs/{job_name}"
+                                        ),
+                                        job,
+                                    )
                                     .await;
                             }
                         }
@@ -462,10 +412,7 @@ impl CronJobController {
 
         match self
             .api
-            .create(
-                &format!("/apis/batch/v1/namespaces/{namespace}/jobs"),
-                &job,
-            )
+            .create(&format!("/apis/batch/v1/namespaces/{namespace}/jobs"), &job)
             .await
         {
             Ok(_) => {
@@ -486,12 +433,7 @@ impl CronJobController {
     /// window, so it is the one place an exact lifetime counter can be
     /// maintained. Counting the Jobs that happen to still exist would make
     /// the totals fall as history is trimmed.
-    async fn cleanup_history(
-        &self,
-        namespace: &str,
-        jobs: &mut Vec<&Value>,
-        limit: usize,
-    ) -> u64 {
+    async fn cleanup_history(&self, namespace: &str, jobs: &mut Vec<&Value>, limit: usize) -> u64 {
         if jobs.len() <= limit {
             return 0;
         }
@@ -507,9 +449,10 @@ impl CronJobController {
             if !job_name.is_empty() {
                 let _ = self
                     .api
-                    .delete(&format!(
-                        "/apis/batch/v1/namespaces/{namespace}/jobs/{job_name}"
-                    ))
+                    .delete_observed(
+                        &format!("/apis/batch/v1/namespaces/{namespace}/jobs/{job_name}"),
+                        job,
+                    )
                     .await;
             }
         }
@@ -523,7 +466,7 @@ impl CronJobController {
 /// A refused write answers with a `Status` (a 409 among them), which is not a
 /// base for the next write; the caller keeps what it had, and the next pass
 /// starts from a fresh list.
-fn written(resp: reqwest::Result<Value>) -> Option<Value> {
+fn written(resp: anyhow::Result<Value>) -> Option<Value> {
     let v = resp.ok()?;
     (v["kind"].as_str() != Some("Status") && v["metadata"]["resourceVersion"].is_string())
         .then_some(v)
@@ -554,5 +497,24 @@ mod tests {
             "reason": "Conflict", "code": 409, "metadata": {},
         });
         assert_eq!(written(Ok(conflict)), None);
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::owned::Controller for CronJobController {
+    fn name(&self) -> &'static str {
+        "cronjob"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/batch/v1/cronjobs"
+    }
+    fn children(&self) -> &'static str {
+        "/apis/batch/v1/jobs"
+    }
+    async fn reconcile(&self, object: &Value, children: &[Value]) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        self.reconcile_cronjob(namespace, object, children).await
     }
 }

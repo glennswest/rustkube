@@ -14,6 +14,8 @@ pub struct ApiClient {
     pub base_url: String,
     pub client: reqwest::Client,
     pub watches: apimachinery::reactor::WatchHub,
+    write_gate: apimachinery::lease::WriteGate,
+    pub informers: apimachinery::informers::Hub,
 }
 
 /// Connection + auth config for the API server (kubeconfig-style).
@@ -52,11 +54,19 @@ fn percent_encode(s: &str) -> String {
 }
 
 impl ApiClient {
+    fn election_client(&self) -> Self {
+        let mut client = self.clone();
+        client.write_gate = Default::default();
+        client
+    }
+
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
             watches: Default::default(),
+            write_gate: Default::default(),
+            informers: Default::default(),
         }
     }
 
@@ -86,6 +96,8 @@ impl ApiClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: b.build()?,
             watches: Default::default(),
+            write_gate: Default::default(),
+            informers: Default::default(),
         })
     }
 
@@ -229,11 +241,12 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
+    ) -> anyhow::Result<serde_json::Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .post(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .json(body)
                 .send()
                 .await?
@@ -243,11 +256,13 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PUT (update) a resource.
@@ -255,11 +270,12 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
+    ) -> anyhow::Result<serde_json::Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .put(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .json(body)
                 .send()
                 .await?
@@ -269,11 +285,13 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PUT a resource's **status only**, through the `/status` subresource.
@@ -292,11 +310,12 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
+    ) -> anyhow::Result<serde_json::Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .put(format!("{}{}/status", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .json(body)
                 .send()
                 .await?
@@ -306,11 +325,13 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PATCH a resource.
@@ -318,11 +339,12 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
+    ) -> anyhow::Result<serde_json::Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .patch(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .header("content-type", "application/strategic-merge-patch+json")
                 .json(body)
                 .send()
@@ -333,19 +355,57 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// DELETE a resource.
-    pub async fn delete(&self, path: &str) -> reqwest::Result<reqwest::Response> {
+    pub async fn delete_observed(
+        &self,
+        path: &str,
+        observed: &serde_json::Value,
+    ) -> anyhow::Result<reqwest::Response> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
+        apimachinery::reactor::check(
+            async {
+                let uid = observed["metadata"]["uid"]
+                    .as_str()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("cannot delete unobserved UID"))?;
+                let revision = observed["metadata"]["resourceVersion"]
+                    .as_str()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("cannot delete without observed revision"))?;
+                let response = self
+                    .client
+                    .delete(format!("{}{}", self.base_url, path))
+                    .timeout(budget)
+                    .json(
+                        &serde_json::json!({"apiVersion":"v1","kind":"DeleteOptions",
+                    "preconditions":{"uid":uid,"resourceVersion":revision}}),
+                    )
+                    .send()
+                    .await?;
+                if response.status().as_u16() == 404 {
+                    return Ok(response);
+                }
+                Ok(response.error_for_status()?)
+            }
+            .await,
+        )
+    }
+
+    pub async fn delete(&self, path: &str) -> anyhow::Result<reqwest::Response> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<reqwest::Response> = async {
             self.client
                 .delete(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .send()
                 .await
         }
@@ -355,7 +415,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PATCH with an RFC-7386 merge patch, which **replaces** lists rather
@@ -370,11 +430,12 @@ impl ApiClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> reqwest::Result<serde_json::Value> {
+    ) -> anyhow::Result<serde_json::Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .patch(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .header("content-type", "application/merge-patch+json")
                 .json(body)
                 .send()
@@ -385,11 +446,13 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// DELETE a resource, carrying `meta/v1` DeleteOptions.
@@ -403,11 +466,12 @@ impl ApiClient {
         &self,
         path: &str,
         options: &serde_json::Value,
-    ) -> reqwest::Result<reqwest::Response> {
+    ) -> anyhow::Result<reqwest::Response> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<reqwest::Response> = async {
             self.client
                 .delete(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .header("content-type", "application/json")
                 .json(options)
                 .send()
@@ -419,7 +483,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 }
 
@@ -642,14 +706,16 @@ impl ControllerManager {
         }
 
         let elector = crate::leaderelection::LeaderElector::new(
-            self.api.clone(),
+            Arc::new(self.api.election_client()),
             "kube-controller-manager",
             "kube-system",
             &self.identity,
         );
         info!("Leader election enabled (identity={})", self.identity);
         loop {
+            self.api.write_gate.close();
             elector.acquire().await;
+            self.api.write_gate.start();
             info!("Became leader; starting controllers");
             crate::metrics_server::set_leader(true);
             let mut tasks = self.spawn_all();
@@ -661,7 +727,9 @@ impl ControllerManager {
                 )
                 .await
                 .unwrap_or(false)
+                    || !self.api.write_gate.renew()
                 {
+                    self.api.write_gate.close();
                     warn!("Lost leadership; stopping controllers");
                     crate::metrics_server::set_leader(false);
                     tasks.abort_all();

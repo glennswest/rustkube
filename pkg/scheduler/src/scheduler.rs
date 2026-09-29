@@ -34,14 +34,22 @@ pub struct ApiClient {
     pub base_url: String,
     pub client: reqwest::Client,
     pub watches: apimachinery::reactor::WatchHub,
+    write_gate: apimachinery::lease::WriteGate,
 }
 
 impl ApiClient {
+    fn election_client(&self) -> Self {
+        let mut client = self.clone();
+        client.write_gate = Default::default();
+        client
+    }
+
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
             watches: Default::default(),
+            write_gate: Default::default(),
         }
     }
 
@@ -71,6 +79,7 @@ impl ApiClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: b.build()?,
             watches: Default::default(),
+            write_gate: Default::default(),
         })
     }
 
@@ -163,11 +172,12 @@ impl ApiClient {
         apimachinery::reactor::check(apimachinery::reflector::list(&self.client, &url).await)
     }
 
-    pub async fn update(&self, path: &str, body: &Value) -> reqwest::Result<Value> {
+    pub async fn update(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .put(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .json(body)
                 .send()
                 .await?
@@ -181,7 +191,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// Raw GET returning the response (so callers can distinguish 404).
@@ -209,11 +219,12 @@ impl ApiClient {
     }
 
     /// PATCH a resource with a strategic-merge patch.
-    pub async fn patch(&self, path: &str, body: &Value) -> reqwest::Result<Value> {
+    pub async fn patch(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .patch(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .header("content-type", "application/strategic-merge-patch+json")
                 .json(body)
                 .send()
@@ -228,7 +239,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// PATCH with a **merge** patch (RFC 7386).
@@ -238,11 +249,12 @@ impl ApiClient {
     /// tags that built-in types have and a CRD has not. rustkube-node's
     /// kubelet already patches a VMI's status this way; the scheduler writes
     /// to the same subresource and has to speak the same content type.
-    pub async fn patch_merge(&self, path: &str, body: &Value) -> reqwest::Result<Value> {
+    pub async fn patch_merge(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .patch(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .header("content-type", "application/merge-patch+json")
                 .json(body)
                 .send()
@@ -257,15 +269,16 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 
     /// POST (create) returning the decoded body.
-    pub async fn create(&self, path: &str, body: &Value) -> reqwest::Result<Value> {
+    pub async fn create(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
+        let budget = apimachinery::reactor::check(self.write_gate.budget())?;
         let result: reqwest::Result<serde_json::Value> = async {
             self.client
                 .post(format!("{}{}", self.base_url, path))
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(budget)
                 .json(body)
                 .send()
                 .await?
@@ -279,7 +292,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result)
+        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
     }
 }
 
@@ -382,7 +395,7 @@ impl Scheduler {
         }
 
         let elector = crate::leaderelection::LeaderElector::new(
-            self.api.clone(),
+            Arc::new(self.api.election_client()),
             "kube-scheduler",
             "kube-system",
             &self.identity,
@@ -393,7 +406,9 @@ impl Scheduler {
         );
         crate::metrics_server::set_leader(false);
         loop {
+            self.api.write_gate.close();
             elector.acquire().await;
+            self.api.write_gate.start();
             info!("Became leader; scheduling pods");
             crate::metrics_server::set_leader(true);
             let leadership = async {
@@ -406,13 +421,16 @@ impl Scheduler {
                     )
                     .await
                     .unwrap_or(false)
+                        || !self.api.write_gate.renew()
                     {
                         break;
                     }
                 }
             };
             tokio::select! {
+                biased;
                 _ = leadership => {
+                    self.api.write_gate.close();
                     warn!("Lost leadership; cancelling scheduling");
                     crate::metrics_server::set_leader(false);
                 },

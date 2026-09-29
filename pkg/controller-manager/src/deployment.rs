@@ -27,7 +27,7 @@ use crate::rollout::{self, RsView};
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 /// The annotation `kubectl rollout history` reads.
 const REVISION: &str = "deployment.kubernetes.io/revision";
@@ -46,52 +46,8 @@ impl DeploymentController {
     }
 
     pub async fn run(&self) {
-        info!("Deployment controller started");
-        let worker = self.api.watches.worker("deployment");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile_all().await {
-                    apimachinery::reactor::failed();
-                    error!("Deployment reconcile error: {e}");
-                }
-            }).await;
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("Deployment reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let deploy_list: Value = self
-            .api
-            .list(&format!("/apis/apps/v1/namespaces/{namespace}/deployments"))
-            .await?;
-        let deployments = deploy_list["items"].as_array().cloned().unwrap_or_default();
-
-        let rs_list: Value = self
-            .api
-            .list(&format!("/apis/apps/v1/namespaces/{namespace}/replicasets"))
-            .await?;
-        let replicasets = rs_list["items"].as_array().cloned().unwrap_or_default();
-
-        for deploy in &deployments {
-            if let Err(e) = self.reconcile_deployment(namespace, deploy, &replicasets).await {
-                let name = deploy["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile deployment {namespace}/{name}: {e}");
-            }
-        }
-        Ok(())
+        info!("Deployment indexed object workers started");
+        crate::owned::run(&self.api, self).await;
     }
 
     async fn reconcile_deployment(
@@ -116,7 +72,9 @@ impl DeploymentController {
         let selector = &deploy["spec"]["selector"];
         let pod_template = &deploy["spec"]["template"];
         let paused = deploy["spec"]["paused"].as_bool().unwrap_or(false);
-        let history_limit = deploy["spec"]["revisionHistoryLimit"].as_u64().unwrap_or(10);
+        let history_limit = deploy["spec"]["revisionHistoryLimit"]
+            .as_u64()
+            .unwrap_or(10);
 
         let owned: Vec<&Value> = existing_rs
             .iter()
@@ -185,12 +143,20 @@ impl DeploymentController {
                 // Created at zero and scaled by the plan below, so the very
                 // first pass of a rollout still respects maxSurge instead of
                 // arriving at full size.
-                RsView { name: rs_name.clone(), revision, spec_replicas: 0, available: 0 }
+                RsView {
+                    name: rs_name.clone(),
+                    revision,
+                    spec_replicas: 0,
+                    available: 0,
+                }
             }
         };
 
-        let olds: Vec<RsView> =
-            all_views.iter().filter(|v| v.name != rs_name).cloned().collect();
+        let olds: Vec<RsView> = all_views
+            .iter()
+            .filter(|v| v.name != rs_name)
+            .cloned()
+            .collect();
 
         // Paused stops the rollout, not the bookkeeping: status still tracks
         // reality, which is the whole reason to pause — to look at it.
@@ -224,7 +190,9 @@ impl DeploymentController {
                     .await;
             }
             for (name, n) in &plan.old {
-                let Some(rs) = by_name(&owned, name) else { continue };
+                let Some(rs) = by_name(&owned, name) else {
+                    continue;
+                };
                 self.scale(namespace, rs, *n).await?;
                 info!("Scaled down replica set {name} to {n}");
                 self.recorder
@@ -243,9 +211,14 @@ impl DeploymentController {
             let settled = plan.old.is_empty() && plan.new_replicas == desired;
             if settled {
                 for name in rollout::prunable(&olds, history_limit) {
-                    let path =
-                        format!("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}");
-                    if let Err(e) = self.api.delete(&path).await {
+                    let path = format!("/apis/apps/v1/namespaces/{namespace}/replicasets/{name}");
+                    let Some(observed) = owned
+                        .iter()
+                        .find(|rs| rs["metadata"]["name"].as_str() == Some(name.as_str()))
+                    else {
+                        continue;
+                    };
+                    if let Err(e) = self.api.delete_observed(&path, observed).await {
                         debug!("pruning replica set {name}: {e}");
                     } else {
                         info!("Pruned replica set {name} (revisionHistoryLimit {history_limit})");
@@ -254,8 +227,16 @@ impl DeploymentController {
             }
         }
 
-        self.update_status(namespace, deploy, deploy_name, desired, &new_view, &olds, paused)
-            .await;
+        self.update_status(
+            namespace,
+            deploy,
+            deploy_name,
+            desired,
+            &new_view,
+            &olds,
+            paused,
+        )
+        .await;
         Ok(())
     }
 
@@ -407,7 +388,9 @@ impl DeploymentController {
             .collect();
 
         let sum = |field: &str| -> u64 {
-            mine.iter().map(|rs| rs["status"][field].as_u64().unwrap_or(0)).sum()
+            mine.iter()
+                .map(|rs| rs["status"][field].as_u64().unwrap_or(0))
+                .sum()
         };
         let replicas = sum("replicas");
         let ready = sum("readyReplicas");
@@ -631,7 +614,33 @@ mod tests {
             "metadata": {"name": "r", "annotations": {REVISION: "7"}},
             "spec": {"replicas": 3},
             "status": {"availableReplicas": 2}});
-        assert_eq!(view_of(&rs), RsView {
-            name: "r".into(), revision: 7, spec_replicas: 3, available: 2 });
+        assert_eq!(
+            view_of(&rs),
+            RsView {
+                name: "r".into(),
+                revision: 7,
+                spec_replicas: 3,
+                available: 2
+            }
+        );
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::owned::Controller for DeploymentController {
+    fn name(&self) -> &'static str {
+        "deployment"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/apps/v1/deployments"
+    }
+    fn children(&self) -> &'static str {
+        "/apis/apps/v1/replicasets"
+    }
+    async fn reconcile(&self, object: &Value, children: &[Value]) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        self.reconcile_deployment(namespace, object, children).await
     }
 }

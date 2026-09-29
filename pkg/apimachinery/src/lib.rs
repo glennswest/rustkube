@@ -29,3 +29,5 @@ pub mod reflector;
 pub mod reactor;
 
 pub mod lease;
+pub mod informer;
+pub mod informers;

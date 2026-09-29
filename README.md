@@ -204,9 +204,13 @@ reconcile queues another pass. Successful idle passes have no poll interval.
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
 and migration deadlines, Event TTL), API recovery and leader Leases.
 
-This is the first migration step: reconcilers still make authoritative,
-fully paginated LISTs per pass. Indexed per-object workers and safe cached
-reads are tracked in #146. See [the event-driven design](docs/event-driven-design.md)
+Deployment, ReplicaSet, StatefulSet, Job and CronJob use bounded per-object
+workers and shared owner indexes. Successful writes remain visible locally
+until acknowledged by the watch or a later consistent snapshot. Destructive
+actions carry observed UID/revision preconditions. Other reconcilers still
+use authoritative paginated LISTs per pass; their migration remains in #146.
+Every controller/scheduler mutation checks a monotonic leadership deadline.
+See [the event-driven design](docs/event-driven-design.md)
 for the subsecond target, failure rules and release baseline. The branch has
 not yet been built or performance-validated.
 

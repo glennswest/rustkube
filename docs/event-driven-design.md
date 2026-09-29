@@ -3,6 +3,13 @@
 Status: first migration drafted; build/test pending the 10:00 America/Chicago
 gate on dev, 2026-09-29. Branch: `turbomode`.
 
+Current implementation: Deployment, ReplicaSet, StatefulSet, Job and CronJob
+have indexed per-object workers (eight concurrent keys per controller).
+Collection watches and snapshots are shared; successful writes use local
+acknowledgement overlays until observed or superseded by a consistent LIST
+begun after the write. Deletion uses observed UID/revision preconditions.
+Other controller migrations and all dev/runtime validation remain open.
+
 ## Objective and boundary
 
 Keep the Kubernetes HTTP APIs, object schemas, resourceVersion/CAS, watches,
@@ -105,6 +112,15 @@ reserved resources. GET and CAS remain the authority for destructive actions.
 GC must never infer owner absence from an unsynchronized or failed list.
 
 ## Dependency routing
+
+The node uses one workload execution framework for Pods and VMIs. Both enter
+the same bounded ready queue, keyed by kind, namespace, name and UID. They
+share dependency routing, retry/deadline handling, claim reservations,
+cancellation and status-delivery machinery. Runtime adapters implement only
+the operations that differ (container/init-container lifecycle versus VM
+process/disk lifecycle). There are no separate Pod and VM scheduling policies
+or worker pools. A slow workload consumes only its own execution slot and
+resource reservations, irrespective of kind.
 
 | Worker | Changes that make it ready |
 |---|---|

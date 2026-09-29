@@ -7,7 +7,7 @@
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 pub struct StatefulSetController {
     api: Arc<ApiClient>,
@@ -19,54 +19,8 @@ impl StatefulSetController {
     }
 
     pub async fn run(&self) {
-        info!("StatefulSet controller started");
-        let worker = self.api.watches.worker("statefulset");
-        loop {
-            let _work = worker.next().await;
-            worker.run(async {
-                if let Err(e) = self.reconcile_all().await {
-                    apimachinery::reactor::failed();
-                    error!("StatefulSet reconcile error: {e}");
-                }
-            }).await;
-        }
-    }
-
-    async fn reconcile_all(&self) -> anyhow::Result<()> {
-        let ns_list: Value = self.api.list("/api/v1/namespaces").await?;
-        let namespaces = ns_list["items"].as_array().cloned().unwrap_or_default();
-
-        for ns in &namespaces {
-            let ns_name = ns["metadata"]["name"].as_str().unwrap_or("default");
-            if let Err(e) = self.reconcile_namespace(ns_name).await {
-                debug!("StatefulSet reconcile in {ns_name}: {e}");
-            }
-        }
-        Ok(())
-    }
-
-    async fn reconcile_namespace(&self, namespace: &str) -> anyhow::Result<()> {
-        let sts_list: Value = self
-            .api
-            .list(&format!(
-                "/apis/apps/v1/namespaces/{namespace}/statefulsets"
-            ))
-            .await?;
-        let statefulsets = sts_list["items"].as_array().cloned().unwrap_or_default();
-
-        let pod_list: Value = self
-            .api
-            .list(&format!("/api/v1/namespaces/{namespace}/pods"))
-            .await?;
-        let pods = pod_list["items"].as_array().cloned().unwrap_or_default();
-
-        for sts in &statefulsets {
-            if let Err(e) = self.reconcile_statefulset(namespace, sts, &pods).await {
-                let name = sts["metadata"]["name"].as_str().unwrap_or("?");
-                warn!("Failed to reconcile statefulset {namespace}/{name}: {e}");
-            }
-        }
-        Ok(())
+        info!("StatefulSet indexed object workers started");
+        crate::owned::run(&self.api, self).await;
     }
 
     async fn reconcile_statefulset(
@@ -162,15 +116,14 @@ impl StatefulSetController {
                 if phase != "Terminating" && !pod_name.is_empty() {
                     match self
                         .api
-                        .delete(&format!(
-                            "/api/v1/namespaces/{namespace}/pods/{pod_name}"
-                        ))
+                        .delete_observed(
+                            &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
+                            pod,
+                        )
                         .await
                     {
                         Ok(_) => {
-                            info!(
-                                "Deleted pod {namespace}/{pod_name} (scale down {sts_name})"
-                            );
+                            info!("Deleted pod {namespace}/{pod_name} (scale down {sts_name})");
                         }
                         Err(e) => {
                             warn!("Failed to delete pod {pod_name}: {e}");
@@ -284,4 +237,24 @@ fn is_pod_ready(pod: &Value) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+#[async_trait::async_trait]
+impl crate::owned::Controller for StatefulSetController {
+    fn name(&self) -> &'static str {
+        "statefulset"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/apps/v1/statefulsets"
+    }
+    fn children(&self) -> &'static str {
+        "/api/v1/pods"
+    }
+    async fn reconcile(&self, object: &Value, children: &[Value]) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        self.reconcile_statefulset(namespace, object, children)
+            .await
+    }
 }

@@ -593,9 +593,11 @@ version = "0.18.0"
 dependencies = [
  "anyhow",
  "apimachinery",
+ "async-trait",
  "axum 0.8.8",
  "base64",
  "chrono",
+ "futures",
  "metrics",
  "metrics-exporter-prometheus",
  "rcgen",

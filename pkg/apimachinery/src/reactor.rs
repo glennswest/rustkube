@@ -13,6 +13,30 @@ use tokio::time::Instant;
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 tokio::task_local! { static CURRENT: Arc<WorkerState>; }
+tokio::task_local! { static OBJECT: ObjectContext; }
+struct ObjectContext {
+    failed: Arc<AtomicBool>,
+    requeue: Arc<dyn Fn(Duration) + Send + Sync>,
+}
+
+/// Per-object executors retain semantic deadlines and handled-error retries
+/// without subscribing each object to whole-collection compatibility feeds.
+pub async fn scope_object<T>(
+    requeue: impl Fn(Duration) + Send + Sync + 'static,
+    future: impl Future<Output = T>,
+) -> (T, bool) {
+    let failed = Arc::new(AtomicBool::new(false));
+    let result = OBJECT
+        .scope(
+            ObjectContext {
+                failed: failed.clone(),
+                requeue: Arc::new(requeue),
+            },
+            future,
+        )
+        .await;
+    (result, failed.load(Ordering::Relaxed))
+}
 
 struct Feed {
     subscribers: HashMap<u64, Weak<WorkerState>>,
@@ -170,6 +194,7 @@ impl Worker {
 /// Called by API clients even when a controller handles/logs the error itself.
 pub fn failed() {
     let _ = CURRENT.try_with(|w| w.failed.store(true, Ordering::Relaxed));
+    let _ = OBJECT.try_with(|w| w.failed.store(true, Ordering::Relaxed));
 }
 
 pub fn check<T, E>(result: Result<T, E>) -> Result<T, E> {
@@ -182,6 +207,7 @@ pub fn check<T, E>(result: Result<T, E>) -> Result<T, E> {
 /// Explicit semantic timer, never a normal idle reconcile interval.
 pub fn requeue_after(delay: Duration) {
     let _ = CURRENT.try_with(|w| w.queue.add_at((), Instant::now() + delay));
+    let _ = OBJECT.try_with(|w| (w.requeue)(delay));
 }
 
 pub fn requeue_at_time(timestamp: chrono::DateTime<chrono::Utc>) {
