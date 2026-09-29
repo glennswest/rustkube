@@ -226,7 +226,7 @@ when each piece landed.
       and the rustkube synthetic rig cannot close upstream acceptance.
 - [ ] Keep #3 open until implementation and upstream acceptance are verified.
 
-### Turbomode indexed workers (#146) — IN PROGRESS 2026-09-29, branch `turbomode`
+### Turbomode indexed workers (#146) — BLOCKED on fastetcd#50, branch `turbomode`
 Branch only: no merge to main, no goldens. Design: docs/event-driven-design.md;
 handoff: docs/turbomode-handoff.md.
 
@@ -271,19 +271,26 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       acknowledged-write accounting and retained bind/volume assumptions;
       optional VMI feed enabled by CRD observation. Shared accounting unit
       tests and burst/capacity-release API-rig checks pass at 226a388.
-- [ ] Final run at 9a24ce9: 409 unit tests pass, but PDB startup membership
-      stalled in the selector rig (#153). At 1b6f951, one diagnostic plus ten
-      fresh repetitions and 20 normal-logging repetitions pass. Short rerun
-      also passes 5/5. Safety/CSI/DaemonSet/VM rigs pass, but one short
-      ConfigMap POST timed out (#154). Add datastore/metrics failure evidence
-      and repeat the short suite to identify the shared stall before closure.
-      Ten fresh short repetitions pass. Static audit found fastetcd Range
-      reads contents then header revision separately; add an isolated LIST
-      consistency regression and hand the datastore fix to its owner.
-- [ ] Final audit: create expectations and dependency recovery passed on dev;
-      add delayed-write history-expiry fencing, then validate final head.
-      Check write overlays, cache recovery barriers,
-      destructive cleanup preconditions
+- [x] Five-crate final implementation tests at 9a24ce9: 409 passed, four
+      datastore integration tests ignored. API safety/CSI/DaemonSet/VM checks
+      pass at 1b6f951. Thirty fresh selector repetitions and ten short-suite
+      repetitions pass; retain original intermittent failures #153/#154.
+- [x] Audit create expectations, cache recovery, delayed acknowledgement
+      history, destructive preconditions and shared resource reservations.
+- [x] Isolate an upstream consistency violation: 981dcdb's
+      `test/e2e/list-snapshot-race.sh` has no controllers/scheduler and detects
+      165 inconsistent LIST snapshots out of 255, against 400 accepted creates.
+- [ ] **Blocked by fastetcd#50:** Range contents and response revision are
+      sampled separately. A LIST can omit writes at/below its advertised RV,
+      and the following WATCH skips them. Hand the fix to fastetcd; do not
+      hide this with poll sweeps or change the datastore from this checkout.
+- [ ] After fastetcd#50 is fixed, rerun the isolated regression and the full
+      unit/API-rig matrix. Confirm #153's startup convergence and investigate
+      #154's separate POST timeout; their passing reruns do not prove a fix.
+      Close #146 only after the snapshot/cache contract is verified.
+- [x] Earlier rig failures #151 (bootstrap UID) and #152 (port/binary setup)
+      fixed and closed with successful sc-build evidence. #155 records the
+      now-isolated snapshot failure and follows fastetcd#50.
 
 ### VM runStrategy on a failed VMI (#104) — COMPLETE 2026-09-28
 - [x] Failed VMI recreated for `Always`/`RerunOnFailure`/`running: true`

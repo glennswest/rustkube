@@ -4,7 +4,8 @@ Status: all controller families and scheduling use object workers on branch
 `turbomode`. Unit/doc and disposable API/store rig tests run through
 `sc-build`; the verification record below identifies checked commits and
 cases. Live validation remains #147/#149, awaiting the owner-selected target.
-No merge, golden or release is implied by these branch results.
+Safe-cache acceptance is blocked by [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50),
+reproduced below. No merge, golden or release is implied by branch results.
 
 Current implementation: Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA
 have indexed per-object workers (eight concurrent keys per controller).
@@ -404,10 +405,35 @@ At `9a24ce9`, all 409 unit tests passed, but the selector rig timed out
 waiting for the first PDB membership update (#153). `1b6f951` adds failure
 object snapshots and PDB debug counts. One diagnostic run and ten fresh
 repetitions passed 14/14 each; that does not establish the cause of the
-original failure. A normal-logging repetition run is in progress.
+original failure. Twenty further fresh repetitions with normal logging also passed.
 
 At `1b6f951`, the separate safety (11), CSI expansion (14), DaemonSet (10)
 and VM (10) checks passed, then the short suite timed out posting a ConfigMap
 in `watch-sees-writes` (#154). Its result was two passes and could-not-run;
 it is not a successful short run. Investigate both failures before closing
 #146. Earlier successful runs above remain evidence of those specific runs.
+
+### Isolated blocker: fastetcd#50
+
+`981dcdb` adds `bash test/e2e/list-snapshot-race.sh`: four writers create 400
+ConfigMaps while readers capture complete LISTs. With no controllers or
+scheduler running, `sc-build` found **165 of 255 snapshots inconsistent**
+(remote exit 1, 67 seconds). For example, a LIST advertising revision 104
+omitted an object whose acknowledged create revision was 104. A watch started
+after that LIST revision cannot deliver the omitted create. #155 records the
+failed probe; the owning fix is [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50).
+
+At fastetcd `841af1a3dcf37656f40d84d67391ccdfef9c053c`, `KvService::range`
+reads contents with `serve_range`, then separately reads `current_revision`
+for the header. `RangeResult` has no snapshot revision; the forwarded leader
+read also loses that boundary. The owner must return a consistent revision
+with the range result and verify concurrent and forwarded reads. Rustkube's
+first LIST page uses the datastore's header; the informer cannot detect a
+successful but internally inconsistent snapshot. This is a concrete blocker
+to #146's safe-cache requirement, not a missing live-test target.
+
+Thirty fresh selector repetitions passed at `1b6f951`; ten fresh short suites
+passed at `e5c4544`. Keep the original #153/#154 failures visible. The Range
+race explains how startup membership can be missed, but does not establish
+the cause of #154's POST timeout. After the owning fix, rerun the isolated
+probe, five-crate units and all API-rig cases before closing #146.

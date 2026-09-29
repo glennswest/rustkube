@@ -216,7 +216,9 @@ Every controller/scheduler mutation checks a monotonic leadership deadline.
 See [the event-driven design](docs/event-driven-design.md) for the execution
 model and verified unit/API-rig cases. Live scale, latency, multi-master and
 runtime/storage acceptance remain tracked in #147/#149; these are branch
-changes, not a shipped release.
+changes, not a shipped release. Safe-cache acceptance is also blocked by
+[fastetcd#50](https://github.com/glennswest/fastetcd/issues/50): an isolated
+regression finds LIST contents inconsistent with their advertised revision.
 
 Deployment (rolling updates), ReplicaSet, StatefulSet, DaemonSet (every
 eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices), Namespace (default

@@ -11,8 +11,11 @@ validation without waiting for a live target. All rustkube controller families
 and scheduling now use indexed object workers. The build-host access problem
 did not reproduce from stormcentral; the five-crate handoff command and the
 API/store regression rigs pass. See [the current verification record](event-driven-design.md#verification-on-dev--2026-09-29).
-The original inventory and resume order below are historical; rustkube steps
-2–3 have advanced. Live scale and multi-master acceptance remain #147/#149.
+Safe-cache acceptance is now blocked by fastetcd#50: the isolated LIST
+snapshot probe at 981dcdb fails 165/255 observations without any controllers.
+The datastore owner must fix the snapshot/revision contract before #146 can
+close. The original inventory and resume order below are historical;
+rustkube steps 2–3 have advanced. Live scale and multi-master acceptance remain #147/#149.
 Continue on `turbomode`; do not merge to main or request a golden yet.
 
 ## Original projects and saved work

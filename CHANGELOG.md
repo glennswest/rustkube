@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Record reproduced datastore snapshot inconsistency (165/255
+  LISTs), hand off fastetcd#50 and block #146 acceptance pending its fix.
+  Retain #153/#154 failures despite successful fresh repetitions.
 - **test:** Add a concurrent LIST/snapshot-revision regression without
   controllers to isolate a datastore consistency race from indexed workers.
 - **test:** Include datastore logs and request/store counters in API-rig
