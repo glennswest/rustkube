@@ -145,6 +145,9 @@ when each piece landed.
       start of it
 
 ### Scheduler drop-in parity (#3) — needs owner baseline, 2026-09-29
+- [x] Baseline at 58ea6d2: sc-build compiled kube-scheduler and passed all
+      57 scheduler unit tests plus doc tests (remote exit 0). Local build-log
+      append was read-only. This does not verify upstream parity.
 - [x] Read #3 and audit scheduler CLI, scheduling loop, score functions and
       unused plugin traits against the recorded scope.
 - [ ] Owner selects the exact upstream Kubernetes version and an isolated

@@ -4,7 +4,9 @@
 
 ### 2026-09-29
 - **docs:** Audit #3 scheduler parity gaps and record the unresolved upstream
-  version/acceptance-cluster decision before implementation.
+  version/acceptance-cluster decision before implementation. Remote sc-build
+  at 58ea6d2 compiled kube-scheduler and passed 57 scheduler tests; upstream
+  acceptance remains unrun.
 - **docs:** Document the #66 scale protocol: complete populations, Lease
   heartbeats, CPU/API/datastore curves and Deployment scale latency. Execution
   environment and artifact delivery still need an owner decision. Five-crate
