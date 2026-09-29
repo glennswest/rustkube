@@ -3,8 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
-- **docs:** Resume #96 real test-container validation through stormcentral
-  at main@d7bc1f8, with per-machine results required before closure.
+- **docs:** Retry #96 real test-container validation at main@d7bc1f8:
+  stormcentral refused before Job creation because the test host API is
+  unavailable (stormcentral#63). Remote sc-build at a4dba9c compiled the
+  test program and passed all 9 unit tests; live acceptance remains open.
 - **docs:** Audit #2 controller-manager parity gaps and the totrust v1.31.4
   acceptance pin; record the missing upstream test environment and correct
   the controller inventory for the turbomode branch. sc-build at 5687d0f
