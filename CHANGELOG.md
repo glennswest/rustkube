@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Watch-cache revision waiters (#148): scripted-store tests on a paused clock prove the pump, the stall re-seed and teardown each wake a waiting LIST before its 50 ms budget, the store fallback at the budget, cancelled waiters leave later ones unaffected, and a 2000-round multi-thread stress loses no wakeup. The wait budget is a parameter and the stall clock is tokio's, so tests can drive it; no behaviour change.
 - **fix:** Scheduler and controller-manager leadership no longer ends on one failed or slow Lease renewal: attempts retry every 2 s and the term lasts until 10 s after the start of the last successful attempt (upstream renewDeadline), each attempt bounded by the time left (`apimachinery::lease::hold`, #145).
 - **fix:** Scheduler reserves capacity only just before the bind write. A Pod whose claim was missing, or whose selected-node patch failed, kept a reservation that pinned it to its first choice, so it could never bind to the node its PersistentVolume required (#145).
 - **test:** `test/e2e/scheduler-failover.sh`: leader pause/takeover, stale-leader resume, standby kill, no overcommit, claim/volume wakeups (#145).

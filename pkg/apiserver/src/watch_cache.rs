@@ -546,11 +546,7 @@ impl WatchCache {
 /// advance between the check and the await still wakes it (`notify_waiters`
 /// stores no permit). Dropping the future — a client that goes away — just
 /// deregisters it.
-async fn wait_for_revision(
-    cache: &PrefixCache,
-    min_rev: u64,
-    budget: std::time::Duration,
-) -> bool {
+async fn wait_for_revision(cache: &PrefixCache, min_rev: u64, budget: std::time::Duration) -> bool {
     let deadline = tokio::time::Instant::now() + budget;
     loop {
         let advanced = cache.advanced.notified();
@@ -600,7 +596,9 @@ mod revision_tests {
         fn set(&self, rev: u64, key: &str) {
             let mut state = self.state.lock().unwrap();
             state.0 = rev;
-            state.1.insert(key.to_string(), (key.as_bytes().to_vec(), rev));
+            state
+                .1
+                .insert(key.to_string(), (key.as_bytes().to_vec(), rev));
         }
         /// Advance the store's revision without touching this prefix.
         fn bump(&self, rev: u64) {

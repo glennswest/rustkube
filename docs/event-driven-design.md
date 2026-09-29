@@ -335,6 +335,18 @@ the indexed informer migration (#146) supplies a verified cache read barrier.
 Watch compaction, cache eviction and subscriber lag terminate the stream with
 a Status error and force recovery rather than silently dropping changes.
 
+The watch cache's own revision wait (`WatchCache::list` with a minimum
+revision; no API LIST handler calls it today) is notified, not polled (#148).
+The pump and the stall re-seed store the new snapshot revision and then wake
+every waiter; teardown (datastore watch lost, or a re-seed that found missed
+events) wakes them too. A waiter registers before it checks the revision, so
+an advance in between still wakes it, and a dropped waiter just deregisters.
+Past a 50 ms budget, or on teardown, the page is read from the datastore.
+Paused-clock unit tests over a scripted store show each wake source arriving
+before the budget, the fallback at exactly the budget, and a multi-thread
+stress with no lost wakeup; removing the notify or registering after the check
+makes them fail.
+
 Required three-master tests: write on A/read on B; watch failover A→B; kill
 each API server; kill controller and scheduler leaders independently; partition
 a minority master; pause a leader beyond lease expiry and resume it; lose
