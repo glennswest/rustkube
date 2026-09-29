@@ -122,6 +122,18 @@ status are essential inputs. Ignore a write whose only changes are
 resourceVersion/managedFields; otherwise status-write echoes can spin.
 Controllers should avoid unchanged status writes as well.
 
+These rules are exercised end to end by `pkg/apimachinery/src/turbomode_tests.rs`
+(#143): the real reflector, `informers::Hub` and `reactor::WatchHub` against a
+scripted API server over HTTP. Covered: subscribers share one LIST and one
+WATCH and a late one is seeded; revision-only echoes and bookmarks wake
+nobody; a dropped or refused watch leaves the feed unsynchronized (reads
+fail, never empty) and resumes from the last revision without a LIST; an
+in-stream 410 or a malformed frame relists and reports the gap's deltas; a
+failing LIST and immediately-ending watches back off (about four attempts in
+the first second); the last subscriber or worker going away closes the watch;
+events during a pass buy exactly one more pass. Each test fails when its
+mechanism is removed (checked by mutation on dev).
+
 The migration begins with an event-driven adapter around the existing
 reconcilers: dependency collections discovered by their reads feed a
 coalescing queue for each controller. Reads remain authoritative paginated
