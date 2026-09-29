@@ -78,6 +78,12 @@ impl Feed {
             })
             .cloned()
             .collect::<Vec<_>>();
+        // A bookmark or a revision-only echo changes nothing. Subscribers
+        // that wake on any call (discovery, pending Pods) would otherwise
+        // run on every 45 s heartbeat bookmark: a poll loop in disguise.
+        if changes.is_empty() && !reset {
+            return;
+        }
         let callbacks = self
             .subscribers
             .lock()
@@ -131,7 +137,16 @@ impl Feed {
                     return true;
                 }
                 Change::Connected => {
+                    // Only a recovery is a reset: work that failed while the
+                    // feed was unsynchronized needs waking. A routine
+                    // reconnect resumes from its revision with nothing
+                    // missed; resetting there requeued every object on
+                    // every watch timeout, a periodic resync.
+                    let recovering = !store.is_synced();
                     store.resumed();
+                    if !recovering {
+                        return true;
+                    }
                     (Ok(Vec::new()), true)
                 }
             }

@@ -447,3 +447,56 @@ async fn events_during_a_pass_run_exactly_one_more_and_an_idle_watch_none() {
     assert_eq!(api.watch_rvs(), ["10"]);
     server.abort();
 }
+
+/// Every call a subscriber receives: (deltas, reset).
+#[derive(Clone, Default)]
+struct Calls(Arc<Mutex<Vec<(usize, bool)>>>);
+impl Calls {
+    fn callback(&self) -> impl Fn(&[Delta], bool) + Send + Sync + 'static {
+        let calls = self.0.clone();
+        move |changes: &[Delta], reset: bool| calls.lock().unwrap().push((changes.len(), reset))
+    }
+    fn get(&self) -> Vec<(usize, bool)> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// Subscribers that wake on any call (discovery, pending Pods) must not be
+/// called for heartbeats, echoes, or a routine reconnect.
+#[tokio::test]
+async fn heartbeats_echoes_and_routine_reconnects_call_nobody() {
+    let api = Api::new("10", &[pod("a", "ua", "10", "Pending")]);
+    let first = api.stream();
+    let second = api.stream();
+    let (url, server) = serve(&api).await;
+    let hub = informers::Hub::default();
+    let calls = Calls::default();
+    let sub = hub.subscribe(&reqwest::Client::new(), url, calls.callback());
+    eventually("synced", || sub.feed.ensure_synced().is_ok()).await;
+    assert_eq!(calls.get(), [(1, true)], "the snapshot");
+
+    first
+        .send(frame("BOOKMARK", json!({"metadata": {"resourceVersion": "11"}})))
+        .unwrap();
+    first.send(frame("MODIFIED", pod("a", "ua", "12", "Pending"))).unwrap();
+    // A healthy watch that ran its course (over a second) ends cleanly.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    drop(first);
+    eventually("reconnected", || api.open.load(SeqCst) == 1 && api.watch_rvs().len() == 2).await;
+    assert_eq!(api.watch_rvs(), ["10", "12"]);
+    second.send(frame("ADDED", pod("b", "ub", "13", "Pending"))).unwrap();
+    eventually("b", || calls.get().len() == 2).await;
+    assert_eq!(calls.get(), [(1, true), (1, false)], "only the snapshot and b");
+
+    // A reconnect after an outage is a reset, so failed work retries.
+    drop(second);
+    api.then(Watch::Status(503));
+    eventually("recovered", || {
+        api.watch_rvs().len() == 4 && sub.feed.ensure_synced().is_ok()
+    })
+    .await;
+    assert_eq!(calls.get(), [(1, true), (1, false), (0, true)]);
+    assert_eq!(api.lists.load(SeqCst), 1);
+    server.abort();
+}
+
