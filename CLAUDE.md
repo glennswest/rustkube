@@ -85,6 +85,11 @@ imported.
 
 ## Work Plan
 
+### Documentation audit — 2026-09-29
+- [ ] Compare history since 2026-09-18 and current source with README and every docs page.
+- [ ] Verify CLI defaults, listeners, API limitations, built-in stormblock PVC ownership and delivery tooling; distinguish turbomode from shipped behavior.
+- [ ] Track unsupported promises in GitHub issues; update documentation and changelog, push and validate.
+
 ### History (condensed)
 
 Phases 0–3 (v0.1.0–v0.3.0, March 2026) scaffolded a 10-crate orchestrator:
