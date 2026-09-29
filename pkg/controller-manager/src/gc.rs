@@ -31,6 +31,10 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use crate::owned::{self, Controller, Dependency, Deps};
+use apimachinery::informer::{Index, Key};
+use apimachinery::workqueue::WorkQueue;
+use futures::{stream::FuturesUnordered, StreamExt};
 
 /// Events older than this are reaped (upstream default ~1h).
 const EVENT_TTL: chrono::Duration = chrono::Duration::hours(1);
@@ -124,72 +128,30 @@ impl GarbageCollector {
     }
 
     pub async fn run(&self) {
-        info!("Starting garbage collector");
-        let worker = self.api.watches.worker("garbage-collector");
-        loop {
-            let _work = worker.next().await;
-            worker.run(self.collect()).await;
-        }
-    }
-
-    /// One sweep. Returns whether it changed anything.
-    async fn collect(&self) -> bool {
-        let resources = self.discover().await;
-        if resources.is_empty() {
-            return false; // apiserver unreachable; a pass over nothing deletes nothing
-        }
-
-        let mut objects: Vec<Object> = Vec::new();
-        // Kinds we actually managed to list. An owner of any other kind is
-        // unknown, not absent.
-        let mut seen_kinds: HashSet<String> = HashSet::new();
-        for resource in &resources {
-            let list = match self.api.list(&resource.list_path()).await {
-                Ok(l) => l,
-                Err(e) => {
-                    debug!("gc: cannot list {}: {e}", resource.list_path());
-                    apimachinery::reactor::failed();
-                    return false;
+        let changed = WorkQueue::new();
+        let wake = changed.clone();
+        let _discovery = self.api.informers.subscribe(&self.api.client,
+            format!("{}/apis/apiextensions.k8s.io/v1/customresourcedefinitions",self.api.base_url),
+            move |_,_| { wake.add(()); });
+        let events = Events(self);
+        let run = async {
+            loop {
+                let resources = Arc::new(self.discover().await);
+                if resources.is_empty() {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
                 }
-            };
-            let Some(items) = list["items"].as_array() else {
-                continue;
-            };
-            seen_kinds.insert(format!("{}/{}", resource.group_version, resource.kind));
-            for item in items {
-                objects.push(Object {
-                    resource: resource.clone(),
-                    value: item.clone(),
-                });
-            }
-        }
-
-        let live: HashSet<String> = objects
-            .iter()
-            .map(|o| o.uid().to_string())
-            .filter(|u| !u.is_empty())
-            .collect();
-
-        // uid -> indices of its dependents.
-        let mut dependents: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, obj) in objects.iter().enumerate() {
-            for owner in obj.owner_refs() {
-                if let Some(uid) = owner["uid"].as_str() {
-                    dependents.entry(uid.to_string()).or_default().push(i);
+                let workers: Vec<_> = resources.iter().map(|resource| Collection {
+                    gc: self, path: resource.list_path(), resource: resource.clone(), resources: resources.clone(),
+                }).collect();
+                let mut active: FuturesUnordered<_> = workers.iter().map(|worker| owned::run(&self.api,worker)).collect();
+                tokio::select! {
+                    _ = active.next() => {},
+                    work = changed.next() => { drop(work); },
                 }
             }
-        }
-
-        debug!(
-            "gc: {} objects across {} kinds, {} with dependents",
-            objects.len(),
-            seen_kinds.len(),
-            dependents.len()
-        );
-        let mut changed = self.process_finalizers(&objects, &dependents).await;
-        changed |= self.background_cascade(&objects, &live, &seen_kinds).await;
-        self.expire_events().await;
-        changed
+        };
+        tokio::join!(run, owned::run(&self.api,&events));
     }
 
     /// Every listable, deletable resource the apiserver serves — built-ins and
@@ -232,7 +194,7 @@ impl GarbageCollector {
         dependents: &HashMap<String, Vec<usize>>,
     ) -> bool {
         let mut changed = false;
-        for owner in objects.iter().filter(|o| o.deleting()) {
+        for owner in objects.iter().take(1).filter(|o| o.deleting()) {
             let finalizers = owner.finalizers();
             let foreground = finalizers.contains(&FOREGROUND_FINALIZER);
             let orphan = finalizers.contains(&ORPHAN_FINALIZER);
@@ -296,7 +258,8 @@ impl GarbageCollector {
                 let opts = json!({
                     "apiVersion": "meta.k8s.io/v1",
                     "kind": "DeleteOptions",
-                    "propagationPolicy": "Foreground"
+                    "propagationPolicy": "Foreground",
+                    "preconditions": {"uid":child.value["metadata"]["uid"],"resourceVersion":child.value["metadata"]["resourceVersion"]}
                 });
                 match self.api.delete_with_options(&path, &opts).await {
                     Ok(r) if r.status().is_success() || r.status().as_u16() == 404 => {
@@ -367,7 +330,7 @@ impl GarbageCollector {
             }
 
             let path = obj.path();
-            match self.api.delete(&path).await {
+            match self.api.delete_observed(&path,&obj.value).await {
                 Ok(r) if r.status().is_success() || r.status().as_u16() == 404 => {
                     changed = true;
                     info!(
@@ -401,7 +364,7 @@ impl GarbageCollector {
         // dependent stays owned by an object that is about to disappear —
         // which the background pass then collects, the exact opposite of
         // orphaning.
-        let patch = json!({"metadata": {"ownerReferences": remaining}});
+        let patch = json!({"metadata": {"uid":child.value["metadata"]["uid"],"resourceVersion":child.value["metadata"]["resourceVersion"],"ownerReferences": remaining}});
         match self.api.patch_merge(&child.path(), &patch).await {
             Ok(_) => true,
             Err(e) => {
@@ -418,23 +381,15 @@ impl GarbageCollector {
             .filter(|f| *f != finalizer)
             .map(|f| json!(f))
             .collect();
-        let patch = json!({"metadata": {"finalizers": remaining}});
+        let patch = json!({"metadata": {"uid":obj.value["metadata"]["uid"],"resourceVersion":obj.value["metadata"]["resourceVersion"],"finalizers": remaining}});
         if let Err(e) = self.api.patch_merge(&obj.path(), &patch).await {
             warn!("gc: could not clear {finalizer} on {}: {e}", obj.path());
         }
     }
 
     /// Delete Events whose lastTimestamp is older than `EVENT_TTL`.
-    async fn expire_events(&self) {
-        let list = match self.api.list("/api/v1/events").await {
-            Ok(l) => l,
-            Err(_) => return,
-        };
-        let Some(items) = list["items"].as_array() else {
-            return;
-        };
+    async fn expire_event(&self, ev: &Value) {
         let now = chrono::Utc::now();
-        for ev in items {
             let ts = ev["lastTimestamp"]
                 .as_str()
                 .or_else(|| ev["eventTime"].as_str())
@@ -448,18 +403,17 @@ impl GarbageCollector {
                 })
                 .unwrap_or(false);
             if !stale {
-                continue;
+                return;
             }
             let ns = ev["metadata"]["namespace"].as_str().unwrap_or("default");
             let name = ev["metadata"]["name"].as_str().unwrap_or("");
             if name.is_empty() {
-                continue;
+                return;
             }
             let _ = self
                 .api
-                .delete(&format!("/api/v1/namespaces/{ns}/events/{name}"))
+                .delete_observed(&format!("/api/v1/namespaces/{ns}/events/{name}"),ev)
                 .await;
-        }
     }
 }
 
@@ -562,5 +516,90 @@ mod tests {
             got[0].list_path(),
             "/apis/cilium.io/v2/ciliumnetworkpolicies"
         );
+    }
+}
+
+struct Collection<'a> {
+    gc: &'a GarbageCollector, resource: Resource, path: String, resources: Arc<Vec<Resource>>,
+}
+#[async_trait::async_trait]
+impl Controller for Collection<'_> {
+    fn name(&self) -> &'static str { "garbage-collector" }
+    fn primary(&self) -> &str { &self.path }
+    fn workers(&self) -> usize { 2 }
+    fn dependencies(&self) -> Vec<Dependency> {
+        self.resources.iter().map(|r| Dependency { path: r.list_path(), route: Arc::new(|delta, primary| {
+            let mut keys = Vec::new();
+            for object in delta.old.iter().chain(delta.new.iter()) {
+                if let Some(uid) = object["metadata"]["uid"].as_str() {
+                    keys.extend(owned::keys_at(primary,Index::Owner(uid.into())));
+                }
+            }
+            for index in &delta.affected {
+                if let Index::Owner(uid) = index {
+                    if let Some(key) = primary.key_for_uid(uid) { keys.push(key); }
+                }
+            }
+            keys
+        }) }).collect()
+    }
+    async fn reconcile(&self, value: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        let object = Object { resource: self.resource.clone(), value: value.clone() };
+        let uid = Key::of(value)?.uid;
+        let mut objects = vec![object];
+        let mut seen = HashSet::from([uid.clone()]);
+        let mut children = Vec::new();
+        for (i,resource) in self.resources.iter().enumerate() {
+            for child in deps.feed(i).select(&Index::Owner(uid.clone()))? {
+                if seen.insert(Key::of(&child)?.uid) {
+                    children.push(objects.len()); objects.push(Object {resource: resource.clone(),value:child});
+                }
+            }
+        }
+        if objects[0].deleting() && objects[0].finalizers().iter().any(|f|
+            *f == FOREGROUND_FINALIZER || *f == ORPHAN_FINALIZER) {
+            // The indexed view narrows normal work. Before releasing an owner
+            // finalizer, confirm dependent membership authoritatively: a watch
+            // can be connected yet still trail an externally created child.
+            objects.truncate(1); children.clear(); seen.clear();
+            seen.insert(objects[0].uid().to_string());
+            for resource in self.resources.iter() {
+                let list = self.gc.api.list(&resource.list_path()).await?;
+                let items = list["items"].as_array().ok_or_else(|| anyhow::anyhow!("invalid GC collection"))?;
+                for child in items {
+                    if child["metadata"]["ownerReferences"].as_array().is_some_and(|refs|
+                        refs.iter().any(|r| r["uid"].as_str() == Some(objects[0].uid())))
+                        && seen.insert(Key::of(child)?.uid) {
+                        children.push(objects.len()); objects.push(Object {resource:resource.clone(),value:child.clone()});
+                    }
+                }
+            }
+        }
+        self.gc.process_finalizers(&objects,&HashMap::from([(uid,children)])).await;
+        let mut live = HashSet::new();
+        let mut known = HashSet::new();
+        // Cache absence is never authority for destructive background GC.
+        for owner in objects[0].owner_refs() {
+            let Some(resource) = self.resources.iter().find(|r| owner["apiVersion"] == r.group_version && owner["kind"] == r.kind) else { return Ok(()); };
+            anyhow::ensure!(owner["uid"].as_str().is_some_and(|uid| !uid.is_empty()), "owner has no UID");
+            let name = owner["name"].as_str().ok_or_else(|| anyhow::anyhow!("owner has no name"))?;
+            let response = self.gc.api.get(&resource.object_path(objects[0].namespace(),name)).await?;
+            if response.status().as_u16() != 404 {
+                let current: Value = response.error_for_status()?.json().await?;
+                if current["metadata"]["uid"] == owner["uid"] { live.insert(owner["uid"].as_str().unwrap_or("").into()); }
+            }
+            known.insert(format!("{}/{}",resource.group_version,resource.kind));
+        }
+        self.gc.background_cascade(&objects[..1],&live,&known).await;
+        Ok(())
+    }
+}
+struct Events<'a>(&'a GarbageCollector);
+#[async_trait::async_trait]
+impl Controller for Events<'_> {
+    fn name(&self) -> &'static str { "event-retention" }
+    fn primary(&self) -> &'static str { "/api/v1/events" }
+    async fn reconcile(&self, ev: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
+        self.0.expire_event(ev).await; Ok(())
     }
 }

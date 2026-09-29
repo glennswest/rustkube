@@ -18,7 +18,12 @@ claim; deletes carry the observed attachment UID/revision. PodMigration and HPA 
 non-metrics placeholder (#89). Other controller migrations and runtime
 validation remain open. Namespace provision/teardown have separate object
 pools; teardown indexes discovered collections by namespace, then confirms
-authoritative emptiness before finalization.
+authoritative emptiness before finalization. Gateway/HTTPRoute workers use
+named reference indexes and remain status-only. GC uses owner indexes across
+discovered shared feeds; all feeds must be synchronized. Background owner
+absence needs GET confirmation, and owner finalization deliberately retains
+authoritative paginated membership checks. Event retention is per-event with
+an expiry deadline.
 
 ## Objective and boundary
 

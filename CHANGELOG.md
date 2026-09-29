@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Index Gateway/HTTPRoute reference workers and per-event retention.
+  GC routes changed owners/dependents through shared discovered feeds, refuses
+  unsynchronized observations, and confirms destructive absence/finalization
+  authoritatively with UID/revision write guards. Gateway remains status-only.
 - **perf:** Index namespace provisioning and teardown with separate bounded
   pools and dynamically discovered shared feeds. Rebuild subscriptions on CRD
   changes; verify authoritative emptiness before conditional finalization.

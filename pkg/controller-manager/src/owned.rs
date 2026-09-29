@@ -34,7 +34,7 @@ impl Deps {
 #[async_trait::async_trait]
 pub trait Controller: Send + Sync {
     fn name(&self) -> &'static str;
-    fn primary(&self) -> &'static str;
+    fn primary(&self) -> &str;
     /// Collection whose members name the primary as an owner, if any.
     fn children(&self) -> Option<&'static str> {
         None

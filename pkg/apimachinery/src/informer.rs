@@ -43,6 +43,7 @@ pub enum Index {
     Driver(String),
     Pod(String, String),
     Target(String, String, String),
+    Reference(String, String, String),
     Label(String, String),
     /// Equality anchor for a selector; namespace prevents cross-namespace wakes.
     Selector(String, String, String),
@@ -92,6 +93,23 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
     }
     for field in ["sourceNode", "targetNode"] {
         if let Some(node) = object["spec"][field].as_str() { result.insert(Index::Node(node.into())); }
+    }
+    if let Some(class) = object["spec"]["gatewayClassName"].as_str() {
+        result.insert(Index::Reference("".into(),"GatewayClass".into(),class.into()));
+    }
+    for parent in object["spec"]["parentRefs"].as_array().into_iter().flatten() {
+        if let Some(name) = parent["name"].as_str() {
+            result.insert(Index::Reference(parent["namespace"].as_str().unwrap_or(&key.namespace).into(),
+                parent["kind"].as_str().unwrap_or("Gateway").into(),name.into()));
+        }
+    }
+    for rule in object["spec"]["rules"].as_array().into_iter().flatten() {
+        for backend in rule["backendRefs"].as_array().into_iter().flatten() {
+            if let Some(name) = backend["name"].as_str() {
+                result.insert(Index::Reference(backend["namespace"].as_str().unwrap_or(&key.namespace).into(),
+                    backend["kind"].as_str().unwrap_or("Service").into(),name.into()));
+            }
+        }
     }
     if let Some(labels) = object["metadata"]["labels"].as_object() {
         for (label, value) in labels {
