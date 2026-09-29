@@ -95,15 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Watch-cache revision waiters (#148) — IN PROGRESS 2026-09-29
+### Watch-cache revision waiters (#148) — COMPLETE 2026-09-29
 Notify-based wait, register-before-check, bounded store fallback and
-termination wake are already on main (turbomode merge). Remaining: the tests.
-- [ ] Wait budget as a parameter; `last_progress` on tokio time so paused-time
-      tests can drive the stall re-seed (no behaviour change)
-- [ ] Tests over a scripted store: pump wake, re-seed wake (unchanged and
-      changed), deadline fallback, pump-end wake, cancelled waiters, and a
-      multi-thread no-lost-wakeup stress
-- [ ] sc-build apiserver tests; docs/changelog; close #148
+termination wake were already on main (turbomode merge); this added the tests.
+- [x] Wait budget as a parameter; `last_progress` on tokio time (ac7ec79)
+- [x] Scripted-store tests: pump wake, re-seed wake (unchanged/changed),
+      deadline fallback, pump-end wake, cancellation, 2000-round multi-thread
+      stress. Mutations fail them: registering after the check hangs the
+      stress; dropping pump/re-seed notifies fails three tests
+- [x] c516a59: apiserver 205 passed, sc-build exit 0. No API LIST handler
+      calls `WatchCache::list` (LIST reads the datastore); no latency
+      attribution claimed — that is #147. No golden (#163)
 
 ### Event-driven scheduler (#145) — COMPLETE 2026-09-29
 Wakeups, serialized accounting, separate renewal and term cancellation were
