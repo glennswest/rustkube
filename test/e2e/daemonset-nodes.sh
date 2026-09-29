@@ -71,9 +71,28 @@ node n3 '{"gpu":"yes"}' >/dev/null
 expect "node added" all "n1 n2 n3"
 expect "node added" gpu "n2 n3"
 
+# Pod creation precedes the status write, which describes the worker's input
+# snapshot. Wait for the follow-up reconciliation to count all three Pods
+# before measuring heartbeat-only writes; placement alone is not convergence.
+settled=
+for _ in $(seq 100); do
+  req GET /apis/apps/v1/namespaces/default/daemonsets/all >/dev/null
+  if python3 - "$W/out" <<'PY_STATUS'
+import json, sys
+ds=json.load(open(sys.argv[1]))
+expected=dict(desiredNumberScheduled=3,currentNumberScheduled=3,
+    updatedNumberScheduled=3,numberReady=0,numberAvailable=0,
+    numberUnavailable=3,numberMisscheduled=0,
+    observedGeneration=ds['metadata'].get('generation',1))
+sys.exit(0 if ds.get('status') == expected else 1)
+PY_STATUS
+  then settled=1; break; fi
+  sleep 0.1
+done
+[ -n "$settled" ] || { fail "status did not converge before heartbeat check"; cat "$W/out"; report; }
+cp "$W/out" "$W/ds-before.json"
 # Heartbeats: status-only node writes. Neither DaemonSet's pods or status may
 # change (an unchanged status is not rewritten, so its resourceVersion holds).
-req GET /apis/apps/v1/namespaces/default/daemonsets/all >/dev/null
 before=$(python3 -c "import json;print(json.load(open('$W/out'))['metadata']['resourceVersion'])")
 for i in 1 2 3 4 5; do
   req GET /api/v1/nodes/n1 >/dev/null
@@ -90,7 +109,7 @@ sleep 2
 req GET /apis/apps/v1/namespaces/default/daemonsets/all >/dev/null
 after=$(python3 -c "import json;print(json.load(open('$W/out'))['metadata']['resourceVersion'])")
 [ "$before" = "$after" ] && pass "heartbeats: DaemonSet not rewritten (rv $after)" \
-  || fail "heartbeats: DaemonSet rewritten ($before -> $after)"
+  || { fail "heartbeats: DaemonSet rewritten ($before -> $after)"; cat "$W/ds-before.json" "$W/out"; }
 [ "$(placed all)" = "n1 n2 n3" ] && pass "heartbeats: pods unchanged" || fail "heartbeats: pods moved: $(placed all)"
 
 # Relabel n2 away from gpu: gpu's pod there is now misplaced and deleted.

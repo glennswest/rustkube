@@ -105,6 +105,9 @@ clone requests. README's configuration tables come from the three CLI sources.
       replay; rerun the controller/scheduler matrix. At 226d84e, 185 LISTs
       passed but the probe awaited unsupported timeoutSeconds stream closure;
       use a client deadline and still require exact expected events.
+- [ ] Correct DaemonSet heartbeat test startup barrier (#164): placement
+      precedes final status accounting. Wait for expected status, then compare
+      revisions; retain both objects on failure and rerun the matrix.
 - [ ] Investigate #153 startup membership and #154 POST timeout with retained
       evidence; do not equate successful repetitions with a diagnosed fix.
 - [ ] Update acceptance docs and issue evidence; close #146 only if verified.

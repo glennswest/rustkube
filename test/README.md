@@ -140,3 +140,8 @@ Range snapshot/revision race (fastetcd#50), and prints its source commit.
 `RK_FASTETCD_REF` selects another tag/branch for comparison; `RK_FASTETCD`
 still accepts a prebuilt binary. All builds remain inside sc-build's private
 volume. The pin is a test dependency, not a deployed datastore upgrade.
+
+The DaemonSet heartbeat regression first waits for both Pod placement and
+status accounting to converge. It then checks that heartbeat-only updates
+leave the DaemonSet revision and placement unchanged; failures print both
+DaemonSet observations.
