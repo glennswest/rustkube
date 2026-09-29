@@ -61,11 +61,15 @@ assert not violations, f'{len(violations)} LIST snapshots disagree with their re
 print('PASS every complete and paginated LIST agrees with its revision',flush=True)
 # Replay after several actual snapshots, including early ones. Every write
 # omitted from a consistent snapshot must arrive on the following WATCH.
+last_write=max(rv for _,rv in writes)
+candidates=sorted({revision:frozenset(names) for revision,names in snapshots
+    if revision<last_write}.items())
+assert len(candidates)>=3, 'not enough distinct snapshots to exercise LIST/WATCH handoff'
+# Exercise early, middle and late boundaries, not three identical empty LISTs.
+samples=[candidates[0],candidates[len(candidates)//2],candidates[-1]]
 checked=0
-for revision,names in sorted(snapshots, key=lambda entry: entry[0]):
+for revision,names in samples:
     expected={name:rv for name,rv in writes if rv>revision}
-    if not expected:
-        continue
     query=urllib.parse.urlencode({'watch':'true','resourceVersion':revision,'timeoutSeconds':5})
     req=urllib.request.Request(base+path+'?'+query,
         headers={'Authorization':'Bearer '+token,'Accept':'application/json'})
@@ -86,9 +90,6 @@ for revision,names in sorted(snapshots, key=lambda entry: entry[0]):
             print(f'WATCH after {revision}: client deadline, received {len(seen)}/{len(expected)} writes',flush=True)
     assert seen==expected, f'WATCH after {revision}: missing={expected.keys()-seen.keys()}, unexpected={seen.keys()-expected.keys()}'
     checked+=1
-    if checked==3:
-        break
-assert checked==3, 'not enough concurrent snapshots to exercise LIST/WATCH handoff'
 print(f'PASS {checked} LIST/WATCH handoffs deliver the exact remaining writes',flush=True)
 PY
 [ "$?" -eq 0 ] || fail 'LIST snapshot/revision consistency'

@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Sample distinct early, middle and late LIST revisions for exact WATCH replay, preventing duplicate empty snapshots from weakening the handoff check.
 - **test:** Choose disposable rig listener ports immediately before startup and outside the host ephemeral range; avoid the compilation-time reservation gap and outbound connection collisions (#166). Silence detached-checkout advice in source pin logs.
 - **test:** Wait for DaemonSet status to count newly placed Pods before asserting heartbeat-only writes leave its revision unchanged; preserve before/after objects on failure (#164).
 - **test:** End LIST/WATCH replay observation at the client deadline when server-side timeoutSeconds is ignored; still fail missing, unexpected or duplicate events. Record the initial probe timeout.

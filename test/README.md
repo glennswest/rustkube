@@ -132,7 +132,7 @@ rig. It uses stand-in Nodes and does not claim real-node performance.
 
 `bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
 and resourceVersion agree with acknowledged writes, including pinned continuation
-pages and exact WATCH replay after sampled snapshots. It runs without
+pages and exact WATCH replay after distinct early, middle and late snapshots. It runs without
 controllers, isolating the datastore/API contract required by informer caches.
 
 The disposable rig builds fastetcd **v1.6.1** by default, which fixes the
