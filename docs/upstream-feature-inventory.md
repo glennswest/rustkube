@@ -81,7 +81,7 @@ only, hardcoded address, #91).
 TTL-after-finished, NodeIPAM/route, ClusterRole aggregation, endpoint-slice
 mirroring, ReplicationController.
 
-On `turbomode`, all controller families use shared informer feeds and bounded
+With the turbomode implementation, all controller families use shared informer feeds and bounded
 indexed object workers. GC and namespace finalization retain authoritative
 absence reads before destructive cleanup. Successful-write overlays, UID/RV
 preconditions and ambiguous-create expectations are implemented. Safe-cache
@@ -112,7 +112,7 @@ locality, node affinity, pod affinity, topology spread. ✅ priority sort.
 🔴 preemption (`preemption.rs` is never called, #84); `schedulingGates` (gated
 pods are scheduled, #87); upstream activeQ/backoffQ/unschedulable framework
 parity and `nominatedNodeName`; scheduling profiles; NodePorts and BalancedAllocation;
-upstream's score weights (scores are summed unweighted). On `turbomode`, a
+upstream's score weights (scores are summed unweighted). With the turbomode implementation, a
 serialized priority-ordered Pod/VMI queue and API retries are implemented,
 with incremental accounting and retained bind/volume reservations. Scheduling
 Events and PodScheduled=False are absent (#138).

@@ -84,10 +84,10 @@ imported.
 
 ## Current Version: `v0.18.0`
 
-Current checkout is **turbomode**, with unreleased indexed workers/informers.
+The #163 integration brings unreleased indexed workers/informers to **main**.
 Do not describe branch code as installed or conformant. GitHub Actions is
 disabled by owner decision (#114); use sc-build and the approved component
-golden path, never persistent dev storage. This branch is not approved for
+golden path, never persistent dev storage. Issue #163 does not authorize
 golden promotion. See docs/releasing.md and docs/changes-since-2026-09-18.md.
 PVCs of class `stormblock` are the kubelet's built-in blank-clone driver;
 CSI is the third-party path. Sbregistry supplies blank templates, not PVC
@@ -99,7 +99,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 Owner instruction #163 supersedes the earlier branch-only restriction below.
 No golden or release is requested; unfinished acceptance stays on its issues.
 - [x] Read #163 and open issues; fetched main is already in turbomode history.
-- [ ] Merge origin/main into turbomode, retaining main behavior.
+- [x] Merge origin/main into turbomode: already up to date; no conflicts.
 - [ ] Push and run sc-build with cargo build --workspace --locked and
       cargo test --workspace --locked (including the test-container crate).
 - [ ] Refresh branch-status documentation, merge with --no-ff into main,
@@ -263,8 +263,8 @@ when each piece landed.
       and the rustkube synthetic rig cannot close upstream acceptance.
 - [ ] Keep #3 open until implementation and upstream acceptance are verified.
 
-### Turbomode indexed workers (#146) — BLOCKED on fastetcd#50, branch `turbomode`
-Branch only: no merge to main, no goldens. Design: docs/event-driven-design.md;
+### Turbomode indexed workers (#146) — acceptance BLOCKED on fastetcd#50
+Owner #163 authorizes integration into main; no goldens. Design: docs/event-driven-design.md;
 handoff: docs/turbomode-handoff.md.
 
 Resume checkpoint 2026-09-29: pushed fc67179 passed the handoff five-crate

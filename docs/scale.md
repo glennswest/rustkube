@@ -11,11 +11,12 @@ The owner must select an isolated environment with an unprivileged account
 and a supported way to deliver binaries built by `sc-build`. Stress workloads
 run outside build slots. The old conformance staging path is unavailable
 under private, disposable build volumes (#140; docs/conformance.md).
-The #146 implementation now exists on turbomode, but safe-cache acceptance
+The #146 implementation now is integrated into main under #163, but safe-cache acceptance
 is blocked on fastetcd#50; runtime scale and multi-master evidence remain
 #147/#149. Do not add fake Nodes
 to a shared live cluster: they could attract unrelated scheduled workloads.
-No turbomode goldens or merge to main are authorized by the handoff.
+Owner #163 supersedes the handoff to authorize the merge into main, with no
+golden request. Runtime acceptance requirements remain unchanged.
 
 ## Measurement protocol
 

@@ -6,7 +6,7 @@ the wire for `kubectl`, `oc`, `helm` and client-go controllers. Compatibility
 is operation-specific; this is not a conformant or drop-in replacement yet.
 
 This page was checked against the code on **2026-09-29**: v0.18.0 plus
-unreleased `turbomode` changes. See the [September change audit](docs/changes-since-2026-09-18.md)
+unreleased turbomode changes integrated into main under #163. See the [September change audit](docs/changes-since-2026-09-18.md)
 for commits, verification limits and tracked gaps. Branch implementation does
 not mean it has shipped in a stormcos release.
 
@@ -208,7 +208,7 @@ created once. With `--dev-anonymous-admin` it also binds `system:anonymous` to
 ## What the controller manager runs
 
 One process, leader-elected on the Lease `kube-system/kube-controller-manager`.
-On `turbomode`, collection LIST/WATCH streams enqueue deduplicated work as
+Collection LIST/WATCH streams enqueue deduplicated work as
 state changes. Controllers run concurrently on Tokio; a change during a
 reconcile queues another pass. Successful idle passes have no poll interval.
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
@@ -225,8 +225,7 @@ authoritative absence checks before destructive cleanup.
 Every controller/scheduler mutation checks a monotonic leadership deadline.
 See [the event-driven design](docs/event-driven-design.md) for the execution
 model and verified unit/API-rig cases. Live scale, latency, multi-master and
-runtime/storage acceptance remain tracked in #147/#149; these are branch
-changes, not a shipped release. Safe-cache acceptance is also blocked by
+runtime/storage acceptance remain tracked in #147/#149; these changes remain unreleased. Safe-cache acceptance is also blocked by
 [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50): an isolated
 regression finds LIST contents inconsistent with their advertised revision.
 

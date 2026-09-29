@@ -32,9 +32,10 @@ stormd goldens around them. See README's **How it ships** for the checked
 stormcos source and runtime flags. A component build or source commit is not
 proof that a node has installed the resulting release.
 
-The `turbomode` branch remains unmerged and unpromoted while cache safety and
-runtime acceptance are outstanding (#146/#147/#149, fastetcd#50). Do not
-request a golden merely to refresh documentation or to run these experiments.
+Owner instruction #163 authorizes merging turbomode into main after full
+workspace checks on both heads, with no golden request. Cache safety and
+runtime acceptance remain outstanding (#146/#147/#149, fastetcd#50). Continue
+that work on main; integration does not establish runtime acceptance.
 
 ## Retained standalone packaging tooling
 

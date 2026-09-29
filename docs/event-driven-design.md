@@ -1,11 +1,10 @@
 # Event-driven control plane (turbomode)
 
-Status: all controller families and scheduling use object workers on branch
-`turbomode`. Unit/doc and disposable API/store rig tests run through
+Status: all controller families and scheduling use object workers, integrated into main under #163. Unit/doc and disposable API/store rig tests run through
 `sc-build`; the verification record below identifies checked commits and
 cases. Live validation remains #147/#149, awaiting the owner-selected target.
 Safe-cache acceptance is blocked by [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50),
-reproduced below. No merge, golden or release is implied by branch results.
+reproduced below. The #163 merge does not establish runtime acceptance or authorize a golden.
 
 Current implementation: Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA
 have indexed per-object workers (eight concurrent keys per controller).

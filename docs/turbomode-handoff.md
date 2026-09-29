@@ -16,7 +16,9 @@ snapshot probe at 981dcdb fails 165/255 observations without any controllers.
 The datastore owner must fix the snapshot/revision contract before #146 can
 close. The original inventory and resume order below are historical;
 rustkube steps 2–3 have advanced. Live scale and multi-master acceptance remain #147/#149.
-Continue on `turbomode`; do not merge to main or request a golden yet.
+Owner instruction #163 supersedes the branch-only restriction: integrate into
+main after whole-workspace checks on turbomode and main, then continue open
+turbomode issues on main. Do not request a golden for this integration.
 
 ## Original projects and saved work
 

@@ -94,7 +94,7 @@ moment it happens rather than when they start fighting. The scheduler sets 0
 before it tries to acquire; the controller manager sets 0 only after losing
 the lease, so a standby that has never led has no series.
 
-There are **no `workqueue_*` metrics**. On `turbomode`, controllers have
+There are **no `workqueue_*` metrics**. With the turbomode implementation, controllers have
 deduplicated per-object queues and bounded workers, but queue depth, queue
 delay and worker utilization are not instrumented (#90). Do not interpret
 missing series as empty queues or idle workers.
@@ -119,7 +119,7 @@ therefore missing: this is not a complete denominator for success rates (#90).
 carry that historical claim into the indexed implementation.
 
 Upstream splits `scheduler_pending_pods` across `active`, `backoff` and
-`unschedulable` queues. On `turbomode`, this gauge counts pending keys in the shared placement
+`unschedulable` queues. With the turbomode implementation, this gauge counts pending keys in the shared placement
 state when workload informer events arrive. The queue includes priority ordering
 and API retry deadlines, but the gauge does not split those states: it reports
 only `active`.
