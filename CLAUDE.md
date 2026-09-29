@@ -95,6 +95,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Merge turbomode into main (#163) — 2026-09-29
+Owner instruction #163 supersedes the earlier branch-only restriction below.
+No golden or release is requested; unfinished acceptance stays on its issues.
+- [x] Read #163 and open issues; fetched main is already in turbomode history.
+- [ ] Merge origin/main into turbomode, retaining main behavior.
+- [ ] Push and run sc-build with cargo build --workspace --locked and
+      cargo test --workspace --locked (including the test-container crate).
+- [ ] Refresh branch-status documentation, merge with --no-ff into main,
+      push and verify the pushed main head with the same whole-workspace suite.
+- [ ] Record counts and remaining acceptance issues, then close #163.
+Version remains v0.18.0 plus unreleased changes: this is the requested branch
+integration, not completion or release of the pending turbomode feature work.
+
 ### Documentation audit — 2026-09-29
 - [x] Compare history since 2026-09-18 and current source with README and every docs page.
 - [x] Verify CLI defaults, listeners, API limitations, built-in stormblock PVC ownership and delivery tooling; distinguish turbomode from shipped behavior.
