@@ -312,3 +312,31 @@ and restore datastore quorum; restart nodes while API servers rotate. Assert
 no duplicate binding, no resource overcommit, no incorrect deletion and no
 missed work; record healthy-path and takeover latency separately. This is an
 acceptance gate, tracked in #149, not an optional follow-up benchmark.
+
+### Requested cluster load acceptance
+
+Run two sequential stress profiles against an explicitly selected test cluster:
+
+- 100 namespaces with ten single-container Pods each (1,000 containers), each
+  sleeping for 120 seconds with restartPolicy Never.
+- 100 single-container Pods in 100 namespaces, each with a distinct fresh PVC.
+  Write 1,000 Pod-specific SQLite records, commit with synchronous FULL, close
+  and reopen, compare every record and checksum, and run integrity_check.
+  Sleep 120 seconds and reopen and verify the database again before exiting.
+
+The opt-in harness is `stormcos_qa/tools/turbomode/run.py`, outside automatic
+per-release QA discovery. Record image identity, release/machine, exact resource
+UIDs, API acknowledgement and watch-observed lifecycle latency percentiles,
+sample counts, peak observed Running concurrency and per-container integrity
+logs. Missing watch samples cannot establish subsecond performance. Record cold
+image/template work separately from warm runs. No live results exist yet.
+
+Both profiles clean their own namespaces with UID preconditions. SQLite
+acceptance additionally requires PVC/PV/VolumeAttachment disappearance and a
+read-only backend audit proving that backing clones and their allocated blocks
+were reclaimed, with no surviving mounts or Pod state directories. Preserve
+shared image/template allocations; never force finalizers or directly remove
+backing storage to make cleanup pass. Unreachable storage or incomplete inventory
+fails verification. Cleanup failures retain exact resource identities and
+evidence for investigation. Track these acceptance runs under #147 and
+rustkube-node#102; neither issue closes on harness creation alone.
