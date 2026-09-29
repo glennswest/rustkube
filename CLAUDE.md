@@ -95,6 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Event-driven scheduler (#145) — IN PROGRESS 2026-09-29
+Wakeups, serialized accounting, separate renewal and term cancellation are
+already on main from #146. Remaining: renewal robustness and fault tests.
+- [ ] Lease renewal: retry transient failures until RENEW_DEADLINE after the
+      start of the last successful renewal (upstream renewDeadline), one
+      shared helper for scheduler + controller-manager, paused-clock tests
+- [ ] test/e2e/scheduler-failover.sh: two electing schedulers; SIGSTOP the
+      leader past lease expiry, standby takes over, resumed stale leader
+      binds nothing, no overcommit; PVC/PV arrival wakes a waiting Pod
+- [ ] sc-build units + rig; docs/changelog; close #145 with evidence
+
 ### #146 dev acceptance — COMPLETE 2026-09-29
 - [x] Read #146, instructions and #163; continued on main. fastetcd#50 fixed
       in v1.6.1; pin API rigs to that release and report its exact commit.
