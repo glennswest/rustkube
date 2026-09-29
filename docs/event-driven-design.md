@@ -397,3 +397,17 @@ real node execution or PVC backing-allocation reclamation. Those remain the
 live acceptance matrix in #147/#149 and the node/QA companion issues. The
 version remains the unreleased turbomode branch; version/tag/golden promotion
 follows that integration, as required by the owner's no-golden instruction.
+
+### Final-validation investigation (still open)
+
+At `9a24ce9`, all 409 unit tests passed, but the selector rig timed out
+waiting for the first PDB membership update (#153). `1b6f951` adds failure
+object snapshots and PDB debug counts. One diagnostic run and ten fresh
+repetitions passed 14/14 each; that does not establish the cause of the
+original failure. A normal-logging repetition run is in progress.
+
+At `1b6f951`, the separate safety (11), CSI expansion (14), DaemonSet (10)
+and VM (10) checks passed, then the short suite timed out posting a ConfigMap
+in `watch-sees-writes` (#154). Its result was two passes and could-not-run;
+it is not a successful short run. Investigate both failures before closing
+#146. Earlier successful runs above remain evidence of those specific runs.

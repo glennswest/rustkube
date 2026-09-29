@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Retain final-validation failures #153/#154 alongside successful
+  reruns; closure remains pending the intermittent-failure investigation.
 - **test:** Preserve object observations on selector-test failure and expose
   PDB candidate counts at debug level to diagnose a startup convergence race.
 - **chore:** Format migrated Rust modules with rustfmt on the build box.
