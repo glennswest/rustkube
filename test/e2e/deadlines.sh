@@ -151,15 +151,16 @@ PY
 
 # --- No idle polling: with nothing changing, the controller-manager makes no
 # API requests. Watches are long-lived and not counted.
-requests() {
-  curl --max-time 5 -sk "$API/metrics" |
-    awk '/^apiserver_request_total\{/ && !/verb="watch"/ { n += $NF } END { printf "%d\n", n }'
+scrape() {
+  curl --max-time 5 -sk "$API/metrics" | grep '^apiserver_request_total{' | grep -v 'verb="watch"'
 }
 sleep 10   # let the cleanup above settle
-before=$(requests)
+scrape >"$W/idle.before"
 sleep 20
-after=$(requests)
-idle=$((after - before - 1))   # the first scrape is not counted by itself; allow for it
+scrape >"$W/idle.after"
+# The first scrape itself completes inside the window and is counted once.
+idle=$(awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) { n+=d; print "  +" d, $1 > "/dev/stderr" } } END { printf "%d\n", n-1 }' \
+  "$W/idle.before" "$W/idle.after")
 if [ "$idle" -le 5 ]; then pass "idle control plane: $idle API requests in 20 s"
 else fail "idle control plane made $idle API requests in 20 s"; fi
 report

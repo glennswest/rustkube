@@ -10,7 +10,7 @@
 //! counterpart — e.g. the DaemonSet controller uses k8s's `failedPodsBackoff`
 //! window (1s → 15min) via [`CreateBackoff::with_params`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,10 @@ const DEFAULT_MAX_SECS: u64 = 300;
 struct Entry {
     failures: u32,
     next: Instant,
+    /// The failed pods already counted. A controller that keeps a Failed pod
+    /// for post-mortem sees it on every pass; counting it each time pushed
+    /// the window out on every wake, so the replacement was never created.
+    counted: HashSet<String>,
 }
 
 /// Per-key create backoff, shared across reconciles on a controller.
@@ -54,20 +58,48 @@ impl CreateBackoff {
         }
     }
 
-    /// Record an observed failure for `key`, widening its backoff window.
-    pub fn record_failure(&self, key: &str, now: Instant) {
+    /// Record the failed pods (by uid) currently seen for `key`. Each pod
+    /// widens the window once, however many passes see it; pods no longer
+    /// present are forgotten. Returns whether any failure was new.
+    pub fn observe_failures(&self, key: &str, failed: &[&str], now: Instant) -> bool {
         let mut m = self.inner.lock().unwrap();
+        if failed.is_empty() {
+            if let Some(e) = m.get_mut(key) {
+                e.counted.clear();
+            }
+            return false;
+        }
         let e = m.entry(key.to_string()).or_insert(Entry {
             failures: 0,
             next: now,
+            counted: HashSet::new(),
         });
-        e.failures = e.failures.saturating_add(1);
-        e.next = now + self.delay(e.failures);
+        let mut new = false;
+        for uid in failed {
+            if !e.counted.contains(*uid) {
+                new = true;
+                e.failures = e.failures.saturating_add(1);
+            }
+        }
+        if new {
+            e.next = now + self.delay(e.failures);
+        }
+        e.counted = failed.iter().map(|uid| uid.to_string()).collect();
+        new
     }
 
     /// Clear any backoff for `key` (the workload is stable/healthy again).
+    /// Failed pods already counted stay counted.
     pub fn clear(&self, key: &str) {
-        self.inner.lock().unwrap().remove(key);
+        let mut m = self.inner.lock().unwrap();
+        if let Some(e) = m.get_mut(key) {
+            if e.counted.is_empty() {
+                m.remove(key);
+            } else {
+                e.failures = 0;
+                e.next = Instant::now();
+            }
+        }
     }
 
     /// Whether a create is allowed for `key` at `now` (no active backoff window).
@@ -99,6 +131,30 @@ impl CreateBackoff {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_retained_failed_pod_widens_the_window_once() {
+        let b = CreateBackoff::new();
+        let t0 = Instant::now();
+        assert!(b.observe_failures("rs", &["p1"], t0));
+        assert!(!b.allowed("rs", t0 + Duration::from_secs(9)));
+        // Seen again at the deadline wake: no new failure, so creation opens.
+        let at = t0 + Duration::from_secs(10);
+        assert!(!b.observe_failures("rs", &["p1"], at));
+        assert!(b.allowed("rs", at));
+        // Stable again: clearing keeps p1 counted.
+        b.clear("rs");
+        assert!(!b.observe_failures("rs", &["p1"], at));
+        assert!(b.allowed("rs", at));
+        // A new failure starts from the base again.
+        assert!(b.observe_failures("rs", &["p1", "p2"], at));
+        assert!(!b.allowed("rs", at + Duration::from_secs(9)));
+        assert!(b.allowed("rs", at + Duration::from_secs(10)));
+        // Two new failures at once count twice.
+        assert!(b.observe_failures("rs", &["p3", "p4"], at));
+        assert!(b.allowed("rs", at + Duration::from_secs(40)));
+        assert!(!b.allowed("rs", at + Duration::from_secs(39)));
+    }
 
     #[test]
     fn default_delay_grows_then_caps() {

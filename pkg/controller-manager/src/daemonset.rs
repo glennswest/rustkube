@@ -117,8 +117,10 @@ impl DaemonSetController {
         for pod in &terminal {
             let node = pod["spec"]["nodeName"].as_str().unwrap_or("").to_string();
             if pod["status"]["phase"].as_str() == Some("Failed") {
-                self.backoff
-                    .record_failure(&format!("{ds_uid}/{node}"), now);
+                if let Some(uid) = pod["metadata"]["uid"].as_str() {
+                    self.backoff
+                        .observe_failures(&format!("{ds_uid}/{node}"), &[uid], now);
+                }
             }
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
             if !pod_name.is_empty() {

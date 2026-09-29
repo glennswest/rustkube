@@ -90,9 +90,11 @@ impl ReplicaSetController {
             let tb = b["metadata"]["creationTimestamp"].as_str().unwrap_or("");
             tb.cmp(ta)
         });
-        let observed_failure = terminal
+        let failed: Vec<&str> = terminal
             .iter()
-            .any(|p| p["status"]["phase"].as_str() == Some("Failed"));
+            .filter(|p| p["status"]["phase"].as_str() == Some("Failed"))
+            .filter_map(|p| p["metadata"]["uid"].as_str())
+            .collect();
         for pod in terminal.iter().skip(1) {
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
             if !pod_name.is_empty() {
@@ -115,9 +117,10 @@ impl ReplicaSetController {
         // Update recreation backoff from observed failures, and decide whether a
         // create is allowed right now.
         let now = Instant::now();
-        if observed_failure {
-            self.backoff.record_failure(rs_uid, now);
-        } else if current >= desired {
+        // The newest Failed pod is kept, so it is seen on every pass; it
+        // counts once.
+        let new_failure = self.backoff.observe_failures(rs_uid, &failed, now);
+        if !new_failure && current >= desired {
             // Stable at desired with no terminal churn — clear any backoff.
             self.backoff.clear(rs_uid);
         }
