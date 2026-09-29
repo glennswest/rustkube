@@ -95,6 +95,16 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Watch-cache revision waiters (#148) — IN PROGRESS 2026-09-29
+Notify-based wait, register-before-check, bounded store fallback and
+termination wake are already on main (turbomode merge). Remaining: the tests.
+- [ ] Wait budget as a parameter; `last_progress` on tokio time so paused-time
+      tests can drive the stall re-seed (no behaviour change)
+- [ ] Tests over a scripted store: pump wake, re-seed wake (unchanged and
+      changed), deadline fallback, pump-end wake, cancelled waiters, and a
+      multi-thread no-lost-wakeup stress
+- [ ] sc-build apiserver tests; docs/changelog; close #148
+
 ### Event-driven scheduler (#145) — COMPLETE 2026-09-29
 Wakeups, serialized accounting, separate renewal and term cancellation were
 already on main from #146; this closed the renewal and fault-test gaps.
