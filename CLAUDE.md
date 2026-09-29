@@ -95,6 +95,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Controller deadlines (#144) — IN PROGRESS 2026-09-29
+Poll loops are gone from controller-manager (audit: remaining sleeps are
+error retry, startup wait and the Lease retry period). Cascades, expired
+Event and namespace finalizers are already on `indexed-safety.sh`.
+- [ ] `test/e2e/deadlines.sh`: CronJob fires at its minute, Job
+      activeDeadlineSeconds, a not-yet-expired Event expires on time, a Lease
+      going stale taints its Node, ReplicaSet crash backoff replaces a Failed
+      Pod after its delay, GC keeps a dependent whose owner kind is unknown
+- [ ] Suspected bug: ReplicaSet records a failure on every pass while the kept
+      Failed Pod exists, so its backoff never lets a replacement be created —
+      confirm on the rig, fix, unit test
+- [ ] sc-build; docs/changelog; close #144
+
 ### Shared watches and work queues (#143) — COMPLETE 2026-09-29
 WorkQueue, reflector, reactor::WatchHub and informers::Hub were on main with
 unit/fake-HTTP tests; this added the integration coverage the handoff named.
