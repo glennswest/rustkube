@@ -117,7 +117,8 @@ impl DaemonSetController {
         for pod in &terminal {
             let node = pod["spec"]["nodeName"].as_str().unwrap_or("").to_string();
             if pod["status"]["phase"].as_str() == Some("Failed") {
-                self.backoff.record_failure(&format!("{ds_uid}/{node}"), now);
+                self.backoff
+                    .record_failure(&format!("{ds_uid}/{node}"), now);
             }
             let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
             if !pod_name.is_empty() {
@@ -159,7 +160,12 @@ impl DaemonSetController {
                     Err(e) => {
                         debug!("Failed to delete terminal DaemonSet pod {pod_name}: {e}");
                         self.recorder
-                            .event(ds, "Warning", "FailedDelete", &format!("Error deleting: {e}"))
+                            .event(
+                                ds,
+                                "Warning",
+                                "FailedDelete",
+                                &format!("Error deleting: {e}"),
+                            )
                             .await;
                     }
                 }
@@ -211,7 +217,12 @@ impl DaemonSetController {
                     let pod_name = pod["metadata"]["name"].as_str().unwrap_or("?");
                     info!("Created DaemonSet pod {namespace}/{pod_name} on node {node_name}");
                     self.recorder
-                        .event(ds, "Normal", "SuccessfulCreate", &format!("Created pod: {pod_name}"))
+                        .event(
+                            ds,
+                            "Normal",
+                            "SuccessfulCreate",
+                            &format!("Created pod: {pod_name}"),
+                        )
                         .await;
                 }
                 Err(e) => {
@@ -219,7 +230,12 @@ impl DaemonSetController {
                     // The one that was invisible. A create the apiserver
                     // rejects was a `warn!` on a node with no reachable log.
                     self.recorder
-                        .event(ds, "Warning", "FailedCreate", &format!("Error creating: {e}"))
+                        .event(
+                            ds,
+                            "Warning",
+                            "FailedCreate",
+                            &format!("Error creating: {e}"),
+                        )
                         .await;
                 }
             }
@@ -513,8 +529,7 @@ mod tests {
     /// before.
     #[test]
     fn daemonset_pods_tolerate_every_node_condition() {
-        let pod =
-            build_daemonset_pod("kube-system", "d", "u", "node1", &ds(Value::Null)).unwrap();
+        let pod = build_daemonset_pod("kube-system", "d", "u", "node1", &ds(Value::Null)).unwrap();
         let tol = pod["spec"]["tolerations"].as_array().expect("tolerations");
         let keys: Vec<&str> = tol.iter().filter_map(|t| t["key"].as_str()).collect();
         for want in [
@@ -538,12 +553,19 @@ mod tests {
     #[test]
     fn a_tolerate_everything_daemonset_gets_nothing_appended() {
         let pod = build_daemonset_pod(
-            "kube-system", "d", "u", "node1",
+            "kube-system",
+            "d",
+            "u",
+            "node1",
             &ds(json!([{"operator": "Exists"}])),
         )
         .unwrap();
         let tol = pod["spec"]["tolerations"].as_array().expect("tolerations");
-        assert_eq!(tol.len(), 1, "appended to a tolerate-everything spec: {tol:?}");
+        assert_eq!(
+            tol.len(),
+            1,
+            "appended to a tolerate-everything spec: {tol:?}"
+        );
     }
 
     fn node(labels: Value, heartbeat: &str) -> Value {
@@ -552,7 +574,11 @@ mod tests {
                                           "lastHeartbeatTime": heartbeat}]}})
     }
     fn delta(old: Option<Value>, new: Option<Value>) -> Delta {
-        Delta { old, new, affected: Default::default() }
+        Delta {
+            old,
+            new,
+            affected: Default::default(),
+        }
     }
 
     /// A heartbeat changes the node every few seconds and changes nothing a
@@ -581,14 +607,23 @@ mod tests {
         };
         let plain = node(json!({}), "t");
         let labelled = node(json!({"gpu": "yes"}), "t");
-        assert_eq!(names(affected_daemonsets(&delta(None, Some(plain.clone())), &dss)), ["d"]);
         assert_eq!(
-            names(affected_daemonsets(&delta(Some(labelled.clone()), None), &dss)),
+            names(affected_daemonsets(&delta(None, Some(plain.clone())), &dss)),
+            ["d"]
+        );
+        assert_eq!(
+            names(affected_daemonsets(
+                &delta(Some(labelled.clone()), None),
+                &dss
+            )),
             ["d", "gpu"]
         );
         // Losing the label must wake the DaemonSet that matched the old side.
         assert_eq!(
-            names(affected_daemonsets(&delta(Some(labelled), Some(plain)), &dss)),
+            names(affected_daemonsets(
+                &delta(Some(labelled), Some(plain)),
+                &dss
+            )),
             ["d", "gpu"]
         );
     }
@@ -597,7 +632,10 @@ mod tests {
     #[test]
     fn an_explicit_toleration_is_not_duplicated() {
         let pod = build_daemonset_pod(
-            "kube-system", "d", "u", "node1",
+            "kube-system",
+            "d",
+            "u",
+            "node1",
             &ds(json!([{
                 "key": "node.kubernetes.io/disk-pressure",
                 "operator": "Exists",

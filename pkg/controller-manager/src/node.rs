@@ -3,13 +3,13 @@
 //! Monitors node heartbeats via Lease objects in kube-node-lease namespace.
 //! Marks nodes as NotReady when lease expires, and taints them for eviction.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::Index;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info};
-use crate::owned::{self, Controller, Dependency, Deps};
-use apimachinery::informer::Index;
 
 const NODE_MONITOR_GRACE_PERIOD: Duration = Duration::from_secs(40);
 
@@ -26,134 +26,143 @@ impl NodeLifecycleController {
         owned::run(&self.api, self).await;
     }
 
-    async fn reconcile_node(&self, node: &Value, leases: &[Value], pods: &[Value]) -> anyhow::Result<()> {
+    async fn reconcile_node(
+        &self,
+        node: &Value,
+        leases: &[Value],
+        pods: &[Value],
+    ) -> anyhow::Result<()> {
         let now = chrono::Utc::now();
-            let node_name = node["metadata"]["name"].as_str().unwrap_or("");
-            if node_name.is_empty() {
-                return Ok(());
+        let node_name = node["metadata"]["name"].as_str().unwrap_or("");
+        if node_name.is_empty() {
+            return Ok(());
+        }
+
+        // Find the corresponding lease
+        let lease = leases
+            .iter()
+            .find(|l| l["metadata"]["name"].as_str() == Some(node_name));
+
+        let is_healthy = match lease {
+            Some(l) => {
+                // Check renewTime
+                if let Some(renew_time) = l["spec"]["renewTime"].as_str() {
+                    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(renew_time) {
+                        apimachinery::reactor::requeue_at_time(
+                            t.with_timezone(&chrono::Utc)
+                                + chrono::Duration::seconds(
+                                    NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
+                                ),
+                        );
+                        let elapsed = now.signed_duration_since(t);
+                        elapsed.num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
             }
-
-            // Find the corresponding lease
-            let lease = leases
-                .iter()
-                .find(|l| l["metadata"]["name"].as_str() == Some(node_name));
-
-            let is_healthy = match lease {
-                Some(l) => {
-                    // Check renewTime
-                    if let Some(renew_time) = l["spec"]["renewTime"].as_str() {
-                        if let Ok(t) = chrono::DateTime::parse_from_rfc3339(renew_time) {
-                            apimachinery::reactor::requeue_at_time(t.with_timezone(&chrono::Utc)
-                                + chrono::Duration::seconds(NODE_MONITOR_GRACE_PERIOD.as_secs() as i64));
-                            let elapsed = now.signed_duration_since(t);
-                            elapsed.num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
-                        } else {
-                            false
-                        }
+            None => {
+                // No lease found — check if node was just created
+                // Give new nodes time to register their first lease
+                if let Some(created) = node["metadata"]["creationTimestamp"].as_str() {
+                    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(created) {
+                        apimachinery::reactor::requeue_at_time(
+                            t.with_timezone(&chrono::Utc)
+                                + chrono::Duration::seconds(
+                                    NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
+                                ),
+                        );
+                        let elapsed = now.signed_duration_since(t);
+                        elapsed.num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
                     } else {
                         false
                     }
+                } else {
+                    false
                 }
-                None => {
-                    // No lease found — check if node was just created
-                    // Give new nodes time to register their first lease
-                    if let Some(created) = node["metadata"]["creationTimestamp"].as_str() {
-                        if let Ok(t) = chrono::DateTime::parse_from_rfc3339(created) {
-                            apimachinery::reactor::requeue_at_time(t.with_timezone(&chrono::Utc)
-                                + chrono::Duration::seconds(NODE_MONITOR_GRACE_PERIOD.as_secs() as i64));
-                            let elapsed = now.signed_duration_since(t);
-                            elapsed.num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                }
-            };
+            }
+        };
 
-            // Check current Ready condition
-            let conditions = node["status"]["conditions"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            let current_ready = conditions.iter().any(|c| {
-                c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True")
-            });
+        // Check current Ready condition
+        let conditions = node["status"]["conditions"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let current_ready = conditions
+            .iter()
+            .any(|c| c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True"));
 
-            if !is_healthy && current_ready {
-                // Node went unhealthy — mark NotReady
-                info!("Node {node_name} is not responding, marking NotReady");
-                let mut updated = node.clone();
-                update_condition(
-                    &mut updated,
-                    "Ready",
-                    "False",
-                    "NodeStatusUnknown",
-                    "Kubelet stopped posting node status",
-                );
-                // Both effects, as upstream does. NoSchedule keeps new work
-                // off; NoExecute is what moves work that is already there, and
-                // without it a node can be unreachable for an hour with its
-                // pods still nominally running on it.
-                let stamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-                apimachinery::taint::add_taint(
+        if !is_healthy && current_ready {
+            // Node went unhealthy — mark NotReady
+            info!("Node {node_name} is not responding, marking NotReady");
+            let mut updated = node.clone();
+            update_condition(
+                &mut updated,
+                "Ready",
+                "False",
+                "NodeStatusUnknown",
+                "Kubelet stopped posting node status",
+            );
+            // Both effects, as upstream does. NoSchedule keeps new work
+            // off; NoExecute is what moves work that is already there, and
+            // without it a node can be unreachable for an hour with its
+            // pods still nominally running on it.
+            let stamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            apimachinery::taint::add_taint(
+                &mut updated,
+                "node.kubernetes.io/not-ready",
+                "NoSchedule",
+                &stamp,
+            );
+            apimachinery::taint::add_taint(
+                &mut updated,
+                "node.kubernetes.io/not-ready",
+                "NoExecute",
+                &stamp,
+            );
+
+            let _ = self
+                .api
+                .update(&format!("/api/v1/nodes/{node_name}"), &updated)
+                .await;
+        }
+
+        // **And take them off again.** A taint added when a node goes bad
+        // and never removed when it recovers leaves a healthy node
+        // permanently unschedulable — and the reason is in `spec` while
+        // everyone reading a node looks at `status`, so it presents as
+        // "the scheduler is ignoring my node".
+        if is_healthy {
+            let mut updated = node.clone();
+            let mut changed = false;
+            for effect in ["NoSchedule", "NoExecute"] {
+                changed |= apimachinery::taint::remove_taint(
                     &mut updated,
                     "node.kubernetes.io/not-ready",
-                    "NoSchedule",
-                    &stamp,
+                    effect,
                 );
-                apimachinery::taint::add_taint(
-                    &mut updated,
-                    "node.kubernetes.io/not-ready",
-                    "NoExecute",
-                    &stamp,
-                );
-
+            }
+            if changed {
+                info!("Node {node_name} is responding again, clearing not-ready taints");
                 let _ = self
                     .api
-                    .update(
-                        &format!("/api/v1/nodes/{node_name}"),
-                        &updated,
-                    )
+                    .update(&format!("/api/v1/nodes/{node_name}"), &updated)
                     .await;
             }
+        }
 
-            // **And take them off again.** A taint added when a node goes bad
-            // and never removed when it recovers leaves a healthy node
-            // permanently unschedulable — and the reason is in `spec` while
-            // everyone reading a node looks at `status`, so it presents as
-            // "the scheduler is ignoring my node".
-            if is_healthy {
-                let mut updated = node.clone();
-                let mut changed = false;
-                for effect in ["NoSchedule", "NoExecute"] {
-                    changed |= apimachinery::taint::remove_taint(
-                        &mut updated,
-                        "node.kubernetes.io/not-ready",
-                        effect,
-                    );
-                }
-                if changed {
-                    info!("Node {node_name} is responding again, clearing not-ready taints");
-                    let _ = self
-                        .api
-                        .update(&format!("/api/v1/nodes/{node_name}"), &updated)
-                        .await;
-                }
-            }
-
-            // NoExecute means "get off", so something has to do the moving.
-            if let Err(e) = self.evict_for_taints(node, node_name, pods).await {
-                debug!("taint eviction on {node_name}: {e}");
-            }
+        // NoExecute means "get off", so something has to do the moving.
+        if let Err(e) = self.evict_for_taints(node, node_name, pods).await {
+            debug!("taint eviction on {node_name}: {e}");
+        }
         Ok(())
     }
 }
 
 fn update_condition(node: &mut Value, cond_type: &str, status: &str, reason: &str, message: &str) {
-    let conditions = node["status"]["conditions"]
-        .as_array_mut();
+    let conditions = node["status"]["conditions"].as_array_mut();
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let new_condition = json!({
@@ -167,7 +176,10 @@ fn update_condition(node: &mut Value, cond_type: &str, status: &str, reason: &st
 
     match conditions {
         Some(conds) => {
-            if let Some(existing) = conds.iter_mut().find(|c| c["type"].as_str() == Some(cond_type)) {
+            if let Some(existing) = conds
+                .iter_mut()
+                .find(|c| c["type"].as_str() == Some(cond_type))
+            {
                 *existing = new_condition;
             } else {
                 conds.push(new_condition);
@@ -178,7 +190,6 @@ fn update_condition(node: &mut Value, cond_type: &str, status: &str, reason: &st
         }
     }
 }
-
 
 impl NodeLifecycleController {
     /// Evict pods that do not tolerate this node's `NoExecute` taints.
@@ -193,10 +204,20 @@ impl NodeLifecycleController {
     /// blip into an outage. Pods that are not yet due are simply left; the
     /// next pass reconsiders them, which is what makes the deadline work
     /// without a timer.
-    async fn evict_for_taints(&self, node: &Value, node_name: &str, pods: &[Value]) -> anyhow::Result<()> {
+    async fn evict_for_taints(
+        &self,
+        node: &Value,
+        node_name: &str,
+        pods: &[Value],
+    ) -> anyhow::Result<()> {
         let taints: Vec<Value> = node["spec"]["taints"]
             .as_array()
-            .map(|a| a.iter().filter(|t| t["effect"].as_str() == Some("NoExecute")).cloned().collect())
+            .map(|a| {
+                a.iter()
+                    .filter(|t| t["effect"].as_str() == Some("NoExecute"))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         if taints.is_empty() {
             return Ok(());
@@ -227,7 +248,8 @@ impl NodeLifecycleController {
                 continue;
             }
             if let apimachinery::taint::Verdict::EvictIn(seconds, _) =
-                apimachinery::taint::verdict_for(&pod, &taints, age) {
+                apimachinery::taint::verdict_for(&pod, &taints, age)
+            {
                 apimachinery::reactor::requeue_after(Duration::from_secs(seconds.max(1) as u64));
             }
             if let apimachinery::taint::Verdict::Evict(key) =
@@ -238,9 +260,7 @@ impl NodeLifecycleController {
                 if name.is_empty() {
                     continue;
                 }
-                info!(
-                    "Evicting {ns}/{name} from {node_name}: does not tolerate {key}:NoExecute"
-                );
+                info!("Evicting {ns}/{name} from {node_name}: does not tolerate {key}:NoExecute");
                 let _ = self
                     .api
                     .delete_observed(&format!("/api/v1/namespaces/{ns}/pods/{name}"), pod)
@@ -253,24 +273,57 @@ impl NodeLifecycleController {
 
 #[async_trait::async_trait]
 impl Controller for NodeLifecycleController {
-    fn name(&self) -> &'static str { "node" }
-    fn primary(&self) -> &'static str { "/api/v1/nodes" }
-    fn dependencies(&self) -> Vec<Dependency> { vec![
-        Dependency { path: "/apis/coordination.k8s.io/v1/leases".into(), route: Arc::new(|delta, primary| {
-            delta.old.iter().chain(delta.new.iter()).filter(|l| l["metadata"]["namespace"] == "kube-node-lease")
-                .flat_map(|l| owned::keys_at(primary, Index::Name("".into(),l["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
-        }) },
-        Dependency { path: "/api/v1/pods".into(), route: Arc::new(|delta, primary| {
-            delta.affected.iter().flat_map(|i| match i {
-                Index::Node(name) => owned::keys_at(primary, Index::Name("".into(),name.clone())),
-                _ => Vec::new(),
-            }).collect()
-        }) },
-    ] }
+    fn name(&self) -> &'static str {
+        "node"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/nodes"
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![
+            Dependency {
+                path: "/apis/coordination.k8s.io/v1/leases".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .old
+                        .iter()
+                        .chain(delta.new.iter())
+                        .filter(|l| l["metadata"]["namespace"] == "kube-node-lease")
+                        .flat_map(|l| {
+                            owned::keys_at(
+                                primary,
+                                Index::Name(
+                                    "".into(),
+                                    l["metadata"]["name"].as_str().unwrap_or("").into(),
+                                ),
+                            )
+                        })
+                        .collect()
+                }),
+            },
+            Dependency {
+                path: "/api/v1/pods".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .affected
+                        .iter()
+                        .flat_map(|i| match i {
+                            Index::Node(name) => {
+                                owned::keys_at(primary, Index::Name("".into(), name.clone()))
+                            }
+                            _ => Vec::new(),
+                        })
+                        .collect()
+                }),
+            },
+        ]
+    }
     async fn reconcile(&self, node: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
         let name = node["metadata"]["name"].as_str().unwrap_or("");
-        let leases = deps.feed(0).select(&Index::Name("kube-node-lease".into(),name.into()))?;
+        let leases = deps
+            .feed(0)
+            .select(&Index::Name("kube-node-lease".into(), name.into()))?;
         let pods = deps.feed(1).select(&Index::Node(name.into()))?;
-        self.reconcile_node(node,&leases,&pods).await
+        self.reconcile_node(node, &leases, &pods).await
     }
 }

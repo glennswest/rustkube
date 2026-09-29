@@ -204,17 +204,19 @@ reconcile queues another pass. Successful idle passes have no poll interval.
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
 and migration deadlines, Event TTL), API recovery and leader Leases.
 
-Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA use bounded per-object
-workers and shared owner indexes. Successful writes remain visible locally
-until acknowledged by the watch or a later consistent snapshot. Destructive
-actions carry observed UID/revision preconditions. Other reconcilers still
-use authoritative paginated LISTs per pass; their migration remains in #146.
+All controller families use bounded per-object workers with shared LIST/WATCH
+feeds and inverse dependency indexes. Most pools allow eight distinct keys;
+PV claim selection is serialized, and discovered GC collections use two.
+Successful writes remain visible locally until observed by the watch or a
+later consistent snapshot. Failed feeds block dependent workers. Ambiguous
+creates retain their original name until resolved; destructive actions carry
+observed UID/revision preconditions. GC and namespace finalization retain
+authoritative absence checks before destructive cleanup.
 Every controller/scheduler mutation checks a monotonic leadership deadline.
-See [the event-driven design](docs/event-driven-design.md)
-for the subsecond target, failure rules and release baseline. The branch has
-passed five-crate unit/doc tests through `sc-build` at `fc67179` on
-2026-09-29 (four storage integration tests ignored). Runtime and performance
-validation remain pending the owner-selected target.
+See [the event-driven design](docs/event-driven-design.md) for the execution
+model and verified unit/API-rig cases. Live scale, latency, multi-master and
+runtime/storage acceptance remain tracked in #147/#149; these are branch
+changes, not a shipped release.
 
 Deployment (rolling updates), ReplicaSet, StatefulSet, DaemonSet (every
 eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices), Namespace (default
@@ -243,8 +245,11 @@ node-IPAM controller.
 
 Leader-elected on `kube-system/kube-scheduler`. Dependency watch events wake
 placement of Pods with no `spec.nodeName` and unplaced VMIs. Placement remains
-serialized to preserve resource accounting; lease renewal runs independently
-and losing leadership cancels the scheduling worker.
+serialized through one priority-ordered Pod/VMI object queue. Incremental
+accounting includes adopted workloads, successful binds and outstanding
+volume/bind reservations before the next placement. Storage dependencies use
+informer indexes. Lease renewal runs independently and losing leadership
+cancels the scheduling worker.
 
 - **Filters:** node Ready, not unschedulable, taints/tolerations,
   `nodeSelector`, required node affinity (which is how `kubernetes.io/arch`
@@ -258,9 +263,10 @@ and losing leadership cancels the scheduling worker.
 
 It **does not preempt**: `preemption.rs` computes victims but nothing calls it
 (#84). It **ignores `schedulingGates`** and binds gated pods (#87). There is
-no per-Pod priority/backoff queue or `nominatedNodeName`; the current work
-queue coalesces scheduling passes. `plugins.rs`
-defines plugin traits the loop does not use.
+no `nominatedNodeName` or upstream framework/profile parity. Pending keys
+are ordered by priority and creation time; failed API operations back off,
+and dependency events wake infeasible keys. `plugins.rs` defines plugin
+traits the loop does not use.
 
 ## Configuration
 
@@ -401,10 +407,3 @@ apiserver starts: `apiserver.crt`/`.key` (CN `apiserver`; SANs the
 ## License
 
 Apache-2.0
-
-On `turbomode`, PV binding also uses indexed claim/volume workers; claim
-selection is serialized so acknowledged reservations precede the next claim.
-
-The `turbomode` scheduler uses a shared Pod/VMI object queue and incremental
-capacity accounting. Bind acknowledgements and volume-wait reservations are
-charged before the next placement; storage reads use shared informer indexes.

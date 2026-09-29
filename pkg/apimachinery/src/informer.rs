@@ -51,7 +51,10 @@ pub enum Index {
 }
 
 fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
-    let mut result = HashSet::from([Index::Namespace(key.namespace.clone()), Index::Name(key.namespace.clone(), key.name.clone())]);
+    let mut result = HashSet::from([
+        Index::Namespace(key.namespace.clone()),
+        Index::Name(key.namespace.clone(), key.name.clone()),
+    ]);
     if let Some(owners) = object["metadata"]["ownerReferences"].as_array() {
         for owner in owners {
             if let Some(uid) = owner["uid"].as_str() {
@@ -72,43 +75,98 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
             }
             if !volume["ephemeral"].is_null() {
                 if let Some(name) = volume["name"].as_str() {
-                    result.insert(Index::Claim(key.namespace.clone(), format!("{}-{name}", key.name)));
+                    result.insert(Index::Claim(
+                        key.namespace.clone(),
+                        format!("{}-{name}", key.name),
+                    ));
                 }
             }
         }
     }
-    if matches!(object["kind"].as_str(), Some("PersistentVolume" | "PersistentVolumeClaim")) {
-        result.insert(Index::StorageClass(object["spec"]["storageClassName"].as_str().unwrap_or("").into()));
+    if matches!(
+        object["kind"].as_str(),
+        Some("PersistentVolume" | "PersistentVolumeClaim")
+    ) {
+        result.insert(Index::StorageClass(
+            object["spec"]["storageClassName"]
+                .as_str()
+                .unwrap_or("")
+                .into(),
+        ));
     }
-    if let (Some(ns), Some(name)) = (object["spec"]["claimRef"]["namespace"].as_str(), object["spec"]["claimRef"]["name"].as_str()) {
+    if let (Some(ns), Some(name)) = (
+        object["spec"]["claimRef"]["namespace"].as_str(),
+        object["spec"]["claimRef"]["name"].as_str(),
+    ) {
         result.insert(Index::Claim(ns.into(), name.into()));
     }
-    for volume in [object["spec"]["volumeName"].as_str(), object["spec"]["source"]["persistentVolumeName"].as_str()].into_iter().flatten() {
+    for volume in [
+        object["spec"]["volumeName"].as_str(),
+        object["spec"]["source"]["persistentVolumeName"].as_str(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         result.insert(Index::Volume(volume.into()));
     }
-    if let Some(driver) = object["spec"]["csi"]["driver"].as_str() { result.insert(Index::Driver(driver.into())); }
-    if let Some(pod) = object["spec"]["podName"].as_str() { result.insert(Index::Pod(key.namespace.clone(), pod.into())); }
-    if let Some(class) = object["storageClassName"].as_str() { result.insert(Index::StorageClass(class.into())); }
+    if let Some(driver) = object["spec"]["csi"]["driver"].as_str() {
+        result.insert(Index::Driver(driver.into()));
+    }
+    if let Some(pod) = object["spec"]["podName"].as_str() {
+        result.insert(Index::Pod(key.namespace.clone(), pod.into()));
+    }
+    if let Some(class) = object["storageClassName"].as_str() {
+        result.insert(Index::StorageClass(class.into()));
+    }
     if let Some(name) = object["spec"]["scaleTargetRef"]["name"].as_str() {
-        result.insert(Index::Target(key.namespace.clone(),object["spec"]["scaleTargetRef"]["kind"].as_str().unwrap_or("Deployment").into(),name.into()));
+        result.insert(Index::Target(
+            key.namespace.clone(),
+            object["spec"]["scaleTargetRef"]["kind"]
+                .as_str()
+                .unwrap_or("Deployment")
+                .into(),
+            name.into(),
+        ));
     }
     for field in ["sourceNode", "targetNode"] {
-        if let Some(node) = object["spec"][field].as_str() { result.insert(Index::Node(node.into())); }
+        if let Some(node) = object["spec"][field].as_str() {
+            result.insert(Index::Node(node.into()));
+        }
     }
     if let Some(class) = object["spec"]["gatewayClassName"].as_str() {
-        result.insert(Index::Reference("".into(),"GatewayClass".into(),class.into()));
+        result.insert(Index::Reference(
+            "".into(),
+            "GatewayClass".into(),
+            class.into(),
+        ));
     }
-    for parent in object["spec"]["parentRefs"].as_array().into_iter().flatten() {
+    for parent in object["spec"]["parentRefs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         if let Some(name) = parent["name"].as_str() {
-            result.insert(Index::Reference(parent["namespace"].as_str().unwrap_or(&key.namespace).into(),
-                parent["kind"].as_str().unwrap_or("Gateway").into(),name.into()));
+            result.insert(Index::Reference(
+                parent["namespace"]
+                    .as_str()
+                    .unwrap_or(&key.namespace)
+                    .into(),
+                parent["kind"].as_str().unwrap_or("Gateway").into(),
+                name.into(),
+            ));
         }
     }
     for rule in object["spec"]["rules"].as_array().into_iter().flatten() {
         for backend in rule["backendRefs"].as_array().into_iter().flatten() {
             if let Some(name) = backend["name"].as_str() {
-                result.insert(Index::Reference(backend["namespace"].as_str().unwrap_or(&key.namespace).into(),
-                    backend["kind"].as_str().unwrap_or("Service").into(),name.into()));
+                result.insert(Index::Reference(
+                    backend["namespace"]
+                        .as_str()
+                        .unwrap_or(&key.namespace)
+                        .into(),
+                    backend["kind"].as_str().unwrap_or("Service").into(),
+                    name.into(),
+                ));
             }
         }
     }
@@ -135,7 +193,9 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
 /// Normalize the two Pod selector schemas without conflating absent and empty.
 pub fn pod_selector(object: &Value) -> Option<Value> {
     let selector = &object["spec"]["selector"];
-    if !selector.is_object() { return None; }
+    if !selector.is_object() {
+        return None;
+    }
     match object["kind"].as_str() {
         Some("Service") => Some(serde_json::json!({"matchLabels": selector})),
         Some("PodDisruptionBudget") => Some(selector.clone()),
@@ -151,10 +211,17 @@ pub fn selector_anchors(selector: &Value) -> Vec<(String, String)> {
             return vec![(key.clone(), value.as_str().unwrap().into())];
         }
     }
-    for expr in selector["matchExpressions"].as_array().into_iter().flatten() {
+    for expr in selector["matchExpressions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         if expr["operator"] == "In" {
             if let (Some(key), Some(values)) = (expr["key"].as_str(), expr["values"].as_array()) {
-                return values.iter().filter_map(|v| v.as_str().map(|v| (key.into(), v.into()))).collect();
+                return values
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|v| (key.into(), v.into())))
+                    .collect();
             }
         }
     }
@@ -293,7 +360,11 @@ impl Store {
 
     /// A delayed response must not rewind a watch after its revision fell out
     /// of the bounded history. Such a response requires a fresh LIST barrier.
-    pub fn acknowledge_since(&mut self, object: Value, started: std::time::Instant) -> anyhow::Result<Option<Delta>> {
+    pub fn acknowledge_since(
+        &mut self,
+        object: Value,
+        started: std::time::Instant,
+    ) -> anyhow::Result<Option<Delta>> {
         let key = Key::of(&object)?;
         let rv =
             revision(&object).ok_or_else(|| anyhow::anyhow!("write response has no revision"))?;
@@ -440,18 +511,33 @@ mod tests {
         store.reset(&json!({"items":[]})).unwrap();
         let started = std::time::Instant::now();
         let written = object("uid", "write", "owner");
-        store.apply(&json!({"type":"ADDED","object":written})).unwrap();
-        store.apply(&json!({"type":"DELETED","object":object("uid","deleted","owner")})).unwrap();
+        store
+            .apply(&json!({"type":"ADDED","object":written}))
+            .unwrap();
+        store
+            .apply(&json!({"type":"DELETED","object":object("uid","deleted","owner")}))
+            .unwrap();
         for n in 0..4096 {
-            store.apply(&json!({"type":"MODIFIED","object":object("other",&format!("rv-{n}"),"owner")})).unwrap();
+            store
+                .apply(
+                    &json!({"type":"MODIFIED","object":object("other",&format!("rv-{n}"),"owner")}),
+                )
+                .unwrap();
         }
         assert!(store.acknowledge_since(written, started).is_err());
         assert!(!store.is_synced());
         store.resumed();
-        assert!(!store.is_synced(), "reconnect alone cannot repair expired history");
-        store.reset_started_at(&json!({"items":[]}),std::time::Instant::now()).unwrap();
+        assert!(
+            !store.is_synced(),
+            "reconnect alone cannot repair expired history"
+        );
+        store
+            .reset_started_at(&json!({"items":[]}), std::time::Instant::now())
+            .unwrap();
         assert!(store.values().unwrap().is_empty());
-        assert!(store.acknowledge_since(object("new","new-rv","owner"),std::time::Instant::now()).is_ok());
+        assert!(store
+            .acknowledge_since(object("new", "new-rv", "owner"), std::time::Instant::now())
+            .is_ok());
     }
 
     #[test]
@@ -461,17 +547,47 @@ mod tests {
         let pdb = serde_json::json!({"kind":"PodDisruptionBudget", "metadata":{"name":"budget","namespace":"ns","uid":"pdb"},
             "spec":{"selector":{"matchExpressions":[{"key":"env","operator":"NotIn","values":["dev"]}]}}});
         let mut store = Store::default();
-        store.reset(&json!({"items":[service.clone(),pdb]})).unwrap();
-        assert_eq!(store.select(&Index::Selector("ns".into(),"app".into(),"web".into())).unwrap().len(), 1);
-        assert_eq!(store.select(&Index::SelectorFallback("ns".into())).unwrap().len(), 1);
-        assert!(store.select(&Index::Selector("other".into(),"app".into(),"web".into())).unwrap().is_empty());
+        store
+            .reset(&json!({"items":[service.clone(),pdb]}))
+            .unwrap();
+        assert_eq!(
+            store
+                .select(&Index::Selector("ns".into(), "app".into(), "web".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .select(&Index::SelectorFallback("ns".into()))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store
+            .select(&Index::Selector("other".into(), "app".into(), "web".into()))
+            .unwrap()
+            .is_empty());
         let mut changed = service;
         changed["metadata"]["resourceVersion"] = json!("opaque");
         changed["spec"]["selector"]["app"] = json!("api");
         let change = store.apply(&event("MODIFIED", changed)).unwrap().unwrap();
-        assert!(change.affected.contains(&Index::Selector("ns".into(),"app".into(),"web".into())));
-        assert!(store.select(&Index::Selector("ns".into(),"app".into(),"web".into())).unwrap().is_empty());
-        assert_eq!(store.select(&Index::Selector("ns".into(),"app".into(),"api".into())).unwrap().len(), 1);
+        assert!(change.affected.contains(&Index::Selector(
+            "ns".into(),
+            "app".into(),
+            "web".into()
+        )));
+        assert!(store
+            .select(&Index::Selector("ns".into(), "app".into(), "web".into()))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .select(&Index::Selector("ns".into(), "app".into(), "api".into()))
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(selector_anchors(&json!({"matchExpressions":[{"key":"env","operator":"In","values":["prod","stage"]}]})).len(), 2);
         assert!(selector_anchors(&json!({})).is_empty());
     }

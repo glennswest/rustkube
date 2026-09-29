@@ -8,12 +8,12 @@ use crate::filter::{self, FilterResult, NodeUsage};
 use crate::score;
 use crate::virtualmachine;
 use crate::volumebinding;
-use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
-use std::collections::{HashMap, HashSet};
 use apimachinery::informer::{Delta, Index, Key};
 use apimachinery::informers::{Hub, Subscription};
 use apimachinery::workqueue::WorkQueue;
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -195,7 +195,8 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -245,7 +246,8 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -277,7 +279,8 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -302,7 +305,8 @@ impl ApiClient {
         }
         .await;
         if let Ok(value) = &result {
-            self.informers.acknowledge(&format!("{}{}",self.base_url,path),value,started);
+            self.informers
+                .acknowledge(&format!("{}{}", self.base_url, path), value, started);
             if value["kind"] == "Status" && value["code"].as_u64().unwrap_or(0) >= 400 {
                 apimachinery::reactor::failed();
             }
@@ -459,86 +463,191 @@ impl Scheduler {
     async fn scheduling_loop(&self) -> anyhow::Result<()> {
         let ready = WorkQueue::<ScheduleKey>::new();
         let observed = Arc::new(Mutex::new(SchedulingState::default()));
-        let pods = scheduling_feed(&self.api,"/api/v1/pods",false,&ready,&observed);
-        let wake = ready.clone(); let state = observed.clone();
-        let crds = self.api.informers.subscribe(&self.api.client,
-            format!("{}/apis/apiextensions.k8s.io/v1/customresourcedefinitions",self.api.base_url),
-            move |_,_| {
+        let pods = scheduling_feed(&self.api, "/api/v1/pods", false, &ready, &observed);
+        let wake = ready.clone();
+        let state = observed.clone();
+        let crds = self.api.informers.subscribe(
+            &self.api.client,
+            format!(
+                "{}/apis/apiextensions.k8s.io/v1/customresourcedefinitions",
+                self.api.base_url
+            ),
+            move |_, _| {
                 let keys: Vec<_> = state.lock().unwrap().pending.keys().cloned().collect();
-                for key in keys { wake.add(key); }
-                wake.add((false,Key {namespace:"".into(),name:"".into(),uid:"discovery".into()}));
-            });
-        let paths = ["/api/v1/nodes","/api/v1/persistentvolumeclaims","/api/v1/persistentvolumes",
-            "/apis/storage.k8s.io/v1/storageclasses","/apis/storage.k8s.io/v1/csidrivers",
-            "/apis/storage.k8s.io/v1/csistoragecapacities"];
-        let dependencies: Vec<_> = paths.iter().map(|path| {
-            let wake = ready.clone(); let state = observed.clone(); let pod_feed = pods.feed.clone(); let is_claim = *path == "/api/v1/persistentvolumeclaims";
-            self.api.informers.subscribe(&self.api.client,format!("{}{}",self.api.base_url,path),move |changes,reset| {
-                if is_claim && !reset {
-                    for delta in changes {
-                        for claim in delta.old.iter().chain(delta.new.iter()) {
-                            let ns = claim["metadata"]["namespace"].as_str().unwrap_or("");
-                            let name = claim["metadata"]["name"].as_str().unwrap_or("");
-                            for pod in pod_feed.select(&Index::Claim(ns.into(),name.into())).unwrap_or_default() {
-                                if let Ok(key) = Key::of(&pod) { wake.add((false,key)); }
+                for key in keys {
+                    wake.add(key);
+                }
+                wake.add((
+                    false,
+                    Key {
+                        namespace: "".into(),
+                        name: "".into(),
+                        uid: "discovery".into(),
+                    },
+                ));
+            },
+        );
+        let paths = [
+            "/api/v1/nodes",
+            "/api/v1/persistentvolumeclaims",
+            "/api/v1/persistentvolumes",
+            "/apis/storage.k8s.io/v1/storageclasses",
+            "/apis/storage.k8s.io/v1/csidrivers",
+            "/apis/storage.k8s.io/v1/csistoragecapacities",
+        ];
+        let dependencies: Vec<_> = paths
+            .iter()
+            .map(|path| {
+                let wake = ready.clone();
+                let state = observed.clone();
+                let pod_feed = pods.feed.clone();
+                let is_claim = *path == "/api/v1/persistentvolumeclaims";
+                self.api.informers.subscribe(
+                    &self.api.client,
+                    format!("{}{}", self.api.base_url, path),
+                    move |changes, reset| {
+                        if is_claim && !reset {
+                            for delta in changes {
+                                for claim in delta.old.iter().chain(delta.new.iter()) {
+                                    let ns = claim["metadata"]["namespace"].as_str().unwrap_or("");
+                                    let name = claim["metadata"]["name"].as_str().unwrap_or("");
+                                    for pod in pod_feed
+                                        .select(&Index::Claim(ns.into(), name.into()))
+                                        .unwrap_or_default()
+                                    {
+                                        if let Ok(key) = Key::of(&pod) {
+                                            wake.add((false, key));
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            let keys: Vec<_> =
+                                state.lock().unwrap().pending.keys().cloned().collect();
+                            for key in keys {
+                                wake.add(key);
+                            }
+                        }
+                    },
+                )
+            })
+            .collect();
+        let mut vmis: Option<Subscription> = None;
+        let mut failures: HashMap<ScheduleKey, u32> = HashMap::new();
+        loop {
+            let work = ready
+                .next_by(|a, b| {
+                    let state = observed.lock().unwrap();
+                    let a = state.pending.get(a);
+                    let b = state.pending.get(b);
+                    b.map(pod_priority)
+                        .unwrap_or(0)
+                        .cmp(&a.map(pod_priority).unwrap_or(0))
+                        .then_with(|| a.map(creation_ts).cmp(&b.map(creation_ts)))
+                })
+                .await;
+            ready.cancel_deadline(work.key());
+            let key = work.key().clone();
+            let wake = ready.clone();
+            let retry = key.clone();
+            let (result, failed) = apimachinery::reactor::scope_object(
+                move |delay| {
+                    wake.add_at(retry.clone(), tokio::time::Instant::now() + delay);
+                },
+                async {
+                    crds.feed.ensure_synced()?;
+                    if vmis.is_none()
+                        && !crds
+                            .feed
+                            .select(&Index::Name(
+                                "".into(),
+                                "virtualmachineinstances.kubevirt.io".into(),
+                            ))?
+                            .is_empty()
+                    {
+                        vmis = Some(scheduling_feed(
+                            &self.api,
+                            virtualmachine::LIST_PATH,
+                            true,
+                            &ready,
+                            &observed,
+                        ));
+                    }
+                    pods.feed.ensure_synced()?;
+                    for feed in &dependencies {
+                        feed.feed.ensure_synced()?;
+                    }
+                    if let Some(feed) = &vmis {
+                        feed.feed.ensure_synced()?;
+                    }
+                    let source = if key.0 {
+                        vmis.as_ref().map(|f| &f.feed)
+                    } else {
+                        Some(&pods.feed)
+                    };
+                    let Some(object) = source.map(|feed| feed.get(&key.1)).transpose()?.flatten()
+                    else {
+                        return Ok::<(), anyhow::Error>(());
+                    };
+                    observed.lock().unwrap().observe(
+                        key.0,
+                        &Delta {
+                            old: None,
+                            new: Some(object.clone()),
+                            affected: Default::default(),
+                        },
+                    );
+                    if !pending_workload(key.0, &object) {
+                        return Ok(());
+                    }
+                    let mut nodes = dependencies[0].feed.list()?;
+                    let (mut state, assumed) = observed.lock().unwrap().snapshot(&key);
+                    if let Some(node) = assumed {
+                        nodes.retain(|n| n["metadata"]["name"] == node);
+                    }
+                    if key.0 {
+                        self.schedule_virtual_machine(&object, &nodes, &mut state, &observed, &key)
+                            .await;
+                    } else {
+                        let volumes = indexed_volume_state(&object, &dependencies)?;
+                        let ns = object["metadata"]["namespace"]
+                            .as_str()
+                            .unwrap_or("default");
+                        match self
+                            .schedule_pod(ns, &object, &nodes, &state, &volumes, &observed, &key)
+                            .await
+                        {
+                            Ok(Placement::Bound(node)) => {
+                                info!(?key,%node,"workload bound");
+                                crate::metrics_server::record_attempt("scheduled");
+                            }
+                            Ok(Placement::WaitingForVolumes(node)) => {
+                                observed
+                                    .lock()
+                                    .unwrap()
+                                    .reserve(key.clone(), &object, &node, true);
+                                crate::metrics_server::record_attempt("unschedulable");
+                            }
+                            Err(error) => {
+                                debug!(%error,?key,"workload not placed");
                             }
                         }
                     }
-                } else {
-                    let keys: Vec<_> = state.lock().unwrap().pending.keys().cloned().collect();
-                    for key in keys { wake.add(key); }
-                }
-            })
-        }).collect();
-        let mut vmis: Option<Subscription> = None;
-        let mut failures: HashMap<ScheduleKey,u32> = HashMap::new();
-        loop {
-            let work = ready.next_by(|a,b| {
-                let state = observed.lock().unwrap();
-                let a = state.pending.get(a); let b = state.pending.get(b);
-                b.map(pod_priority).unwrap_or(0).cmp(&a.map(pod_priority).unwrap_or(0))
-                    .then_with(|| a.map(creation_ts).cmp(&b.map(creation_ts)))
-            }).await;
-            ready.cancel_deadline(work.key());
-            let key = work.key().clone();
-            let wake = ready.clone(); let retry = key.clone();
-            let (result,failed) = apimachinery::reactor::scope_object(move |delay| {
-                wake.add_at(retry.clone(),tokio::time::Instant::now()+delay);
-            },async {
-                crds.feed.ensure_synced()?;
-                if vmis.is_none() && !crds.feed.select(&Index::Name("".into(),"virtualmachineinstances.kubevirt.io".into()))?.is_empty() {
-                    vmis = Some(scheduling_feed(&self.api,virtualmachine::LIST_PATH,true,&ready,&observed));
-                }
-                pods.feed.ensure_synced()?;
-                for feed in &dependencies { feed.feed.ensure_synced()?; }
-                if let Some(feed) = &vmis { feed.feed.ensure_synced()?; }
-                let source = if key.0 { vmis.as_ref().map(|f| &f.feed) } else { Some(&pods.feed) };
-                let Some(object) = source.map(|feed| feed.get(&key.1)).transpose()?.flatten() else { return Ok::<(),anyhow::Error>(()); };
-                observed.lock().unwrap().observe(key.0,&Delta { old: None, new: Some(object.clone()), affected: Default::default() });
-                if !pending_workload(key.0,&object) { return Ok(()); }
-                let mut nodes = dependencies[0].feed.list()?;
-                let (mut state, assumed) = observed.lock().unwrap().snapshot(&key);
-                if let Some(node) = assumed { nodes.retain(|n| n["metadata"]["name"] == node); }
-                if key.0 {
-                    self.schedule_virtual_machine(&object,&nodes,&mut state,&observed,&key).await;
-                } else {
-                    let volumes = indexed_volume_state(&object,&dependencies)?;
-                    let ns = object["metadata"]["namespace"].as_str().unwrap_or("default");
-                    match self.schedule_pod(ns,&object,&nodes,&state,&volumes,&observed,&key).await {
-                        Ok(Placement::Bound(node)) => { info!(?key,%node,"workload bound"); crate::metrics_server::record_attempt("scheduled"); },
-                        Ok(Placement::WaitingForVolumes(node)) => {
-                            observed.lock().unwrap().reserve(key.clone(),&object,&node,true);
-                            crate::metrics_server::record_attempt("unschedulable");
-                        }
-                        Err(error) => { debug!(%error,?key,"workload not placed"); }
-                    }
-                }
-                Ok(())
-            }).await;
+                    Ok(())
+                },
+            )
+            .await;
             if result.is_err() || failed {
-                let n = failures.entry(key.clone()).or_default(); *n = n.saturating_add(1);
-                ready.add_at(key,tokio::time::Instant::now()+Duration::from_millis((100_u64 << (*n).min(8)).min(30_000)));
-            } else { failures.remove(&key); }
+                let n = failures.entry(key.clone()).or_default();
+                *n = n.saturating_add(1);
+                ready.add_at(
+                    key,
+                    tokio::time::Instant::now()
+                        + Duration::from_millis((100_u64 << (*n).min(8)).min(30_000)),
+                );
+            } else {
+                failures.remove(&key);
+            }
             drop(work);
         }
     }
@@ -552,7 +661,8 @@ impl Scheduler {
         vmi: &Value,
         nodes: &[Value],
         state: &mut ClusterState,
-        observed: &Mutex<SchedulingState>, key: &ScheduleKey,
+        observed: &Mutex<SchedulingState>,
+        key: &ScheduleKey,
     ) {
         let name = vmi["metadata"]["name"].as_str().unwrap_or("");
         let ns = vmi["metadata"]["namespace"].as_str().unwrap_or("default");
@@ -627,7 +737,10 @@ impl Scheduler {
         let body = json!({"metadata": {
             "uid": vmi["metadata"]["uid"], "resourceVersion": vmi["metadata"]["resourceVersion"]
         }, "status": status});
-        observed.lock().unwrap().reserve(key.clone(),vmi,chosen,false);
+        observed
+            .lock()
+            .unwrap()
+            .reserve(key.clone(), vmi, chosen, false);
         match self
             .api
             .patch_merge(&virtualmachine::status_path(ns, name), &body)
@@ -685,7 +798,8 @@ impl Scheduler {
         nodes: &[Value],
         state: &ClusterState,
         volumes: &volumebinding::VolumeState,
-        observed: &Mutex<SchedulingState>, key: &ScheduleKey,
+        observed: &Mutex<SchedulingState>,
+        key: &ScheduleKey,
     ) -> anyhow::Result<Placement> {
         let pod_name = pod["metadata"]["name"]
             .as_str()
@@ -747,7 +861,10 @@ impl Scheduler {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("node missing name"))?;
 
-        observed.lock().unwrap().reserve(key.clone(),pod,chosen_name,false);
+        observed
+            .lock()
+            .unwrap()
+            .reserve(key.clone(), pod, chosen_name, false);
 
         // Phase 3a: volumes before the pod.
         //
@@ -810,133 +927,232 @@ impl Scheduler {
 
         Ok(Placement::Bound(chosen_name.to_string()))
     }
-
-
 }
 
 type ScheduleKey = (bool, Key); // false = Pod, true = VMI; one shared executor
-struct Assumption { node: String, object: Value, waiting_for_volume: bool }
+struct Assumption {
+    node: String,
+    object: Value,
+    waiting_for_volume: bool,
+}
 #[derive(Default)]
 struct SchedulingState {
-    pending: HashMap<ScheduleKey,Value>,
-    placed: HashMap<ScheduleKey,(String,Value)>,
-    usage: HashMap<String,NodeUsage>,
-    assumptions: HashMap<ScheduleKey,Assumption>,
+    pending: HashMap<ScheduleKey, Value>,
+    placed: HashMap<ScheduleKey, (String, Value)>,
+    usage: HashMap<String, NodeUsage>,
+    assumptions: HashMap<ScheduleKey, Assumption>,
 }
 fn pending_workload(vm: bool, object: &Value) -> bool {
-    if !object["metadata"]["deletionTimestamp"].is_null() { return false; }
-    if vm { !virtualmachine::is_terminal(object) && virtualmachine::node_of(object).is_none() }
-    else { !matches!(object["status"]["phase"].as_str(),Some("Succeeded" | "Failed"))
-        && object["spec"]["nodeName"].as_str().is_none_or(|n| n.is_empty()) }
-}
-fn placed_workload(vm: bool, object: &Value) -> Option<(String,Value)> {
+    if !object["metadata"]["deletionTimestamp"].is_null() {
+        return false;
+    }
     if vm {
-        if virtualmachine::is_terminal(object) { return None; }
-        virtualmachine::node_of(object).map(|n|(n.into(),virtualmachine::scheduling_shim(object)))
+        !virtualmachine::is_terminal(object) && virtualmachine::node_of(object).is_none()
     } else {
-        if matches!(object["status"]["phase"].as_str(),Some("Succeeded" | "Failed")) { return None; }
-        object["spec"]["nodeName"].as_str().filter(|n| !n.is_empty()).map(|n|(n.into(),object.clone()))
+        !matches!(
+            object["status"]["phase"].as_str(),
+            Some("Succeeded" | "Failed")
+        ) && object["spec"]["nodeName"]
+            .as_str()
+            .is_none_or(|n| n.is_empty())
+    }
+}
+fn placed_workload(vm: bool, object: &Value) -> Option<(String, Value)> {
+    if vm {
+        if virtualmachine::is_terminal(object) {
+            return None;
+        }
+        virtualmachine::node_of(object).map(|n| (n.into(), virtualmachine::scheduling_shim(object)))
+    } else {
+        if matches!(
+            object["status"]["phase"].as_str(),
+            Some("Succeeded" | "Failed")
+        ) {
+            return None;
+        }
+        object["spec"]["nodeName"]
+            .as_str()
+            .filter(|n| !n.is_empty())
+            .map(|n| (n.into(), object.clone()))
     }
 }
 impl SchedulingState {
     fn remove(&mut self, key: &ScheduleKey) {
         self.pending.remove(key);
         self.assumptions.remove(key);
-        if let Some((node,pod)) = self.placed.remove(key) {
-            let (cpu,mem) = filter::pod_requests(&pod);
+        if let Some((node, pod)) = self.placed.remove(key) {
+            let (cpu, mem) = filter::pod_requests(&pod);
             let used = self.usage.entry(node).or_default();
-            used.cpu_milli -= cpu; used.mem_bytes -= mem;
+            used.cpu_milli -= cpu;
+            used.mem_bytes -= mem;
         }
     }
     fn observe(&mut self, vm: bool, delta: &Delta) {
         if let Some(old) = &delta.old {
             if let Ok(key) = Key::of(old) {
-                if delta.new.as_ref().and_then(|o| Key::of(o).ok()).as_ref() != Some(&key) { self.remove(&(vm,key)); }
+                if delta.new.as_ref().and_then(|o| Key::of(o).ok()).as_ref() != Some(&key) {
+                    self.remove(&(vm, key));
+                }
             }
         }
         if let Some(object) = &delta.new {
-            let Ok(key) = Key::of(object) else { return; };
-            let key = (vm,key);
-            if let Some((node,old)) = self.placed.remove(&key) {
-                let (cpu,mem) = filter::pod_requests(&old);
-                let used = self.usage.entry(node).or_default(); used.cpu_milli -= cpu; used.mem_bytes -= mem;
+            let Ok(key) = Key::of(object) else {
+                return;
+            };
+            let key = (vm, key);
+            if let Some((node, old)) = self.placed.remove(&key) {
+                let (cpu, mem) = filter::pod_requests(&old);
+                let used = self.usage.entry(node).or_default();
+                used.cpu_milli -= cpu;
+                used.mem_bytes -= mem;
             }
             self.pending.remove(&key);
-            if pending_workload(vm,object) {
-                self.pending.insert(key.clone(),object.clone());
-                if self.assumptions.get(&key).is_some_and(|a| !a.waiting_for_volume
-                    && a.object["metadata"]["resourceVersion"] != object["metadata"]["resourceVersion"]) {
+            if pending_workload(vm, object) {
+                self.pending.insert(key.clone(), object.clone());
+                if self.assumptions.get(&key).is_some_and(|a| {
+                    !a.waiting_for_volume
+                        && a.object["metadata"]["resourceVersion"]
+                            != object["metadata"]["resourceVersion"]
+                }) {
                     // A later durable object version fences any delayed CAS bind
                     // issued with the assumed version, so its reservation can go.
                     self.assumptions.remove(&key);
                 }
-            } else { self.assumptions.remove(&key); }
-            if let Some((node,pod)) = placed_workload(vm,object) {
-                let (cpu,mem) = filter::pod_requests(&pod);
-                let used = self.usage.entry(node.clone()).or_default(); used.cpu_milli += cpu; used.mem_bytes += mem;
-                self.placed.insert(key,(node,pod));
+            } else {
+                self.assumptions.remove(&key);
+            }
+            if let Some((node, pod)) = placed_workload(vm, object) {
+                let (cpu, mem) = filter::pod_requests(&pod);
+                let used = self.usage.entry(node.clone()).or_default();
+                used.cpu_milli += cpu;
+                used.mem_bytes += mem;
+                self.placed.insert(key, (node, pod));
             }
         }
     }
     fn reserve(&mut self, key: ScheduleKey, object: &Value, node: &str, waiting: bool) {
-        self.assumptions.insert(key,Assumption {node:node.into(),object:object.clone(),waiting_for_volume:waiting});
+        self.assumptions.insert(
+            key,
+            Assumption {
+                node: node.into(),
+                object: object.clone(),
+                waiting_for_volume: waiting,
+            },
+        );
     }
-    fn snapshot(&self, current: &ScheduleKey) -> (ClusterState,Option<String>) {
-        let mut state = ClusterState { usage: self.usage.clone(), placed: self.placed.values().cloned().collect() };
-        for (key,reserved) in &self.assumptions {
-            if key == current || self.placed.contains_key(key) { continue; }
-            let mut pod = if key.0 { virtualmachine::scheduling_shim(&reserved.object) } else { reserved.object.clone() };
-            pod["spec"]["nodeName"] = json!(reserved.node);
-            let (cpu,mem) = filter::pod_requests(&pod);
-            let used = state.usage.entry(reserved.node.clone()).or_default(); used.cpu_milli += cpu; used.mem_bytes += mem;
-            state.placed.push((reserved.node.clone(),pod));
-        }
-        (state,self.assumptions.get(current).map(|a|a.node.clone()))
-    }
-}
-fn scheduling_feed(api: &ApiClient, path: &str, vm: bool, ready: &Arc<WorkQueue<ScheduleKey>>, state: &Arc<Mutex<SchedulingState>>) -> Subscription {
-    let wake = ready.clone(); let state = state.clone();
-    api.informers.subscribe(&api.client,format!("{}{}",api.base_url,path),move |changes,reset| {
-        let keys = {
-            let mut state = state.lock().unwrap();
-            let mut keys = HashSet::new();
-            let mut placement_changed = reset;
-            for delta in changes {
-                let before = delta.old.as_ref().and_then(|o| placed_workload(vm,o));
-                let after = delta.new.as_ref().and_then(|o| placed_workload(vm,o));
-                placement_changed |= before != after;
-                state.observe(vm,delta);
-                for object in delta.old.iter().chain(delta.new.iter()) {
-                    if let Ok(key) = Key::of(object) { keys.insert((vm,key)); }
-                }
-            }
-            if placement_changed { keys.extend(state.pending.keys().cloned()); }
-            crate::metrics_server::set_pending_pods(state.pending.keys().filter(|k| !k.0).count());
-            crate::metrics_server::set_pending_virtual_machines(state.pending.keys().filter(|k| k.0).count());
-            keys
+    fn snapshot(&self, current: &ScheduleKey) -> (ClusterState, Option<String>) {
+        let mut state = ClusterState {
+            usage: self.usage.clone(),
+            placed: self.placed.values().cloned().collect(),
         };
-        for key in keys { wake.add(key); }
-    })
+        for (key, reserved) in &self.assumptions {
+            if key == current || self.placed.contains_key(key) {
+                continue;
+            }
+            let mut pod = if key.0 {
+                virtualmachine::scheduling_shim(&reserved.object)
+            } else {
+                reserved.object.clone()
+            };
+            pod["spec"]["nodeName"] = json!(reserved.node);
+            let (cpu, mem) = filter::pod_requests(&pod);
+            let used = state.usage.entry(reserved.node.clone()).or_default();
+            used.cpu_milli += cpu;
+            used.mem_bytes += mem;
+            state.placed.push((reserved.node.clone(), pod));
+        }
+        (state, self.assumptions.get(current).map(|a| a.node.clone()))
+    }
 }
-fn indexed_volume_state(pod: &Value, feeds: &[Subscription]) -> anyhow::Result<volumebinding::VolumeState> {
+fn scheduling_feed(
+    api: &ApiClient,
+    path: &str,
+    vm: bool,
+    ready: &Arc<WorkQueue<ScheduleKey>>,
+    state: &Arc<Mutex<SchedulingState>>,
+) -> Subscription {
+    let wake = ready.clone();
+    let state = state.clone();
+    api.informers.subscribe(
+        &api.client,
+        format!("{}{}", api.base_url, path),
+        move |changes, reset| {
+            let keys = {
+                let mut state = state.lock().unwrap();
+                let mut keys = HashSet::new();
+                let mut placement_changed = reset;
+                for delta in changes {
+                    let before = delta.old.as_ref().and_then(|o| placed_workload(vm, o));
+                    let after = delta.new.as_ref().and_then(|o| placed_workload(vm, o));
+                    placement_changed |= before != after;
+                    state.observe(vm, delta);
+                    for object in delta.old.iter().chain(delta.new.iter()) {
+                        if let Ok(key) = Key::of(object) {
+                            keys.insert((vm, key));
+                        }
+                    }
+                }
+                if placement_changed {
+                    keys.extend(state.pending.keys().cloned());
+                }
+                crate::metrics_server::set_pending_pods(
+                    state.pending.keys().filter(|k| !k.0).count(),
+                );
+                crate::metrics_server::set_pending_virtual_machines(
+                    state.pending.keys().filter(|k| k.0).count(),
+                );
+                keys
+            };
+            for key in keys {
+                wake.add(key);
+            }
+        },
+    )
+}
+fn indexed_volume_state(
+    pod: &Value,
+    feeds: &[Subscription],
+) -> anyhow::Result<volumebinding::VolumeState> {
     let mut state = volumebinding::VolumeState::default();
     let ns = pod["metadata"]["namespace"].as_str().unwrap_or("default");
     for name in volumebinding::pod_claims(pod) {
-        for pvc in feeds[1].feed.select(&Index::Name(ns.into(),name.clone()))? {
+        for pvc in feeds[1]
+            .feed
+            .select(&Index::Name(ns.into(), name.clone()))?
+        {
             if let Some(volume) = pvc["spec"]["volumeName"].as_str() {
-                for pv in feeds[2].feed.select(&Index::Name("".into(),volume.into()))? { state.volumes.insert(volume.into(),pv); }
+                for pv in feeds[2]
+                    .feed
+                    .select(&Index::Name("".into(), volume.into()))?
+                {
+                    state.volumes.insert(volume.into(), pv);
+                }
             }
             let class = pvc["spec"]["storageClassName"].as_str().unwrap_or("");
             for pv in feeds[2].feed.select(&Index::StorageClass(class.into()))? {
-                if let Some(name) = pv["metadata"]["name"].as_str() { state.volumes.insert(name.into(),pv.clone()); }
+                if let Some(name) = pv["metadata"]["name"].as_str() {
+                    state.volumes.insert(name.into(), pv.clone());
+                }
             }
-            for sc in feeds[3].feed.select(&Index::Name("".into(),class.into()))? {
+            for sc in feeds[3]
+                .feed
+                .select(&Index::Name("".into(), class.into()))?
+            {
                 let driver = sc["provisioner"].as_str().unwrap_or("");
-                if feeds[4].feed.select(&Index::Name("".into(),driver.into()))?.iter().any(|d| d["spec"]["storageCapacity"] == true) { state.capacity_tracking.push(driver.into()); }
-                state.classes.insert(class.into(),sc);
+                if feeds[4]
+                    .feed
+                    .select(&Index::Name("".into(), driver.into()))?
+                    .iter()
+                    .any(|d| d["spec"]["storageCapacity"] == true)
+                {
+                    state.capacity_tracking.push(driver.into());
+                }
+                state.classes.insert(class.into(), sc);
             }
-            state.capacities.extend(feeds[5].feed.select(&Index::StorageClass(class.into()))?);
-            state.claims.insert((ns.into(),name.clone()),pvc);
+            state
+                .capacities
+                .extend(feeds[5].feed.select(&Index::StorageClass(class.into()))?);
+            state.claims.insert((ns.into(), name.clone()), pvc);
         }
     }
     Ok(state)
@@ -1054,42 +1270,67 @@ mod reservation_tests {
         json!({"metadata":{"namespace":"ns","name":uid,"uid":uid,"resourceVersion":rv},
             "spec":{"containers":[{"resources":{"requests":{"cpu":"600m","memory":"1Gi"}}}]}})
     }
-    fn changed(object: Value) -> Delta { Delta { old:None,new:Some(object),affected:Default::default() } }
+    fn changed(object: Value) -> Delta {
+        Delta {
+            old: None,
+            new: Some(object),
+            affected: Default::default(),
+        }
+    }
     #[test]
     fn assumed_bind_is_charged_once_across_acknowledgement_and_watch_lag() {
         let mut state = SchedulingState::default();
-        let p = pod("a","opaque-a"); let a = (false,Key::of(&p).unwrap());
-        let other = (false,Key::of(&pod("b","v")).unwrap());
-        state.observe(false,&changed(p.clone())); state.reserve(a.clone(),&p,"node",false);
-        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli,600);
+        let p = pod("a", "opaque-a");
+        let a = (false, Key::of(&p).unwrap());
+        let other = (false, Key::of(&pod("b", "v")).unwrap());
+        state.observe(false, &changed(p.clone()));
+        state.reserve(a.clone(), &p, "node", false);
+        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli, 600);
         assert!(!state.snapshot(&a).0.usage.contains_key("node"));
         // A failed response followed by the unchanged cache retains the charge.
-        state.observe(false,&changed(p.clone()));
-        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli,600);
-        let mut bound = p.clone(); bound["spec"]["nodeName"] = json!("node");
+        state.observe(false, &changed(p.clone()));
+        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli, 600);
+        let mut bound = p.clone();
+        bound["spec"]["nodeName"] = json!("node");
         bound["metadata"]["resourceVersion"] = json!("opaque-b");
-        state.observe(false,&changed(bound.clone()));
-        state.observe(false,&changed(bound)); // duplicate observation never double counts
-        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli,600);
+        state.observe(false, &changed(bound.clone()));
+        state.observe(false, &changed(bound)); // duplicate observation never double counts
+        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli, 600);
         assert!(state.assumptions.is_empty());
-        state.observe(false,&Delta {old:Some(p),new:None,affected:Default::default()});
-        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli,0);
+        state.observe(
+            false,
+            &Delta {
+                old: Some(p),
+                new: None,
+                affected: Default::default(),
+            },
+        );
+        assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli, 0);
     }
     #[test]
     fn volume_wait_and_adopted_vmi_share_capacity_with_pods() {
         let mut state = SchedulingState::default();
-        let p = pod("a","v1"); let key = (false,Key::of(&p).unwrap());
-        state.reserve(key.clone(),&p,"node",true);
-        let mut updated = p; updated["metadata"]["resourceVersion"] = json!("v2");
-        state.observe(false,&changed(updated));
+        let p = pod("a", "v1");
+        let key = (false, Key::of(&p).unwrap());
+        state.reserve(key.clone(), &p, "node", true);
+        let mut updated = p;
+        updated["metadata"]["resourceVersion"] = json!("v2");
+        state.observe(false, &changed(updated));
         assert!(state.assumptions.contains_key(&key));
         let vmi = json!({"metadata":{"name":"vm","namespace":"ns","uid":"vm","resourceVersion":"v"},
             "spec":{"domain":{"cpu":{"cores":1},"memory":{"guest":"2Gi"}}},"status":{"nodeName":"node","phase":"Running"}});
-        state.observe(true,&changed(vmi));
-        let other = (false,Key::of(&pod("b","v")).unwrap());
-        assert_eq!(state.snapshot(&other).0.usage["node"].mem_bytes,3*1024*1024*1024);
-        let mut terminal = pod("a","v3"); terminal["status"]["phase"] = json!("Failed");
-        state.observe(false,&changed(terminal));
-        assert_eq!(state.snapshot(&other).0.usage["node"].mem_bytes,2*1024*1024*1024);
+        state.observe(true, &changed(vmi));
+        let other = (false, Key::of(&pod("b", "v")).unwrap());
+        assert_eq!(
+            state.snapshot(&other).0.usage["node"].mem_bytes,
+            3 * 1024 * 1024 * 1024
+        );
+        let mut terminal = pod("a", "v3");
+        terminal["status"]["phase"] = json!("Failed");
+        state.observe(false, &changed(terminal));
+        assert_eq!(
+            state.snapshot(&other).0.usage["node"].mem_bytes,
+            2 * 1024 * 1024 * 1024
+        );
     }
 }

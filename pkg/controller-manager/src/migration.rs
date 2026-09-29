@@ -16,12 +16,12 @@
 //! - Snapshot: Firecracker VMs (~200ms downtime)
 //! - Evacuate: CRI pods (kill + reschedule, seconds of downtime)
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::Index;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-use crate::owned::{self, Controller, Dependency, Deps};
-use apimachinery::informer::Index;
 
 pub struct MigrationController {
     api: Arc<ApiClient>,
@@ -53,7 +53,10 @@ impl MigrationController {
         // Check timeout
         if let Some(start_time) = migration["status"]["startTime"].as_str() {
             if let Ok(started) = chrono::DateTime::parse_from_rfc3339(start_time) {
-                apimachinery::reactor::requeue_deadline(started.with_timezone(&chrono::Utc), timeout_secs);
+                apimachinery::reactor::requeue_deadline(
+                    started.with_timezone(&chrono::Utc),
+                    timeout_secs,
+                );
                 let elapsed = chrono::Utc::now()
                     .signed_duration_since(started)
                     .num_seconds();
@@ -390,9 +393,12 @@ impl MigrationController {
                 let mut pod: Value = pod_resp.json().await?;
 
                 // Delete source pod first
-                self.api.delete_observed(
-                    &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"), &pod,
-                ).await?;
+                self.api
+                    .delete_observed(
+                        &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
+                        &pod,
+                    )
+                    .await?;
 
                 // Create new pod on target node
                 pod["spec"]["nodeName"] = json!(target_node);
@@ -632,22 +638,70 @@ impl MigrationController {
 
 #[async_trait::async_trait]
 impl Controller for MigrationController {
-    fn name(&self) -> &'static str { "migration" }
-    fn primary(&self) -> &'static str { "/apis/rustkube.io/v1alpha1/podmigrations" }
-    fn dependencies(&self) -> Vec<Dependency> { vec![
-        Dependency { path: "/api/v1/pods".into(), route: Arc::new(|delta, primary| {
-            delta.old.iter().chain(delta.new.iter()).flat_map(|p| owned::keys_at(primary,Index::Pod(
-                p["metadata"]["namespace"].as_str().unwrap_or("").into(),p["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
-        }) },
-        Dependency { path: "/api/v1/nodes".into(), route: Arc::new(|delta,primary| {
-            delta.old.iter().chain(delta.new.iter()).flat_map(|n| owned::keys_at(primary,Index::Node(n["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
-        }) },
-    ] }
+    fn name(&self) -> &'static str {
+        "migration"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/rustkube.io/v1alpha1/podmigrations"
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![
+            Dependency {
+                path: "/api/v1/pods".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .old
+                        .iter()
+                        .chain(delta.new.iter())
+                        .flat_map(|p| {
+                            owned::keys_at(
+                                primary,
+                                Index::Pod(
+                                    p["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                                    p["metadata"]["name"].as_str().unwrap_or("").into(),
+                                ),
+                            )
+                        })
+                        .collect()
+                }),
+            },
+            Dependency {
+                path: "/api/v1/nodes".into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .old
+                        .iter()
+                        .chain(delta.new.iter())
+                        .flat_map(|n| {
+                            owned::keys_at(
+                                primary,
+                                Index::Node(n["metadata"]["name"].as_str().unwrap_or("").into()),
+                            )
+                        })
+                        .collect()
+                }),
+            },
+        ]
+    }
     async fn reconcile(&self, migration: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
-        if matches!(migration["status"]["phase"].as_str(),Some("Completed" | "Failed")) { return Ok(()); }
-        let ns = migration["metadata"]["namespace"].as_str().unwrap_or("default");
-        if let Err(e) = self.reconcile_migration(ns,migration).await {
-            self.update_migration_status(ns,migration["metadata"]["name"].as_str().unwrap_or(""),"Failed",&e.to_string(),None).await?;
+        if matches!(
+            migration["status"]["phase"].as_str(),
+            Some("Completed" | "Failed")
+        ) {
+            return Ok(());
+        }
+        let ns = migration["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        if let Err(e) = self.reconcile_migration(ns, migration).await {
+            self.update_migration_status(
+                ns,
+                migration["metadata"]["name"].as_str().unwrap_or(""),
+                "Failed",
+                &e.to_string(),
+                None,
+            )
+            .await?;
         }
         Ok(())
     }

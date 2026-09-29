@@ -37,11 +37,11 @@
 //! nothing in the API pointing at it, which is the failure this whole object
 //! exists to prevent.
 
+use crate::owned::{self, Controller, Deps};
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-use crate::owned::{self, Controller, Deps};
 
 pub struct VirtualMachineController {
     api: Arc<ApiClient>,
@@ -61,63 +61,67 @@ impl VirtualMachineController {
     }
 
     async fn reconcile_vm(&self, vm: &Value, vmis: &[Value]) -> anyhow::Result<()> {
-        if !vm["metadata"]["deletionTimestamp"].is_null() { return Ok(()); }
+        if !vm["metadata"]["deletionTimestamp"].is_null() {
+            return Ok(());
+        }
         let namespace = vm["metadata"]["namespace"].as_str().unwrap_or("default");
-            let name = vm["metadata"]["name"].as_str().unwrap_or("");
-            let uid = vm["metadata"]["uid"].as_str().unwrap_or("");
-            if name.is_empty() {
-                return Ok(());
-            }
-            // The VMI this VM owns: named after it *and* owned by it. Name
-            // alone would adopt a hand-applied VMI that happens to share the
-            // name, and then delete it when the VM stops.
-            let owned = vmis.iter().find(|i| {
-                i["metadata"]["name"].as_str() == Some(name) && owned_by(i, uid)
-            });
+        let name = vm["metadata"]["name"].as_str().unwrap_or("");
+        let uid = vm["metadata"]["uid"].as_str().unwrap_or("");
+        if name.is_empty() {
+            return Ok(());
+        }
+        // The VMI this VM owns: named after it *and* owned by it. Name
+        // alone would adopt a hand-applied VMI that happens to share the
+        // name, and then delete it when the VM stops.
+        let owned = vmis
+            .iter()
+            .find(|i| i["metadata"]["name"].as_str() == Some(name) && owned_by(i, uid));
 
-            let want = apimachinery::kubevirt::wants_running(vm);
-            let now = chrono::Utc::now();
-            let mut start_failure = vm["status"]["startFailure"].clone();
-            let mut restarting = false;
-            match (want, owned) {
-                (true, None) => self.create_vmi(namespace, vm).await,
-                (false, Some(vmi)) => self.delete_vmi(namespace, name, vm, vmi).await,
-                (true, Some(vmi)) => match finished_phase(vmi) {
-                    Some(phase) if restarts_after(vm, phase) => {
-                        restarting = true;
-                        let due = if phase == "Failed" {
-                            start_failure = record_failure(&start_failure, vmi, now);
-                            retry_due(&start_failure, now)
-                        } else {
-                            // A clean shutdown under `Always` is not a crash:
-                            // no backoff, the same as upstream.
-                            true
-                        };
-                        // Delete now, create on the next tick once it is gone:
-                        // the replacement has the same name, so it cannot be
-                        // created while the finished one is still there.
-                        if !due {
-                            if let Some(at) = start_failure["retryAfterTimestamp"].as_str()
-                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
-                                apimachinery::reactor::requeue_at_time(at.with_timezone(&chrono::Utc));
-                            }
-                        }
-                        if due {
-                            self.delete_vmi(namespace, name, vm, vmi).await;
+        let want = apimachinery::kubevirt::wants_running(vm);
+        let now = chrono::Utc::now();
+        let mut start_failure = vm["status"]["startFailure"].clone();
+        let mut restarting = false;
+        match (want, owned) {
+            (true, None) => self.create_vmi(namespace, vm).await,
+            (false, Some(vmi)) => self.delete_vmi(namespace, name, vm, vmi).await,
+            (true, Some(vmi)) => match finished_phase(vmi) {
+                Some(phase) if restarts_after(vm, phase) => {
+                    restarting = true;
+                    let due = if phase == "Failed" {
+                        start_failure = record_failure(&start_failure, vmi, now);
+                        retry_due(&start_failure, now)
+                    } else {
+                        // A clean shutdown under `Always` is not a crash:
+                        // no backoff, the same as upstream.
+                        true
+                    };
+                    // Delete now, create on the next tick once it is gone:
+                    // the replacement has the same name, so it cannot be
+                    // created while the finished one is still there.
+                    if !due {
+                        if let Some(at) = start_failure["retryAfterTimestamp"]
+                            .as_str()
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        {
+                            apimachinery::reactor::requeue_at_time(at.with_timezone(&chrono::Utc));
                         }
                     }
-                    Some(_) => {}
-                    // Up again: the crash loop, if there was one, is over.
-                    None if is_ready(vmi) => start_failure = Value::Null,
-                    None => {}
-                },
-                // Stopped: a later start begins without a backoff to serve.
-                (false, None) => start_failure = Value::Null,
-            }
-            let status = desired_status(vm, want, owned, restarting, &start_failure, now);
-            if let Err(e) = self.write_status(namespace, name, vm, status).await {
-                warn!("VirtualMachine {namespace}/{name} status: {e}");
-            }
+                    if due {
+                        self.delete_vmi(namespace, name, vm, vmi).await;
+                    }
+                }
+                Some(_) => {}
+                // Up again: the crash loop, if there was one, is over.
+                None if is_ready(vmi) => start_failure = Value::Null,
+                None => {}
+            },
+            // Stopped: a later start begins without a backoff to serve.
+            (false, None) => start_failure = Value::Null,
+        }
+        let status = desired_status(vm, want, owned, restarting, &start_failure, now);
+        if let Err(e) = self.write_status(namespace, name, vm, status).await {
+            warn!("VirtualMachine {namespace}/{name} status: {e}");
+        }
         Ok(())
     }
 
@@ -369,9 +373,7 @@ fn printable_status(want: bool, vmi: Option<&Value>, restarting: bool) -> &'stat
         (_, Some(i)) if !i["metadata"]["deletionTimestamp"].is_null() => "Terminating",
         (true, Some(i)) if is_ready(i) => "Running",
         // Upstream's word for a failed guest waiting out its backoff.
-        (true, Some(i)) if finished_phase(i) == Some("Failed") && restarting => {
-            "CrashLoopBackOff"
-        }
+        (true, Some(i)) if finished_phase(i) == Some("Failed") && restarting => "CrashLoopBackOff",
         // Failed and staying that way (`Once`, `Manual`). Upstream would say
         // `Stopped`, which hides the one thing a reader needs to know.
         (true, Some(i)) if finished_phase(i) == Some("Failed") => "Failed",
@@ -406,9 +408,15 @@ mod tests {
         assert!(restarts_after(&s("RerunOnFailure"), "Failed"));
         assert!(!restarts_after(&s("RerunOnFailure"), "Succeeded"));
         assert!(!restarts_after(&s("Once"), "Failed"));
-        assert!(!restarts_after(&json!({"spec": {"runStrategy": "Manual", "running": true}}), "Failed"));
+        assert!(!restarts_after(
+            &json!({"spec": {"runStrategy": "Manual", "running": true}}),
+            "Failed"
+        ));
         // Plain `running: true` is upstream's Always.
-        assert!(restarts_after(&json!({"spec": {"running": true}}), "Succeeded"));
+        assert!(restarts_after(
+            &json!({"spec": {"running": true}}),
+            "Succeeded"
+        ));
     }
 
     #[test]
@@ -443,7 +451,10 @@ mod tests {
         let st = desired_status(&vm, true, Some(&failed), false, &Value::Null, now);
         assert_eq!(st["printableStatus"], "Failed");
         assert_eq!(st["ready"], false);
-        assert_eq!(st["other"], 1, "fields the controller does not own are kept");
+        assert_eq!(
+            st["other"], 1,
+            "fields the controller does not own are kept"
+        );
         let failure = st["conditions"]
             .as_array()
             .unwrap()
@@ -454,8 +465,14 @@ mod tests {
         assert!(st.get("startFailure").is_none());
         // Written once, the next tick computes the same thing: no write loop.
         let vm2 = json!({"spec": vm["spec"], "status": st});
-        let later = desired_status(&vm2, true, Some(&failed), false, &Value::Null,
-            at("2026-09-28T10:05:00Z"));
+        let later = desired_status(
+            &vm2,
+            true,
+            Some(&failed),
+            false,
+            &Value::Null,
+            at("2026-09-28T10:05:00Z"),
+        );
         assert_eq!(later, vm2["status"]);
     }
 
@@ -465,7 +482,14 @@ mod tests {
         // Status last written while it was starting; the VMI is Running now.
         let vm = json!({"spec": {"running": true},
             "status": {"created": true, "ready": false, "printableStatus": "Starting"}});
-        let st = desired_status(&vm, true, Some(&vmi("a", "Running")), false, &Value::Null, now);
+        let st = desired_status(
+            &vm,
+            true,
+            Some(&vmi("a", "Running")),
+            false,
+            &Value::Null,
+            now,
+        );
         assert_eq!(st["ready"], true);
         assert_eq!(st["printableStatus"], "Running");
     }
@@ -478,7 +502,10 @@ mod tests {
         assert!(!owned_by(&mine, "vm-2"));
         assert!(!owned_by(&json!({"metadata": {}}), "vm-1"));
         // An empty uid matches nothing, rather than everything.
-        assert!(!owned_by(&json!({"metadata": {"ownerReferences": [{"uid": ""}]}}), ""));
+        assert!(!owned_by(
+            &json!({"metadata": {"ownerReferences": [{"uid": ""}]}}),
+            ""
+        ));
     }
 
     #[test]
@@ -496,7 +523,10 @@ mod tests {
         // Terminating beats everything: it is what is actually happening.
         assert_eq!(printable_status(true, Some(&going), true), "Terminating");
         // A failed guest never reads Starting (#104).
-        assert_eq!(printable_status(true, Some(&failed), true), "CrashLoopBackOff");
+        assert_eq!(
+            printable_status(true, Some(&failed), true),
+            "CrashLoopBackOff"
+        );
         assert_eq!(printable_status(true, Some(&failed), false), "Failed");
         assert_eq!(printable_status(true, Some(&done), false), "Stopped");
         assert_eq!(printable_status(true, Some(&done), true), "Starting");
@@ -505,9 +535,15 @@ mod tests {
 
 #[async_trait::async_trait]
 impl Controller for VirtualMachineController {
-    fn name(&self) -> &'static str { "virtualmachine" }
-    fn primary(&self) -> &'static str { "/apis/kubevirt.io/v1/virtualmachines" }
-    fn children(&self) -> Option<&'static str> { Some("/apis/kubevirt.io/v1/virtualmachineinstances") }
+    fn name(&self) -> &'static str {
+        "virtualmachine"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/kubevirt.io/v1/virtualmachines"
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/apis/kubevirt.io/v1/virtualmachineinstances")
+    }
     async fn reconcile(&self, vm: &Value, children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
         self.reconcile_vm(vm, children).await
     }

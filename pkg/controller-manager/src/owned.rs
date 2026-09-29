@@ -51,8 +51,12 @@ pub trait Controller: Send + Sync {
     async fn deleted(&self, _key: &Key, _children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn reconcile(&self, object: &Value, children: &[Value], deps: &Deps)
-        -> anyhow::Result<()>;
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        deps: &Deps,
+    ) -> anyhow::Result<()>;
 }
 
 /// Every primary key: for a dependency relist, whose lost events are unknown.
@@ -75,37 +79,55 @@ pub fn same_namespace(delta: &Delta, primary: &Feed) -> Vec<Key> {
     keys
 }
 
-
 /// Reuse condition timestamps when the condition's semantic data is stable.
 /// Also handles nested Gateway listeners/parents, whose status echoes must not
 /// continuously schedule more status writes.
 pub fn preserve_transition_times(current: &Value, desired: &mut Value) {
     match (current, desired) {
         (Value::Object(old), Value::Object(new)) => {
-            let mut a = old.clone(); let mut b = new.clone();
-            a.remove("lastTransitionTime"); b.remove("lastTransitionTime");
+            let mut a = old.clone();
+            let mut b = new.clone();
+            a.remove("lastTransitionTime");
+            b.remove("lastTransitionTime");
             if a == b {
-                if let Some(t) = old.get("lastTransitionTime") { new.insert("lastTransitionTime".into(),t.clone()); }
+                if let Some(t) = old.get("lastTransitionTime") {
+                    new.insert("lastTransitionTime".into(), t.clone());
+                }
             }
-            for (k,v) in new.iter_mut() { if let Some(old) = old.get(k) { preserve_transition_times(old,v); } }
+            for (k, v) in new.iter_mut() {
+                if let Some(old) = old.get(k) {
+                    preserve_transition_times(old, v);
+                }
+            }
         }
         (Value::Array(old), Value::Array(new)) => {
-            for (old,new) in old.iter().zip(new.iter_mut()) { preserve_transition_times(old,new); }
+            for (old, new) in old.iter().zip(new.iter_mut()) {
+                preserve_transition_times(old, new);
+            }
         }
         _ => {}
     }
 }
 
 pub fn keys_at(primary: &Feed, index: Index) -> Vec<Key> {
-    primary.select(&index).unwrap_or_default().iter().filter_map(|o| Key::of(o).ok()).collect()
+    primary
+        .select(&index)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|o| Key::of(o).ok())
+        .collect()
 }
 
 /// Pod volume use wakes the named PVC, including its old claims after edits/deletion.
 pub fn claim_users(delta: &Delta, primary: &Feed) -> Vec<Key> {
-    delta.affected.iter().flat_map(|i| match i {
-        Index::Claim(ns, name) => keys_at(primary, Index::Name(ns.clone(), name.clone())),
-        _ => Vec::new(),
-    }).collect()
+    delta
+        .affected
+        .iter()
+        .flat_map(|i| match i {
+            Index::Claim(ns, name) => keys_at(primary, Index::Name(ns.clone(), name.clone())),
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 pub fn volume_claims(delta: &Delta, primary: &Feed) -> Vec<Key> {
@@ -115,8 +137,13 @@ pub fn volume_claims(delta: &Delta, primary: &Feed) -> Vec<Key> {
         keys.extend(keys_at(primary, Index::Volume(name.into())));
         let ns = pv["spec"]["claimRef"]["namespace"].as_str().unwrap_or("");
         let claim = pv["spec"]["claimRef"]["name"].as_str().unwrap_or("");
-        if !claim.is_empty() { keys.extend(keys_at(primary, Index::Name(ns.into(),claim.into()))); }
-        keys.extend(keys_at(primary, Index::StorageClass(pv["spec"]["storageClassName"].as_str().unwrap_or("").into())));
+        if !claim.is_empty() {
+            keys.extend(keys_at(primary, Index::Name(ns.into(), claim.into())));
+        }
+        keys.extend(keys_at(
+            primary,
+            Index::StorageClass(pv["spec"]["storageClassName"].as_str().unwrap_or("").into()),
+        ));
     }
     keys
 }
@@ -124,7 +151,10 @@ pub fn volume_claims(delta: &Delta, primary: &Feed) -> Vec<Key> {
 pub fn storage_class_claims(delta: &Delta, primary: &Feed) -> Vec<Key> {
     let mut keys = keys_at(primary, Index::StorageClass("".into()));
     for class in delta.old.iter().chain(delta.new.iter()) {
-        keys.extend(keys_at(primary, Index::StorageClass(class["metadata"]["name"].as_str().unwrap_or("").into())));
+        keys.extend(keys_at(
+            primary,
+            Index::StorageClass(class["metadata"]["name"].as_str().unwrap_or("").into()),
+        ));
     }
     keys
 }
@@ -132,12 +162,26 @@ pub fn storage_class_claims(delta: &Delta, primary: &Feed) -> Vec<Key> {
 pub fn owner_keys(delta: &Delta, primary: &Feed) -> Vec<Key> {
     let mut keys = HashSet::new();
     for object in delta.old.iter().chain(delta.new.iter()) {
-        for owner in object["metadata"]["ownerReferences"].as_array().into_iter().flatten() {
-            let (Some(uid), Some(name)) = (owner["uid"].as_str(), owner["name"].as_str()) else { continue };
-            if uid.is_empty() { continue; }
-            keys.insert(primary.key_for_uid(uid).unwrap_or_else(|| Key {
-                namespace: object["metadata"]["namespace"].as_str().unwrap_or("").into(),
-                name: name.into(), uid: uid.into(),
+        for owner in object["metadata"]["ownerReferences"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let (Some(uid), Some(name)) = (owner["uid"].as_str(), owner["name"].as_str()) else {
+                continue;
+            };
+            if uid.is_empty() {
+                continue;
+            }
+            keys.insert(primary.key_for_uid(uid).unwrap_or_else(|| {
+                Key {
+                    namespace: object["metadata"]["namespace"]
+                        .as_str()
+                        .unwrap_or("")
+                        .into(),
+                    name: name.into(),
+                    uid: uid.into(),
+                }
             }));
         }
     }
@@ -150,15 +194,25 @@ pub fn pod_membership(delta: &Delta, primary: &Feed) -> Vec<Key> {
     for pod in delta.old.iter().chain(delta.new.iter()) {
         let ns = pod["metadata"]["namespace"].as_str().unwrap_or("");
         let labels = &pod["metadata"]["labels"];
-        let mut candidates = primary.select(&Index::SelectorFallback(ns.into())).unwrap_or_default();
+        let mut candidates = primary
+            .select(&Index::SelectorFallback(ns.into()))
+            .unwrap_or_default();
         for (label, value) in labels.as_object().into_iter().flatten() {
             if let Some(value) = value.as_str() {
-                candidates.extend(primary.select(&Index::Selector(ns.into(), label.clone(), value.into())).unwrap_or_default());
+                candidates.extend(
+                    primary
+                        .select(&Index::Selector(ns.into(), label.clone(), value.into()))
+                        .unwrap_or_default(),
+                );
             }
         }
         for object in candidates {
-            if apimachinery::informer::pod_selector(&object).is_some_and(|s| apimachinery::selector::matches(&s, labels)) {
-                if let Ok(key) = Key::of(&object) { result.insert(key); }
+            if apimachinery::informer::pod_selector(&object)
+                .is_some_and(|s| apimachinery::selector::matches(&s, labels))
+            {
+                if let Ok(key) = Key::of(&object) {
+                    result.insert(key);
+                }
             }
         }
     }
@@ -168,22 +222,29 @@ pub fn pod_membership(delta: &Delta, primary: &Feed) -> Vec<Key> {
 /// Read candidates via one positive selector clause, then apply the complete
 /// selector. Empty/negative selectors necessarily consider the namespace.
 pub fn selected_pods(object: &Value, pods: &Feed) -> anyhow::Result<Vec<Value>> {
-    let Some(selector) = apimachinery::informer::pod_selector(object) else { return Ok(Vec::new()) };
+    let Some(selector) = apimachinery::informer::pod_selector(object) else {
+        return Ok(Vec::new());
+    };
     let ns = object["metadata"]["namespace"].as_str().unwrap_or("");
     let anchors = apimachinery::informer::selector_anchors(&selector);
     let candidates = if anchors.is_empty() {
         pods.select(&Index::Namespace(ns.into()))?
     } else {
         let mut candidates = Vec::new();
-        for (label, value) in anchors { candidates.extend(pods.select(&Index::Label(label, value))?); }
+        for (label, value) in anchors {
+            candidates.extend(pods.select(&Index::Label(label, value))?);
+        }
         candidates
     };
     let mut seen = HashSet::new();
-    Ok(candidates.into_iter().filter(|pod| {
-        pod["metadata"]["namespace"].as_str().unwrap_or("") == ns
-            && apimachinery::selector::matches(&selector, &pod["metadata"]["labels"])
-            && Key::of(pod).is_ok_and(|key| seen.insert(key))
-    }).collect())
+    Ok(candidates
+        .into_iter()
+        .filter(|pod| {
+            pod["metadata"]["namespace"].as_str().unwrap_or("") == ns
+                && apimachinery::selector::matches(&selector, &pod["metadata"]["labels"])
+                && Key::of(pod).is_ok_and(|key| seen.insert(key))
+        })
+        .collect())
 }
 
 pub async fn run(api: &ApiClient, controller: &dyn Controller) {
@@ -196,8 +257,15 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
         format!("{}{}", api.base_url, controller.primary()),
         move |changes, reset| {
             if reset {
-                if let Some(feed) = reset_primary.lock().unwrap().as_ref().and_then(|f| f.upgrade()) {
-                    for key in all_keys(&feed) { changed.add(key); }
+                if let Some(feed) = reset_primary
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|f| f.upgrade())
+                {
+                    for key in all_keys(&feed) {
+                        changed.add(key);
+                    }
                 }
             }
             for change in changes {
@@ -223,7 +291,9 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
                     }
                 }
                 for change in changes {
-                    for key in owner_keys(change, &owners) { changed.add(key); }
+                    for key in owner_keys(change, &owners) {
+                        changed.add(key);
+                    }
                 }
             },
         )
@@ -310,45 +380,92 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
 #[cfg(test)]
 mod safety_tests {
     use super::*;
-    use axum::{body::Body, extract::{Query, State}, http::StatusCode, response::{IntoResponse, Response}, routing::get, Json, Router};
-    use std::sync::atomic::{AtomicBool,AtomicUsize,Ordering};
-    struct Probe { calls: Arc<AtomicUsize> }
+    use axum::{
+        body::Body,
+        extract::{Query, State},
+        http::StatusCode,
+        response::{IntoResponse, Response},
+        routing::get,
+        Json, Router,
+    };
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    struct Probe {
+        calls: Arc<AtomicUsize>,
+    }
     #[async_trait::async_trait]
     impl Controller for Probe {
-        fn name(&self) -> &'static str { "probe" }
-        fn primary(&self) -> &'static str { "/primary" }
-        fn dependencies(&self) -> Vec<Dependency> { vec![Dependency {path:"/dependency".into(),route:Arc::new(same_namespace)}] }
+        fn name(&self) -> &'static str {
+            "probe"
+        }
+        fn primary(&self) -> &'static str {
+            "/primary"
+        }
+        fn dependencies(&self) -> Vec<Dependency> {
+            vec![Dependency {
+                path: "/dependency".into(),
+                route: Arc::new(same_namespace),
+            }]
+        }
         async fn reconcile(&self, _: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
-            self.calls.fetch_add(1,Ordering::SeqCst); Ok(())
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     }
-    fn response(query: HashMap<String,String>) -> Response {
-        if query.get("watch").is_some_and(|v|v=="true") {
+    fn response(query: HashMap<String, String>) -> Response {
+        if query.get("watch").is_some_and(|v| v == "true") {
             let body=Body::from_stream(futures::stream::once(async {Ok::<_,std::convert::Infallible>(axum::body::Bytes::from_static(b"{\"type\":\"BOOKMARK\",\"object\":{\"metadata\":{\"resourceVersion\":\"1\"}}}\n"))})
                 .chain(futures::stream::pending()));
             Response::new(body)
-        } else { Json(serde_json::json!({"metadata":{"resourceVersion":"1"},"items":[{"metadata":{"name":"one","uid":"one","resourceVersion":"1"}}]})).into_response() }
+        } else {
+            Json(serde_json::json!({"metadata":{"resourceVersion":"1"},"items":[{"metadata":{"name":"one","uid":"one","resourceVersion":"1"}}]})).into_response()
+        }
     }
-    async fn primary(Query(query): Query<HashMap<String,String>>) -> Response { response(query) }
-    async fn dependency(State(failed): State<Arc<AtomicBool>>, Query(query): Query<HashMap<String,String>>) -> Response {
-        if failed.load(Ordering::SeqCst) { StatusCode::SERVICE_UNAVAILABLE.into_response() } else { response(query) }
+    async fn primary(Query(query): Query<HashMap<String, String>>) -> Response {
+        response(query)
+    }
+    async fn dependency(
+        State(failed): State<Arc<AtomicBool>>,
+        Query(query): Query<HashMap<String, String>>,
+    ) -> Response {
+        if failed.load(Ordering::SeqCst) {
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        } else {
+            response(query)
+        }
     }
     #[tokio::test]
     async fn unavailable_dependency_blocks_work_and_recovery_wakes_it() {
-        let failed=Arc::new(AtomicBool::new(true));
-        let calls=Arc::new(AtomicUsize::new(0));
-        let app=Router::new().route("/primary",get(primary)).route("/dependency",get(dependency)).with_state(failed.clone());
-        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr=listener.local_addr().unwrap();
-        let server=tokio::spawn(async move { axum::serve(listener,app).await.unwrap() });
-        let probe=Probe {calls:calls.clone()};
-        let worker=tokio::spawn(async move { run(&ApiClient::new(&format!("http://{addr}")),&probe).await });
+        let failed = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/primary", get(primary))
+            .route("/dependency", get(dependency))
+            .with_state(failed.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let probe = Probe {
+            calls: calls.clone(),
+        };
+        let worker =
+            tokio::spawn(
+                async move { run(&ApiClient::new(&format!("http://{addr}")), &probe).await },
+            );
         tokio::time::sleep(Duration::from_millis(250)).await;
-        assert_eq!(calls.load(Ordering::SeqCst),0,"a failed feed must never look empty/ready");
-        failed.store(false,Ordering::SeqCst);
-        tokio::time::timeout(Duration::from_secs(3),async {
-            while calls.load(Ordering::SeqCst)==0 { tokio::time::sleep(Duration::from_millis(10)).await; }
-        }).await.expect("feed recovery must wake queued work");
-        worker.abort(); server.abort();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "a failed feed must never look empty/ready"
+        );
+        failed.store(false, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while calls.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("feed recovery must wake queued work");
+        worker.abort();
+        server.abort();
     }
 }

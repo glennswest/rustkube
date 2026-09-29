@@ -1,8 +1,10 @@
 # Event-driven control plane (turbomode)
 
-Status: partial migration; five-crate unit/doc tests pass through `sc-build`
-at `fc67179` on 2026-09-29 (four storage integration tests ignored). Live
-validation awaits the owner-selected target. Branch: `turbomode`.
+Status: all controller families and scheduling use object workers on branch
+`turbomode`. Unit/doc and disposable API/store rig tests run through
+`sc-build`; the verification record below identifies checked commits and
+cases. Live validation remains #147/#149, awaiting the owner-selected target.
+No merge, golden or release is implied by these branch results.
 
 Current implementation: Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA
 have indexed per-object workers (eight concurrent keys per controller).
@@ -15,8 +17,8 @@ and node lifecycle also use object workers; Node expiry and eviction
 deadlines are unchanged, with Lease/Pod events routed by Node name. CSI
 attach/detach workers select claims and attachments by volume, then Pods by
 claim; deletes carry the observed attachment UID/revision. PodMigration and HPA workers route named dependencies; HPA remains the
-non-metrics placeholder (#89). Other controller migrations and runtime
-validation remain open. Namespace provision/teardown have separate object
+non-metrics placeholder (#89). Runtime acceptance remains open.
+Namespace provision/teardown have separate object
 pools; teardown indexes discovered collections by namespace, then confirms
 authoritative emptiness before finalization. Gateway/HTTPRoute workers use
 named reference indexes and remain status-only. GC uses owner indexes across
@@ -49,15 +51,15 @@ volume operations: this repository cannot promise subsecond image downloads
 or manufacture a Ready condition before the node reports it. The reported
 six-second and two-minute observations are symptoms, not a measured baseline.
 
-## Evidence in this branch
+## Pre-migration observations
 
-Deployment → ReplicaSet → scheduler currently crosses 2 s + 2 s + 1 s poll
+Before turbomode, Deployment → ReplicaSet → scheduler crossed 2 s + 2 s + 1 s poll
 intervals, before node startup. The claim path crosses stormblock 2 s, PV
 binder 3 s, attach/detach 5 s and scheduler 1 s (#142). Controllers repeatedly
-LIST entire collections. Garbage collection starts every 30 s and delays
+LISTed entire collections. Garbage collection started every 30 s and delayed
 follow-up passes by 2 s. More workers alone will not remove these waits.
-The scheduler also renews its leader lease inside its scheduling tick: lease
-maintenance and placement must become independent tasks.
+The scheduler also renewed its leader lease inside its scheduling tick;
+lease maintenance and placement are now independent tasks.
 
 ## Execution model
 
@@ -368,3 +370,30 @@ if its revision has already fallen out of watch history before the response
 arrives, the feed becomes unreadable and immediately relists. Reconnecting a
 watch alone cannot clear this barrier. This prevents a late acknowledgement
 from resurrecting a deleted UID or replacing newer state.
+
+## Verification on dev — 2026-09-29
+
+All commands ran via `sc-build` after pushing, in disposable build volumes.
+They used this repository's synthetic API/store rig, not a deployed cluster.
+
+| Commit | Command/cases | Result |
+|---|---|---|
+| `eff0752` | Unit/doc tests: apimachinery, controller-manager, apiserver; `bash test/e2e/indexed-selectors.sh`; `bash test/e2e/vm-runstrategy.sh` | Passed; selector 14/14, VM 10/10 |
+| `72908ec` | apimachinery/controller-manager unit tests; `bash test/e2e/volume-expansion.sh`; `bash test/e2e/daemonset-nodes.sh` | Passed; real CSI provisioner/resizer 14/14, DaemonSet 10/10 |
+| `af87b2d` | `cargo test --locked -p apimachinery -p storage -p apiserver -p controller-manager -p scheduler`; test-container short profile on the rig | Passed; short 5/5; four storage integration tests ignored by default |
+| `226a388` | apimachinery/controller-manager/scheduler unit tests; `bash test/e2e/indexed-safety.sh` | Passed; GC propagation, orphaning, Event TTL, namespace finalizer (9), capacity burst and release (2) |
+| `1a4a288` | `cargo test --locked -p controller-manager owned::safety_tests` | Passed; unavailable dependency blocks work, recovery wakes it |
+
+Unit cases additionally cover cache resets and UID replacement, old/new
+selector membership, acknowledged writes, ambiguous create recovery, queue
+coalescing/deadlines, and shared Pod/VMI reservation accounting. Four ignored
+storage tests require their own configured running datastore; API-rig tests
+exercise a real disposable fastetcd instead. Build-host log appends report a
+read-only local state file after remote success; the results above use the
+remote command exit and test output.
+
+These results do not establish latency SLOs, three-master failure recovery,
+real node execution or PVC backing-allocation reclamation. Those remain the
+live acceptance matrix in #147/#149 and the node/QA companion issues. The
+version remains the unreleased turbomode branch; version/tag/golden promotion
+follows that integration, as required by the owner's no-golden instruction.

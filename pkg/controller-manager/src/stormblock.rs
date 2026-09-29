@@ -27,11 +27,11 @@
 //! mounts the same thing.
 
 use crate::events::EventRecorder;
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::info;
-use crate::owned::{self, Controller, Dependency, Deps};
 
 /// The class this provisions for. A claim of any other class belongs to
 /// somebody else, and the kubelet agrees — `storage::provisioned_here`
@@ -65,15 +65,24 @@ impl StormblockProvisioner {
     pub async fn run(&self) {
         let claims = Claims(self);
         let volumes = Volumes(self);
-        tokio::join!(owned::run(&self.api, &claims), owned::run(&self.api, &volumes));
+        tokio::join!(
+            owned::run(&self.api, &claims),
+            owned::run(&self.api, &volumes)
+        );
     }
 
     async fn provision_claim(&self, pvc: &Value) -> anyhow::Result<()> {
         let namespace = pvc["metadata"]["namespace"].as_str().unwrap_or("default");
         let name = pvc["metadata"]["name"].as_str().unwrap_or("");
-        if name.is_empty() || !pvc["metadata"]["deletionTimestamp"].is_null()
+        if name.is_empty()
+            || !pvc["metadata"]["deletionTimestamp"].is_null()
             || pvc["spec"]["storageClassName"] != STORAGE_CLASS
-            || pvc["spec"]["volumeName"].as_str().is_some_and(|v| !v.is_empty()) { return Ok(()); }
+            || pvc["spec"]["volumeName"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty())
+        {
+            return Ok(());
+        }
         self.ensure_volume(namespace, name, pvc).await
     }
 
@@ -84,12 +93,7 @@ impl StormblockProvisioner {
     /// would race it. This only has to make a volume the binder can find, and
     /// pre-binding it with `claimRef` is how upstream's provisioners hand one
     /// over without that race.
-    async fn ensure_volume(
-        &self,
-        namespace: &str,
-        claim: &str,
-        pvc: &Value,
-    ) -> anyhow::Result<()> {
+    async fn ensure_volume(&self, namespace: &str, claim: &str, pvc: &Value) -> anyhow::Result<()> {
         // **WaitForFirstConsumer, honoured.** A stormblock clone is made by, and
         // lives on, the node that runs the first pod using it, and until the
         // scheduler has picked that node there is nowhere to say the volume
@@ -103,8 +107,14 @@ impl StormblockProvisioner {
         let pv_name = volume_name(namespace, claim);
         let path = format!("/api/v1/persistentvolumes/{pv_name}");
         let response = self.api.get(&path).await?;
-        if response.status().is_success() { return Ok(()); }
-        anyhow::ensure!(response.status().as_u16() == 404, "cannot observe stormblock PV: {}", response.status());
+        if response.status().is_success() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            response.status().as_u16() == 404,
+            "cannot observe stormblock PV: {}",
+            response.status()
+        );
 
         // What the claim asked for. The node rounds this up to a size class
         // and that class is the ceiling; reporting the request rather than the
@@ -198,40 +208,40 @@ impl StormblockProvisioner {
     /// kubelet's `reclaim_released` deletes the clone and then the PV
     /// (rustkube-node#46), and this reports that it will.
     async fn reclaim(&self, pv: &Value) -> anyhow::Result<()> {
-            if pv["metadata"]["annotations"][PROVISIONED_BY].as_str() != Some(PROVISIONER) {
-                return Ok(());
-            }
-            if pv["status"]["phase"].as_str() != Some("Released") {
-                return Ok(());
-            }
-            let name = pv["metadata"]["name"].as_str().unwrap_or("");
-            match pv["spec"]["persistentVolumeReclaimPolicy"].as_str() {
-                Some("Retain") | None => {
-                    self.events
-                        .event(
-                            &pv,
-                            "Normal",
-                            "VolumeRetained",
-                            "Released; the stormblock volume is kept for an administrator, \
+        if pv["metadata"]["annotations"][PROVISIONED_BY].as_str() != Some(PROVISIONER) {
+            return Ok(());
+        }
+        if pv["status"]["phase"].as_str() != Some("Released") {
+            return Ok(());
+        }
+        let name = pv["metadata"]["name"].as_str().unwrap_or("");
+        match pv["spec"]["persistentVolumeReclaimPolicy"].as_str() {
+            Some("Retain") | None => {
+                self.events
+                    .event(
+                        &pv,
+                        "Normal",
+                        "VolumeRetained",
+                        "Released; the stormblock volume is kept for an administrator, \
                              as reclaimPolicy: Retain asks",
-                        )
-                        .await;
-                }
-                _ => {
-                    self.events
-                        .event(
-                            &pv,
-                            "Normal",
-                            "VolumeReclaiming",
-                            &format!(
-                                "Released with reclaimPolicy: Delete: the node holding \
+                    )
+                    .await;
+            }
+            _ => {
+                self.events
+                    .event(
+                        &pv,
+                        "Normal",
+                        "VolumeReclaiming",
+                        &format!(
+                            "Released with reclaimPolicy: Delete: the node holding \
                                  stormblock volume {name} deletes it and then this PV \
                                  (rustkube-node reclaim_released)."
-                            ),
-                        )
-                        .await;
-                }
+                        ),
+                    )
+                    .await;
             }
+        }
         Ok(())
     }
 }
@@ -266,16 +276,31 @@ struct Claims<'a>(&'a StormblockProvisioner);
 struct Volumes<'a>(&'a StormblockProvisioner);
 #[async_trait::async_trait]
 impl Controller for Claims<'_> {
-    fn name(&self) -> &'static str { "stormblock-claims" }
-    fn primary(&self) -> &'static str { "/api/v1/persistentvolumeclaims" }
-    fn dependencies(&self) -> Vec<Dependency> { vec![Dependency {
-        path: "/api/v1/persistentvolumes".into(), route: Arc::new(owned::volume_claims),
-    }] }
-    async fn reconcile(&self, pvc: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> { self.0.provision_claim(pvc).await }
+    fn name(&self) -> &'static str {
+        "stormblock-claims"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/persistentvolumeclaims"
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![Dependency {
+            path: "/api/v1/persistentvolumes".into(),
+            route: Arc::new(owned::volume_claims),
+        }]
+    }
+    async fn reconcile(&self, pvc: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
+        self.0.provision_claim(pvc).await
+    }
 }
 #[async_trait::async_trait]
 impl Controller for Volumes<'_> {
-    fn name(&self) -> &'static str { "stormblock-reclaim" }
-    fn primary(&self) -> &'static str { "/api/v1/persistentvolumes" }
-    async fn reconcile(&self, pv: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> { self.0.reclaim(pv).await }
+    fn name(&self) -> &'static str {
+        "stormblock-reclaim"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/persistentvolumes"
+    }
+    async fn reconcile(&self, pv: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
+        self.0.reclaim(pv).await
+    }
 }

@@ -49,7 +49,7 @@ pkg/
   storage/            etcd v3 client (etcd-client) — keys are opaque here
   apiserver/          REST API (axum), auth, RBAC, built-in admission, watch cache, CRDs
   scheduler/          fixed filter/score functions, volume binding, VMI placement
-  controller-manager/ the built-in controllers (watch-driven passes; indexed workers pending #146)
+  controller-manager/ the built-in controllers (bounded indexed object workers on turbomode)
   cloud/              EMPTY — a doc comment, no code, nothing depends on it
 ```
 
@@ -244,19 +244,19 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
       Pod labels → Service/PDB, PVC/PV → binder…), children optional
 - [x] DaemonSet (Node eligibility + owned Pods), implemented at 826a8a4;
-      live regression script committed, runtime verification pending
+      API-rig node regression passed 10/10 at 72908ec
 - [x] Service/EndpointSlice, PDB: selector-indexed Pod membership, UID-safe
-      endpoint cleanup, CAS/no-op writes; unit tests pass. Real rig exposed
-      UID-less bootstrap endpoints; repair committed, rerun pending.
+      endpoint cleanup, CAS/no-op writes; real selector rig passed 14/14 at
+      eff0752 after repairing UID-less bootstrap endpoints.
 - [x] Baseline 79c1a9e: handoff five-crate command passed on dev (four
       datastore-dependent storage tests ignored).
 - [x] PV binder: serialized indexed claim workers and per-PV lifecycle;
-      only 404 proves claim absence; remote validation pending
+      only 404 proves claim absence; real CSI expansion passed 14/14 at 72908ec
 - [x] Stormblock claim and reclaim workers; node lifecycle indexed by Lease
       name and assigned Pod, preserving expiry/toleration deadlines
 - [x] Attach/detach: per-PV workers with indexed claim/Pod/driver/attachment
-      dependencies and conditional detach; remote validation pending
-- [x] VM (owned VMI), CSR, root CA (ConfigMap → Namespace); remote checks pending
+      dependencies and conditional detach; unit tests pass
+- [x] VM (owned VMI), CSR, root CA (ConfigMap → Namespace); VM rig 10/10 at eff0752
 - [x] Migration and HPA object workers with named Pod/Node/target routes;
       HPA remains the #89 placeholder, status timestamp echoes suppressed
 - [x] Namespace: separate provision/teardown object pools, discovered shared
@@ -265,10 +265,12 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
 - [x] Events: per-event TTL deadlines and conditional deletion
 - [x] GC: indexed resource workers fail closed on any unsynced feed; confirm
       owner absence and finalizer-dependent membership with authoritative reads
-      and apply destructive UID/revision preconditions. Remote checks pending
+      and apply destructive UID/revision preconditions. All three propagation
+      modes, Event expiry and namespace finalizers pass at 226a388
 - [x] Scheduler: one serialized Pod/VMI queue, indexed storage reads, shared
       acknowledged-write accounting and retained bind/volume assumptions;
-      optional VMI feed enabled by CRD observation. Remote validation pending.
+      optional VMI feed enabled by CRD observation. Shared accounting unit
+      tests and burst/capacity-release API-rig checks pass at 226a388.
 - [ ] Final audit: create expectations and dependency recovery passed on dev;
       add delayed-write history-expiry fencing, then validate final head.
       Check write overlays, cache recovery barriers,

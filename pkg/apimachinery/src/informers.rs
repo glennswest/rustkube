@@ -43,7 +43,10 @@ pub struct Feed {
 }
 impl Feed {
     pub fn ensure_synced(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(self.store.lock().unwrap().is_synced(), "informer is not synchronized");
+        anyhow::ensure!(
+            self.store.lock().unwrap().is_synced(),
+            "informer is not synchronized"
+        );
         Ok(())
     }
 
@@ -93,10 +96,14 @@ impl Feed {
             Change::Applied { event, .. } => Some(format!(
                 "{} {}/{} uid={} rv={}",
                 event["type"].as_str().unwrap_or("?"),
-                event["object"]["metadata"]["namespace"].as_str().unwrap_or(""),
+                event["object"]["metadata"]["namespace"]
+                    .as_str()
+                    .unwrap_or(""),
                 event["object"]["metadata"]["name"].as_str().unwrap_or("?"),
                 event["object"]["metadata"]["uid"].as_str().unwrap_or("-"),
-                event["object"]["metadata"]["resourceVersion"].as_str().unwrap_or("-"),
+                event["object"]["metadata"]["resourceVersion"]
+                    .as_str()
+                    .unwrap_or("-"),
             )),
             _ => None,
         };
@@ -216,9 +223,14 @@ impl Hub {
         // A subscriber joining an already-synchronized feed must get its seed.
         let seed = feed.store.lock().unwrap().values();
         if let Ok(objects) = seed {
-            let changes: Vec<_> = objects.into_iter().map(|object| Delta {
-                old: None, new: Some(object), affected: Default::default(),
-            }).collect();
+            let changes: Vec<_> = objects
+                .into_iter()
+                .map(|object| Delta {
+                    old: None,
+                    new: Some(object),
+                    affected: Default::default(),
+                })
+                .collect();
             callback(&changes, true);
         }
         Subscription {
@@ -236,7 +248,11 @@ impl Hub {
         };
         let feed = self.inner.feeds.lock().unwrap().get(&collection).cloned();
         if let Some(feed) = feed {
-            let change = feed.store.lock().unwrap().acknowledge_since(object.clone(), started);
+            let change = feed
+                .store
+                .lock()
+                .unwrap()
+                .acknowledge_since(object.clone(), started);
             match change {
                 Ok(Some(change)) => feed.notify(&[change], false),
                 Ok(None) => {}
@@ -279,7 +295,7 @@ mod tests {
             store: Mutex::new(Store::default()),
             subscribers: Mutex::new(HashMap::new()),
             task: Mutex::new(None),
-                        relist: Arc::new(tokio::sync::Notify::new()),
+            relist: Arc::new(tokio::sync::Notify::new()),
         };
         let count = Arc::new(AtomicU64::new(0));
         let observed = count.clone();

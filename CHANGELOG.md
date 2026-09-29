@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **chore:** Format migrated Rust modules with rustfmt on the build box.
+- **docs:** Refresh controller/scheduler behavior, handoff checkpoints and
+  verification evidence; separate completed dev checks from #147/#149 live
+  acceptance. Keep turbomode unreleased under the no-golden instruction.
 - **fix:** Retain backed-off detach cleanup when a removed PV still has users;
   guard PVC class/provisioner patches. Keep ordinary FIFO dequeue constant-time
   and test priority ties plus dirty-key requeueing.

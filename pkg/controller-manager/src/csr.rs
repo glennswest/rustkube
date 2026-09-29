@@ -10,12 +10,12 @@
 //! Requires the cluster CA cert+key (`--cluster-signing-cert-file` /
 //! `--cluster-signing-key-file`); without them only approval runs.
 
+use crate::owned::{self, Controller, Deps};
 use crate::runner::ApiClient;
 use base64::Engine;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{info, warn};
-use crate::owned::{self, Controller, Deps};
 
 const CSR_PATH: &str = "/apis/certificates.k8s.io/v1/certificatesigningrequests";
 const KUBELET_CLIENT_SIGNER: &str = "kubernetes.io/kube-apiserver-client-kubelet";
@@ -36,27 +36,27 @@ impl CsrController {
     }
 
     async fn reconcile_csr(&self, csr: &Value) -> anyhow::Result<()> {
-            let name = csr["metadata"]["name"].as_str().unwrap_or("").to_string();
-            if name.is_empty() {
-                return Ok(());
-            }
-            let spec = &csr["spec"];
-            let status = &csr["status"];
-            let approved = has_condition(status, "Approved");
-            let denied = has_condition(status, "Denied");
+        let name = csr["metadata"]["name"].as_str().unwrap_or("").to_string();
+        if name.is_empty() {
+            return Ok(());
+        }
+        let spec = &csr["spec"];
+        let status = &csr["status"];
+        let approved = has_condition(status, "Approved");
+        let denied = has_condition(status, "Denied");
 
-            // 1) Approve eligible, undecided CSRs.
-            if !approved && !denied && self.should_auto_approve(spec) {
-                self.approve(&name, csr).await;
-                return Ok(()); // approval acknowledgement queues signing
-            }
+        // 1) Approve eligible, undecided CSRs.
+        if !approved && !denied && self.should_auto_approve(spec) {
+            self.approve(&name, csr).await;
+            return Ok(()); // approval acknowledgement queues signing
+        }
 
-            // 2) Sign approved CSRs that have no issued certificate yet.
-            if approved && status.get("certificate").and_then(|c| c.as_str()).is_none() {
-                if let Some((ca_cert, ca_key)) = &self.ca {
-                    self.sign(&name, csr, ca_cert, ca_key).await;
-                }
+        // 2) Sign approved CSRs that have no issued certificate yet.
+        if approved && status.get("certificate").and_then(|c| c.as_str()).is_none() {
+            if let Some((ca_cert, ca_key)) = &self.ca {
+                self.sign(&name, csr, ca_cert, ca_key).await;
             }
+        }
         Ok(())
     }
 
@@ -133,9 +133,18 @@ fn sign_csr(csr_pem: &str, ca_cert_pem: &str, ca_key_pem: &str) -> anyhow::Resul
 
 #[async_trait::async_trait]
 impl Controller for CsrController {
-    fn name(&self) -> &'static str { "csr" }
-    fn primary(&self) -> &'static str { CSR_PATH }
-    async fn reconcile(&self, csr: &Value, _children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
+    fn name(&self) -> &'static str {
+        "csr"
+    }
+    fn primary(&self) -> &'static str {
+        CSR_PATH
+    }
+    async fn reconcile(
+        &self,
+        csr: &Value,
+        _children: &[Value],
+        _deps: &Deps,
+    ) -> anyhow::Result<()> {
         self.reconcile_csr(csr).await
     }
 }

@@ -14,12 +14,12 @@
 //! gets the ConfigMap if it has none, and has it put back if its `ca.crt` was
 //! changed.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::{Index, Key};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::info;
-use crate::owned::{self, Controller, Dependency, Deps};
-use apimachinery::informer::{Index, Key};
 
 pub const NAME: &str = "kube-root-ca.crt";
 const KEY: &str = "ca.crt";
@@ -106,23 +106,41 @@ mod tests {
 
 #[async_trait::async_trait]
 impl Controller for RootCaPublisher {
-    fn name(&self) -> &'static str { "rootca" }
-    fn primary(&self) -> &'static str { "/api/v1/namespaces" }
+    fn name(&self) -> &'static str {
+        "rootca"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/namespaces"
+    }
     fn dependencies(&self) -> Vec<Dependency> {
-        vec![Dependency { path: "/api/v1/configmaps".into(), route: Arc::new(|delta, primary| {
-            let mut result = Vec::new();
-            for cm in delta.old.iter().chain(delta.new.iter()) {
-                if cm["metadata"]["name"] != NAME { continue; }
-                let ns = cm["metadata"]["namespace"].as_str().unwrap_or("");
-                for object in primary.select(&Index::Name("".into(), ns.into())).unwrap_or_default() {
-                    if let Ok(key) = Key::of(&object) { result.push(key); }
+        vec![Dependency {
+            path: "/api/v1/configmaps".into(),
+            route: Arc::new(|delta, primary| {
+                let mut result = Vec::new();
+                for cm in delta.old.iter().chain(delta.new.iter()) {
+                    if cm["metadata"]["name"] != NAME {
+                        continue;
+                    }
+                    let ns = cm["metadata"]["namespace"].as_str().unwrap_or("");
+                    for object in primary
+                        .select(&Index::Name("".into(), ns.into()))
+                        .unwrap_or_default()
+                    {
+                        if let Ok(key) = Key::of(&object) {
+                            result.push(key);
+                        }
+                    }
                 }
-            }
-            result
-        }) }]
+                result
+            }),
+        }]
     }
     async fn reconcile(&self, ns: &Value, _children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
-        if !ns["metadata"]["deletionTimestamp"].is_null() || ns["status"]["phase"] == "Terminating" { return Ok(()); }
-        self.reconcile(ns["metadata"]["name"].as_str().unwrap_or("")).await
+        if !ns["metadata"]["deletionTimestamp"].is_null() || ns["status"]["phase"] == "Terminating"
+        {
+            return Ok(());
+        }
+        self.reconcile(ns["metadata"]["name"].as_str().unwrap_or(""))
+            .await
     }
 }

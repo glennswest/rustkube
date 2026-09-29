@@ -6,12 +6,12 @@
 //! whatever resource the HPA names, and the desired count starts at the
 //! current one and only rises, so it never scales down.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::Index;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{info, warn};
-use crate::owned::{self, Controller, Dependency, Deps};
-use apimachinery::informer::Index;
 
 pub struct HpaController {
     api: Arc<ApiClient>,
@@ -53,11 +53,22 @@ impl HpaController {
             }
         };
 
-        let i = match target_kind { "Deployment" => 0, "ReplicaSet" => 1, "StatefulSet" => 2, _ => return Ok(()) };
-        let targets = deps.feed(i).select(&Index::Name(namespace.into(),target_name.into()))?;
-        let Some(target_obj) = targets.first() else { return Ok(()); };
+        let i = match target_kind {
+            "Deployment" => 0,
+            "ReplicaSet" => 1,
+            "StatefulSet" => 2,
+            _ => return Ok(()),
+        };
+        let targets = deps
+            .feed(i)
+            .select(&Index::Name(namespace.into(), target_name.into()))?;
+        let Some(target_obj) = targets.first() else {
+            return Ok(());
+        };
         let current_replicas = target_obj["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
-        let pods = deps.feed(3).select(&Index::Owner(target_obj["metadata"]["uid"].as_str().unwrap_or("").into()))?;
+        let pods = deps.feed(3).select(&Index::Owner(
+            target_obj["metadata"]["uid"].as_str().unwrap_or("").into(),
+        ))?;
 
         // Count ready pods owned by target (simplified — real HPA uses metrics API)
         let target_uid = target_obj["metadata"]["uid"].as_str().unwrap_or("");
@@ -111,7 +122,9 @@ impl HpaController {
             }]
         });
         owned::preserve_transition_times(&hpa["status"], &mut updated_hpa["status"]);
-        if hpa["status"] == updated_hpa["status"] { return Ok(()); }
+        if hpa["status"] == updated_hpa["status"] {
+            return Ok(());
+        }
         let _ = self
             .api
             .update(
@@ -218,27 +231,74 @@ impl HpaController {
 
 #[async_trait::async_trait]
 impl Controller for HpaController {
-    fn name(&self) -> &'static str { "hpa" }
-    fn primary(&self) -> &'static str { "/apis/autoscaling/v2/horizontalpodautoscalers" }
+    fn name(&self) -> &'static str {
+        "hpa"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/autoscaling/v2/horizontalpodautoscalers"
+    }
     fn dependencies(&self) -> Vec<Dependency> {
-        let route: owned::Route = Arc::new(|delta, primary| delta.old.iter().chain(delta.new.iter()).flat_map(|o|
-            owned::keys_at(primary,Index::Target(o["metadata"]["namespace"].as_str().unwrap_or("").into(),o["kind"].as_str().unwrap_or("").into(),o["metadata"]["name"].as_str().unwrap_or("").into()))).collect());
+        let route: owned::Route = Arc::new(|delta, primary| {
+            delta
+                .old
+                .iter()
+                .chain(delta.new.iter())
+                .flat_map(|o| {
+                    owned::keys_at(
+                        primary,
+                        Index::Target(
+                            o["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                            o["kind"].as_str().unwrap_or("").into(),
+                            o["metadata"]["name"].as_str().unwrap_or("").into(),
+                        ),
+                    )
+                })
+                .collect()
+        });
         vec![
-            Dependency { path: "/apis/apps/v1/deployments".into(), route: route.clone() },
-            Dependency { path: "/apis/apps/v1/replicasets".into(), route: route.clone() },
-            Dependency { path: "/apis/apps/v1/statefulsets".into(), route },
-            Dependency { path: "/api/v1/pods".into(), route: Arc::new(|delta,primary| {
-                let mut keys = Vec::new();
-                for pod in delta.old.iter().chain(delta.new.iter()) {
-                    for owner in pod["metadata"]["ownerReferences"].as_array().into_iter().flatten() {
-                        keys.extend(owned::keys_at(primary,Index::Target(pod["metadata"]["namespace"].as_str().unwrap_or("").into(),owner["kind"].as_str().unwrap_or("").into(),owner["name"].as_str().unwrap_or("").into())));
+            Dependency {
+                path: "/apis/apps/v1/deployments".into(),
+                route: route.clone(),
+            },
+            Dependency {
+                path: "/apis/apps/v1/replicasets".into(),
+                route: route.clone(),
+            },
+            Dependency {
+                path: "/apis/apps/v1/statefulsets".into(),
+                route,
+            },
+            Dependency {
+                path: "/api/v1/pods".into(),
+                route: Arc::new(|delta, primary| {
+                    let mut keys = Vec::new();
+                    for pod in delta.old.iter().chain(delta.new.iter()) {
+                        for owner in pod["metadata"]["ownerReferences"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            keys.extend(owned::keys_at(
+                                primary,
+                                Index::Target(
+                                    pod["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                                    owner["kind"].as_str().unwrap_or("").into(),
+                                    owner["name"].as_str().unwrap_or("").into(),
+                                ),
+                            ));
+                        }
                     }
-                }
-                keys
-            }) },
+                    keys
+                }),
+            },
         ]
     }
     async fn reconcile(&self, hpa: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
-        self.reconcile_hpa(hpa["metadata"]["namespace"].as_str().unwrap_or("default"),hpa,deps).await
+        self.reconcile_hpa(
+            hpa["metadata"]["namespace"].as_str().unwrap_or("default"),
+            hpa,
+            deps,
+        )
+        .await
     }
 }

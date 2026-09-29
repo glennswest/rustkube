@@ -4,7 +4,18 @@ The owner switched work back to stormcentral. This is unfinished engineering,
 not a validated release. All implementation and harness changes are committed
 and pushed on branches named `turbomode`; no live scale test has run.
 
-## Projects and saved work
+## Updated rustkube checkpoint — 2026-09-29
+
+The owner subsequently authorized #146 implementation and dev unit/e2e
+validation without waiting for a live target. All rustkube controller families
+and scheduling now use indexed object workers. The build-host access problem
+did not reproduce from stormcentral; the five-crate handoff command and the
+API/store regression rigs pass. See [the current verification record](event-driven-design.md#verification-on-dev--2026-09-29).
+The original inventory and resume order below are historical; rustkube steps
+2–3 have advanced. Live scale and multi-master acceptance remain #147/#149.
+Continue on `turbomode`; do not merge to main or request a golden yet.
+
+## Original projects and saved work
 
 | Project | Implementation head | Scope and remaining work |
 |---|---|---|
@@ -18,7 +29,7 @@ turbomode changes were made to those repositories. Deployment/version pins and
 real-release verification remain future integration work; do not infer a shipped
 release from these branch commits.
 
-## Resume order
+## Original resume order
 
 1. Resolve stormcentral#170. Builds were attempted **on dev after 10 a.m.
    America/Chicago** and stopped before compilation/test execution with
@@ -70,6 +81,6 @@ release from these branch commits.
    healthy-path p50/p95/p99/max startup latency.
 
 All relevant issues retain their original requirements plus dated progress and
-remaining-work notes. No turbomode issue was closed as completed. The provided
+remaining-work notes. At the original handoff, no turbomode issue had been closed as completed. The provided
 C2NR0Q2 OS-release baseline remains in the design documents; there are no new
 subsecond, multi-master, integrity or cleanup acceptance measurements yet.

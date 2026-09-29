@@ -3,13 +3,13 @@
 //! Ensures default ServiceAccount exists in each namespace.
 //! Handles namespace deletion by cleaning up resources.
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::Index;
+use apimachinery::workqueue::WorkQueue;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, info};
-use crate::owned::{self, Controller, Dependency, Deps};
-use apimachinery::informer::Index;
-use apimachinery::workqueue::WorkQueue;
 
 pub struct NamespaceController {
     api: Arc<ApiClient>,
@@ -25,9 +25,16 @@ impl NamespaceController {
     pub async fn run(&self) {
         let changed = WorkQueue::new();
         let wake = changed.clone();
-        let _discovery = self.api.informers.subscribe(&self.api.client,
-            format!("{}/apis/apiextensions.k8s.io/v1/customresourcedefinitions",self.api.base_url),
-            move |_,_| { wake.add(()); });
+        let _discovery = self.api.informers.subscribe(
+            &self.api.client,
+            format!(
+                "{}/apis/apiextensions.k8s.io/v1/customresourcedefinitions",
+                self.api.base_url
+            ),
+            move |_, _| {
+                wake.add(());
+            },
+        );
         loop {
             let resources = match self.discover_namespaced_resources().await {
                 Ok(resources) => resources,
@@ -38,7 +45,10 @@ impl NamespaceController {
                 }
             };
             let provision = Provision(self);
-            let terminate = Terminate { controller: self, resources };
+            let terminate = Terminate {
+                controller: self,
+                resources,
+            };
             tokio::select! {
                 _ = async { tokio::join!(owned::run(&self.api,&provision),owned::run(&self.api,&terminate)); } => {},
                 work = changed.next() => { drop(work); },
@@ -113,9 +123,10 @@ async fn terminate_namespace(
         for item in items {
             if let Some(name) = item["metadata"]["name"].as_str() {
                 let _ = api
-                    .delete_observed(&format!(
-                        "{api_root}/namespaces/{namespace}/{resource}/{name}"
-                    ), item)
+                    .delete_observed(
+                        &format!("{api_root}/namespaces/{namespace}/{resource}/{name}"),
+                        item,
+                    )
                     .await;
             }
         }
@@ -148,7 +159,11 @@ async fn ensure_default_service_account(api: &ApiClient, namespace: &str) -> any
         return Ok(()); // Already exists
     }
 
-    anyhow::ensure!(resp.status().as_u16() == 404,"cannot observe default ServiceAccount: {}",resp.status());
+    anyhow::ensure!(
+        resp.status().as_u16() == 404,
+        "cannot observe default ServiceAccount: {}",
+        resp.status()
+    );
     let sa = json!({
         "apiVersion": "v1",
         "kind": "ServiceAccount",
@@ -167,51 +182,105 @@ async fn ensure_default_service_account(api: &ApiClient, namespace: &str) -> any
     Ok(())
 }
 
-fn route_namespace(delta: &apimachinery::informer::Delta, primary: &apimachinery::informers::Feed) -> Vec<apimachinery::informer::Key> {
-    delta.old.iter().chain(delta.new.iter()).flat_map(|object| owned::keys_at(primary,
-        Index::Name("".into(),object["metadata"]["namespace"].as_str().unwrap_or("").into()))).collect()
+fn route_namespace(
+    delta: &apimachinery::informer::Delta,
+    primary: &apimachinery::informers::Feed,
+) -> Vec<apimachinery::informer::Key> {
+    delta
+        .old
+        .iter()
+        .chain(delta.new.iter())
+        .flat_map(|object| {
+            owned::keys_at(
+                primary,
+                Index::Name(
+                    "".into(),
+                    object["metadata"]["namespace"]
+                        .as_str()
+                        .unwrap_or("")
+                        .into(),
+                ),
+            )
+        })
+        .collect()
 }
 fn terminating(ns: &Value) -> bool {
     !ns["metadata"]["deletionTimestamp"].is_null() || ns["status"]["phase"] == "Terminating"
 }
 struct Provision<'a>(&'a NamespaceController);
-struct Terminate<'a> { controller: &'a NamespaceController, resources: Vec<(String,String)> }
+struct Terminate<'a> {
+    controller: &'a NamespaceController,
+    resources: Vec<(String, String)>,
+}
 #[async_trait::async_trait]
 impl Controller for Provision<'_> {
-    fn name(&self) -> &'static str { "namespace-provision" }
-    fn primary(&self) -> &'static str { "/api/v1/namespaces" }
-    fn dependencies(&self) -> Vec<Dependency> { vec![Dependency { path: "/api/v1/serviceaccounts".into(), route: Arc::new(route_namespace) }] }
+    fn name(&self) -> &'static str {
+        "namespace-provision"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/namespaces"
+    }
+    fn dependencies(&self) -> Vec<Dependency> {
+        vec![Dependency {
+            path: "/api/v1/serviceaccounts".into(),
+            route: Arc::new(route_namespace),
+        }]
+    }
     async fn reconcile(&self, ns: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
-        if !terminating(ns) { ensure_default_service_account(&self.0.api,ns["metadata"]["name"].as_str().unwrap_or("")).await?; }
+        if !terminating(ns) {
+            ensure_default_service_account(
+                &self.0.api,
+                ns["metadata"]["name"].as_str().unwrap_or(""),
+            )
+            .await?;
+        }
         Ok(())
     }
 }
 #[async_trait::async_trait]
 impl Controller for Terminate<'_> {
-    fn name(&self) -> &'static str { "namespace-terminate" }
-    fn primary(&self) -> &'static str { "/api/v1/namespaces" }
+    fn name(&self) -> &'static str {
+        "namespace-terminate"
+    }
+    fn primary(&self) -> &'static str {
+        "/api/v1/namespaces"
+    }
     fn dependencies(&self) -> Vec<Dependency> {
-        self.resources.iter().map(|(root,resource)| Dependency {
-            path: format!("{root}/{resource}"), route: Arc::new(route_namespace),
-        }).collect()
+        self.resources
+            .iter()
+            .map(|(root, resource)| Dependency {
+                path: format!("{root}/{resource}"),
+                route: Arc::new(route_namespace),
+            })
+            .collect()
     }
     async fn reconcile(&self, ns: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
-        if !terminating(ns) { return Ok(()); }
+        if !terminating(ns) {
+            return Ok(());
+        }
         let name = ns["metadata"]["name"].as_str().unwrap_or("");
         let mut remaining = 0;
-        for (i,(root,resource)) in self.resources.iter().enumerate() {
+        for (i, (root, resource)) in self.resources.iter().enumerate() {
             let items = deps.feed(i).select(&Index::Namespace(name.into()))?;
             remaining += items.len();
             for item in items {
-                if !item["metadata"]["deletionTimestamp"].is_null() { continue; }
+                if !item["metadata"]["deletionTimestamp"].is_null() {
+                    continue;
+                }
                 let item_name = item["metadata"]["name"].as_str().unwrap_or("");
-                self.controller.api.delete_observed(&format!("{root}/namespaces/{name}/{resource}/{item_name}"),&item).await?;
+                self.controller
+                    .api
+                    .delete_observed(
+                        &format!("{root}/namespaces/{name}/{resource}/{item_name}"),
+                        &item,
+                    )
+                    .await?;
             }
         }
         if remaining == 0 {
             // Confirm absence with authoritative paginated reads before removing
             // the Namespace finalizer; a synced watch may still trail new writes.
-            terminate_namespace(&self.controller.api,name,&self.resources,ns).await?;
+            terminate_namespace(&self.controller.api, name, &self.resources, ns).await?;
         }
         Ok(())
     }

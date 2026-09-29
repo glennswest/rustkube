@@ -12,13 +12,13 @@
 //!   address (192.168.1.100, #91), updates listener status
 //! - HTTPRoute: Validates parentRefs (Gateway references), resolves backendRefs to Services
 
+use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
+use apimachinery::informer::Index;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
-use crate::owned::{self, Controller, Dependency, Deps};
-use apimachinery::informer::Index;
 
 pub struct GatewayController {
     api: Arc<ApiClient>,
@@ -30,10 +30,23 @@ impl GatewayController {
     }
 
     pub async fn run(&self) {
-        let class = GatewayWorker { controller: self, kind: "gatewayclasses" };
-        let gateway = GatewayWorker { controller: self, kind: "gateways" };
-        let route = GatewayWorker { controller: self, kind: "httproutes" };
-        tokio::join!(owned::run(&self.api,&class),owned::run(&self.api,&gateway),owned::run(&self.api,&route));
+        let class = GatewayWorker {
+            controller: self,
+            kind: "gatewayclasses",
+        };
+        let gateway = GatewayWorker {
+            controller: self,
+            kind: "gateways",
+        };
+        let route = GatewayWorker {
+            controller: self,
+            kind: "httproutes",
+        };
+        tokio::join!(
+            owned::run(&self.api, &class),
+            owned::run(&self.api, &gateway),
+            owned::run(&self.api, &route)
+        );
     }
 
     async fn reconcile_gateway_class(&self, gc: &Value) -> anyhow::Result<()> {
@@ -65,9 +78,10 @@ impl GatewayController {
         });
 
         owned::preserve_transition_times(&gc["status"], &mut updated["status"]);
-        if gc["status"] == updated["status"] { return Ok(()); }
-        self
-            .api
+        if gc["status"] == updated["status"] {
+            return Ok(());
+        }
+        self.api
             .update_status(
                 &format!("/apis/gateway.networking.k8s.io/v1/gatewayclasses/{gc_name}"),
                 &updated,
@@ -77,7 +91,12 @@ impl GatewayController {
         Ok(())
     }
 
-    async fn reconcile_gateway(&self, namespace: &str, gateway: &Value, deps: &Deps) -> anyhow::Result<()> {
+    async fn reconcile_gateway(
+        &self,
+        namespace: &str,
+        gateway: &Value,
+        deps: &Deps,
+    ) -> anyhow::Result<()> {
         let gateway_name = gateway["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Gateway missing name"))?;
@@ -85,7 +104,10 @@ impl GatewayController {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Gateway missing gatewayClassName"))?;
 
-        let gc_exists = !deps.feed(0).select(&Index::Name("".into(),gateway_class_name.into()))?.is_empty();
+        let gc_exists = !deps
+            .feed(0)
+            .select(&Index::Name("".into(), gateway_class_name.into()))?
+            .is_empty();
 
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let accepted = gc_exists;
@@ -98,10 +120,7 @@ impl GatewayController {
         let mut listener_statuses = Vec::new();
 
         for listener in &listeners {
-            let listener_name = listener["name"]
-                .as_str()
-                .unwrap_or("unknown")
-                .to_string();
+            let listener_name = listener["name"].as_str().unwrap_or("unknown").to_string();
             let protocol = listener["protocol"].as_str().unwrap_or("HTTP");
 
             // Validate listener protocol
@@ -159,7 +178,9 @@ impl GatewayController {
         });
 
         owned::preserve_transition_times(&gateway["status"], &mut updated["status"]);
-        if gateway["status"] == updated["status"] { return Ok(()); }
+        if gateway["status"] == updated["status"] {
+            return Ok(());
+        }
         self
             .api
             .update_status(
@@ -198,9 +219,7 @@ impl GatewayController {
 
         for parent_ref in &parent_refs {
             let parent_name = parent_ref["name"].as_str().unwrap_or("");
-            let parent_namespace = parent_ref["namespace"]
-                .as_str()
-                .unwrap_or(namespace);
+            let parent_namespace = parent_ref["namespace"].as_str().unwrap_or(namespace);
             let parent_kind = parent_ref["kind"].as_str().unwrap_or("Gateway");
 
             // Check if parent Gateway exists
@@ -286,7 +305,9 @@ impl GatewayController {
         });
 
         owned::preserve_transition_times(&httproute["status"], &mut updated["status"]);
-        if httproute["status"] == updated["status"] { return Ok(()); }
+        if httproute["status"] == updated["status"] {
+            return Ok(());
+        }
         self
             .api
             .update_status(
@@ -305,10 +326,15 @@ impl GatewayController {
     }
 }
 
-struct GatewayWorker<'a> { controller: &'a GatewayController, kind: &'static str }
+struct GatewayWorker<'a> {
+    controller: &'a GatewayController,
+    kind: &'static str,
+}
 #[async_trait::async_trait]
 impl Controller for GatewayWorker<'_> {
-    fn name(&self) -> &'static str { self.kind }
+    fn name(&self) -> &'static str {
+        self.kind
+    }
     fn primary(&self) -> &'static str {
         match self.kind {
             "gatewayclasses" => "/apis/gateway.networking.k8s.io/v1/gatewayclasses",
@@ -320,31 +346,73 @@ impl Controller for GatewayWorker<'_> {
         let paths: &[&str] = match self.kind {
             "gatewayclasses" => &[],
             "gateways" => &["/apis/gateway.networking.k8s.io/v1/gatewayclasses"],
-            _ => &["/apis/gateway.networking.k8s.io/v1/gateways","/api/v1/services"],
+            _ => &[
+                "/apis/gateway.networking.k8s.io/v1/gateways",
+                "/api/v1/services",
+            ],
         };
-        paths.iter().map(|path| Dependency { path: (*path).into(), route: Arc::new(|delta,primary| {
-            delta.old.iter().chain(delta.new.iter()).flat_map(|o| owned::keys_at(primary,Index::Reference(
-                o["metadata"]["namespace"].as_str().unwrap_or("").into(),o["kind"].as_str().unwrap_or("").into(),o["metadata"]["name"].as_str().unwrap_or("").into()))).collect()
-        }) }).collect()
+        paths
+            .iter()
+            .map(|path| Dependency {
+                path: (*path).into(),
+                route: Arc::new(|delta, primary| {
+                    delta
+                        .old
+                        .iter()
+                        .chain(delta.new.iter())
+                        .flat_map(|o| {
+                            owned::keys_at(
+                                primary,
+                                Index::Reference(
+                                    o["metadata"]["namespace"].as_str().unwrap_or("").into(),
+                                    o["kind"].as_str().unwrap_or("").into(),
+                                    o["metadata"]["name"].as_str().unwrap_or("").into(),
+                                ),
+                            )
+                        })
+                        .collect()
+                }),
+            })
+            .collect()
     }
     async fn reconcile(&self, object: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
-        let ns = object["metadata"]["namespace"].as_str().unwrap_or("default");
+        let ns = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
         match self.kind {
             "gatewayclasses" => self.controller.reconcile_gateway_class(object).await,
-            "gateways" => self.controller.reconcile_gateway(ns,object,deps).await,
+            "gateways" => self.controller.reconcile_gateway(ns, object, deps).await,
             _ => {
-                let mut gateways = Vec::new(); let mut services = Vec::new();
-                for parent in object["spec"]["parentRefs"].as_array().into_iter().flatten() {
-                    if let Some(name) = parent["name"].as_str() { gateways.extend(deps.feed(0).select(&Index::Name(ns.into(),name.into()))?); }
+                let mut gateways = Vec::new();
+                let mut services = Vec::new();
+                for parent in object["spec"]["parentRefs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(name) = parent["name"].as_str() {
+                        gateways.extend(deps.feed(0).select(&Index::Name(ns.into(), name.into()))?);
+                    }
                 }
                 for rule in object["spec"]["rules"].as_array().into_iter().flatten() {
                     for backend in rule["backendRefs"].as_array().into_iter().flatten() {
-                        if let Some(name) = backend["name"].as_str() { services.extend(deps.feed(1).select(&Index::Name(ns.into(),name.into()))?); }
+                        if let Some(name) = backend["name"].as_str() {
+                            services
+                                .extend(deps.feed(1).select(&Index::Name(ns.into(), name.into()))?);
+                        }
                     }
                 }
-                let gateway_map = gateways.iter().filter_map(|o| o["metadata"]["name"].as_str().map(|n|(n.to_string(),o))).collect();
-                let service_map = services.iter().filter_map(|o| o["metadata"]["name"].as_str().map(|n|(n.to_string(),o))).collect();
-                self.controller.reconcile_httproute(ns,object,&gateway_map,&service_map).await
+                let gateway_map = gateways
+                    .iter()
+                    .filter_map(|o| o["metadata"]["name"].as_str().map(|n| (n.to_string(), o)))
+                    .collect();
+                let service_map = services
+                    .iter()
+                    .filter_map(|o| o["metadata"]["name"].as_str().map(|n| (n.to_string(), o)))
+                    .collect();
+                self.controller
+                    .reconcile_httproute(ns, object, &gateway_map, &service_map)
+                    .await
             }
         }
     }
