@@ -208,7 +208,8 @@ new Deployment's ReplicaSet (#99, fixed in #69).
 
 # Part II — Historical diagnostic template (not a verified runbook)
 
-Copy-paste ready. Set the vars once; the rest follows.
+Adapt the placeholder namespace, workload and operator names before using
+these diagnostic examples. They are not the component acceptance test.
 
 ```bash
 export NS=stromcos                 # namespace

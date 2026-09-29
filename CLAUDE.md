@@ -340,7 +340,7 @@ datastore fix, then #147/#149 runtime validation. Do not claim live acceptance.
 - [x] A watch from revision 0 ("from now") is served by the cache, not the store
 - [x] `test/e2e/watch-deleted.sh` on dev
 
-### Storage (v0.8.0)
+### Storage — current through v0.18.0
 - [x] PV/PVC binding, protection finalizers, phases, reclaim, events (#56)
 - [x] Attach/detach — `VolumeAttachment` for drivers that require it
 - [x] Volume-aware scheduling — PV `nodeAffinity`, `selected-node`,
