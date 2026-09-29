@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Add a concurrent LIST/snapshot-revision regression without
+  controllers to isolate a datastore consistency race from indexed workers.
 - **test:** Include datastore logs and request/store counters in API-rig
   failure reports; retain PDB-specific diagnostics despite startup log volume.
 - **docs:** Retain final-validation failures #153/#154 alongside successful

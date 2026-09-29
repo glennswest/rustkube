@@ -129,3 +129,7 @@ rig respects the build volume target and scratch paths.
 `e2e/indexed-safety.sh` checks GC propagation, Event expiry, namespace
 finalization and scheduler burst/reservation accounting on the same disposable
 rig. It uses stand-in Nodes and does not claim real-node performance.
+
+`bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
+and resourceVersion agree with acknowledged writes. It runs without
+controllers, isolating the datastore/API contract required by informer caches.

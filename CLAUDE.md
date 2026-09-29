@@ -277,6 +277,9 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       also passes 5/5. Safety/CSI/DaemonSet/VM rigs pass, but one short
       ConfigMap POST timed out (#154). Add datastore/metrics failure evidence
       and repeat the short suite to identify the shared stall before closure.
+      Ten fresh short repetitions pass. Static audit found fastetcd Range
+      reads contents then header revision separately; add an isolated LIST
+      consistency regression and hand the datastore fix to its owner.
 - [ ] Final audit: create expectations and dependency recovery passed on dev;
       add delayed-write history-expiry fencing, then validate final head.
       Check write overlays, cache recovery barriers,
