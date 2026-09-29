@@ -124,7 +124,7 @@ struct PrefixCache {
     terminated: AtomicBool,
     /// Last time the pump made progress (an event) or the freshness task
     /// re-seeded. Used to distinguish a *quiet* prefix from a *stalled* watch.
-    last_progress: Mutex<std::time::Instant>,
+    last_progress: Mutex<tokio::time::Instant>,
 }
 
 /// One shared watch cache over a `KvStore`, keyed by resource prefix.
@@ -175,7 +175,7 @@ impl WatchCache {
             snapshot_rev: AtomicU64::new(start_rev),
             advanced: tokio::sync::Notify::new(),
             terminated: AtomicBool::new(false),
-            last_progress: Mutex::new(std::time::Instant::now()),
+            last_progress: Mutex::new(tokio::time::Instant::now()),
         });
 
         // Single upstream watch for this prefix.
@@ -235,7 +235,7 @@ impl WatchCache {
                 }
                 pump.snapshot_rev.store(ev.revision(), Ordering::SeqCst);
                 pump.advanced.notify_waiters();
-                *pump.last_progress.lock().unwrap() = std::time::Instant::now();
+                *pump.last_progress.lock().unwrap() = tokio::time::Instant::now();
 
                 // What the cache holds, under upstream's names. These are
                 // free here — the numbers already exist — and they are the
@@ -345,7 +345,7 @@ impl WatchCache {
                             fresh.advanced.notify_waiters();
                             // Count the re-seed as progress so a persistently
                             // quiet prefix re-seeds at most once per STALL window.
-                            *fresh.last_progress.lock().unwrap() = std::time::Instant::now();
+                            *fresh.last_progress.lock().unwrap() = tokio::time::Instant::now();
                             if changed {
                                 // Missing watch events require client relists
                                 // and a new upstream watch, not silent cache
@@ -406,7 +406,7 @@ impl WatchCache {
         min_rev: u64,
     ) -> Result<CachePage> {
         let cache = self.ensure(prefix).await?;
-        if !wait_for_revision(&cache, min_rev).await {
+        if !wait_for_revision(&cache, min_rev, MIN_REV_WAIT).await {
             tracing::debug!("watch-cache: {prefix} not at rev {min_rev} after {MIN_REV_WAIT:?}; listing from the store");
             let page = self.store.list(prefix, limit, continue_token).await?;
             let items = page.items.into_iter().map(|(_, v, r)| (v, r)).collect();
@@ -538,9 +538,20 @@ impl WatchCache {
     }
 }
 
-/// Subscribe before checking, including when several LISTs await one write.
-async fn wait_for_revision(cache: &PrefixCache, min_rev: u64) -> bool {
-    let deadline = tokio::time::Instant::now() + MIN_REV_WAIT;
+/// Wait until the snapshot reflects `min_rev`, for at most `budget`: true when
+/// it does, false when the budget runs out or the cache is torn down (the
+/// caller then reads the store). Woken by `advanced`, never by polling.
+///
+/// The `Notified` future is enabled *before* the state is checked, so an
+/// advance between the check and the await still wakes it (`notify_waiters`
+/// stores no permit). Dropping the future — a client that goes away — just
+/// deregisters it.
+async fn wait_for_revision(
+    cache: &PrefixCache,
+    min_rev: u64,
+    budget: std::time::Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + budget;
     loop {
         let advanced = cache.advanced.notified();
         tokio::pin!(advanced);
@@ -560,6 +571,128 @@ async fn wait_for_revision(cache: &PrefixCache, min_rev: u64) -> bool {
 #[cfg(test)]
 mod revision_tests {
     use super::*;
+    use apimachinery::store::{LeaseId, ListResult};
+    use async_trait::async_trait;
+    use std::time::Duration;
+    use tokio::time::Instant;
+
+    const P: &str = "/registry/pods/";
+
+    /// A store whose revision and contents the test sets, and whose watch
+    /// delivers only the events the test sends: so a page tells whether it
+    /// came from the cache (which saw the events) or the store (which did not).
+    #[derive(Default)]
+    struct ScriptedStore {
+        state: Mutex<(u64, BTreeMap<String, (Vec<u8>, u64)>)>,
+        watchers: Mutex<Vec<mpsc::Sender<WatchEvent>>>,
+    }
+
+    impl ScriptedStore {
+        fn at(rev: u64, keys: &[&str]) -> Arc<Self> {
+            let store = Self::default();
+            for key in keys {
+                store.set(rev, key);
+            }
+            store.state.lock().unwrap().0 = rev;
+            Arc::new(store)
+        }
+        /// Write `key` at `rev` in the store only — no watch event.
+        fn set(&self, rev: u64, key: &str) {
+            let mut state = self.state.lock().unwrap();
+            state.0 = rev;
+            state.1.insert(key.to_string(), (key.as_bytes().to_vec(), rev));
+        }
+        /// Advance the store's revision without touching this prefix.
+        fn bump(&self, rev: u64) {
+            self.state.lock().unwrap().0 = rev;
+        }
+        /// Deliver an event to the open watch, as the datastore would.
+        async fn emit(&self, key: &str, rev: u64) {
+            let tx = self.watchers.lock().unwrap().last().cloned().unwrap();
+            tx.send(WatchEvent::Added {
+                key: key.to_string(),
+                value: key.as_bytes().to_vec(),
+                revision: rev,
+            })
+            .await
+            .unwrap();
+        }
+        /// End every open watch, as a lost datastore connection does.
+        fn close_watches(&self) {
+            self.watchers.lock().unwrap().clear();
+        }
+    }
+
+    #[async_trait]
+    impl KvStore for ScriptedStore {
+        async fn get(&self, _: &str) -> Result<Option<(Vec<u8>, u64)>> {
+            unimplemented!()
+        }
+        async fn put(&self, _: &str, _: &[u8], _: Option<u64>) -> Result<u64> {
+            unimplemented!()
+        }
+        async fn delete(&self, _: &str, _: Option<u64>) -> Result<u64> {
+            unimplemented!()
+        }
+        async fn list(&self, prefix: &str, _: usize, _: Option<&str>) -> Result<ListResult> {
+            let state = self.state.lock().unwrap();
+            Ok(ListResult {
+                items: state
+                    .1
+                    .iter()
+                    .filter(|(k, _)| k.starts_with(prefix))
+                    .map(|(k, (v, r))| (k.clone(), v.clone(), *r))
+                    .collect(),
+                continue_token: None,
+                revision: state.0,
+                remaining: None,
+            })
+        }
+        async fn watch(&self, _: &str, _: u64) -> Result<WatchStream> {
+            let (tx, rx) = mpsc::channel(64);
+            self.watchers.lock().unwrap().push(tx);
+            Ok(rx)
+        }
+        async fn lease_grant(&self, _: Duration) -> Result<LeaseId> {
+            unimplemented!()
+        }
+        async fn lease_keepalive(&self, _: LeaseId) -> Result<()> {
+            unimplemented!()
+        }
+        async fn lease_revoke(&self, _: LeaseId) -> Result<()> {
+            unimplemented!()
+        }
+        async fn compact(&self, _: u64) -> Result<()> {
+            unimplemented!()
+        }
+    }
+
+    fn keys(page: &CachePage) -> Vec<String> {
+        page.items
+            .iter()
+            .map(|(v, _)| String::from_utf8(v.clone()).unwrap())
+            .collect()
+    }
+
+    /// A cache over `store`, opened (seeded, pump running).
+    async fn opened(store: &Arc<ScriptedStore>) -> Arc<WatchCache> {
+        let wc = Arc::new(WatchCache::new(store.clone()));
+        wc.list(P, 0, None, 0).await.unwrap();
+        wc
+    }
+
+    fn spawn_list(
+        wc: &Arc<WatchCache>,
+        min_rev: u64,
+    ) -> tokio::task::JoinHandle<(CachePage, Duration)> {
+        let wc = wc.clone();
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let page = wc.list(P, 0, None, min_rev).await.unwrap();
+            (page, started.elapsed())
+        })
+    }
+
     fn cache() -> Arc<PrefixCache> {
         Arc::new(PrefixCache {
             tx: broadcast::channel(16).0,
@@ -570,25 +703,174 @@ mod revision_tests {
             snapshot_rev: AtomicU64::new(1),
             advanced: tokio::sync::Notify::new(),
             terminated: AtomicBool::new(false),
-            last_progress: Mutex::new(std::time::Instant::now()),
+            last_progress: Mutex::new(Instant::now()),
         })
     }
+
     #[tokio::test]
     async fn advancing_revision_wakes_all_waiters() {
         let cache = cache();
         let first = cache.clone();
         let second = cache.clone();
-        let a = tokio::spawn(async move { wait_for_revision(&first, 2).await });
-        let b = tokio::spawn(async move { wait_for_revision(&second, 2).await });
+        let a = tokio::spawn(async move { wait_for_revision(&first, 2, MIN_REV_WAIT).await });
+        let b = tokio::spawn(async move { wait_for_revision(&second, 2, MIN_REV_WAIT).await });
         tokio::task::yield_now().await;
         cache.snapshot_rev.store(2, Ordering::SeqCst);
         cache.advanced.notify_waiters();
         assert!(a.await.unwrap());
         assert!(b.await.unwrap());
-        assert!(wait_for_revision(&cache, 2).await);
+        assert!(wait_for_revision(&cache, 2, MIN_REV_WAIT).await);
     }
+
     #[tokio::test]
     async fn a_stalled_watch_releases_the_reader_for_store_fallback() {
-        assert!(!wait_for_revision(&cache(), 2).await);
+        assert!(!wait_for_revision(&cache(), 2, MIN_REV_WAIT).await);
+    }
+
+    // Paused time: a waiter that missed its wakeup would sleep out the whole
+    // budget, which the clock then shows exactly.
+
+    #[tokio::test(start_paused = true)]
+    async fn the_pump_applying_the_write_wakes_a_waiting_list() {
+        let store = ScriptedStore::at(5, &["/registry/pods/a"]);
+        let wc = opened(&store).await;
+        let waiter = spawn_list(&wc, 6);
+        tokio::task::yield_now().await;
+        store.emit("/registry/pods/b", 6).await;
+        let (page, waited) = waiter.await.unwrap();
+        assert!(waited < MIN_REV_WAIT, "woken by the pump, not the deadline");
+        assert_eq!(page.revision, 6);
+        // Only the cache saw the event: this page is the snapshot.
+        assert_eq!(keys(&page), ["/registry/pods/a", "/registry/pods/b"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_revision_the_pump_never_reaches_falls_back_to_the_store_at_the_deadline() {
+        let store = ScriptedStore::at(5, &["/registry/pods/a"]);
+        let wc = opened(&store).await;
+        store.set(7, "/registry/pods/c");
+        let (page, waited) = spawn_list(&wc, 7).await.unwrap();
+        // Timer deadlines round to the millisecond.
+        assert!(waited >= MIN_REV_WAIT && waited <= MIN_REV_WAIT + Duration::from_millis(2));
+        assert_eq!(page.revision, 7);
+        assert_eq!(keys(&page), ["/registry/pods/a", "/registry/pods/c"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lost_datastore_watch_releases_the_waiter_at_once() {
+        let store = ScriptedStore::at(5, &["/registry/pods/a"]);
+        let wc = opened(&store).await;
+        let mut events = wc.watch(P, 0).await.unwrap();
+        let waiter = spawn_list(&wc, 9);
+        tokio::task::yield_now().await;
+        store.set(9, "/registry/pods/d");
+        store.close_watches();
+        let (page, waited) = waiter.await.unwrap();
+        assert_eq!(waited, Duration::ZERO, "woken by the pump ending");
+        assert_eq!(page.revision, 9);
+        assert_eq!(keys(&page), ["/registry/pods/a", "/registry/pods/d"]);
+        assert!(matches!(
+            events.recv().await,
+            Some(WatchEvent::Error { code: 503, .. })
+        ));
+    }
+
+    /// The stall check re-seeds at the first freshness tick at or past
+    /// `STALL_SECS` of silence: 30 s after the cache opened.
+    const JUST_BEFORE_RESEED: Duration = Duration::from_millis(STALL_SECS * 1000 - 30);
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unchanged_reseed_advances_the_revision_and_wakes_the_waiter() {
+        let store = ScriptedStore::at(5, &["/registry/pods/a"]);
+        let wc = opened(&store).await;
+        let mut events = wc.watch(P, 0).await.unwrap();
+        // Another prefix moved the global revision; this one is just quiet.
+        store.bump(8);
+        tokio::time::sleep(JUST_BEFORE_RESEED).await;
+        let (page, waited) = spawn_list(&wc, 8).await.unwrap();
+        assert!(
+            waited > Duration::ZERO && waited < MIN_REV_WAIT,
+            "woken by the re-seed at ~30 ms, got {waited:?}"
+        );
+        assert_eq!(page.revision, 8);
+        assert_eq!(keys(&page), ["/registry/pods/a"]);
+        // Nothing was missed, so watchers carry on.
+        assert!(events.try_recv().is_err());
+        assert!(!wc.caches.get(P).unwrap().terminated.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reseed_that_finds_missed_events_wakes_the_waiter_and_ends_watches() {
+        let store = ScriptedStore::at(5, &["/registry/pods/a"]);
+        let wc = opened(&store).await;
+        let mut events = wc.watch(P, 0).await.unwrap();
+        // Written, but the datastore watch never said so.
+        store.set(8, "/registry/pods/e");
+        tokio::time::sleep(JUST_BEFORE_RESEED).await;
+        let (page, waited) = spawn_list(&wc, 8).await.unwrap();
+        assert!(
+            waited > Duration::ZERO && waited < MIN_REV_WAIT,
+            "woken by the re-seed at ~30 ms, got {waited:?}"
+        );
+        assert_eq!(page.revision, 8);
+        assert_eq!(keys(&page), ["/registry/pods/a", "/registry/pods/e"]);
+        assert!(matches!(
+            events.recv().await,
+            Some(WatchEvent::Error { code: 410, .. })
+        ));
+        assert!(wc.caches.get(P).is_none(), "the next reader re-opens");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelled_waiters_do_not_disturb_later_ones() {
+        let store = ScriptedStore::at(5, &["/registry/pods/a"]);
+        let wc = opened(&store).await;
+        // A client that disconnects mid-wait, and one that gives up.
+        let gone = spawn_list(&wc, 6);
+        tokio::task::yield_now().await;
+        gone.abort();
+        assert!(gone.await.err().unwrap().is_cancelled());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), wc.list(P, 0, None, 6))
+                .await
+                .is_err()
+        );
+        let waiter = spawn_list(&wc, 6);
+        tokio::task::yield_now().await;
+        store.emit("/registry/pods/b", 6).await;
+        let (page, waited) = waiter.await.unwrap();
+        assert_eq!(waited, Duration::ZERO);
+        assert_eq!(keys(&page), ["/registry/pods/a", "/registry/pods/b"]);
+    }
+
+    /// Waiters registering on some threads while the revision advances on
+    /// others. The budget is an hour, so a missed wakeup hangs the round and
+    /// the outer timeout fails the test, instead of hiding in a fallback.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn no_notification_is_lost_to_a_concurrent_advance() {
+        let cache = cache();
+        let rounds = async {
+            for rev in 2..2002u64 {
+                let waiters: Vec<_> = (0..8)
+                    .map(|_| {
+                        let cache = cache.clone();
+                        tokio::spawn(async move {
+                            wait_for_revision(&cache, rev, Duration::from_secs(3600)).await
+                        })
+                    })
+                    .collect();
+                let advancer = cache.clone();
+                tokio::spawn(async move {
+                    advancer.snapshot_rev.store(rev, Ordering::SeqCst);
+                    advancer.advanced.notify_waiters();
+                });
+                for waiter in waiters {
+                    assert!(waiter.await.unwrap());
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), rounds)
+            .await
+            .expect("a waiter missed its wakeup");
     }
 }
