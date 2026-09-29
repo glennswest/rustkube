@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Add real API/store Service/PDB membership, deletion/recreation and
+  idle-write regression checks. Keep all e2e build/scratch/store data on the
+  private build drive. Limit endpoint orphan cleanup to controlling Services.
 - **perf:** Migrate Service/EndpointSlice and PDB to bounded indexed workers;
   route old/new Pod labels via namespace-scoped selector anchors and preserve
   negative/empty selectors. Check all dependency sync barriers, reseed shared

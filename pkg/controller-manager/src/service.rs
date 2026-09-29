@@ -222,6 +222,9 @@ impl Controller for ServiceController {
         let slices = deps.feed(1).select(&Index::Owner(key.uid.clone()))?;
         for (plural, items) in [("/api/v1", children), ("/apis/discovery.k8s.io/v1", slices.as_slice())] {
             for item in items {
+                if !item["metadata"]["ownerReferences"].as_array().is_some_and(|refs|
+                    refs.iter().any(|r| r["kind"] == "Service" && r["controller"] == true
+                        && r["uid"].as_str() == Some(key.uid.as_str()))) { continue; }
                 let resource = if plural == "/api/v1" { "endpoints" } else { "endpointslices" };
                 let name = item["metadata"]["name"].as_str().unwrap_or("");
                 self.api.delete_observed(&format!("{plural}/namespaces/{}/{resource}/{name}", key.namespace), item).await?;

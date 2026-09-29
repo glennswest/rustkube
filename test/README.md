@@ -120,3 +120,8 @@ not a suite result. Recovery is tracked by
 Retry the short suite through stormcentral after recovery; #96 stays open
 until that real-machine run passes. No hardware-specific assumptions were
 added to the suite.
+
+`e2e/indexed-selectors.sh` exercises Service/PDB Pod relabelling, namespace
+isolation, negative selectors, idle writes and UID replacement against the
+API/store rig. Run through `sc-build`; it does not need a kubelet. The shared
+rig respects the build volume target and scratch paths.

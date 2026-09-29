@@ -17,7 +17,9 @@
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
 # each, so two runs can share the build box.
 set -u
-mkdir -p "$HOME/tmp" && export TMPDIR="$HOME/tmp"
+mkdir -p "$PWD/tmp"
+: "${TMPDIR:=$PWD/tmp}"
+export TMPDIR
 W=$(mktemp -d)
 cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
@@ -37,17 +39,16 @@ if [ -n "${RK_BIN:-}" ]; then
     [ -x "$BIN/$b" ] || { echo "RK_BIN=$BIN has no $b"; exit 100; }
   done
 else
-  export CARGO_TARGET_DIR=$HOME/target/rustkube-e2e
   cargo build -q -p kube-apiserver -p kube-controller-manager -p kube-scheduler || exit 100
-  BIN=$CARGO_TARGET_DIR/debug
+  BIN=${CARGO_TARGET_DIR:-$PWD/target}/debug
 fi
 if [ -n "${RK_FASTETCD:-}" ]; then
   FASTETCD=$RK_FASTETCD
   [ -x "$FASTETCD" ] || { echo "RK_FASTETCD=$FASTETCD is not executable"; exit 100; }
 else
   git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
-  (cd "$W/fastetcd" && CARGO_TARGET_DIR=$HOME/target/fastetcd-e2e cargo build -q -p fastetcd-server) || exit 100
-  FASTETCD=$(ls "$HOME"/target/fastetcd-e2e/debug/fastetcd* | grep -v '\.d$' | head -1)
+  (cd "$W/fastetcd" && cargo build -q -p fastetcd-server) || exit 100
+  FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/debug/fastetcd-server
 fi
 
 # --- credentials --------------------------------------------------------------
@@ -78,14 +79,8 @@ openssl x509 -req -in "$W/apiserver.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" -CAc
   -out "$W/apiserver.crt" -days 2 -extfile "$W/san.ext" 2>/dev/null
 
 # --- start --------------------------------------------------------------------
-# The store on tmpfs when there is one: this data is thrown away, and on a
-# shared build box every fsync to disk queues behind everyone else's builds —
-# namespace creation took over 30 s under the conformance suite's load (#67).
+# Keep the datastore on the build's private disposable drive too.
 DATA=$W/etcd
-if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-  DATA=$(mktemp -d /dev/shm/rustkube-e2e.XXXXXX)
-  trap 'cleanup; rm -rf "$DATA"' EXIT
-fi
 "$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:$ETCD \
   --listen-peer-urls http://127.0.0.1:$((ETCD + 1)) --listen-metrics-url 127.0.0.1:$((ETCD + 2)) \
   >"$W/fastetcd.log" 2>&1 &
