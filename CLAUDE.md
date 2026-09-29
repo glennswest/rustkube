@@ -100,7 +100,8 @@ clone requests. README's configuration tables come from the three CLI sources.
       fastetcd#50 is closed with its snapshot fix in v1.6.1.
 - [x] Handoff five-crate tests at 9f622fa: 409 passed, four datastore tests
       ignored, doc tests passed; sc-build remote exit 0 in 34 seconds.
-- [ ] Pin the disposable API rig to fastetcd v1.6.1 for reproducible snapshot
+- [x] Pin the disposable API rig to fastetcd v1.6.1.
+- [ ] Extend snapshot regression to pinned pages and exact WATCH replay; for snapshot
       acceptance; rerun the isolated LIST race and controller/scheduler matrix.
 - [ ] Investigate #153 startup membership and #154 POST timeout with retained
       evidence; do not equate successful repetitions with a diagnosed fix.

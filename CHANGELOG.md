@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **test:** Check paginated snapshots for stable revisions and duplicate-free membership, then verify WATCH replay delivers exactly the writes after sampled LIST revisions (#146).
 - **test:** Pin disposable API rigs to fastetcd v1.6.1 and report its commit; allow explicit source-ref comparison for snapshot regression. Baseline #146 unit/doc tests pass (409, four ignored).
 - **docs:** Resume #146 on main after fastetcd v1.6.1; record snapshot and controller acceptance gates and intermittent-failure investigation.
 - **chore:** Merge turbomode into main at 908d078 (#163). Full locked workspace builds/tests on both branch and merge commit passed: 418 tests, four datastore-dependent tests ignored, doc tests passed. Runtime/cache acceptance remains on existing issues; no golden requested.
