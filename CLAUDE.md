@@ -145,6 +145,9 @@ when each piece landed.
       start of it
 
 ### Controller-manager drop-in parity (#2) — acceptance environment needed, 2026-09-29
+- [x] sc-build at 5687d0f compiled kube-controller-manager and passed 58 unit
+      tests plus doc tests (remote exit 0; local build-log append read-only).
+      This baseline run does not verify upstream acceptance.
 - [x] Read #2 and totrust#4; audit CLI, controller runner and HPA. TLS/token,
       Leases, metrics/health and workload controllers exist. Kubeconfig and
       signal handling are absent; controller presence does not establish parity.
@@ -204,9 +207,10 @@ when each piece landed.
       append was read-only. This does not verify upstream parity.
 - [x] Read #3 and audit scheduler CLI, scheduling loop, score functions and
       unused plugin traits against the recorded scope.
-- [ ] Owner selects the exact upstream Kubernetes version and an isolated
-      otherwise-upstream acceptance cluster with real kubelets. README API
-      posture is 1.36; research targets 1.32 and 1.37. No baseline is selected.
+- [x] Follow-up during #2: totrust/PINS.yaml supplies the shared acceptance
+      baseline v1.31.4. README posture and research versions do not override it.
+- [ ] Owner identifies an isolated otherwise-upstream acceptance cluster with
+      real kubelets and a deployment route; shared pin changes belong in totrust.
 - [ ] Implement kubeconfig/configuration profiles, framework/default scoring
       parity, priority/backoff/unschedulable queues and nomination, preemption
       (#84), scheduling gates (#87), and Pod scheduling events/status (#138).
