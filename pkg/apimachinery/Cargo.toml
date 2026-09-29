@@ -50,3 +50,6 @@ jsonwebtoken = { workspace = true }
 # Cert utilities
 rcgen = { workspace = true }
 x509-parser = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

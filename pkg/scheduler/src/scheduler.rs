@@ -426,30 +426,21 @@ impl Scheduler {
         crate::metrics_server::set_leader(false);
         loop {
             self.api.write_gate.close();
-            elector.acquire().await;
-            self.api.write_gate.start();
+            let attempted = elector.acquire().await;
+            self.api.write_gate.start(attempted);
             info!("Became leader; scheduling pods");
             crate::metrics_server::set_leader(true);
-            let leadership = async {
-                loop {
-                    // Lease maintenance is an actual timed obligation.
-                    tokio::time::sleep(elector.retry_period()).await;
-                    if !tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        elector.try_acquire_or_renew(),
-                    )
-                    .await
-                    .unwrap_or(false)
-                        || !self.api.write_gate.renew()
-                    {
-                        break;
-                    }
-                }
-            };
+            // Lease maintenance is a timed obligation of its own, polled
+            // alongside (never inside) scheduling; its end drops the whole
+            // term — queue, feeds and in-memory reservations.
+            let leadership = apimachinery::lease::hold(
+                &self.api.write_gate,
+                elector.retry_period(),
+                || elector.try_acquire_or_renew(),
+            );
             tokio::select! {
                 biased;
                 _ = leadership => {
-                    self.api.write_gate.close();
                     warn!("Lost leadership; cancelling scheduling");
                     crate::metrics_server::set_leader(false);
                 },

@@ -821,29 +821,19 @@ impl ControllerManager {
         info!("Leader election enabled (identity={})", self.identity);
         loop {
             self.api.write_gate.close();
-            elector.acquire().await;
-            self.api.write_gate.start();
+            let attempted = elector.acquire().await;
+            self.api.write_gate.start(attempted);
             info!("Became leader; starting controllers");
             crate::metrics_server::set_leader(true);
             let mut tasks = self.spawn_all();
-            loop {
-                tokio::time::sleep(elector.retry_period()).await;
-                if !tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    elector.try_acquire_or_renew(),
-                )
-                .await
-                .unwrap_or(false)
-                    || !self.api.write_gate.renew()
-                {
-                    self.api.write_gate.close();
-                    warn!("Lost leadership; stopping controllers");
-                    crate::metrics_server::set_leader(false);
-                    tasks.abort_all();
-                    while tasks.join_next().await.is_some() {}
-                    break;
-                }
-            }
+            apimachinery::lease::hold(&self.api.write_gate, elector.retry_period(), || {
+                elector.try_acquire_or_renew()
+            })
+            .await;
+            warn!("Lost leadership; stopping controllers");
+            crate::metrics_server::set_leader(false);
+            tasks.abort_all();
+            while tasks.join_next().await.is_some() {}
         }
     }
 }

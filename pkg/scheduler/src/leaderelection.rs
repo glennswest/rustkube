@@ -46,11 +46,13 @@ impl LeaderElector {
         RETRY_PERIOD
     }
 
-    /// Block until this candidate holds the lease.
-    pub async fn acquire(&self) {
+    /// Block until this candidate holds the lease; returns when the winning
+    /// attempt started, which is where the new term's deadline counts from.
+    pub async fn acquire(&self) -> apimachinery::lease::TermInstant {
         loop {
+            let attempted = apimachinery::lease::TermInstant::now();
             if self.try_acquire_or_renew().await {
-                return;
+                return attempted;
             }
             tokio::time::sleep(RETRY_PERIOD).await;
         }
