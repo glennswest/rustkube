@@ -120,7 +120,9 @@ for round in (1, 2):
     failed_at = time.time()
     replaced, at = until(lambda: [p for p in active_rs_pods() if p['metadata']['uid'] != pod['metadata']['uid']], 45)
     lag = at - failed_at
-    check(f'ReplicaSet replaces Failed Pod {round} after its backoff', bool(replaced) and 8 <= lag <= 20,
+    # Round 2's window is 10 s, or 20 s if the Pod failed before a stable
+    # pass reset the count; never an immediate replacement.
+    check(f'ReplicaSet replaces Failed Pod {round} after its backoff', bool(replaced) and 8 <= lag <= (20 if round == 1 else 30),
           f'{lag:.1f}s' if replaced else 'never replaced')
 
 for t in threads: t.join()
@@ -156,11 +158,18 @@ scrape() {
 }
 sleep 10   # let the cleanup above settle
 scrape >"$W/idle.before"
+idle_from=$(date -u +%H:%M:%S)
 sleep 20
 scrape >"$W/idle.after"
+idle_to=$(date -u +%H:%M:%S)
 # The first scrape itself completes inside the window and is counted once.
 idle=$(awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) { n+=d; print "  +" d, $1 > "/dev/stderr" } } END { printf "%d\n", n-1 }' \
   "$W/idle.before" "$W/idle.after")
 if [ "$idle" -le 5 ]; then pass "idle control plane: $idle API requests in 20 s"
-else fail "idle control plane made $idle API requests in 20 s"; fi
+else
+  fail "idle control plane made $idle API requests in 20 s"
+  echo "---- controller-manager warnings $idle_from..$idle_to"
+  sed 's/\x1b\[[0-9;]*m//g' "$W/cm.log" | awk -v a="$idle_from" -v b="$idle_to" 'substr($1,12,8) >= a && substr($1,12,8) <= b' |
+    grep -v 'not synchronized' | head -40
+fi
 report
