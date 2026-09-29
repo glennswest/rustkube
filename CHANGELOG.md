@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **perf:** Reconcile CSI attachments per PV using claim/Pod/driver/attachment
+  indexes; retain attachments when PV absence or Pod release is unproven and
+  guard detach with the observed attachment UID and revision.
 - **perf:** Index stormblock provisioning/reclaim per claim/volume and node
   lifecycle per Node, with Lease and assigned-Pod routes. Preserve semantic
   expiry/eviction deadlines and use conditional Pod deletion.

@@ -254,7 +254,8 @@ and run unit/e2e validation on dev. Do not claim live runtime acceptance.
       only 404 proves claim absence; remote validation pending
 - [x] Stormblock claim and reclaim workers; node lifecycle indexed by Lease
       name and assigned Pod, preserving expiry/toleration deadlines
-- [ ] Attach/detach (claim/PV/Pod/VolumeAttachment)
+- [x] Attach/detach: per-PV workers with indexed claim/Pod/driver/attachment
+      dependencies and conditional detach; remote validation pending
 - [x] VM (owned VMI), CSR, root CA (ConfigMap → Namespace); remote checks pending
 - [ ] Migration; namespace, HPA, gateway, events
 - [ ] GC: fail closed on any unsynced feed

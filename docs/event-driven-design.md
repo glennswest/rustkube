@@ -12,7 +12,9 @@ begun after the write. Deletion uses observed UID/revision preconditions.
 PV binding uses serialized claim workers, storage-class candidate indexes, and
 independent per-volume lifecycle workers. Stormblock provisioning/reclaim
 and node lifecycle also use object workers; Node expiry and eviction
-deadlines are unchanged, with Lease/Pod events routed by Node name. Other controller migrations and
+deadlines are unchanged, with Lease/Pod events routed by Node name. CSI
+attach/detach workers select claims and attachments by volume, then Pods by
+claim; deletes carry the observed attachment UID/revision. Other controller migrations and
 runtime validation remain open.
 
 ## Objective and boundary
