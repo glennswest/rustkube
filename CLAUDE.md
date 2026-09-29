@@ -95,6 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Resume #146 acceptance after fastetcd v1.6.1 — 2026-09-29
+- [x] Read #146, project instructions, open issues and #163; continue on main.
+      fastetcd#50 is closed with its snapshot fix in v1.6.1.
+- [ ] Run the handoff five-crate tests on the pushed head before new changes.
+- [ ] Pin the disposable API rig to fastetcd v1.6.1 for reproducible snapshot
+      acceptance; rerun the isolated LIST race and controller/scheduler matrix.
+- [ ] Investigate #153 startup membership and #154 POST timeout with retained
+      evidence; do not equate successful repetitions with a diagnosed fix.
+- [ ] Update acceptance docs and issue evidence; close #146 only if verified.
+      Live validation remains #147/#149. Preserve the no-golden instruction.
+
+
 ### Merge turbomode into main (#163) — 2026-09-29
 Owner instruction #163 supersedes the earlier branch-only restriction below.
 No golden or release is requested; unfinished acceptance stays on its issues.
