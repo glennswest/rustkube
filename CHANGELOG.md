@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **fix:** Resolve the e2e store executable by its binary name (`fastetcd`),
+  not its Cargo package name, and fail immediately if absent.
 - **test:** Add real API/store Service/PDB membership, deletion/recreation and
   idle-write regression checks. Keep all e2e build/scratch/store data on the
   private build drive. Limit endpoint orphan cleanup to controlling Services.

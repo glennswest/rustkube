@@ -48,8 +48,9 @@ if [ -n "${RK_FASTETCD:-}" ]; then
 else
   git clone -q --depth 1 https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
   (cd "$W/fastetcd" && cargo build -q -p fastetcd-server) || exit 100
-  FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/debug/fastetcd-server
+  FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/debug/fastetcd
 fi
+[ -x "$FASTETCD" ] || { echo "fastetcd build produced no executable"; exit 100; }
 
 # --- credentials --------------------------------------------------------------
 openssl genrsa -out "$W/sa.key" 2048 2>/dev/null
