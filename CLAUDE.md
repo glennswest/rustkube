@@ -95,18 +95,22 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Controller deadlines (#144) — IN PROGRESS 2026-09-29
-Poll loops are gone from controller-manager (audit: remaining sleeps are
-error retry, startup wait and the Lease retry period). Cascades, expired
-Event and namespace finalizers are already on `indexed-safety.sh`.
-- [ ] `test/e2e/deadlines.sh`: CronJob fires at its minute, Job
-      activeDeadlineSeconds, a not-yet-expired Event expires on time, a Lease
-      going stale taints its Node, ReplicaSet crash backoff replaces a Failed
-      Pod after its delay, GC keeps a dependent whose owner kind is unknown
-- [ ] Suspected bug: ReplicaSet records a failure on every pass while the kept
-      Failed Pod exists, so its backoff never lets a replacement be created —
-      confirm on the rig, fix, unit test
-- [ ] sc-build; docs/changelog; close #144
+### Controller deadlines (#144) — COMPLETE 2026-09-29
+Poll loops were already gone from controller-manager source (remaining sleeps:
+error retry, startup wait, Lease retry). The new rig found three live defects.
+- [x] `test/e2e/deadlines.sh`: cron +0.0–0.1 s, Job deadline +0.1–2.7 s,
+      Event TTL +0.1–1.7 s, Lease grace +0.1–1.4 s after their deadlines; RS
+      backoff 10 s; GC deletes proven-absent owner's dependent, keeps an
+      unserved-kind owner's; idle control plane 0 API requests in 60 s
+- [x] Fixed: RS re-counted its retained Failed Pod every pass, never replaced
+      it (f58498c); cleared backoff requeued itself at zero delay (25eadee)
+- [x] Fixed: 45 s heartbeat BOOKMARKs reached subscribers as empty calls —
+      GC/namespace re-discovered and restarted every worker, scheduler
+      re-queued pending Pods; routine reconnects were resets (abff0aa)
+- [x] 4024040: deadlines 9/9, indexed-safety 11, indexed-selectors 14,
+      daemonset-nodes 10, scheduler-failover 19, vm-runstrategy 10, exit 0.
+      5c450f5: workspace 441 passed, 4 ignored. Auto-filed #167–#170 closed.
+      Live latency stays #147; no golden (#163)
 
 ### Shared watches and work queues (#143) — COMPLETE 2026-09-29
 WorkQueue, reflector, reactor::WatchHub and informers::Hub were on main with
