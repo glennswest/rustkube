@@ -852,11 +852,6 @@ impl Scheduler {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("node missing name"))?;
 
-        observed
-            .lock()
-            .unwrap()
-            .reserve(key.clone(), pod, chosen_name, false);
-
         // Phase 3a: volumes before the pod.
         //
         // A `WaitForFirstConsumer` claim is provisioned where the pod is going
@@ -895,7 +890,18 @@ impl Scheduler {
             return Ok(Placement::WaitingForVolumes(chosen_name.to_string()));
         }
 
-        // Phase 3b: Bind — update the pod with the chosen node
+        // Phase 3b: Bind — update the pod with the chosen node.
+        //
+        // Charged before the write, whose outcome may be unknown; the claim
+        // path above charges only once selected-node is written (the caller's
+        // WaitingForVolumes reservation). Reserving before a claim that is
+        // missing, or whose patch failed, pinned the Pod to that first choice
+        // (`snapshot` restricts it to the assumed node) — even after the claim
+        // appeared with a volume that lives elsewhere.
+        observed
+            .lock()
+            .unwrap()
+            .reserve(key.clone(), pod, chosen_name, false);
         let mut bound_pod = pod.clone();
         bound_pod["spec"]["nodeName"] = json!(chosen_name);
         bound_pod["status"]["phase"] = json!("Pending");
@@ -1267,6 +1273,34 @@ mod reservation_tests {
             new: Some(object),
             affected: Default::default(),
         }
+    }
+    #[tokio::test]
+    async fn a_missing_claim_leaves_no_assumption_pinning_the_first_node() {
+        // No API is reachable: the claim path must fail before any write.
+        let sched = Scheduler::new("http://127.0.0.1:1");
+        let mut p = pod("a", "v1");
+        p["spec"]["volumes"] = json!([{"name":"v","persistentVolumeClaim":{"claimName":"late"}}]);
+        let node = json!({"metadata":{"name":"first"},"status":{
+            "allocatable":{"cpu":"4","memory":"8Gi","pods":"10"},
+            "conditions":[{"type":"Ready","status":"True"}]}});
+        let key = (false, Key::of(&p).unwrap());
+        let observed = Mutex::new(SchedulingState::default());
+        let result = sched
+            .schedule_pod(
+                "ns",
+                &p,
+                &[node],
+                &ClusterState::default(),
+                &Default::default(),
+                &observed,
+                &key,
+            )
+            .await;
+        let error = result.err().expect("a missing claim cannot be placed").to_string();
+        assert!(error.contains("claim ns/late"), "reached the claim path: {error}");
+        let state = observed.lock().unwrap();
+        assert!(state.assumptions.is_empty(), "no write, so no reservation");
+        assert_eq!(state.snapshot(&key).1, None, "the Pod may choose any node later");
     }
     #[test]
     fn assumed_bind_is_charged_once_across_acknowledgement_and_watch_lag() {
