@@ -125,6 +125,7 @@ struct Desired {
 }
 
 /// The claims a pod mounts (generic ephemeral volumes included).
+#[cfg(test)]
 fn claim_names(pod: &Value) -> Vec<String> {
     let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
     pod["spec"]["volumes"]

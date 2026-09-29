@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **fix:** Retain ambiguous controller create expectations by owner/collection.
+  Resolve or retry the same named object before another generated child;
+  retire expectations on owner deletion. Test a committed POST with a lost
+  response to prevent duplicate replicas during cache lag.
 - **perf:** Replace scheduler namespace passes with a shared prioritized Pod/VMI
   object queue, indexed storage dependencies, incremental placed accounting
   and retained bind/volume reservations. Failed or lagging observations cannot

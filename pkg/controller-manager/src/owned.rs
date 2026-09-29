@@ -284,8 +284,11 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
                             None => Vec::new(),
                         };
                         match object {
-                            Some(object) => controller.reconcile(&object,&children,&deps).await,
-                            None => controller.deleted(work.key(), &children, &deps).await,
+                            Some(object) => {
+                                if !object["metadata"]["deletionTimestamp"].is_null() { api.forget_creates(&work.key().uid); }
+                                controller.reconcile(&object,&children,&deps).await
+                            },
+                            None => { api.forget_creates(&work.key().uid); controller.deleted(work.key(), &children, &deps).await },
                         }
                     }).await;
                     (work,result,failed)

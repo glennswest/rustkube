@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, HashSet};
 use apimachinery::informer::{Delta, Index, Key};
-use apimachinery::informers::{Feed, Hub, Subscription};
+use apimachinery::informers::{Hub, Subscription};
 use apimachinery::workqueue::WorkQueue;
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -521,7 +521,7 @@ impl Scheduler {
                     let volumes = indexed_volume_state(&object,&dependencies)?;
                     let ns = object["metadata"]["namespace"].as_str().unwrap_or("default");
                     match self.schedule_pod(ns,&object,&nodes,&state,&volumes,&observed,&key).await {
-                        Ok(Placement::Bound(_)) => crate::metrics_server::record_attempt("scheduled"),
+                        Ok(Placement::Bound(node)) => { info!(?key,%node,"workload bound"); crate::metrics_server::record_attempt("scheduled"); },
                         Ok(Placement::WaitingForVolumes(node)) => {
                             observed.lock().unwrap().reserve(key.clone(),&object,&node,true);
                             crate::metrics_server::record_attempt("unschedulable");

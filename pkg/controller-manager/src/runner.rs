@@ -16,6 +16,16 @@ pub struct ApiClient {
     pub watches: apimachinery::reactor::WatchHub,
     write_gate: apimachinery::lease::WriteGate,
     pub informers: apimachinery::informers::Hub,
+    pending_creates: Arc<std::sync::Mutex<std::collections::HashMap<String, PendingCreate>>>,
+}
+
+#[derive(Clone)]
+struct PendingCreate { path: String, body: serde_json::Value, owner: String }
+fn create_owner(body: &serde_json::Value) -> String {
+    body["metadata"]["ownerReferences"].as_array().and_then(|refs|
+        refs.iter().find(|r| r["controller"] == true).or_else(|| refs.first()))
+        .and_then(|r| r["uid"].as_str())
+        .or_else(|| body["spec"]["claimRef"]["uid"].as_str()).unwrap_or("").into()
 }
 
 /// Connection + auth config for the API server (kubeconfig-style).
@@ -67,6 +77,7 @@ impl ApiClient {
             watches: Default::default(),
             write_gate: Default::default(),
             informers: Default::default(),
+            pending_creates: Default::default(),
         }
     }
 
@@ -98,6 +109,7 @@ impl ApiClient {
             watches: Default::default(),
             write_gate: Default::default(),
             informers: Default::default(),
+            pending_creates: Default::default(),
         })
     }
 
@@ -236,8 +248,43 @@ impl ApiClient {
         apimachinery::reactor::check(apimachinery::reflector::list(&self.client, &url).await)
     }
 
+    /// A timed-out create may still commit. Keep its original name/body and
+    /// resolve/retry that same atomic create before generating another child.
+    pub async fn create(&self, path: &str, body: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let name = body["metadata"]["name"].as_str().ok_or_else(|| anyhow::anyhow!("controller create requires an explicit name"))?;
+        let owner = create_owner(body);
+        let group = format!("{path}/{}", if owner.is_empty() { name } else { &owner });
+        let previous = self.pending_creates.lock().unwrap().get(&group).cloned();
+        let pending = previous.clone().unwrap_or_else(|| PendingCreate {path:path.into(),body:body.clone(),owner});
+        self.pending_creates.lock().unwrap().insert(group.clone(),pending.clone());
+        if previous.is_some() {
+            let url = format!("{}/{}",pending.path,pending.body["metadata"]["name"].as_str().unwrap());
+            let response = self.get(&url).await?;
+            if response.status().is_success() {
+                let existing: serde_json::Value = response.json().await?;
+                anyhow::ensure!(create_owner(&existing) == pending.owner,"ambiguous create name belongs to another owner");
+                self.informers.acknowledge(&format!("{}{}",self.base_url,pending.path),&existing);
+                self.pending_creates.lock().unwrap().remove(&group);
+                return Ok(existing);
+            }
+            anyhow::ensure!(response.status().as_u16() == 404,"cannot resolve ambiguous create: {}",response.status());
+        }
+        let result = self.send_create(&pending.path,&pending.body).await;
+        let definitive = match &result {
+            Ok(_) => true,
+            Err(error) => error.downcast_ref::<reqwest::Error>().and_then(|e| e.status())
+                .is_some_and(|s| s.is_client_error() && (s.as_u16() != 409 || previous.is_none()) && s.as_u16() != 408 && s.as_u16() != 429),
+        };
+        if definitive { self.pending_creates.lock().unwrap().remove(&group); }
+        result
+    }
+
+    pub(crate) fn forget_creates(&self, owner: &str) {
+        self.pending_creates.lock().unwrap().retain(|_,pending| pending.owner != owner);
+    }
+
     /// POST (create) a resource.
-    pub async fn create(
+    async fn send_create(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -754,5 +801,44 @@ mod list_tests {
         // Unreserved characters are left alone, so an ordinary token is
         // unchanged and readable in a log.
         assert_eq!(percent_encode("plain-token_1.2~3"), "plain-token_1.2~3");
+    }
+}
+
+#[cfg(test)]
+mod create_expectation_tests {
+    use super::*;
+    use axum::{routing::post, extract::State, http::StatusCode, Json, Router};
+    use serde_json::{json, Value};
+    #[derive(Default)]
+    struct Server { object: Option<Value>, posts: usize }
+    async fn create(State(state): State<Arc<std::sync::Mutex<Server>>>, Json(mut body): Json<Value>) -> (StatusCode,Json<Value>) {
+        let mut state = state.lock().unwrap(); state.posts += 1;
+        body["metadata"]["uid"] = json!(format!("uid-{}",state.posts));
+        body["metadata"]["resourceVersion"] = json!(format!("rv-{}",state.posts));
+        state.object = Some(body.clone());
+        if state.posts == 1 { (StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"message":"response lost after commit"}))) }
+        else { (StatusCode::CREATED,Json(body)) }
+    }
+    async fn get(State(state): State<Arc<std::sync::Mutex<Server>>>) -> Json<Value> {
+        Json(state.lock().unwrap().object.clone().unwrap())
+    }
+    #[tokio::test]
+    async fn uncertain_create_resolves_the_old_name_before_another_child() {
+        let state = Arc::new(std::sync::Mutex::new(Server::default()));
+        let app = Router::new().route("/api/v1/namespaces/ns/pods",post(create))
+            .route("/api/v1/namespaces/ns/pods/first",axum::routing::get(get)).with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = ApiClient::new(&format!("http://{}",listener.local_addr().unwrap()));
+        let task = tokio::spawn(async move { axum::serve(listener,app).await.unwrap() });
+        let body = |name| json!({"metadata":{"name":name,"namespace":"ns","ownerReferences":[{"uid":"owner","controller":true}]}});
+        let path = "/api/v1/namespaces/ns/pods";
+        assert!(api.create(path,&body("first")).await.is_err());
+        let resolved = api.create(path,&body("different-random-name")).await.unwrap();
+        assert_eq!(resolved["metadata"]["name"],"first");
+        assert_eq!(state.lock().unwrap().posts,1,"must not create a second child while the first outcome is unknown");
+        assert!(api.pending_creates.lock().unwrap().is_empty());
+        api.create(path,&body("next")).await.unwrap();
+        assert_eq!(state.lock().unwrap().posts,2);
+        task.abort();
     }
 }
