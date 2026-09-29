@@ -144,6 +144,22 @@ when each piece landed.
       vm-runstrategy) are the
       start of it
 
+### Controller-manager drop-in parity (#2) — acceptance environment needed, 2026-09-29
+- [x] Read #2 and totrust#4; audit CLI, controller runner and HPA. TLS/token,
+      Leases, metrics/health and workload controllers exist. Kubeconfig and
+      signal handling are absent; controller presence does not establish parity.
+- [x] Read totrust/PINS.yaml: the shared acceptance baseline is v1.31.4.
+      This is distinct from rustkube's advertised 1.36 API posture; pin changes
+      belong in totrust and must not be silently chosen in this repository.
+- [ ] Owner identifies an isolated otherwise-upstream cluster with real
+      kubelets and a deployment route for swapping only controller-manager.
+- [ ] Complete kubeconfig, shutdown, ServiceAccount/token lifecycle,
+      ResourceQuota (#124), real HPA (#89) and the controller parity review.
+      Coordinate indexed workers and recovery safety with #146.
+- [ ] Run all-upstream baseline and Rust-CM-only comparison: Deployment ->
+      ReplicaSet -> Pods, scale up/down, owner-reference deletion and failover.
+      Keep #2 open until implementation and upstream acceptance pass.
+
 ### Certificate lifecycle (#20) — scope decision needed, 2026-09-29
 - [x] sc-build at 6f7e318: 3 cert-helper and 197 apiserver tests passed;
       the controller-manager csr:: filter matched no tests. Remote exit 0,

@@ -78,7 +78,23 @@ only, hardcoded address, #91).
 TTL-after-finished, NodeIPAM/route, ClusterRole aggregation, endpoint-slice
 mirroring, ReplicationController.
 
-All of them poll-and-list on a fixed interval; none uses an informer (#66).
+On `turbomode`, shared watches drive work. Deployment, ReplicaSet,
+StatefulSet, DaemonSet, Job and CronJob use bounded indexed object workers;
+other controllers still perform whole-collection reads per event-driven pass.
+The remaining migration and cache-safety audit is #146.
+
+Drop-in acceptance (#2) remains unverified. The CLI accepts discrete TLS and
+token flags but no kubeconfig; it has no shutdown signal handling. Default
+ServiceAccount creation does not implement the missing token controller, and
+the presence of a controller module does not demonstrate upstream parity.
+[totrust#4](https://github.com/glennswest/totrust/issues/4) requires an
+all-upstream baseline followed by a run with only the Rust controller-manager
+substituted. On 2026-09-29, its
+[PINS.yaml](https://github.com/glennswest/totrust/blob/main/PINS.yaml) specifies
+Kubernetes v1.31.4, independently of this repository's 1.36 API posture.
+Changing that shared pin belongs in totrust. The owner must identify an
+isolated upstream test cluster and supported binary-deployment route before
+acceptance runs. No such run has been completed here.
 
 ## 4. Scheduler (#3)
 

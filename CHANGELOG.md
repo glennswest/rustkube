@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **docs:** Audit #2 controller-manager parity gaps and the totrust v1.31.4
+  acceptance pin; record the missing upstream test environment and correct
+  the controller inventory for the turbomode branch.
 - **docs:** Reconcile #20 with stormcert renewal and stormcos#119; distinguish
   external issuance from rustkube reload gaps and record the pending CA/scope
   decision. sc-build at 6f7e318 passed 3 cert-helper and 197 apiserver tests;
