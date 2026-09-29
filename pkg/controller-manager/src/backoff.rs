@@ -19,7 +19,8 @@ const DEFAULT_MAX_SECS: u64 = 300;
 
 struct Entry {
     failures: u32,
-    next: Instant,
+    /// When creation opens again; `None` once cleared.
+    next: Option<Instant>,
     /// The failed pods already counted. A controller that keeps a Failed pod
     /// for post-mortem sees it on every pass; counting it each time pushed
     /// the window out on every wake, so the replacement was never created.
@@ -71,7 +72,7 @@ impl CreateBackoff {
         }
         let e = m.entry(key.to_string()).or_insert(Entry {
             failures: 0,
-            next: now,
+            next: None,
             counted: HashSet::new(),
         });
         let mut new = false;
@@ -82,7 +83,7 @@ impl CreateBackoff {
             }
         }
         if new {
-            e.next = now + self.delay(e.failures);
+            e.next = Some(now + self.delay(e.failures));
         }
         e.counted = failed.iter().map(|uid| uid.to_string()).collect();
         new
@@ -97,7 +98,7 @@ impl CreateBackoff {
                 m.remove(key);
             } else {
                 e.failures = 0;
-                e.next = Instant::now();
+                e.next = None;
             }
         }
     }
@@ -106,8 +107,8 @@ impl CreateBackoff {
     pub fn allowed(&self, key: &str, now: Instant) -> bool {
         let entries = self.inner.lock().unwrap();
         if let Some(entry) = entries.get(key) {
-            if entry.next > now {
-                apimachinery::reactor::requeue_after(entry.next.duration_since(now));
+            if let Some(next) = entry.next.filter(|next| *next > now) {
+                apimachinery::reactor::requeue_after(next.duration_since(now));
                 return false;
             }
         }
@@ -142,8 +143,10 @@ mod tests {
         let at = t0 + Duration::from_secs(10);
         assert!(!b.observe_failures("rs", &["p1"], at));
         assert!(b.allowed("rs", at));
-        // Stable again: clearing keeps p1 counted.
+        // Stable again: clearing keeps p1 counted, and opens creation even
+        // for a `now` captured before the clear (no zero-delay requeue loop).
         b.clear("rs");
+        assert!(b.allowed("rs", t0));
         assert!(!b.observe_failures("rs", &["p1"], at));
         assert!(b.allowed("rs", at));
         // A new failure starts from the base again.
