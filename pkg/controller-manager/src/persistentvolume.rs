@@ -128,8 +128,9 @@ impl PersistentVolumeController {
         let class_name = claim_class(pvc, default_class);
         if pvc["spec"]["storageClassName"].as_str().is_none() {
             if let Some(cn) = &class_name {
-                let patch = json!({"spec": {"storageClassName": cn}});
-                let _ = self.api.patch(&path, &patch).await;
+                let patch = json!({"metadata": {"uid": pvc["metadata"]["uid"], "resourceVersion": pvc["metadata"]["resourceVersion"]}, "spec": {"storageClassName": cn}});
+                self.api.patch(&path, &patch).await?;
+                return Ok(()); // continue with the acknowledged claim revision
             }
         }
 
@@ -203,7 +204,7 @@ impl PersistentVolumeController {
                 if pvc["metadata"]["annotations"][ANN_STORAGE_PROVISIONER].as_str()
                     != Some(provisioner)
                 {
-                    let patch = json!({"metadata": {"annotations": {
+                    let patch = json!({"metadata": {"uid": pvc["metadata"]["uid"], "resourceVersion": pvc["metadata"]["resourceVersion"], "annotations": {
                         ANN_STORAGE_PROVISIONER: provisioner,
                         ANN_STORAGE_PROVISIONER_BETA: provisioner,
                     }}});

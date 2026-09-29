@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-09-29
+- **fix:** Retain backed-off detach cleanup when a removed PV still has users;
+  guard PVC class/provisioner patches. Keep ordinary FIFO dequeue constant-time
+  and test priority ties plus dirty-key requeueing.
 - **fix:** Relist before reading a delayed write whose watch history expired;
   bounded history must never rewind or resurrect an object. Fence claim
   binding and migration source deletion with observed UID/revision.

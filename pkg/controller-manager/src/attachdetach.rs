@@ -254,7 +254,11 @@ impl Controller for AttachDetachController {
             let ns = pvc["metadata"]["namespace"].as_str().unwrap_or("");
             let name = pvc["metadata"]["name"].as_str().unwrap_or("");
             if deps.feed(1).select(&Index::Claim(ns.into(),name.into()))?.iter().any(|p|
-                !matches!(p["status"]["phase"].as_str(),Some("Succeeded" | "Failed"))) { return Ok(()); }
+                !matches!(p["status"]["phase"].as_str(),Some("Succeeded" | "Failed"))) {
+                // The primary PV is gone, so future Pod events cannot find it
+                // in the inverse index. Retain a backed-off cleanup retry.
+                anyhow::bail!("missing PV still has a nonterminal claim user");
+            }
         }
         for va in deps.feed(3).select(&Index::Volume(key.name.clone()))? {
             let driver = va["spec"]["attacher"].as_str().unwrap_or("");

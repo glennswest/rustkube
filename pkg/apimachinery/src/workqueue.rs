@@ -89,12 +89,16 @@ impl<K: Clone + Eq + Hash> WorkQueue<K> {
     }
 
     pub async fn next(self: &Arc<Self>) -> Work<K> {
-        self.next_by(|_,_| std::cmp::Ordering::Equal).await
+        self.next_selected(|ready| if ready.is_empty() { None } else { Some(0) }).await
     }
 
     /// Select a ready key by priority without changing deduplication or the
     /// processing/dirty protocol. Equal priorities retain FIFO order.
     pub async fn next_by(self: &Arc<Self>, compare: impl Fn(&K,&K) -> std::cmp::Ordering) -> Work<K> {
+        self.next_selected(|ready| ready.iter().enumerate().min_by(|(_,a),(_,b)| compare(a,b)).map(|(i,_)| i)).await
+    }
+
+    async fn next_selected(self: &Arc<Self>, select: impl Fn(&VecDeque<K>) -> Option<usize>) -> Work<K> {
         loop {
             // enable before examining state: supports multiple waiting workers
             // without losing notify_one between the check and the await.
@@ -121,7 +125,7 @@ impl<K: Clone + Eq + Hash> WorkQueue<K> {
                         }
                     }
                 }
-                let next = state.ready.iter().enumerate().min_by(|(_,a),(_,b)| compare(a,b)).map(|(i,_)| i);
+                let next = select(&state.ready);
                 if let Some(key) = next.and_then(|i| state.ready.remove(i)) {
                     let entry = state.entries.get_mut(&key).unwrap();
                     entry.queued = false;
@@ -188,6 +192,23 @@ impl<K: Clone + Eq + Hash> Drop for Work<K> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn priority_selection_preserves_fifo_ties_and_dirty_work() {
+        let queue = WorkQueue::new();
+        queue.add((1, "first")); queue.add((2, "high")); queue.add((1, "second"));
+        let high = queue.next_by(|a,b| b.0.cmp(&a.0)).await;
+        assert_eq!(*high.key(), (2,"high"));
+        queue.add((2,"high"));
+        drop(high);
+        let high = queue.next_by(|a,b| b.0.cmp(&a.0)).await;
+        assert_eq!(*high.key(), (2,"high"));
+        drop(high);
+        let first = queue.next_by(|a,b| b.0.cmp(&a.0)).await;
+        assert_eq!(*first.key(), (1,"first"));
+        drop(first);
+        assert_eq!(*queue.next().await.key(), (1,"second"));
+    }
 
     #[tokio::test]
     async fn duplicate_and_processing_events_coalesce_without_losing_work() {
