@@ -144,6 +144,22 @@ when each piece landed.
       vm-runstrategy) are the
       start of it
 
+### Turbomode indexed workers (#146) — IN PROGRESS 2026-09-29, branch `turbomode`
+Branch only: no merge to main, no goldens. Design: docs/event-driven-design.md;
+handoff: docs/turbomode-handoff.md.
+- [x] origin/main merged into turbomode (de8c912); handoff step 2 on dev:
+      `cargo test --locked` for the five crates passes (87/197/56/57, storage 4 ignored)
+- [ ] `owned::run` takes extra dependency feeds with routers (Node → DaemonSet,
+      Pod labels → Service/PDB, PVC/PV → binder…), children optional
+- [ ] DaemonSet (Node eligibility + owned Pods)
+- [ ] Service/EndpointSlice, PDB (selector → Pod membership)
+- [ ] PV binder, stormblock, attach/detach (claim/PV/Pod/VolumeAttachment)
+- [ ] VM, migration; namespace, node lifecycle, CSR, root CA, HPA, gateway, events
+- [ ] GC: fail closed on any unsynced feed
+- [ ] scheduler indexed queue + reservations (with #145)
+- [ ] audit: write overlays/create expectations, cache recovery barriers,
+      destructive cleanup preconditions
+
 ### VM runStrategy on a failed VMI (#104) — COMPLETE 2026-09-28
 - [x] Failed VMI recreated for `Always`/`RerunOnFailure`/`running: true`
       (Succeeded too for `Always`), with backoff in `status.startFailure`;
