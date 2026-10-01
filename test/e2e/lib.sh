@@ -15,6 +15,7 @@
 #                kube-scheduler (test/conformance/stage.sh builds and publishes it)
 #   RK_FASTETCD_REF  source tag/branch (default v1.6.1, snapshot-safe Range)
 #   RK_FASTETCD  path to a fastetcd server binary
+#   RK_RELEASE=1 build both release (as shipped) rather than debug, for timing
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
 # each; without an override the rig chooses a free block outside the host
 # ephemeral range just before starting servers (Linux /proc required).
@@ -31,14 +32,15 @@ pass() { echo "PASS  $*"; }
 fail() { echo "FAIL  $*"; FAIL=$((FAIL + 1)); }
 
 # --- build (or take prebuilt binaries) ---------------------------------------
+PROFILE=debug; [ -n "${RK_RELEASE:-}" ] && PROFILE=release
 if [ -n "${RK_BIN:-}" ]; then
   BIN=$RK_BIN
   for b in kube-apiserver kube-controller-manager kube-scheduler; do
     [ -x "$BIN/$b" ] || { echo "RK_BIN=$BIN has no $b"; exit 100; }
   done
 else
-  cargo build -q -p kube-apiserver -p kube-controller-manager -p kube-scheduler || exit 100
-  BIN=${CARGO_TARGET_DIR:-$PWD/target}/debug
+  cargo build -q ${RK_RELEASE:+--release} -p kube-apiserver -p kube-controller-manager -p kube-scheduler || exit 100
+  BIN=${CARGO_TARGET_DIR:-$PWD/target}/$PROFILE
 fi
 if [ -n "${RK_FASTETCD:-}" ]; then
   FASTETCD=$RK_FASTETCD
@@ -46,8 +48,8 @@ if [ -n "${RK_FASTETCD:-}" ]; then
 else
   git -c advice.detachedHead=false clone -q --depth 1 --branch "${RK_FASTETCD_REF:-v1.6.1}" https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
   echo "rig: fastetcd $(git -C "$W/fastetcd" rev-parse HEAD) (${RK_FASTETCD_REF:-v1.6.1})"
-  (cd "$W/fastetcd" && cargo build -q -p fastetcd-server) || exit 100
-  FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/debug/fastetcd
+  (cd "$W/fastetcd" && cargo build -q ${RK_RELEASE:+--release} -p fastetcd-server) || exit 100
+  FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/$PROFILE/fastetcd
 fi
 [ -x "$FASTETCD" ] || { echo "fastetcd build produced no executable"; exit 100; }
 

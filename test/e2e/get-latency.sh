@@ -19,7 +19,8 @@ SA_TOKEN=$(token "$SA_SUB" '["system:serviceaccounts","system:serviceaccounts:ku
 LOAD_TOKENS=$W/load-tokens
 for i in $(seq 40); do token "system:serviceaccount:load:sa$i" '["system:serviceaccounts","system:serviceaccounts:load"]'; echo; done >"$LOAD_TOKENS"
 
-API="$API" ADMIN="$ADMIN" SA_TOKEN="$SA_TOKEN" LOAD_TOKENS="$LOAD_TOKENS" \
+echo "rig: $PROFILE binaries"
+API_PID=$API_PID STORE_PID=$STORE_PID API="$API" ADMIN="$ADMIN" SA_TOKEN="$SA_TOKEN" LOAD_TOKENS="$LOAD_TOKENS" \
   P99_MS="${RK_GET_P99_MS:-50}" python3 - <<'PY'
 import http.client, json, os, ssl, sys, threading, time, urllib.parse
 
@@ -125,6 +126,34 @@ def measure(phase, n=200):
         print(f"      {phase:5} {who:5} {what:12} p50 {pct(ms, .5):7.1f} ms  p99 {pct(ms, .99):7.1f} ms  max {max(ms):7.1f} ms", flush=True)
     return out
 
+def cpu_seconds(pid):
+    f = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
+    return (int(f[11]) + int(f[12])) / os.sysconf("SC_CLK_TCK")
+
+def sums():
+    """{metric{labels}: (sum, count)} for the latency summaries."""
+    s, d = admin.req("GET", "/metrics")
+    out = {}
+    for line in d.decode().splitlines():
+        for suffix in ("_sum{", "_count{"):
+            if suffix in line and line.startswith(("etcd_request_duration_seconds", "apiserver_request_duration_seconds")):
+                name, rest = line.split(suffix, 1)
+                labels, v = rest.rsplit(" ", 1)
+                k = name + "{" + labels
+                cur = out.get(k, (0.0, 0.0))
+                out[k] = (float(v), cur[1]) if suffix == "_sum{" else (cur[0], float(v))
+    return out
+
+def explain(before, after, secs, cpu):
+    print(f"      over {secs:.1f} s: apiserver cpu {cpu[0]:.0%}, fastetcd cpu {cpu[1]:.0%} (of one core)", flush=True)
+    rows = []
+    for k, (s1, c1) in after.items():
+        s0, c0 = before.get(k, (0.0, 0.0))
+        if c1 - c0 >= 20:
+            rows.append(((s1 - s0) / (c1 - c0) * 1000, c1 - c0, k))
+    for mean, n, k in sorted(rows, reverse=True)[:12]:
+        print(f"      mean {mean:8.1f} ms  n {n:6.0f}  {k}", flush=True)
+
 def store_counts():
     s, d = admin.req("GET", "/metrics")
     counts = {}
@@ -167,9 +196,12 @@ def worker(i, tok):
 threads = [threading.Thread(target=worker, args=(i, t), daemon=True) for i, t in enumerate(LOAD)]
 for t in threads: t.start()
 time.sleep(3)
-t0, ops0 = time.time(), load_ops[0]
+PIDS = (os.environ["API_PID"], os.environ["STORE_PID"])
+t0, ops0, m0, cpu0 = time.time(), load_ops[0], sums(), [cpu_seconds(p) for p in PIDS]
 loaded = measure("load")
-rate = (load_ops[0] - ops0) / (time.time() - t0)
+secs = time.time() - t0
+rate = (load_ops[0] - ops0) / secs
+explain(m0, sums(), secs, [(cpu_seconds(p) - c) / secs for p, c in zip(PIDS, cpu0)])
 stop.set()
 for t in threads: t.join(timeout=30)
 print(f"      background: {len(LOAD)} clients, {rate:.0f} renew loops/s", flush=True)

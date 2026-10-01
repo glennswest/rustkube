@@ -728,6 +728,7 @@ mod revision_tests {
 
     fn cache() -> Arc<PrefixCache> {
         Arc::new(PrefixCache {
+            generation: 0,
             tx: broadcast::channel(16).0,
             ring: Mutex::new(VecDeque::new()),
             next_seq: AtomicU64::new(1),
