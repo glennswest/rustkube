@@ -136,7 +136,13 @@ ignored. TokenReview is served.
 
 **Authorization** is RBAC against the stored Roles and Bindings, plus
 SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview and
-LocalSubjectAccessReview.
+LocalSubjectAccessReview. A request is checked against in-memory copies of
+the ClusterRoleBindings, ClusterRoles, RoleBindings and Roles, kept current by
+the watch cache (#177), so authorizing costs no datastore read. Only an allow
+is taken from memory: a request the copies would refuse is checked again
+against the datastore, so a grant applies to the very next request, while a
+revocation applies once its watch event arrives (milliseconds, or up to the
+watch cache's 35 s stall window if its watch silently stalls).
 
 **Projects** (`project.openshift.io/v1`, #97) are Namespaces with owners.
 Nothing is stored as a Project: each is the Namespace of the same name,

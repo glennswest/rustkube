@@ -2,6 +2,10 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-01
+- **perf:** RBAC authorizes from the watch cache instead of the datastore (#177). Every request not from `system:masters` used to LIST every ClusterRoleBinding and GET each matching role: four linearizable fastetcd reads to serve one GET. On a busy node a Lease GET took 1–4 s, so cilium-operator lost its leader election and cilium never became ready. Bindings and roles are now parsed once per change from the watch cache's snapshots. A memory deny re-checks the datastore, so grants are immediate.
+- **test:** `test/e2e/get-latency.sh`: GET vs LIST p50/p99 for an RBAC-authorized ServiceAccount and for system:masters, idle and under 40-client Lease-renewal load; datastore calls per request; grant/revocation timing; metadata-only CRD watch decoding. `RK_RELEASE=1` builds the rig's binaries as release.
+
 ### 2026-09-29
 - **fix:** An idle control plane polled the API: every watch's 45 s heartbeat BOOKMARK reached subscribers as an empty notification, and the garbage collector and namespace controller re-discovered the API and restarted all their workers on each one (100+ requests per window on a rig); the scheduler re-queued every pending Pod. Feeds now deliver nothing for a heartbeat or revision-only echo, and a routine watch reconnect is no longer a reset that requeued every object (#144).
 - **fix:** A ReplicaSet never replaced a Failed Pod: it keeps the newest Failed Pod for post-mortem, counted it as a new failure on every pass, and so pushed its recreation backoff out on every wake. Each failed Pod now counts once; a cleared backoff has no window (#144).
