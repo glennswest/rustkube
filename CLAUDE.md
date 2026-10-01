@@ -95,6 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Single-object GET latency (#177, P0) — IN PROGRESS 2026-10-01
+server1 11.57: GET of one Lease/CRD 1.3–3.7 s while lists take ms; cilium-operator
+loses its lease. GET/LIST handlers and fastetcd Range are the same path, so the
+suspect is per-request RBAC (LIST every ClusterRoleBinding + GET each role, all
+linearizable datastore reads) for every non-system:masters client.
+- [ ] `test/e2e/get-latency.sh`: SA vs admin GET/LIST p50/p99 idle and under
+      40-client lease-renewal load, datastore calls per request, metadata-only
+      CRD watch decoding. Baseline on the pre-fix code
+- [ ] Fix, rig shows p99 < 50 ms and one datastore call per GET
+- [ ] Golden; live acceptance (server1 cilium 1/1) ships with the release
+
 ### Controller deadlines (#144) — COMPLETE 2026-09-29
 Poll loops were already gone from controller-manager source (remaining sleeps:
 error retry, startup wait, Lease retry). The new rig found three live defects.
