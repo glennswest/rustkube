@@ -113,8 +113,12 @@ linearizable datastore reads) for every non-system:masters client.
 - [x] 7b36d52: rig 0 failed on release + fastetcd v1.8.0 and debug + v1.6.1;
       28da43f: workspace tests pass (4 datastore tests ignored)
 - [x] golden-rustkube-0162589e3b0a (stormcos#164); #177 proposed after fastetcd#71
-- [ ] Close #177
-      after fastetcd#71 ships and server1 shows GET p99 < 50 ms, cilium 1/1
+- [x] fastetcd#71 fixed in fastetcd v1.9.0 (bb3e828). Rig on release +
+      v1.9.0: 0 failed; under load SA GET lease p99 998 → 68 ms (p50 1.1 ms),
+      store linearizable p99 80 ms; idle p99 2 ms
+- [x] 2026-10-01 server1 still on rustkube 0.15.1, GETs 0.4–0.9 s: neither
+      golden installed yet. #177 marked `shipped` (closes with the release)
+- [ ] After the release: server1 GET p99 < 50 ms, cilium 1/1, coredns Ready
 
 ### Controller deadlines (#144) — COMPLETE 2026-09-29
 Poll loops were already gone from controller-manager source (remaining sleeps:

@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-01
+- **docs:** #177 verified against fastetcd v1.9.0 (fastetcd#71 fix): `get-latency.sh` 0 failed; ServiceAccount GET p99 under Lease-renewal load 998 ms → 68 ms. Live check on server1 waits for the release of both goldens.
 - **perf:** RBAC authorizes from the watch cache instead of the datastore (#177). Every request not from `system:masters` used to LIST every ClusterRoleBinding and GET each matching role: four linearizable fastetcd reads to serve one GET. On a busy node a Lease GET took 1–4 s, so cilium-operator lost its leader election and cilium never became ready. Bindings and roles are now parsed once per change from the watch cache's snapshots. A memory deny re-checks the datastore, so grants are immediate.
 - **test:** `test/e2e/get-latency.sh`: GET vs LIST p50/p99 for an RBAC-authorized ServiceAccount and for system:masters, idle and under 40-client Lease-renewal load; datastore calls per request; grant/revocation timing; metadata-only CRD watch decoding. `RK_RELEASE=1` builds the rig's binaries as release.
 

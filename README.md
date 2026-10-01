@@ -145,7 +145,9 @@ revocation applies once its watch event arrives (milliseconds, or up to the
 watch cache's 35 s stall window if its watch silently stalls).
 `test/e2e/get-latency.sh` measures it: one datastore read per authorized GET,
 and a ServiceAccount's GET as fast as system:masters'. Under write load every
-read still waits on fastetcd's linearizable-read barrier (fastetcd#71).
+read is one linearizable fastetcd Range; before fastetcd v1.9.0 that Range
+queued behind writes for up to seconds (fastetcd#71). On v1.9.0 the rig's
+GET p99 under 40-client Lease-renewal load is about 70 ms.
 
 **Projects** (`project.openshift.io/v1`, #97) are Namespaces with owners.
 Nothing is stored as a Project: each is the Namespace of the same name,
