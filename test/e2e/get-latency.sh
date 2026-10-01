@@ -183,6 +183,30 @@ for phase, res in (("idle", idle), ("load", loaded)):
     c = res[("sa", "GET crd")]
     check(pct(c, .99) < P99_MS, f"{phase}: sa GET crd p99 {pct(c, .99):.1f} ms < {P99_MS:.0f} ms")
 
+# --- RBAC served from memory still sees grants at once, revocations promptly --
+NEWCOMER = Client(LOAD[0])  # load:sa1, which holds no grant in kube-system
+CM = "/api/v1/namespaces/kube-system/configmaps"
+s, _ = NEWCOMER.req("GET", CM)
+check(s == 403, f"before a grant: kube-system configmaps refused ({s})")
+must("POST", "/apis/rbac.authorization.k8s.io/v1/namespaces/kube-system/rolebindings", {
+    "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
+    "metadata": {"name": "newcomer", "namespace": "kube-system"},
+    "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "view"},
+    "subjects": [{"kind": "ServiceAccount", "name": "sa1", "namespace": "load"}]})
+s, _ = NEWCOMER.req("GET", CM)
+check(s == 200, f"the request right after a grant is allowed ({s})")
+time.sleep(0.5)
+c0 = store_counts(); NEWCOMER.req("GET", CM); c1 = store_counts()
+calls = sum(c1[k] - c0.get(k, 0) for k in c1)
+check(calls <= 1, f"once the cache has it, the granted request makes one datastore call ({calls:.0f})")
+admin.req("DELETE", "/apis/rbac.authorization.k8s.io/v1/namespaces/kube-system/rolebindings/newcomer")
+revoked_at, s = None, 200
+for i in range(100):
+    s, _ = NEWCOMER.req("GET", CM)
+    if s == 403: revoked_at = i * 10; break
+    time.sleep(0.01)
+check(revoked_at is not None, f"a revoked grant is refused within 1 s ({revoked_at} ms, last {s})")
+
 # --- metadata-only CRD watch decodes ----------------------------------------
 w = conn()
 w.request("GET", CRDS + "?watch=true&allowWatchBookmarks=true&resourceVersion=0",

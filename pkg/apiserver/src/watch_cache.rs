@@ -106,6 +106,9 @@ const CLIENT_CHANNEL: usize = 256;
 type Seq = u64;
 
 struct PrefixCache {
+    /// Unique per pump: a re-opened prefix is a new generation, so a reader
+    /// keyed on `(generation, revision)` never mistakes one for the other.
+    generation: u64,
     /// Live fan-out to all current watchers of this prefix.
     tx: broadcast::Sender<(Seq, WatchEvent)>,
     /// Bounded ring of recent events (with their sequence) for replay.
@@ -126,6 +129,13 @@ struct PrefixCache {
     /// re-seeded. Used to distinguish a *quiet* prefix from a *stalled* watch.
     last_progress: Mutex<tokio::time::Instant>,
 }
+
+/// Source of `PrefixCache::generation`.
+static GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// What a snapshot reflects: the pump's generation and the store revision.
+/// Two reads with the same version saw the same objects.
+pub type SnapshotVersion = (u64, u64);
 
 /// One shared watch cache over a `KvStore`, keyed by resource prefix.
 pub struct WatchCache {
@@ -167,6 +177,7 @@ impl WatchCache {
 
         let (tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
         let cache = Arc::new(PrefixCache {
+            generation: GENERATION.fetch_add(1, Ordering::SeqCst),
             tx,
             ring: Mutex::new(VecDeque::with_capacity(RING_CAPACITY)),
             next_seq: AtomicU64::new(1),
@@ -384,6 +395,30 @@ impl WatchCache {
             "watch-cache: opened upstream watch for prefix={prefix} from rev={start_rev}"
         );
         Ok(cache)
+    }
+
+    /// The version of `prefix`'s snapshot, opening its pump on first use.
+    ///
+    /// Two atomic loads once the pump exists: cheap enough to ask on every
+    /// request, so a reader can keep its own parsed copy of a prefix and
+    /// rebuild it only when this changes (the RBAC authorizer, #177).
+    pub async fn version(&self, prefix: &str) -> Result<SnapshotVersion> {
+        let cache = self.ensure(prefix).await?;
+        Ok((cache.generation, cache.snapshot_rev.load(Ordering::SeqCst)))
+    }
+
+    /// Every object under `prefix` as the cache holds it, keyed by store key,
+    /// with the version it reflects. The pump applies a write milliseconds
+    /// after the datastore accepts it, so this can trail a write that has
+    /// just been acknowledged; a caller that cannot accept that reads the
+    /// store.
+    pub async fn snapshot(&self, prefix: &str) -> Result<(SnapshotVersion, Vec<(String, Vec<u8>)>)> {
+        let cache = self.ensure(prefix).await?;
+        let snap = cache.snapshot.lock().unwrap();
+        // Read under the lock: the pump writes the snapshot before it stores
+        // the revision, so this version is never newer than these objects.
+        let version = (cache.generation, cache.snapshot_rev.load(Ordering::SeqCst));
+        Ok((version, snap.iter().map(|(k, (v, _))| (k.clone(), v.clone())).collect()))
     }
 
     /// LIST `prefix` from the in-memory snapshot (seeded once from the store,

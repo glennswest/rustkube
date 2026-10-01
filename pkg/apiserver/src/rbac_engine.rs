@@ -5,8 +5,10 @@
 
 use crate::auth::UserInfo;
 use crate::storage::ResourceStorage;
+use crate::watch_cache::SnapshotVersion;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 
 use axum::extract::Request;
 use axum::http::StatusCode;
@@ -46,11 +48,31 @@ pub struct RbacEngine {
     /// A flag given once at startup is a decision, not data. It belongs in the
     /// engine.
     dev_anonymous_admin: bool,
+    /// Parsed RBAC objects per store prefix, as of a watch-cache version.
+    ///
+    /// Authorizing from the datastore cost every request that was not
+    /// system:masters a LIST of every ClusterRoleBinding and a GET of each
+    /// matching role — four linearizable reads to serve one GET, which under
+    /// a cluster's worth of clients put a single Lease GET past a second and
+    /// cost cilium-operator its election (#177). Upstream authorizes from
+    /// informers; this is the same, fed by the watch cache's pumps.
+    views: Mutex<HashMap<&'static str, View>>,
 }
+
+/// One prefix of RBAC objects, parsed once per change rather than per request.
+struct View {
+    version: SnapshotVersion,
+    objects: Arc<BTreeMap<String, Value>>,
+}
+
+const CLUSTER_ROLE_BINDINGS: &str = "/registry/clusterrolebindings/";
+const CLUSTER_ROLES: &str = "/registry/clusterroles/";
+const ROLE_BINDINGS: &str = "/registry/rolebindings/";
+const ROLES: &str = "/registry/roles/";
 
 impl RbacEngine {
     pub fn new(storage: Arc<ResourceStorage>) -> Self {
-        Self { storage, dev_anonymous_admin: false }
+        Self { storage, dev_anonymous_admin: false, views: Mutex::new(HashMap::new()) }
     }
 
     /// Bind `system:anonymous` to cluster-admin. Dev rigs only; see the field.
@@ -85,6 +107,16 @@ impl RbacEngine {
         // up. See `dev_anonymous_admin`.
         if self.dev_anonymous_admin && user.username == "system:anonymous" {
             return Decision::allow("RBAC: allowed by --dev-anonymous-admin");
+        }
+
+        // From memory first. Only an allow is trusted there: the cache trails
+        // a write by the time its watch event takes, and a grant that was
+        // just written must take effect on the very next request (a new
+        // project's admin acts at once). A deny — or no cache — asks the
+        // datastore, as every request used to. Revocation lags by the same
+        // watch delay, as it does upstream.
+        if let Some(why) = self.cached_allow(user, req).await {
+            return Decision::allow(&why);
         }
 
         // Check ClusterRoleBindings
@@ -226,6 +258,85 @@ impl RbacEngine {
             Err(_) => set.incomplete = true,
         }
         set
+    }
+
+    /// The parsed objects under `prefix`, rebuilt only when the watch cache
+    /// has moved on. `None` when the cache cannot be had.
+    async fn view(&self, prefix: &'static str) -> Option<Arc<BTreeMap<String, Value>>> {
+        let cache = self.storage.watch_cache();
+        let version = cache.version(prefix).await.ok()?;
+        if let Some(v) = self.views.lock().unwrap().get(prefix) {
+            if v.version == version {
+                return Some(v.objects.clone());
+            }
+        }
+        let (version, items) = cache.snapshot(prefix).await.ok()?;
+        let objects: BTreeMap<String, Value> = items
+            .into_iter()
+            .filter_map(|(k, bytes)| serde_json::from_slice(&bytes).ok().map(|v| (k, v)))
+            .collect();
+        let objects = Arc::new(objects);
+        self.views
+            .lock()
+            .unwrap()
+            .insert(prefix, View { version, objects: objects.clone() });
+        Some(objects)
+    }
+
+    /// The binding that grants `req`, decided from the watch cache: the same
+    /// bindings in the same order as the datastore path below, so the reason
+    /// is the same one. `None` for "not granted" and for "no cache" alike.
+    async fn cached_allow(&self, user: &UserInfo, req: &AuthorizationRequest) -> Option<String> {
+        let bindings = self.view(CLUSTER_ROLE_BINDINGS).await?;
+        let cluster_roles = self.view(CLUSTER_ROLES).await?;
+        for binding in bindings.values().filter(|b| subjects_match(b, user)) {
+            if binding["roleRef"]["kind"].as_str() != Some("ClusterRole") {
+                continue;
+            }
+            let role_name = binding["roleRef"]["name"].as_str().unwrap_or("");
+            let key = ResourceStorage::cluster_key("clusterroles", role_name);
+            if cluster_roles.get(&key).is_some_and(|role| rules_permit(role, req)) {
+                let binding_name = binding["metadata"]["name"].as_str().unwrap_or("");
+                return Some(format!(
+                    "RBAC: allowed by ClusterRoleBinding \"{binding_name}\" of ClusterRole \"{role_name}\""
+                ));
+            }
+        }
+
+        let namespace = req.namespace.as_deref()?;
+        let bindings = self.view(ROLE_BINDINGS).await?;
+        let prefix = ResourceStorage::namespace_prefix("rolebindings", namespace);
+        let mut roles = None;
+        for (_, binding) in bindings
+            .range(prefix.clone()..)
+            .take_while(|(k, _)| k.starts_with(&prefix))
+            .filter(|(_, b)| subjects_match(b, user))
+        {
+            let role_name = binding["roleRef"]["name"].as_str().unwrap_or("");
+            let role_kind = binding["roleRef"]["kind"].as_str().unwrap_or("");
+            let permits = match role_kind {
+                "ClusterRole" => cluster_roles
+                    .get(&ResourceStorage::cluster_key("clusterroles", role_name))
+                    .is_some_and(|role| rules_permit(role, req)),
+                "Role" => {
+                    if roles.is_none() {
+                        roles = Some(self.view(ROLES).await?);
+                    }
+                    roles
+                        .as_ref()
+                        .and_then(|r| r.get(&ResourceStorage::namespaced_key("roles", namespace, role_name)))
+                        .is_some_and(|role| rules_permit(role, req))
+                }
+                _ => false,
+            };
+            if permits {
+                let binding_name = binding["metadata"]["name"].as_str().unwrap_or("");
+                return Some(format!(
+                    "RBAC: allowed by RoleBinding \"{namespace}/{binding_name}\" of {role_kind} \"{role_name}\""
+                ));
+            }
+        }
+        None
     }
 
     /// The ClusterRoleBinding that grants `req`, if one does.

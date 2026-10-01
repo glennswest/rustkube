@@ -51,10 +51,10 @@ impl KvStore for MemStore {
     }
 
     async fn list(&self, _: &str, _: usize, _: Option<&str>) -> Result<ListResult> {
-        unimplemented!("MemStore does not list")
+        Err(Error::Store("MemStore does not list".into()))
     }
     async fn watch(&self, _: &str, _: u64) -> Result<WatchStream> {
-        unimplemented!("MemStore does not watch")
+        Err(Error::Store("MemStore does not watch".into()))
     }
     async fn lease_grant(&self, _: Duration) -> Result<LeaseId> {
         unimplemented!("MemStore has no leases")

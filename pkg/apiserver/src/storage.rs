@@ -44,6 +44,12 @@ impl ResourceStorage {
         Self { store, watch_cache }
     }
 
+    /// The shared watch cache, for readers that keep their own view of a
+    /// prefix (the RBAC authorizer, #177).
+    pub(crate) fn watch_cache(&self) -> &Arc<WatchCache> {
+        &self.watch_cache
+    }
+
     /// The resource name inside a store key or prefix, for the `type` label on
     /// `etcd_request_duration_seconds`.
     fn resource_of(key: &str) -> String {
