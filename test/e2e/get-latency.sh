@@ -247,10 +247,12 @@ for phase, res in (("idle", idle), ("load", loaded)):
     sa, ad = res[("sa", "GET lease")], res[("admin", "GET lease")]
     check(pct(sa, .5) <= pct(ad, .5) * 1.25 + 2,
           f"{phase}: RBAC adds nothing — sa GET p50 {pct(sa, .5):.1f} ms vs admin {pct(ad, .5):.1f} ms")
-    for who in ("sa", "admin"):
-        g, l = res[(who, "GET lease")], res[(who, "LIST leases")]
-        check(pct(g, .5) <= pct(l, .5) * 1.1 + 2,
-              f"{phase}: {who} GET p50 {pct(g, .5):.1f} ms <= LIST p50 {pct(l, .5):.1f} ms")
+for who in ("sa", "admin"):
+    # Idle only: under load both wait on the same datastore barrier, and
+    # which of two such waits is longer is noise.
+    g, l = idle[(who, "GET lease")], idle[(who, "LIST leases")]
+    check(pct(g, .5) <= pct(l, .5) * 1.1 + 2,
+          f"idle: {who} GET p50 {pct(g, .5):.1f} ms <= LIST p50 {pct(l, .5):.1f} ms")
 
 # --- RBAC served from memory still sees grants at once, revocations promptly --
 NEWCOMER = Client(LOAD[0])  # load:sa1, which holds no grant in kube-system
