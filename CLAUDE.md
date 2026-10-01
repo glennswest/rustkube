@@ -100,10 +100,16 @@ server1 11.57: GET of one Lease/CRD 1.3–3.7 s while lists take ms; cilium-oper
 loses its lease. GET/LIST handlers and fastetcd Range are the same path, so the
 suspect is per-request RBAC (LIST every ClusterRoleBinding + GET each role, all
 linearizable datastore reads) for every non-system:masters client.
-- [ ] `test/e2e/get-latency.sh`: SA vs admin GET/LIST p50/p99 idle and under
-      40-client lease-renewal load, datastore calls per request, metadata-only
-      CRD watch decoding. Baseline on the pre-fix code
-- [ ] Fix, rig shows p99 < 50 ms and one datastore call per GET
+- [x] `test/e2e/get-latency.sh` (d1ef838): baseline — SA GET = 4 datastore
+      calls (LIST CRBs + 2 role GETs + object), idle p50 11.7 ms vs admin 1.6;
+      under 40-client renew load SA GET p99 1182 ms. Metadata-only CRD watch
+      decodes fine (checked; not a defect on the rig)
+- [x] 04c3e32: RBAC from watch-cache views (allow from memory, deny re-checks
+      the store). 6762513: 1 datastore call per GET; idle SA p50 1.4 ms debug /
+      0.2 ms release; grant immediate, revoke < 10 ms; apiserver 205 tests pass
+- [ ] Remaining load latency is the datastore: release rig, apiserver 4% CPU,
+      fastetcd 10%, yet every Range 150–220 ms mean, every Put 223 ms. File on
+      fastetcd with the direct linearizable/serializable probe (v1.8.0 run)
 - [ ] Golden; live acceptance (server1 cilium 1/1) ships with the release
 
 ### Controller deadlines (#144) — COMPLETE 2026-09-29
