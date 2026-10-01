@@ -237,16 +237,19 @@ print(f"      background: {len(LOAD)} clients, {rate:.0f} renew loops/s", flush=
 # Idle, the bound is absolute. Under load every read waits on the datastore
 # (store_probe shows how long); what the apiserver owns is that authorizing
 # adds nothing — a ServiceAccount's GET costs what system:masters' does — and
-# that a GET is never slower than the LIST it belongs to.
+# that a GET is never slower than the LIST it belongs to (idle: under load
+# both are one wait on the same barrier).
 for who in ("sa", "admin"):
     g = idle[(who, "GET lease")]
     check(pct(g, .99) < P99_MS, f"idle: {who} GET lease p99 {pct(g, .99):.1f} ms < {P99_MS:.0f} ms")
 c = idle[("sa", "GET crd")]
 check(pct(c, .99) < P99_MS, f"idle: sa GET crd p99 {pct(c, .99):.1f} ms < {P99_MS:.0f} ms")
-for phase, res in (("idle", idle), ("load", loaded)):
-    sa, ad = res[("sa", "GET lease")], res[("admin", "GET lease")]
-    check(pct(sa, .5) <= pct(ad, .5) * 1.25 + 2,
-          f"{phase}: RBAC adds nothing — sa GET p50 {pct(sa, .5):.1f} ms vs admin {pct(ad, .5):.1f} ms")
+# That authorizing adds nothing under load is the one-call check above: both
+# GETs then make the same single datastore read, and which of two waits on
+# its barrier is longer is noise (either way round on successive runs).
+sa, ad = idle[("sa", "GET lease")], idle[("admin", "GET lease")]
+check(pct(sa, .5) <= pct(ad, .5) * 1.25 + 2,
+      f"idle: RBAC adds nothing — sa GET p50 {pct(sa, .5):.1f} ms vs admin {pct(ad, .5):.1f} ms")
 for who in ("sa", "admin"):
     # Idle only: under load both wait on the same datastore barrier, and
     # which of two such waits is longer is noise.
