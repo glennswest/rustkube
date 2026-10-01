@@ -112,7 +112,8 @@ linearizable datastore reads) for every non-system:masters client.
       p99 0.4–6.9 s; serializable p50 0.2–0.5 ms; fastetcd ~9% CPU
 - [x] 7b36d52: rig 0 failed on release + fastetcd v1.8.0 and debug + v1.6.1;
       28da43f: workspace tests pass (4 datastore tests ignored)
-- [ ] Golden for the RBAC fix; #177 proposed after fastetcd#71. Close #177
+- [x] golden-rustkube-0162589e3b0a (stormcos#164); #177 proposed after fastetcd#71
+- [ ] Close #177
       after fastetcd#71 ships and server1 shows GET p99 < 50 ms, cilium 1/1
 
 ### Controller deadlines (#144) — COMPLETE 2026-09-29
