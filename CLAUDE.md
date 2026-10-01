@@ -107,10 +107,13 @@ linearizable datastore reads) for every non-system:masters client.
 - [x] 04c3e32: RBAC from watch-cache views (allow from memory, deny re-checks
       the store). 6762513: 1 datastore call per GET; idle SA p50 1.4 ms debug /
       0.2 ms release; grant immediate, revoke < 10 ms; apiserver 205 tests pass
-- [ ] Remaining load latency is the datastore: release rig, apiserver 4% CPU,
-      fastetcd 10%, yet every Range 150–220 ms mean, every Put 223 ms. File on
-      fastetcd with the direct linearizable/serializable probe (v1.8.0 run)
-- [ ] Golden; live acceptance (server1 cilium 1/1) ships with the release
+- [x] Remaining load latency is the datastore, filed fastetcd#71 (P0): direct
+      v3-gateway probe under the same load, linearizable Range p50 139–157 ms,
+      p99 0.4–6.9 s; serializable p50 0.2–0.5 ms; fastetcd ~9% CPU
+- [x] 7b36d52: rig 0 failed on release + fastetcd v1.8.0 and debug + v1.6.1;
+      28da43f: workspace tests pass (4 datastore tests ignored)
+- [ ] Golden for the RBAC fix; #177 proposed after fastetcd#71. Close #177
+      after fastetcd#71 ships and server1 shows GET p99 < 50 ms, cilium 1/1
 
 ### Controller deadlines (#144) — COMPLETE 2026-09-29
 Poll loops were already gone from controller-manager source (remaining sleeps:

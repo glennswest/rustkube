@@ -143,6 +143,9 @@ is taken from memory: a request the copies would refuse is checked again
 against the datastore, so a grant applies to the very next request, while a
 revocation applies once its watch event arrives (milliseconds, or up to the
 watch cache's 35 s stall window if its watch silently stalls).
+`test/e2e/get-latency.sh` measures it: one datastore read per authorized GET,
+and a ServiceAccount's GET as fast as system:masters'. Under write load every
+read still waits on fastetcd's linearizable-read barrier (fastetcd#71).
 
 **Projects** (`project.openshift.io/v1`, #97) are Namespaces with owners.
 Nothing is stored as a Project: each is the Namespace of the same name,
