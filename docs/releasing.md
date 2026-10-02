@@ -1,6 +1,6 @@
 # Building and delivery
 
-As of 2026-09-29, builds run through **sc-build** after the commit is pushed.
+As of 2026-10-02, builds run through **sc-build** after the commit is pushed.
 GitHub Actions is disabled by owner decision (#114). The retained
 `.github/workflows/images.yml` describes an obsolete tag-triggered publication
 path; it does not currently publish releases. Removing that file remains #114.
@@ -26,16 +26,16 @@ stormcentral component build rustkube --url http://stormcentral.g8.lo
 ```
 
 This produces an immutable component golden containing the three binaries and
-files the stormcos release request. Stormcos assembles the per-process
-`rustkube-apiserver`, `rustkube-controller-manager` and `rustkube-scheduler`
-stormd goldens around them. See README's **How it ships** for the checked
-stormcos source and runtime flags. A component build or source commit is not
-proof that a node has installed the resulting release.
+files the stormcos release request. No release mounts the component golden
+yet (stormcos#62): the per-process `rustkube-apiserver`,
+`rustkube-controller-manager` and `rustkube-scheduler` stormd goldens are
+compiled from a rustkube source checkout by stormcos's stage build, which
+records the commit. See README's **How it ships** for the checked stormcos
+source and runtime flags. A component build or source commit is not proof
+that a node has installed the resulting release.
 
-Owner instruction #163 authorizes merging turbomode into main after full
-workspace checks on both heads, with no golden request. Cache safety and
-runtime acceptance remain outstanding (#146/#147/#149, fastetcd#50). Continue
-that work on main; integration does not establish runtime acceptance.
+Turbomode is on main (#163); its datastore dependency fastetcd#50 is fixed in
+fastetcd v1.6.1, and runtime acceptance remains #147/#149.
 
 ## Retained standalone packaging tooling
 
@@ -58,7 +58,8 @@ header are obsolete and tracked in #156. It must be adapted to the private
 build volume and supported artifact export before treating it as a current
 publication recipe. Do not use root, persistent dev mounts, or a HOME override
 to make the old recipe work. Conformance staging has the same class of issue
-in its separate script (#140).
+in its separate script; the owner's answer there is goldens (#140), not yet
+implemented.
 
 Outputs, when the packaging script runs successfully:
 

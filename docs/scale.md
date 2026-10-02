@@ -1,6 +1,6 @@
 # Control-plane scale measurement (#66)
 
-Status, 2026-09-29: measurement plan only. No new scale run has been made.
+Status, 2026-10-02: measurement plan only. No new scale run has been made.
 The issue's earlier synthetic 10/100/250-node results used controller LISTs
 silently truncated at 500 objects. v0.12.0 fixed pagination; those earlier
 CPU numbers do not establish the cost of processing the full population.
@@ -8,15 +8,13 @@ CPU numbers do not establish the cost of processing the full population.
 ## Execution prerequisite
 
 The owner must select an isolated environment with an unprivileged account
-and a supported way to deliver binaries built by `sc-build`. Stress workloads
-run outside build slots. The old conformance staging path is unavailable
-under private, disposable build volumes (#140; docs/conformance.md).
-The #146 implementation now is integrated into main under #163, but safe-cache acceptance
-is blocked on fastetcd#50; runtime scale and multi-master evidence remain
-#147/#149. Do not add fake Nodes
-to a shared live cluster: they could attract unrelated scheduled workloads.
-Owner #163 supersedes the handoff to authorize the merge into main, with no
-golden request. Runtime acceptance requirements remain unchanged.
+(#162). Stress workloads run outside build slots. Binaries reach a test
+environment as the component's goldens — the owner's answer to #140 — and
+persistent tests are to be pods living on forge (#173); neither route is
+implemented yet. The #146 implementation is on main (#163) and its datastore
+snapshot dependency is fixed (fastetcd#50, v1.6.1); runtime scale and
+multi-master evidence remain #147/#149. Do not add fake Nodes to a shared
+live cluster: they could attract unrelated scheduled workloads.
 
 ## Measurement protocol
 

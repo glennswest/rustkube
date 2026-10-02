@@ -5,8 +5,9 @@
 the wire for `kubectl`, `oc`, `helm` and client-go controllers. Compatibility
 is operation-specific; this is not a conformant or drop-in replacement yet.
 
-This page was checked against the code on **2026-09-29**: v0.18.0 plus
-unreleased turbomode changes integrated into main under #163. See the [September change audit](docs/changes-since-2026-09-18.md)
+This page was checked against the code on **2026-10-02**: v0.18.0 plus
+unreleased changes on main (turbomode, integrated under #163; RBAC from the
+watch cache, #177). See the [September change audit](docs/changes-since-2026-09-18.md)
 for commits, verification limits and tracked gaps. Branch implementation does
 not mean it has shipped in a stormcos release.
 
@@ -15,7 +16,7 @@ separate components:
 
 | | component | what it is to rustkube |
 |---|---|---|
-| datastore | [fastetcd](https://github.com/glennswest/fastetcd) | an etcd v3 wire-compatible store; the apiserver is its only client, over gRPC (`--etcd-servers`) |
+| datastore | [fastetcd](https://github.com/glennswest/fastetcd) | an etcd v3 wire-compatible store; the apiserver reaches it over gRPC (`--etcd-servers`). It is the only rustkube component that does; stormconsole reads fastetcd's status and metrics too |
 | node agent | [rustkube-node](https://github.com/glennswest/rustkube-node) | the kubelet; the apiserver proxies `logs`, `exec`, `attach` and `port-forward` to it on `:10250` |
 | certificates | [stormcert](https://github.com/glennswest/stormcert) | writes the serving cert, the CA and the ServiceAccount keypair the apiserver reads |
 | cluster DNS | stormcoredns, deployed from a manifest | rustkube knows nothing about DNS |
@@ -52,11 +53,13 @@ test/e2e, test/conformance                             scripts: a real control p
 custom resources under `/registry/{group}/{plural}/…` (#76). `resourceVersion`
 is the store's `mod_revision`. Every write is a compare-and-swap; a PATCH
 without a `resourceVersion` retries the CAS the way upstream's
-`GuaranteedUpdate` does (#77). A watch cache sits in front of watches.
-LIST reads go directly to the shared datastore; continuation pages request
-the first page's revision even through another API server. This depends on
-correct datastore snapshots: [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50)
-currently blocks that guarantee. Compacted LIST revisions return 410; automatic
+`GuaranteedUpdate` does (#77). A watch cache sits in front of watches and
+feeds RBAC (below). GETs and LISTs read the shared datastore directly — one
+linearizable Range each, `resourceVersion=0` included; nothing is served from
+the cache yet (#171). Continuation pages request the first page's revision,
+even through another API server. That needs correct datastore snapshots,
+which fastetcd has from v1.6.1 ([fastetcd#50](https://github.com/glennswest/fastetcd/issues/50),
+fixed); `test/e2e/list-snapshot-race.sh` checks it. Compacted LIST revisions return 410; automatic
 compaction is absent (#139), and compacted watch error handling is incomplete
 (#127). Controller and scheduler
 leadership uses Kubernetes Leases; watch queues are local, reconstructible
@@ -132,7 +135,8 @@ identity, plus `system:authenticated`. `Impersonate-Extra-*` is ignored.
 
 TokenRequest (`serviceaccounts/{name}/token`) mints an unbound token with a
 fixed 24-hour lifetime; the request body, `expirationSeconds` included, is
-ignored. TokenReview is served.
+ignored, so a token names a ServiceAccount, not the pod holding it (#182).
+TokenReview is served.
 
 **Authorization** is RBAC against the stored Roles and Bindings, plus
 SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview and
@@ -203,7 +207,8 @@ creates the bootstrap RBAC (below); registers itself in the `default/kubernetes`
 Service and Endpoints; then applies `--manifest-dir`.
 
 Bootstrap RBAC: `cluster-admin`; `system:masters`, `system:nodes`,
-`system:kube-controller-manager` and `system:kube-scheduler` bound to it;
+`system:kube-controller-manager` and `system:kube-scheduler` bound to it
+(upstream binds least-privilege roles instead, #176);
 `system:node-bootstrapper` (CSR create) for `system:bootstrappers`;
 `system:basic-user` (self-reviews) for `system:authenticated`;
 `system:discovery` for `system:anonymous`; the project roles `admin`,
@@ -223,7 +228,9 @@ Collection LIST/WATCH streams enqueue deduplicated work as
 state changes. Controllers run concurrently on Tokio; a change during a
 reconcile queues another pass. Successful idle passes have no poll interval:
 watch heartbeats and routine reconnects wake nothing, and an idle control
-plane makes no API requests (`test/e2e/deadlines.sh`).
+plane makes no API requests (`test/e2e/deadlines.sh`) — except on a cluster
+without KubeVirt, where the VirtualMachine controller starts regardless and
+retries the unserved API every 30 s (#172; the rig does not count those 404s).
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
 and migration deadlines, Event TTL), API recovery and leader Leases.
 
@@ -394,7 +401,9 @@ minutes) proves the control plane is up and does its job; `medium` its API
 semantics, controllers and GC end to end; `long` overnight waves with a
 latency, memory and residue trend. See [test/README.md](test/README.md). The
 same binary runs against a real apiserver, controller-manager and scheduler on
-fastetcd on the build box with `sc-build test/e2e/test-container.sh`.
+fastetcd on the build box with `sc-build test/e2e/test-container.sh`. The
+`test/e2e/*.sh` rigs still run inside build slots; the owner wants persistent
+tests to be pods living on forge, which is #173.
 
 ## How it ships
 
@@ -403,17 +412,22 @@ is stormd, which runs the binary from a config baked into the golden. The
 goldens are `rustkube-apiserver`, `rustkube-controller-manager` and
 `rustkube-scheduler`, started by stormpump from `/etc/stormpump/boot.d/30-kube`
 on profiles that enable the control plane. stormcos's `deploy/build-goldens.sh`
-builds the binaries **from source** at a pinned commit
-(`cargo build --release --target x86_64-unknown-linux-musl`) rather than from
-a release.
+(its stage mode) builds the binaries **from source**, from a clean rustkube
+checkout whose commit it records in the image manifest
+(`cargo build --release --target x86_64-unknown-linux-musl`), not from a
+release.
 
 The **component golden** — what `stormcentral component build rustkube`
 produces, `golden-rustkube-<digest>`, and what a stormcos release request
-names — carries the three binaries; the three stormd goldens above are
-assembled around them.
+names — carries the same three binaries, but no release mounts it yet:
+breaking the binaries out of the composite stormd goldens is stormcos#62.
+Until then a node runs whatever the stage build compiled into
+`rustkube-apiserver` and its two siblings; their manifests name the commit.
+The apiserver's `/version` (`v1.36.0-rustkube+<workspace version>`) tells
+releases apart but not two unreleased commits of the same version.
 
 The following is the **build configuration**, checked against stormcos
-[`be718e09`](https://github.com/glennswest/stormcos/blob/be718e09b5f25d1c893d9ed9a4ffd852ca3af00a/deploy/build-goldens.sh),
+[`bb347bf4`](https://github.com/glennswest/stormcos/blob/bb347bf4ad081020b1e325e504c148a5245a0b79/deploy/build-goldens.sh) (2026-10-02),
 not proof of the version installed on any node:
 
 - **kube-apiserver:** `--etcd-servers http://127.0.0.1:2379` (plaintext,
@@ -430,7 +444,8 @@ not proof of the version installed on any node:
   `--client-key /data/stormcert/kube-<component>.key` (`controller-manager`
   or `scheduler`). These authenticate as `system:kube-<component>`; rustkube
   currently binds both identities to `cluster-admin`. Least privilege and
-  removing the remaining anonymous-admin deployments remain stormcos#76.
+  removing the remaining anonymous-admin deployments remain stormcos#76
+  (rustkube's half is #176).
   No cluster-signing flags are supplied here; publishing the root CA does
   not imply CSR signing is enabled.
 

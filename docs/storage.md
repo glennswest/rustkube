@@ -29,10 +29,10 @@ side is made against what the other side actually does.
 ## The chain, end to end
 
 A pod asks for 20Gi under a CSI class — stormblock-csi ships one
-(`deploy/02-storageclass.yaml`, `provisioner: csi.stormblock.io`,
-`volumeBindingMode: WaitForFirstConsumer`). That manifest names its class
-`stormblock` too, which collides with the in-kubelet class below; see
-[the name collision](#the-name-stormblock-is-claimed-twice).
+(`deploy/02-storageclass.yaml`: class `stormblock-csi`, `provisioner:
+csi.stormblock.io`, `volumeBindingMode: WaitForFirstConsumer`, not the
+default). The name `stormblock` belongs to the in-kubelet class below, which
+stays the default; see [class selection](#class-selection-is-by-name).
 
 1. **The claim is created.** `persistentvolume.rs` gives it the default class,
    adds the `kubernetes.io/pvc-protection` finalizer, and — because the class
@@ -119,20 +119,24 @@ orders converge: the kubelet may provision before the controller writes the
 object or after it, and neither is an error.
 
 This path relies on stormcos shipping `CSIDriver stormblock.storm.io` with
-`attachRequired: false` (`deploy/manifests/46-csidriver.yaml`).
+`attachRequired: false` (stormcos `deploy/manifests/46-csidriver.yaml`).
 `attachdetach.rs` treats a driver with no CSIDriver object as needing
 attachment, so without that object every such PV would get a
 `VolumeAttachment` that nothing ever acts on. Until `stormblock.rs` writes the
 PV, `persistentvolume.rs` also sets the storage-provisioner annotation and an
 `ExternalProvisioning` event on the claim; both are transient.
 
-### The name `stormblock` is claimed twice
+### Class selection is by name
 
 `stormblock.rs` selects claims by the class **name** `stormblock` and never
-reads the class's provisioner. stormcos's manifest defines `stormblock` with
-provisioner `stormblock.storm.io` (this path); stormblock-csi's defines
-`stormblock` with `csi.stormblock.io` (the CSI path). With the CSI manifest
-applied, both would act on the same claims (#92).
+reads the class's provisioner. stormcos's manifest
+(`deploy/manifests/45-storageclass.yaml`) defines `stormblock` with
+provisioner `stormblock.storm.io` (this path). stormblock-csi names its
+StorageClass `stormblock-csi` (stormblock-csi@931b085), so the two no longer
+collide; only its VolumeSnapshotClass and VolumeGroupSnapshotClass are named
+`stormblock`, and they are not StorageClasses. What remains is #92: a
+StorageClass named `stormblock` with any other provisioner would still be
+provisioned by this path.
 
 **Deleting the backing clone is the node's job.** stormblock's management API
 defaults to `0.0.0.0:9090`, not loopback. It authenticates with a per-node
@@ -181,10 +185,13 @@ served like any other custom resource, and three things outside this repo
 make them work:
 
 - **the CRDs and the snapshot-controller** (one per cluster, watching every
-  namespace) are the cluster's business: stormpump#28 installs them;
+  namespace) are the cluster's business: installing them is stormcos#170
+  (moved from stormpump#28 with `deploy/manifests/`), still open — they are
+  not in stormcos's manifests today;
 - **the `csi-snapshotter` sidecar** runs beside a CSI driver and calls its
-  `CreateSnapshot`/`DeleteSnapshot`: stormblock-csi's business, and whether
-  that maps onto stormblock's goldens and CoW clones is stormblock#111;
+  `CreateSnapshot`/`DeleteSnapshot`: stormblock-csi's business. It implements
+  them on stormblock's `/v1/snapshots`, which makes a CoW snapshot volume, so
+  snapshots map onto stormblock's clones (stormblock#111, answered and closed);
 - the in-kubelet `stormblock` class has no sidecars at all, so snapshots are
   for CSI-class claims.
 
@@ -208,7 +215,8 @@ protobuf codec dropped Go's inline embeds (a PV read by client-go had no
   created; everything else is handed to the driver named by the class. The
   kubelet draws the same line, on the same class name. That keeps the kubelet
   and this controller from both owning a claim, but not this controller and a
-  CSI provisioner whose class is also named `stormblock` (#92).
+  StorageClass named `stormblock` with another provisioner (#92); no shipped
+  manifest defines one today.
 - **It never deletes a backing volume.** A `Delete` PV with no
   `pv.kubernetes.io/provisioned-by` gets a `VolumeFailedDelete` warning and
   stays `Released`, which is the truth, rather than a phase that implies

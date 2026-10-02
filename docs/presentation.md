@@ -82,7 +82,7 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 - Keys `/registry/{resource}/[{ns}/]{name}`, CRs `/registry/{group}/{plural}/…`
 - `resourceVersion` = fastetcd's `mod_revision`; every write is a CAS
 - Shared informers and indexed object workers drive controllers;
-  scheduler placement is serialized. Snapshot safety is blocked on fastetcd#50.
+  scheduler placement is serialized. Snapshot safety needs fastetcd ≥ v1.6.1 (fastetcd#50, fixed).
 
 ---
 
@@ -204,8 +204,9 @@ Missing:
 
 ## Status and open issues that matter
 
-- **fastetcd#50 / #146 — LIST snapshot revisions are inconsistent.**
-  Blocks safe informer acceptance; integration into main (#163) does not establish acceptance.
+- **#147 / #149 — turbomode live acceptance.** fastetcd#50 (inconsistent
+  LIST snapshots) is fixed in v1.6.1 and the rig verifies it; latency at
+  scale and three-master failover are still unproven on a live cluster.
 - **#98 — no RBAC escalation check.** Contained for projects by keeping
   Namespace writes cluster-scoped; fixing it lifts that limit.
 - **stormcos#76 — partial auth wiring now exists.** Its build script supplies

@@ -48,7 +48,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | REST CRUD + `/status` | core | ✅ | a PUT to `/status` is conditional on the body's `resourceVersion` when supplied (#78); custom-resource main writes can still overwrite status (#128) |
 | Watch (list+watch, chunked) + watch cache | core | ✅ | DELETED carries the last state, selectors apply to it (v0.15.2, #100) |
 | Watch bookmarks, `sendInitialEvents` | core | ✅ | v0.7.25 (#39) |
-| Label & field selectors, pagination | core | 🟡 | per-item RVs and pinned pages implemented; snapshot correctness blocked on fastetcd#50; no automatic compaction (#139) |
+| Label & field selectors, pagination | core | 🟡 | per-item RVs and pinned pages implemented; snapshot correctness needs fastetcd ≥ v1.6.1 (fastetcd#50, fixed); LIST/GET never served from the watch cache (#171); no automatic compaction (#139) |
 | Server-Side Apply (`managedFields`, conflicts) | core | ✅ | v0.7.31–32 (#45) |
 | Strategic-merge / JSON / merge patch | core | ✅ | strategic merge uses a fixed table of `patchMergeKey`s, not per-type schema; Service ports are wrong (#150) |
 | protobuf wire codec | core | ✅ | both directions (v0.7.14) |
@@ -84,9 +84,9 @@ mirroring, ReplicationController.
 With the turbomode implementation, all controller families use shared informer feeds and bounded
 indexed object workers. GC and namespace finalization retain authoritative
 absence reads before destructive cleanup. Successful-write overlays, UID/RV
-preconditions and ambiguous-create expectations are implemented. Safe-cache
-acceptance remains blocked on fastetcd#50 (#146); scale, multi-master and
-runtime acceptance remain #147/#149.
+preconditions and ambiguous-create expectations are implemented. The datastore
+snapshot defect fastetcd#50 is fixed in v1.6.1 and dev acceptance (#146) is
+complete; scale, multi-master and runtime acceptance remain #147/#149.
 
 Drop-in acceptance (#2) remains unverified. The CLI accepts discrete TLS and
 token flags but no kubeconfig; it has no shutdown signal handling. Default
@@ -165,7 +165,8 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
 3. `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
 5. Scheduler: preemption (#84), scheduling gates (#87), Events/status (#138).
-6. Datastore snapshot correctness (fastetcd#50) and safe informer acceptance (#146).
+6. Live turbomode acceptance at scale and under failover (#147/#149); datastore
+   snapshot correctness (fastetcd#50) is fixed in fastetcd v1.6.1.
    The protobuf empty-UID GC defect (#99) was fixed in v0.15.3.
 
 **Then:**

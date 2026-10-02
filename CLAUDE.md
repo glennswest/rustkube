@@ -95,6 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Docs refresh from the code (since 2026-09-25) — COMPLETE 2026-10-02
+- [x] `git log --since=2026-09-25`: no CLI/port/API change since the 09-29
+      audit; RBAC-from-cache (#177), informer/backoff/lease/scheduler fixes
+      (#144/#145) described in README, event-driven-design, test/README
+- [x] #174/#175: fastetcd#50 fixed (v1.6.1), fastetcd's other clients,
+      `stormblock-csi` class, stormcos#170, stormblock#111, stormcos_qa#25,
+      #140 answered "Goldens"
+- [x] How it ships re-checked at stormcos bb347bf4: stormd goldens compiled
+      from a rustkube checkout by stage mode; component golden unmounted
+      (stormcos#62). Known gaps named in place: #171, #172, #173, #176, #182
+- [x] Audit addendum in docs/changes-since-2026-09-18.md
+
 ### Single-object GET latency (#177, P0) — IN PROGRESS 2026-10-01
 server1 11.57: GET of one Lease/CRD 1.3–3.7 s while lists take ms; cilium-operator
 loses its lease. GET/LIST handlers and fastetcd Range are the same path, so the
@@ -472,8 +484,9 @@ Continue live acceptance in #147/#149; do not claim those gates passed.
       becoming Bound, strategic-merge directives. `test/e2e/volume-expansion.sh`
       (hostpath CSI + external-provisioner v6.3.0 + external-resizer v2.2.0)
       14/14; the pre-#63 code fails 4. Node half: rustkube-node#42
-- [x] Snapshots (#64) — COMPLETE 2026-09-28. Install is stormpump#28,
-      CreateSnapshot is stormblock#111. `test/e2e/snapshot-controller.sh`:
+- [x] Snapshots (#64) — COMPLETE 2026-09-28. Install is stormcos#170
+      (moved from stormpump#28, open); CreateSnapshot maps onto CoW
+      snapshots (stormblock#111, closed). `test/e2e/snapshot-controller.sh`:
       upstream v8.6.0 CRDs + the real snapshot-controller as its SA, 18/18.
       Fixed on the way: RoleBinding SA subject namespace, pre-bound claim
       binding its PV, protobuf inline embeds + webhook `Webhooks` field
@@ -481,8 +494,9 @@ Continue live acceptance in #147/#149; do not claim those gates passed.
       kubelet's mount refusal is rustkube-node#42
 - [x] In-kubelet `stormblock` class: `stormblock.rs` writes the PV once the
       scheduler picks a node (#71, v0.13.0–v0.14.1)
-- [ ] `stormblock.rs` matches the class by name, which stormblock-csi's
-      class also uses (#92)
+- [ ] `stormblock.rs` matches the class by name and never reads its
+      provisioner (#92); stormblock-csi's class is now `stormblock-csi`, so
+      no shipped manifest collides
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
   sbregistry and stormblock-csi. rustkube creates no volume bytes itself.
 
@@ -514,9 +528,9 @@ Continue live acceptance in #147/#149; do not claim those gates passed.
       LISTs; pagination was fixed in v0.12.0, but the full-read curve is absent.
 - [x] Document the 10/100/1000-node protocol in docs/scale.md, keeping fake
       Nodes alive with Leases and checking the full Pod population.
-- [ ] Owner selects an isolated test environment and fresh-binary delivery
-      route outside build slots (#140); turbomode live target is also pending
-      on #146. Do not choose or launch a stress workload before that decision.
+- [ ] Owner selects an isolated test environment (#162). Delivery is
+      decided: goldens (#140), persistent tests as pods on forge (#173);
+      neither implemented. Do not launch a stress workload before that.
 - [ ] Run and publish CPU/request/latency/datastore curves and Deployment
       scale-to-Pod-creation latency; keep #66 open until measurements exist.
 
@@ -587,9 +601,10 @@ results are in docs/conformance.md.
     GC orphan was load (4/4 focused); PriorityClass `value` immutability
     fixed (c241688). docs/conformance.md has the table. #67 closed: the run
     exists and every failure is filed. **Blocked for new runs:** stage.sh
-    can't write /build/assets under the no-kept-state build rule (#140) —
-    owner decides how binaries reach conform.g8.lo (goldens? #96 test
-    container?). efbea2d is still staged there.
+    can't write /build/assets under the no-kept-state build rule (#140).
+    Owner answered **Goldens**: binaries reach conform.g8.lo as the
+    component's golden; run.sh/vm.sh not yet changed. efbea2d is still
+    staged there.
 - [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — the disabled workflow
       describes x86_64 musl only (#114); `build-release.sh` can target aarch64 via
       `cross`, and no such build has been recorded

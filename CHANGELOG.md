@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-02
+- **docs:** Docs refreshed from the code for everything since 2026-09-25. No CLI, port or served-API change since the 09-29 audit. README, event-driven-design and test/README now describe RBAC authorizing from the watch cache (#177), with GET and LIST still reading the datastore (#171). They also add the `deadlines.sh`/`get-latency.sh` rigs, VirtualMachine's idle KubeVirt retries (#172), unbound TokenRequest tokens (#182) and the cluster-admin bootstrap bindings (#176). Stale cross-repo references are corrected (#174, #175): fastetcd#50 is fixed in v1.6.1; fastetcd has clients besides the apiserver; stormblock-csi's class is `stormblock-csi`; snapshot install is stormcos#170; stormblock#111 is answered; stormcos_qa#25 is pending; #140 is answered "Goldens"; persistent tests are #173. "How it ships" was re-checked against stormcos bb347bf4: stage mode compiles the stormd goldens from a rustkube checkout, and no release mounts the component golden yet (stormcos#62). The audit addendum is in docs/changes-since-2026-09-18.md.
+
 ### 2026-10-01
 - **docs:** #177 verified against fastetcd v1.9.0 (fastetcd#71 fix): `get-latency.sh` 0 failed; ServiceAccount GET p99 under Lease-renewal load 998 ms → 68 ms. Live check on server1 waits for the release of both goldens.
 - **perf:** RBAC authorizes from the watch cache instead of the datastore (#177). Every request not from `system:masters` used to LIST every ClusterRoleBinding and GET each matching role: four linearizable fastetcd reads to serve one GET. On a busy node a Lease GET took 1–4 s, so cilium-operator lost its leader election and cilium never became ready. Bindings and roles are now parsed once per change from the watch cache's snapshots. A memory deny re-checks the datastore, so grants are immediate.

@@ -23,7 +23,7 @@ cannot tell, and what it found (#67).
   `RESULT <passed|failed> <seconds> <name>` line per spec, with the failure
   message and where it failed.
 
-### Historical VM procedure — currently blocked (#140)
+### Historical VM procedure — to be replaced by goldens (#140)
 
 A run compiles nothing: it is a test workload, and it used to hold dev's
 build slots for 45–90 minutes per chunk (four at once took dev to load 48 on
@@ -35,7 +35,7 @@ The following records the old procedure, **not a working command sequence
 under today's build-volume contract**:
 
 ```bash
-# Historical only: stage.sh cannot publish this way now (#140).
+# Historical only: stage.sh cannot publish this way now; goldens replace it (#140).
 # 1. on the agent VM, from the checkout (pushed first): build and publish
 sc-build test/conformance/stage.sh       # → STAGED /build/assets/conformance/<sha>
 
@@ -46,10 +46,11 @@ ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && git checkout -q origin
 
 > **Staging is broken since 2026-09-28.** sc-build now gives every job a
 > private drive and keeps nothing, so `stage.sh` can no longer write
-> `/build/assets` (#140). Until the owner decides how a commit's binaries
-> reach this VM (e.g. from the goldens, or conformance as a test container
-> under `stormcentral test`, #96), only an already-staged commit can be run;
-> efbea2d is still staged on the VM.
+> `/build/assets` (#140). The owner has decided the route: **goldens** —
+> conformance binaries reach the VM as the component's golden artifacts.
+> That is not implemented yet: `run.sh`/`vm.sh` still expect the staged
+> directory, and `stage.sh` still writes `/build/assets`. Until it is, only an
+> already-staged commit can be run; efbea2d is still staged on the VM.
 
 `vm.sh` fetches the staged directory with a read-only rsync key (it can read
 `/build/assets/conformance` on dev and nothing else), checks the binaries
@@ -199,6 +200,6 @@ From the 2026-09-27 triage (CHANGELOG has each):
 Some fixes after 430b268 were confirmed by the efbea2d run and focused
 reruns above; others have unit/API-rig evidence only. None of these historical
 runs validates current turbomode. Repeating conformance for a new commit
-needs the supported artifact delivery path tracked in #140, then a runtime
+needs the golden delivery path decided in #140 implemented, then a runtime
 environment appropriate to the tests. Passing API-only tests does not prove
 node, network, storage or multi-master conformance.

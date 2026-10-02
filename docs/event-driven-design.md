@@ -212,7 +212,9 @@ only on a new snapshot or on reconnecting after an outage.
 `test/e2e/deadlines.sh` holds each semantic deadline to its moment (cron start,
 Job `activeDeadlineSeconds`, Event TTL, Lease grace, ReplicaSet recreation
 backoff; measured at +0.1–1.8 s) and requires an idle control plane to make no
-API requests for a minute, longer than one heartbeat.
+API requests for a minute, longer than one heartbeat. One exception is not
+counted: without KubeVirt installed, the VirtualMachine controller's feed
+retries the unserved API every 30 s and the rig excludes those 404s (#172).
 
 ## Leadership, concurrency and failure
 
@@ -354,8 +356,19 @@ cannot authorize garbage collection, namespace finalization or node cleanup.
 
 The initial implementation uses authoritative datastore Range reads for LIST,
 with the first revision pinned on subsequent pages. This removes the old
-process-local recent-write freshness shortcut. It costs datastore reads until
-the indexed informer migration (#146) supplies a verified cache read barrier.
+process-local recent-write freshness shortcut. It costs one datastore read per
+LIST page and per GET, `resourceVersion=0` included. The indexed informer
+work (#146) and the fastetcd snapshot fix (fastetcd#50, v1.6.1) are done;
+serving LIST and GET from the cache when it has reached the requested
+revision, as upstream's cacher does, is #171 and not implemented.
+
+Authorization does use the cache (#177): RBAC reads ClusterRoleBindings,
+ClusterRoles, RoleBindings and Roles from views parsed from the watch cache's
+snapshots, rebuilt when a prefix's revision changes. Only an allow is taken
+from memory; a request the views would refuse is re-checked against the
+datastore, so a new grant applies to the next request and a revocation once
+its watch event arrives. `test/e2e/get-latency.sh` counts one datastore call
+per authorized GET (it was four).
 Watch compaction, cache eviction and subscriber lag terminate the stream with
 a Status error and force recovery rather than silently dropping changes.
 

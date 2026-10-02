@@ -13,8 +13,9 @@ loop uses fixed filter/score calls; plugin traits are unused. With the turbomode
 indexed dependency events drive a serialized priority-ordered Pod/VMI queue,
 with API retry deadlines and shared bind/volume reservations (#145/#146).
 Preemption (#84), scheduling gates (#87), Pod scheduling Events/status (#138),
-upstream framework queue parity and nomination remain open. Safe-cache
-acceptance is blocked on fastetcd#50; see event-driven-design.md.
+upstream framework queue parity and nomination remain open. The datastore
+snapshot fix it depends on is in fastetcd v1.6.1 (fastetcd#50); see
+event-driven-design.md.
 
 Follow-up from #2 on 2026-09-29: totrust#4 defines the shared component-swap
 acceptance contract, and its PINS.yaml currently specifies Kubernetes v1.31.4.

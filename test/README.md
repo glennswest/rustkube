@@ -45,7 +45,8 @@ test failed, 2 the suite could not run (reported as a `could-not-run` skip).
 | `replicaset-pod-bound` | a ReplicaSet's pod is created (controller-manager) and bound to a node (scheduler) within 60 s |
 
 **medium** (< 30 min) — features and failure paths, end to end. The checks of
-the retired `stormcos_qa/tests/rustkube/*.sh` that fit a namespace, and the
+the `stormcos_qa/tests/rustkube/*.sh` scripts that fit a namespace (ported
+here; their retirement there is stormcos_qa#25, still open), and the
 regressions fixed since:
 
 | test | what it proves |
@@ -136,6 +137,23 @@ nothing, the standby is killed and the old leader takes over again — a
 one-CPU stand-in Node is never overcommitted. It then checks that a missing
 claim's arrival, and a claim's binding after selected-node, wake the waiting
 Pod onto its volume's node (#145).
+
+`e2e/deadlines.sh` holds each controller deadline to its moment (CronJob
+start, Job `activeDeadlineSeconds`, Event TTL, Lease grace, ReplicaSet
+recreation backoff), checks GC fail-closed for an unserved owner kind, and
+requires an idle control plane to make no API requests for a minute — the
+VirtualMachine controller's 30 s retries of an unserved KubeVirt API are
+listed, not counted (#172).
+
+`e2e/get-latency.sh` (#177) times GET against LIST for a ServiceAccount that
+RBAC must authorize and for system:masters, idle and under 40 clients renewing
+Leases; counts datastore calls per authorized GET (one); checks that a grant
+applies at once and a revocation within the watch's delay; and decodes a
+metadata-only CRD watch. Its idle p99 bound is `RK_GET_P99_MS` (default 50).
+Under load the datastore's linearizable Range sets the pace, so compare with
+`RK_RELEASE=1` (release binaries) and `RK_FASTETCD_REF=v1.9.0` or later
+(fastetcd#71): on the default v1.6.1 a linearizable Range queues behind
+writes, and the load numbers measure that queue.
 
 `bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
 and resourceVersion agree with acknowledged writes, including pinned continuation
