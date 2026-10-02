@@ -95,6 +95,20 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### DaemonSet pod not back after a reboot (#189, P0) — BLOCKED on rustkube-node#129, 2026-10-02
+server3 11.65 after the power-cut reboot: cilium DS desired 1 / current 0, no pod.
+- [x] Live read of server3's kube-system (23:22 UTC): the DS controller is NOT
+      stuck — 32 cilium pods created since the reboot, each `Failed` within
+      seconds (kubelet: the pod's own `kubernetes.io~empty-dir` /
+      `~projected` dirs "do not exist" on the host), deleted, and the per-node
+      failedPodsBackoff (1 s → 15 min, as upstream) leaves no pod between tries
+- [x] Filed rustkube-node#129 (kubelet writes per-pod dirs in its own view,
+      checks/mounts them on the host; pod should stay Pending, not Failed);
+      #189 proposed after it. No rustkube code change: DS behaviour matches
+      upstream's DaemonSet controller
+- [ ] After rustkube-node#129 ships: stormcentral's install reboot step shows
+      cilium back within 60 s of node Ready; then close #189
+
 ### Stored CRDs not served after a restart (#185, P0) — SHIPPED 2026-10-02
 server3 11.62 reboot: CRDs listed, but cilium.io/kubevirt.io gone from /apis and
 every CR 404s. Boot registers CRDs from ONE datastore LIST whose error is
