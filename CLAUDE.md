@@ -95,7 +95,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Stored CRDs not served after a restart (#185, P0) — IN PROGRESS 2026-10-02
+### Stored CRDs not served after a restart (#185, P0) — SHIPPED 2026-10-02
 server3 11.62 reboot: CRDs listed, but cilium.io/kubevirt.io gone from /apis and
 every CR 404s. Boot registers CRDs from ONE datastore LIST whose error is
 swallowed (`if let Ok`), nothing re-reads them, and /readyz is always "ok".
@@ -110,7 +110,9 @@ swallowed (`if let Ok`), nothing re-reads them, and /readyz is always "ok".
       code too — the rig does not reproduce server3's failed boot read, whose
       exact cause (error vs empty answer) is unproven. Workspace sc-build
       at fc4565f exit 0
-- [ ] Golden requested; after the release, server3 reboot test: cilium.io in
+- [x] golden-rustkube-3dd6c1c7903f (stormcos#164); #185 marked `shipped`;
+      install reboot check filed stormcentral#289
+- [ ] After the release, server3 reboot test: cilium.io in
       /apis, cilium ready (stormcentral install reboot step)
 
 ### Docs refresh from the code (since 2026-09-25) — COMPLETE 2026-10-02
