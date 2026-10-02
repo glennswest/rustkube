@@ -99,13 +99,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 server3 11.62 reboot: CRDs listed, but cilium.io/kubevirt.io gone from /apis and
 every CR 404s. Boot registers CRDs from ONE datastore LIST whose error is
 swallowed (`if let Ok`), nothing re-reads them, and /readyz is always "ok".
-- [ ] Boot load pages and retries until the datastore answers; logs the count
-- [ ] Registry follows the CRD prefix through the watch cache (registers
-      late/other-replica CRDs, unregisters deleted ones); manifest Reconcile
-      of a CRD re-registers it
-- [ ] /readyz 503 until stored CRDs are registered
-- [ ] `test/e2e/crd-restart.sh`: CRDs + CRs, restart apiserver (also with the
-      datastore down at boot), groups/resources/CRs served again; sc-build
+- [x] cc1282b: boot load pages (50) and retries a minute, logs the count;
+      `follow_stored_crds` follows the CRD prefix via the watch cache (1 s
+      version check; unregisters only CRDs it saw stored then gone); manifest
+      Reconcile re-registers a CRD; /readyz 503 until registered
+- [x] `test/e2e/crd-restart.sh` 43/43 at cc1282b (restart, reboot with store
+      up 15 s after apiserver, second apiserver create/delete); apiserver 207
+      unit tests incl. 2 new. Control (fix reverse-applied): fails the
+      cross-replica create (404 after 20 s); restart/reboot pass on the old
+      code too — the rig does not reproduce server3's failed boot read, whose
+      exact cause (error vs empty answer) is unproven. Workspace sc-build
+      at fc4565f exit 0
+- [ ] Golden requested; after the release, server3 reboot test: cilium.io in
+      /apis, cilium ready (stormcentral install reboot step)
 
 ### Docs refresh from the code (since 2026-09-25) — COMPLETE 2026-10-02
 - [x] `git log --since=2026-09-25`: no CLI/port/API change since the 09-29
