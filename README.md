@@ -83,6 +83,14 @@ routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `scheduling.k8s.io/v1` (PriorityClass) and `authentication.k8s.io/v1`
 (TokenReview) are served and advertised in `/apis` (#85).
 
+**Custom resources** are served from an in-memory registry of the stored
+CRDs. At boot every stored CRD is registered before the API listens (the read
+is paged and retried for a minute if the datastore fails it); after that the
+registry follows the CRD prefix through the watch cache, so a CRD created or
+deleted through another apiserver, or one a slow boot could not read, is
+served or unserved within about a second. `/readyz` answers 503 until the
+stored CRDs are registered (#185).
+
 **Wire.** JSON and client-go's protobuf (`application/vnd.kubernetes.protobuf`)
 in both directions; Table output for `kubectl get`; `PartialObjectMetadata`;
 watch with bookmarks and `sendInitialEvents` (a watch with no

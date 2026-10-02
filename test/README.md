@@ -155,6 +155,13 @@ Under load the datastore's linearizable Range sets the pace, so compare with
 (fastetcd#71): on the default v1.6.1 a linearizable Range queues behind
 writes, and the load numbers measure that queue.
 
+`e2e/crd-restart.sh` (#185) creates two CRDs (two served versions, cluster
+scope) with a CR each, then checks that `/apis`, each group-version and the CRs
+are served after an apiserver restart, after a "reboot" (datastore and
+apiserver both stopped, the apiserver started 15 s before the datastore), and
+by a second apiserver on the same store, which also must serve a CRD created
+through the other and drop one deleted through it.
+
 `bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
 and resourceVersion agree with acknowledged writes, including pinned continuation
 pages and exact WATCH replay after distinct early, middle and late snapshots. It runs without
