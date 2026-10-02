@@ -95,6 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Stored CRDs not served after a restart (#185, P0) — IN PROGRESS 2026-10-02
+server3 11.62 reboot: CRDs listed, but cilium.io/kubevirt.io gone from /apis and
+every CR 404s. Boot registers CRDs from ONE datastore LIST whose error is
+swallowed (`if let Ok`), nothing re-reads them, and /readyz is always "ok".
+- [ ] Boot load pages and retries until the datastore answers; logs the count
+- [ ] Registry follows the CRD prefix through the watch cache (registers
+      late/other-replica CRDs, unregisters deleted ones); manifest Reconcile
+      of a CRD re-registers it
+- [ ] /readyz 503 until stored CRDs are registered
+- [ ] `test/e2e/crd-restart.sh`: CRDs + CRs, restart apiserver (also with the
+      datastore down at boot), groups/resources/CRs served again; sc-build
+
 ### Docs refresh from the code (since 2026-09-25) — COMPLETE 2026-10-02
 - [x] `git log --since=2026-09-25`: no CLI/port/API change since the 09-29
       audit; RBAC-from-cache (#177), informer/backoff/lease/scheduler fixes
