@@ -35,8 +35,20 @@ pub async fn livez() -> impl IntoResponse {
 }
 
 /// GET /readyz
-pub async fn readyz() -> impl IntoResponse {
-    "ok"
+///
+/// Not ready until every stored CRD is registered (#185): before that, each
+/// custom resource answers 404, and a client that trusts readiness (Cilium's
+/// agent listing CiliumNodes) concludes its own resources do not exist.
+pub async fn readyz(State(state): State<AppState>) -> axum::response::Response {
+    if state.crd_registry.is_synced() {
+        "ok".into_response()
+    } else {
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "[-]crd-registration failed: stored CustomResourceDefinitions not yet registered\nreadyz check failed\n",
+        )
+            .into_response()
+    }
 }
 
 /// GET /api — list core API versions.

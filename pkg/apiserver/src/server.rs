@@ -822,6 +822,9 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // Initialize CRD registry and load existing CRDs
     let crd_registry = Arc::new(CrdRegistry::new());
     crd::load_existing_crds(&storage, &crd_registry).await;
+    // And keep following them: a CRD written through another replica, or one
+    // the boot read could not see, is registered here too (#185).
+    tokio::spawn(crd::follow_stored_crds(storage.clone(), crd_registry.clone()));
 
     // Manifests that ship with the node, applied once. After the CRD registry
     // is loaded, because a manifest may be a custom resource of a CRD that is

@@ -236,8 +236,16 @@ pub async fn apply_one(
             if let Some(st) = current.get("status") {
                 obj["status"] = st.clone();
             }
+            let is_crd = obj["kind"].as_str() == Some("CustomResourceDefinition");
             match storage.update(&key, obj, None).await {
-                Ok(_) => Outcome::Updated,
+                // A reconciled CRD may serve new versions; register what was
+                // stored, as the API's update path does.
+                Ok(stored) => {
+                    if is_crd {
+                        crds.register(&stored).await;
+                    }
+                    Outcome::Updated
+                }
                 Err(e) => Outcome::Failed(e.message),
             }
         }

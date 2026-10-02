@@ -11,7 +11,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 /// Scope of a CRD — determines whether instances are namespaced or cluster-scoped.
@@ -44,11 +45,24 @@ pub struct CrdDefinition {
 pub struct CrdRegistry {
     #[allow(clippy::type_complexity)]
     crds: RwLock<HashMap<String, HashMap<String, HashMap<String, CrdDefinition>>>>,
+    /// Every stored CRD has been registered at least once (#185). `/readyz`
+    /// fails until it is: an apiserver that answers while its custom
+    /// resources 404 is not ready, it is wrong.
+    synced: AtomicBool,
 }
 
 impl CrdRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether the CRDs in storage have been registered (see `synced`).
+    pub fn is_synced(&self) -> bool {
+        self.synced.load(Ordering::SeqCst)
+    }
+
+    fn mark_synced(&self) {
+        self.synced.store(true, Ordering::SeqCst);
     }
 
     /// Register a CRD from its JSON spec.
@@ -248,13 +262,20 @@ impl CrdRegistry {
     }
 }
 
-/// Load all existing CRDs from storage into the registry, and backfill the
-/// establishing status on any that predate #36.
-pub async fn load_existing_crds(storage: &ResourceStorage, registry: &CrdRegistry) {
+/// Register every CRD in storage, and backfill the establishing status on
+/// any that predate #36. Pages through them: a few CRDs carry megabytes of
+/// schema, and one page of everything is the largest read the apiserver
+/// makes. Returns how many were registered; any datastore error is returned,
+/// never taken for "there are none".
+async fn register_stored_crds(storage: &ResourceStorage, registry: &CrdRegistry) -> Result<usize, ApiError> {
     let prefix = ResourceStorage::cluster_prefix("customresourcedefinitions");
-    if let Ok((crds, _, _)) = storage.list(&prefix, 1000, None).await {
+    let mut count = 0;
+    let mut cont: Option<String> = None;
+    loop {
+        let (crds, next, _) = storage.list(&prefix, 50, cont.as_deref()).await?;
         for crd in &crds {
             registry.register(crd).await;
+            count += 1;
             // Establish any CRD whose status was never populated.
             if crd["status"]["conditions"].as_array().is_none() {
                 let mut updated = crd.clone();
@@ -264,8 +285,126 @@ pub async fn load_existing_crds(storage: &ResourceStorage, registry: &CrdRegistr
                 let _ = storage.update(&key, updated, None).await;
             }
         }
+        match next {
+            Some(t) => cont = Some(t),
+            None => return Ok(count),
+        }
     }
-    migrate_legacy_cr_keys(storage, registry).await;
+}
+
+/// Load all existing CRDs from storage into the registry, before the server
+/// serves anything.
+///
+/// This used to be one LIST whose failure was swallowed: an apiserver that
+/// booted while the datastore was slow or still recovering registered no CRDs
+/// at all, served every custom resource as a 404 — Cilium's included, so no
+/// pod networking — and reported ready, until the next restart (#185). Now a
+/// failure is retried for a minute and logged; past that the server starts
+/// unready and `follow_stored_crds` registers them when the datastore answers.
+pub async fn load_existing_crds(storage: &ResourceStorage, registry: &CrdRegistry) {
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+    let start = std::time::Instant::now();
+    let mut delay = std::time::Duration::from_millis(100);
+    loop {
+        match register_stored_crds(storage, registry).await {
+            Ok(n) => {
+                tracing::info!("crd: registered {n} stored CustomResourceDefinition(s)");
+                registry.mark_synced();
+                migrate_legacy_cr_keys(storage, registry).await;
+                return;
+            }
+            Err(e) if start.elapsed() >= DEADLINE => {
+                tracing::error!(
+                    "crd: stored CustomResourceDefinitions could not be read within \
+                     {DEADLINE:?} ({}); serving unready until they are",
+                    e.message
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("crd: reading stored CustomResourceDefinitions: {}; retrying", e.message);
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(std::time::Duration::from_secs(5));
+            }
+        }
+    }
+}
+
+/// Keep the registry equal to the CRDs in storage, for as long as the server
+/// runs (#185).
+///
+/// The write handlers register a CRD as they store it, but only on the replica
+/// that took the write, and the boot load sees only what the datastore
+/// answered at boot. This follows the CRD prefix through the watch cache —
+/// one shared watch, and a version check of two atomic loads per tick — so a
+/// CRD registers however it was written: by another apiserver, by a boot that
+/// raced the datastore, or before a restart. A CRD gone from storage is
+/// unregistered, which is how a delete through another replica reaches this
+/// one.
+pub async fn follow_stored_crds(storage: std::sync::Arc<ResourceStorage>, registry: std::sync::Arc<CrdRegistry>) {
+    let prefix = ResourceStorage::cluster_prefix("customresourcedefinitions");
+    let cache = storage.watch_cache().clone();
+    let mut seen_version = None;
+    let mut known: HashSet<String> = HashSet::new();
+    let mut complained = false;
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    loop {
+        tick.tick().await;
+        let snap = match cache.version(&prefix).await {
+            Ok(v) if Some(v) == seen_version => continue,
+            Ok(_) => cache.snapshot(&prefix).await,
+            Err(e) => Err(e),
+        };
+        let (version, items) = match snap {
+            Ok(s) => s,
+            Err(e) => {
+                if !complained {
+                    tracing::warn!("crd: following stored CRDs: {e}; retrying");
+                    complained = true;
+                }
+                continue;
+            }
+        };
+        complained = false;
+        let objects: Vec<Value> = items
+            .iter()
+            .filter_map(|(_, bytes)| serde_json::from_slice(bytes).ok())
+            .collect();
+        known = reconcile_registry(&registry, &objects, &known).await;
+        seen_version = Some(version);
+        if !registry.is_synced() {
+            tracing::info!("crd: registered {} stored CustomResourceDefinition(s)", objects.len());
+            registry.mark_synced();
+            migrate_legacy_cr_keys(&storage, &registry).await;
+        }
+    }
+}
+
+/// Register every CRD in `objects`, and unregister any in `previous` (what
+/// the last pass saw stored) that is no longer there. Returns the names now
+/// stored, for the next pass.
+///
+/// Only a CRD this follower saw stored and then saw gone is unregistered. One
+/// created through this replica a moment ago is registered by its handler
+/// before the watch cache shows it, and must not be torn down for being
+/// absent from a snapshot that predates it.
+async fn reconcile_registry(
+    registry: &CrdRegistry,
+    objects: &[Value],
+    previous: &HashSet<String>,
+) -> HashSet<String> {
+    let mut stored = HashSet::new();
+    for crd in objects {
+        registry.register(crd).await;
+        if let Some(name) = crd["metadata"]["name"].as_str() {
+            stored.insert(name.to_string());
+        }
+    }
+    for gone in previous.difference(&stored) {
+        tracing::info!("crd: {gone} is no longer stored; unregistered");
+        registry.unregister(gone).await;
+    }
+    stored
 }
 
 /// Move custom resources from the pre-#76 key `/registry/{plural}/...` to
@@ -1066,6 +1205,48 @@ mod establish_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stored_crd(group: &str, plural: &str) -> Value {
+        serde_json::json!({
+            "metadata": {"name": format!("{plural}.{group}")},
+            "spec": {
+                "group": group, "scope": "Namespaced",
+                "names": {"plural": plural, "kind": "Thing"},
+                "versions": [{"name": "v1", "served": true}]
+            }
+        })
+    }
+
+    /// The follower registers what is stored however it got there, and
+    /// unregisters what it saw stored and then saw gone (#185).
+    #[tokio::test]
+    async fn follower_registers_stored_and_drops_deleted() {
+        let reg = CrdRegistry::new();
+        assert!(!reg.is_synced(), "a new registry is not synced");
+        let a = stored_crd("cilium.io", "ciliumnodes");
+        let b = stored_crd("kubevirt.io", "virtualmachines");
+        let known = reconcile_registry(&reg, &[a.clone(), b], &HashSet::new()).await;
+        assert!(reg.lookup("cilium.io", "v1", "ciliumnodes").await.is_some());
+        assert!(reg.lookup("kubevirt.io", "v1", "virtualmachines").await.is_some());
+        assert_eq!(reg.api_groups().await.len(), 2);
+
+        let known = reconcile_registry(&reg, &[a], &known).await;
+        assert!(reg.lookup("kubevirt.io", "v1", "virtualmachines").await.is_none());
+        assert_eq!(reg.api_groups().await.len(), 1, "an emptied group leaves /apis");
+        assert_eq!(known.len(), 1);
+    }
+
+    /// A CRD registered by its write handler and not yet in the watch cache's
+    /// snapshot is left registered: it was never seen stored, so its absence
+    /// says nothing.
+    #[tokio::test]
+    async fn follower_keeps_a_crd_newer_than_its_snapshot() {
+        let reg = CrdRegistry::new();
+        reg.register(&stored_crd("example.io", "widgets")).await;
+        let known = reconcile_registry(&reg, &[], &HashSet::new()).await;
+        assert!(known.is_empty());
+        assert!(reg.lookup("example.io", "v1", "widgets").await.is_some());
+    }
 
     /// Every served version registers, not just the first. Cilium ships v2 and
     /// v2alpha1 kinds side by side; taking versions[0] made the rest 404.
