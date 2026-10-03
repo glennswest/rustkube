@@ -922,9 +922,12 @@ impl Scheduler {
         let feasible: Vec<&Value> = nodes
             .iter()
             .filter(|node| {
+                // Pod count after the others, as upstream's NodeResourcesFit
+                // follows NodeAffinity: a full node the Pod's selector rules
+                // out anyway is reported as the selector, not as full.
                 let used = state.used(node);
-                let result = match filter::pod_count_filter(node, used) {
-                    FilterResult::Pass => filter::run_filters(pod, node, used, state, nodes),
+                let result = match filter::run_filters(pod, node, used, state, nodes) {
+                    FilterResult::Pass => filter::pod_count_filter(node, used),
                     fail => fail,
                 };
                 if let FilterResult::Fail(reason) = result {

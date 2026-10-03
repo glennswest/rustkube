@@ -33,10 +33,11 @@ pub struct NodeUsage {
 /// `allocatable.pods` non-terminal Pods (#194).
 ///
 /// Separate from `run_filters` because a VMI shim goes through those too, and
-/// a VM is not a Pod on the node. Checked before resource fit's "requests
-/// nothing, fits anywhere" shortcut: a BestEffort Pod still takes a slot, and
-/// that shortcut is how 1,000 of them landed on a 110-pod node. A node with no
-/// `allocatable.pods` is not limited.
+/// a VM is not a Pod on the node; the Pod path runs it after them. It does
+/// not sit behind resource fit's "requests nothing, fits anywhere" shortcut:
+/// a BestEffort Pod still takes a slot, and that shortcut is how 1,000 of
+/// them landed on a 110-pod node. A node with no `allocatable.pods` is not
+/// limited.
 pub fn pod_count_filter(node: &Value, used: NodeUsage) -> FilterResult {
     let limit = match &node["status"]["allocatable"]["pods"] {
         Value::String(s) => s.trim().parse::<u64>().ok(),
