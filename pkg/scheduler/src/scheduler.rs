@@ -604,12 +604,26 @@ impl Scheduler {
                         let ns = object["metadata"]["namespace"]
                             .as_str()
                             .unwrap_or("default");
+                        // Read before the bind: its watch event may clear it.
+                        let queued = observed.lock().unwrap().queued.get(&key).copied();
                         match self
                             .schedule_pod(ns, &object, &nodes, &state, &volumes, &observed, &key)
                             .await
                         {
                             Ok(Placement::Bound(node)) => {
-                                info!(?key,%node,"workload bound");
+                                let waited = queued.map(|at| at.elapsed());
+                                if let Some(waited) = waited {
+                                    crate::metrics_server::record_e2e_latency(
+                                        waited.as_secs_f64(),
+                                        "scheduled",
+                                    );
+                                }
+                                info!(
+                                    ?key,
+                                    %node,
+                                    ms = waited.map(|w| w.as_secs_f64() * 1000.0),
+                                    "workload bound"
+                                );
                                 crate::metrics_server::record_attempt("scheduled");
                             }
                             Ok(Placement::WaitingForVolumes(node)) => {
@@ -903,7 +917,17 @@ impl Scheduler {
             .unwrap()
             .reserve(key.clone(), pod, chosen_name, false);
         let mut bound_pod = pod.clone();
+        let now = chrono::Utc::now();
         bound_pod["spec"]["nodeName"] = json!(chosen_name);
+        // PodScheduled's time is a metav1.Time, whole seconds as upstream
+        // serializes it; a kubelet timing a subsecond start from it measured
+        // the truncation (#190). The annotation is the same instant to the
+        // microsecond.
+        if !bound_pod["metadata"]["annotations"].is_object() {
+            bound_pod["metadata"]["annotations"] = json!({});
+        }
+        bound_pod["metadata"]["annotations"][SCHEDULED_AT] =
+            json!(now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
         bound_pod["status"]["phase"] = json!("Pending");
         bound_pod["status"]["conditions"] = json!([
             {
@@ -911,7 +935,7 @@ impl Scheduler {
                 "status": "True",
                 "reason": "Scheduled",
                 "message": format!("Bound to node {chosen_name}"),
-                "lastTransitionTime": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                "lastTransitionTime": now.format("%Y-%m-%dT%H:%M:%SZ").to_string()
             }
         ]);
 
@@ -926,6 +950,10 @@ impl Scheduler {
     }
 }
 
+/// Annotation on a bound Pod: when the scheduler wrote the binding, RFC3339
+/// to the microsecond (`PodScheduled`'s lastTransitionTime is whole seconds).
+pub const SCHEDULED_AT: &str = "storm.io/scheduled-at";
+
 type ScheduleKey = (bool, Key); // false = Pod, true = VMI; one shared executor
 struct Assumption {
     node: String,
@@ -938,6 +966,9 @@ struct SchedulingState {
     placed: HashMap<ScheduleKey, (String, Value)>,
     usage: HashMap<String, NodeUsage>,
     assumptions: HashMap<ScheduleKey, Assumption>,
+    /// When each pending workload was first seen pending, for
+    /// `scheduler_e2e_scheduling_duration_seconds`.
+    queued: HashMap<ScheduleKey, std::time::Instant>,
 }
 fn pending_workload(vm: bool, object: &Value) -> bool {
     if !object["metadata"]["deletionTimestamp"].is_null() {
@@ -976,6 +1007,7 @@ fn placed_workload(vm: bool, object: &Value) -> Option<(String, Value)> {
 impl SchedulingState {
     fn remove(&mut self, key: &ScheduleKey) {
         self.pending.remove(key);
+        self.queued.remove(key);
         self.assumptions.remove(key);
         if let Some((node, pod)) = self.placed.remove(key) {
             let (cpu, mem) = filter::pod_requests(&pod);
@@ -1005,6 +1037,9 @@ impl SchedulingState {
             }
             self.pending.remove(&key);
             if pending_workload(vm, object) {
+                self.queued
+                    .entry(key.clone())
+                    .or_insert_with(std::time::Instant::now);
                 self.pending.insert(key.clone(), object.clone());
                 if self.assumptions.get(&key).is_some_and(|a| {
                     !a.waiting_for_volume
@@ -1017,6 +1052,7 @@ impl SchedulingState {
                 }
             } else {
                 self.assumptions.remove(&key);
+                self.queued.remove(&key);
             }
             if let Some((node, pod)) = placed_workload(vm, object) {
                 let (cpu, mem) = filter::pod_requests(&pod);
@@ -1331,6 +1367,22 @@ mod reservation_tests {
             },
         );
         assert_eq!(state.snapshot(&other).0.usage["node"].cpu_milli, 0);
+    }
+    #[test]
+    fn queued_from_first_pending_observation_until_bound() {
+        let mut state = SchedulingState::default();
+        let p = pod("a", "v1");
+        let key = (false, Key::of(&p).unwrap());
+        state.observe(false, &changed(p.clone()));
+        let first = state.queued[&key];
+        let mut again = p.clone();
+        again["metadata"]["resourceVersion"] = json!("v2");
+        state.observe(false, &changed(again));
+        assert_eq!(state.queued[&key], first, "a later pending version keeps the first time");
+        let mut bound = p;
+        bound["spec"]["nodeName"] = json!("node");
+        state.observe(false, &changed(bound));
+        assert!(state.queued.is_empty(), "bound is no longer queued");
     }
     #[test]
     fn volume_wait_and_adopted_vmi_share_capacity_with_pods() {

@@ -102,8 +102,16 @@ lat = {n: (seen[n][0] - created[n][0]) * 1000 for n in created if n in seen}
 def pct(v, p):
     v = sorted(v); return v[min(len(v) - 1, int(round(p / 100 * (len(v) - 1))))]
 vals = list(lat.values())
+def scheduled_at(n):
+    at = seen[n][2]["metadata"].get("annotations", {}).get("storm.io/scheduled-at", "")
+    try: return datetime.datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+    except ValueError: return None
+print("  pod        create→seen  (create→bind write, bind write→seen)")
 for n in created:
-    if n in lat: print(f"  {n:10s} {lat[n]:7.1f} ms")
+    if n not in lat: continue
+    t = scheduled_at(n)
+    split = "" if t is None else f"  ({(t - created[n][1]) * 1000:6.1f}, {(seen[n][1] - t) * 1000:6.1f})"
+    print(f"  {n:10s} {lat[n]:7.1f} ms{split}")
 p50, p99 = pct(vals, 50), pct(vals, 99)
 print(f"create → bound seen: n={len(vals)} p50={p50:.1f} ms p99={p99:.1f} ms max={max(vals):.1f} ms")
 check(len(vals) == len(created), f"all {len(created)} pods bound")
