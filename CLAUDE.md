@@ -95,6 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Scheduler create→bind latency (#190, P1) — IN PROGRESS 2026-10-02
+pvetest1: kubelet's `scheduled` 156→393 ms, growing pod by pod. That number is
+kubelet-seen minus PodScheduled.lastTransitionTime, which the scheduler writes
+truncated to whole seconds — so it carries 0–999 ms of truncation that drifts
+as pods are created ~4.0x s apart. Measure the real latency first.
+- [ ] `test/e2e/schedule-latency.sh`: create → watch-seen-bound, 5 spaced, 20
+      burst, 10 late; p50 < 20 / p99 < 50 ms; baseline on the current code
+- [ ] Bind writes `storm.io/scheduled-at` (RFC3339, µs); wire the unused
+      `scheduler_e2e_scheduling_duration_seconds`; fix any real latency found
+- [ ] File rustkube-node: start timing prefers `storm.io/scheduled-at`
+
 ### DaemonSet pod not back after a reboot (#189, P0) — BLOCKED on stormcos#231, 2026-10-02
 server3 11.65 after the power-cut reboot: cilium DS desired 1 / current 0, no pod.
 - [x] Live read of server3's kube-system (23:22 UTC): the DS controller is NOT

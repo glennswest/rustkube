@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+#
+# Pod creation → bound latency on an idle single Node (#190), measured from
+# outside the scheduler: the client's monotonic clock from just before the
+# create POST to the watch event that first carries spec.nodeName — the same
+# path a kubelet sees a bound pod by. No kubelet, no controller-manager.
+#
+#   - five pods 4 s apart (the issue's shape), then a burst of 20 back to
+#     back, then ten more 1 s apart with 25 already bound: p50 and p99 over
+#     all of them, and no growth from the first spaced pods to the last
+#   - every bound pod carries storm.io/scheduled-at, an RFC3339 time with
+#     sub-second digits, between the create and the watch event
+#     (PodScheduled's lastTransitionTime is whole seconds, as upstream's
+#     metav1.Time is, so it cannot time a subsecond phase)
+#
+#   RK_RELEASE=1 test/e2e/schedule-latency.sh   # timing is for release builds
+#
+# RK_SCHED_P50_MS (default 20) and RK_SCHED_P99_MS (default 50) are the
+# bounds. Exit status is the number of failed checks.
+# shellcheck source=lib.sh
+. "$(dirname "$0")/lib.sh"
+start_scheduler
+echo "rig: $PROFILE binaries"
+export API ADMIN W
+P50_MS="${RK_SCHED_P50_MS:-20}" P99_MS="${RK_SCHED_P99_MS:-50}" python3 - <<'PY' || FAIL=$?
+import datetime, http.client, json, os, ssl, sys, threading, time, urllib.parse
+
+API = urllib.parse.urlparse(os.environ["API"]); TOKEN = os.environ["ADMIN"]
+P50, P99 = float(os.environ["P50_MS"]), float(os.environ["P99_MS"])
+CTX = ssl._create_unverified_context()
+H = {"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"}
+failed = 0
+def check(ok, what):
+    global failed
+    print(("PASS  " if ok else "FAIL  ") + what, flush=True)
+    failed += 0 if ok else 1
+
+conn = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=30)
+def req(method, path, body=None):
+    conn.request(method, path, body=None if body is None else json.dumps(body), headers=H)
+    r = conn.getresponse(); data = r.read()
+    if r.status >= 300 and r.status != 409:
+        print(f"setup {method} {path}: {r.status} {data[:300]!r}"); sys.exit(100)
+    return json.loads(data)
+
+NS = "/api/v1/namespaces/latency"
+req("POST", "/api/v1/namespaces", {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "latency"}})
+node = req("POST", "/api/v1/nodes", {"apiVersion": "v1", "kind": "Node",
+    "metadata": {"name": "solo", "labels": {"kubernetes.io/hostname": "solo"}}})
+res = {"cpu": "64", "memory": "256Gi", "pods": "200"}
+node["status"] = {"capacity": res, "allocatable": res, "conditions": [{"type": "Ready", "status": "True"}]}
+req("PUT", "/api/v1/nodes/solo/status", node)
+
+# --- the watch: when each pod is first seen bound ----------------------------
+seen, cond = {}, threading.Condition()
+rv = req("GET", NS + "/pods")["metadata"]["resourceVersion"]
+def watch():
+    c = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=600)
+    c.request("GET", f"{NS}/pods?watch=1&resourceVersion={rv}", headers=H)
+    r = c.getresponse()
+    while True:
+        line = r.readline()
+        if not line: return
+        now, wall = time.monotonic(), time.time()
+        ev = json.loads(line); pod = ev["object"]
+        name = pod["metadata"].get("name")
+        if pod.get("spec", {}).get("nodeName"):
+            with cond:
+                seen.setdefault(name, (now, wall, pod)); cond.notify_all()
+threading.Thread(target=watch, daemon=True).start()
+
+# Wait until the scheduler has synced its feeds and placed a pod.
+def create(name):
+    sent, wall = time.monotonic(), time.time()
+    req("POST", NS + "/pods", {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name},
+        "spec": {"containers": [{"name": "c", "image": "unused",
+                 "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}}}]}})
+    return sent, wall
+def bound(name, limit=60):
+    end = time.monotonic() + limit
+    with cond:
+        while name not in seen and time.monotonic() < end:
+            cond.wait(end - time.monotonic())
+    return seen.get(name)
+create("warmup")
+if not bound("warmup", 120):
+    print("setup: the scheduler never bound the warm-up pod"); sys.exit(100)
+time.sleep(2)
+
+created = {}
+def run(name, gap):
+    created[name] = create(name)
+    if gap: bound(name); time.sleep(gap)
+for i in range(5): run(f"spaced-{i}", 4)
+for i in range(20): run(f"burst-{i}", 0)
+for i in range(10): run(f"late-{i}", 1)
+for name in created:
+    if not bound(name):
+        check(False, f"{name} bound within 60 s")
+
+lat = {n: (seen[n][0] - created[n][0]) * 1000 for n in created if n in seen}
+def pct(v, p):
+    v = sorted(v); return v[min(len(v) - 1, int(round(p / 100 * (len(v) - 1))))]
+vals = list(lat.values())
+for n in created:
+    if n in lat: print(f"  {n:10s} {lat[n]:7.1f} ms")
+p50, p99 = pct(vals, 50), pct(vals, 99)
+print(f"create → bound seen: n={len(vals)} p50={p50:.1f} ms p99={p99:.1f} ms max={max(vals):.1f} ms")
+check(len(vals) == len(created), f"all {len(created)} pods bound")
+check(p50 < P50, f"p50 {p50:.1f} ms < {P50:g} ms")
+check(p99 < P99, f"p99 {p99:.1f} ms < {P99:g} ms")
+first = sorted(lat[f"spaced-{i}"] for i in range(5))[2]
+last = sorted(lat[f"late-{i}"] for i in range(10))[5]
+check(last < max(2 * first, first + 10), f"no growth: median of first five {first:.1f} ms, of last ten {last:.1f} ms")
+
+# --- storm.io/scheduled-at -----------------------------------------------------
+bad = []
+for n in created:
+    if n not in seen: continue
+    at = seen[n][2]["metadata"].get("annotations", {}).get("storm.io/scheduled-at", "")
+    try:
+        t = datetime.datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        bad.append(f"{n}: {at!r} is not RFC3339"); continue
+    if "." not in at:
+        bad.append(f"{n}: {at!r} has no sub-second digits")
+    # The same machine's wall clock; a millisecond of float slack.
+    elif not created[n][1] - 0.001 <= t <= seen[n][1] + 0.001:
+        bad.append(f"{n}: {at} outside create {created[n][1]:.6f} .. seen {seen[n][1]:.6f}")
+check(not bad, "storm.io/scheduled-at is a sub-second bind time between create and watch event"
+      + ("" if not bad else ": " + "; ".join(bad[:3])))
+sys.exit(failed)
+PY
+[ -f "$W/sched.log" ] && [ "$FAIL" -ne 0 ] && { echo "---- scheduler log (tail)"; tail -40 "$W/sched.log"; }
+report
