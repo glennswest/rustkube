@@ -131,6 +131,15 @@ rig respects the build volume target and scratch paths.
 finalization and scheduler burst/reservation accounting on the same disposable
 rig. It uses stand-in Nodes and does not claim real-node performance.
 
+`e2e/schedule-latency.sh` times Pod creation to binding on one stand-in
+Node, from the Pod's ADDED event to the first event carrying `nodeName` on
+the same watch. It creates five pods 4 s apart, a burst of 20 and ten more
+1 s apart. Bounds: p50 < 20 ms, the scheduler's own share (ADDED →
+`storm.io/scheduled-at`) p99 < 10 ms, and no growth. Each pod's split (create
+POST, scheduler, bind write → seen) is printed. End-to-end p99 is bounded only
+with `RK_SCHED_P99_MS`, because on the shared build box the bind write's
+datastore time stalls under other jobs' I/O. Run with `RK_RELEASE=1` (#190).
+
 `e2e/scheduler-failover.sh` runs two electing schedulers: the leader is
 paused past its lease, the standby takes over, the resumed old leader binds
 nothing, the standby is killed and the old leader takes over again — a

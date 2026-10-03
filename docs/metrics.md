@@ -108,15 +108,14 @@ scheduler_pending_virtualmachines{queue="active"}
 scheduler_schedule_attempts_total{result="scheduled"|"unschedulable"|"error"}
 ```
 
-VMI outcomes are counted in `scheduler_schedule_attempts_total` too. On
-`turbomode`, successful Pod binds and volume waits increment the counter,
-but the Pod placement error arm only logs. Other Pod placement failures are
-therefore missing: this is not a complete denominator for success rates (#90).
+VMI outcomes are counted in `scheduler_schedule_attempts_total` too.
+Successful Pod binds, failed bind writes (`error`) and volume waits increment
+the counter. A Pod with no feasible node is only logged, so this is not a
+complete denominator for success rates (#90).
 
-`scheduler_e2e_scheduling_duration_seconds{result}` is defined by
-`record_e2e_latency`, but **has no callers** on this branch and is not emitted
-(#90). The previous polling implementation timed successful attempts; do not
-carry that historical claim into the indexed implementation.
+`scheduler_e2e_scheduling_duration_seconds{result="scheduled"}` times each
+bound Pod from when the scheduler first saw it pending to when its bind write
+was acknowledged (#190). Only `scheduled` is recorded.
 
 Upstream splits `scheduler_pending_pods` across `active`, `backoff` and
 `unschedulable` queues. With the turbomode implementation, this gauge counts pending keys in the shared placement

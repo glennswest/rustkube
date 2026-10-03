@@ -95,16 +95,24 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Scheduler create→bind latency (#190, P1) — IN PROGRESS 2026-10-02
+### Scheduler create→bind latency (#190, P1) — IN PROGRESS 2026-10-03
 pvetest1: kubelet's `scheduled` 156→393 ms, growing pod by pod. That number is
 kubelet-seen minus PodScheduled.lastTransitionTime, which the scheduler writes
-truncated to whole seconds — so it carries 0–999 ms of truncation that drifts
-as pods are created ~4.0x s apart. Measure the real latency first.
-- [ ] `test/e2e/schedule-latency.sh`: create → watch-seen-bound, 5 spaced, 20
-      burst, 10 late; p50 < 20 / p99 < 50 ms; baseline on the current code
-- [ ] Bind writes `storm.io/scheduled-at` (RFC3339, µs); wire the unused
-      `scheduler_e2e_scheduling_duration_seconds`; fix any real latency found
-- [ ] File rustkube-node: start timing prefers `storm.io/scheduled-at`
+truncated to whole seconds: 0–999 ms of truncation, drifting as pods are
+created ~4.0x s apart. Measured, the scheduler was never the cost.
+- [x] `test/e2e/schedule-latency.sh` (release, fastetcd v1.12.0). Baseline at
+      3c02bd3: create→seen p50 20.7 / p99 187 ms, no growth; scheduler share
+      0.2–0.8 ms; burst backlog from serialized binds; 40–45 ms watch stalls
+- [x] c5b86b9 `storm.io/scheduled-at` (µs) + e2e metric emitted; 163b633 binds
+      in the background (≤16, Work held, aborted with the term); 97d56d9
+      apiserver TCP_NODELAY (the 40 ms stalls were Nagle + delayed ACK)
+- [x] After: ADDED→bound p50 4.0–7.3 ms; scheduler share p99 ≤ 1.1 ms over 10
+      runs; e2e p99 9.7–30 ms in 7 of 10 runs, the rest in the bind write's
+      datastore time (etcd update ≈ 96% of the PUT) on shared dev.
+      scheduler-failover 19/19 at 163b633
+- [ ] Workspace sc-build + indexed-safety; golden; file rustkube-node to
+      time `scheduled` from `storm.io/scheduled-at`; shipped. pvetest1 burst
+      of 20 (p50 < 20 / p99 < 50 ms) after the release + kubelet change
 
 ### DaemonSet pod not back after a reboot (#189, P0) — BLOCKED on stormcos#231, 2026-10-02
 server3 11.65 after the power-cut reboot: cilium DS desired 1 / current 0, no pod.

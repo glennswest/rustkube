@@ -28,7 +28,8 @@ discovered shared feeds; all feeds must be synchronized. Background owner
 absence needs GET confirmation, and owner finalization deliberately retains
 authoritative paginated membership checks. Event retention is per-event with
 an expiry deadline. The scheduler uses one serialized Pod/VMI queue and
-shared incremental capacity accounting; acknowledged writes replace bind
+shared incremental capacity accounting (bind writes run in the background
+once reserved, up to 16 in flight, #190); acknowledged writes replace bind
 assumptions without double counting, and volume waits retain their charge.
 Ambiguous controller creates retain their original name/body per owner and
 collection; recovery resolves/retries that same atomic create before another

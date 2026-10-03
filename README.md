@@ -293,7 +293,11 @@ Leader-elected on `kube-system/kube-scheduler`. Dependency watch events wake
 placement of Pods with no `spec.nodeName` and unplaced VMIs. Placement remains
 serialized through one priority-ordered Pod/VMI object queue. Incremental
 accounting includes adopted workloads, successful binds and outstanding
-volume/bind reservations before the next placement. Storage dependencies use
+volume/bind reservations before the next placement. A Pod's bind write (a
+conditional PUT of `spec.nodeName`) is reserved first and then written in the
+background, up to 16 at once, so the next Pod is placed without waiting for
+it (#190). A bound Pod carries `storm.io/scheduled-at`, the bind time to the
+microsecond; `PodScheduled`'s time is whole seconds, as upstream's is. Storage dependencies use
 informer indexes. Lease renewal runs independently (every 2 s); a failed or
 hung attempt is retried, and the term ends — cancelling the scheduling worker
 and its reservations — once no renewal has succeeded for 10 s from its start
