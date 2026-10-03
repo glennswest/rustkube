@@ -148,6 +148,6 @@ for line in m.splitlines():
         print("  " + line)
 sys.exit(failed)
 PY
-grep -o 'workload bound.*' "$W/sched.log" | grep -o 'ms=[0-9.]*' | tr '\n' ' ' | sed 's/^/scheduler queued→bound: /'; echo
+sed 's/\x1b\[[0-9;]*m//g' "$W/sched.log" | grep -o 'workload bound.*' | grep -o 'ms=[0-9.]*' | tr '\n' ' ' | sed 's/^/scheduler queued→bound: /'; echo
 [ -f "$W/sched.log" ] && [ "$FAIL" -ne 0 ] && { echo "---- scheduler log (tail)"; tail -40 "$W/sched.log"; }
 report
