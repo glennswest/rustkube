@@ -95,6 +95,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Pods beyond allocatable.pods (#194, P1) — IN PROGRESS 2026-10-03
+pvetest1 (stormcos_qa turbomode run 4bbb76be8f): 1,000 Pods bound to a node
+with `allocatable.pods = 110`. The scheduler charges CPU/memory per node but
+never counts Pods, and a pod with no requests skipped resource fit entirely.
+- [ ] NodeUsage counts non-terminal Pods per node (watch, binds, assumptions;
+      VMIs take no pod slot — rustkube-node runs no virt-launcher); a Pod is
+      refused "Too many pods" at `allocatable.pods`
+- [ ] Unplaceable Pod gets `PodScheduled=False/Unschedulable` with an
+      upstream-shaped "0/N nodes are available: …" message, written only when
+      it changes (FailedScheduling events stay #138)
+- [ ] Unit tests: 2-pod node + 3 Pods leaves one unscheduled, binds it when
+      one finishes; e2e rig on dev; sc-build; golden; close #194
+
 ### Scheduler create→bind latency (#190, P1) — SHIPPED 2026-10-03
 pvetest1: kubelet's `scheduled` 156→393 ms, growing pod by pod. That number is
 kubelet-seen minus PodScheduled.lastTransitionTime, which the scheduler writes
