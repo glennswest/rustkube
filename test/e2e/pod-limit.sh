@@ -10,7 +10,8 @@
 #     try again
 #   - one bound Pod goes Succeeded: the third binds, PodScheduled=True
 #   - a burst of 30 onto a 5-pod node (binds in flight, reservations): exactly
-#     5 bound; deleting one bound Pod lets exactly one more bind
+#     5 bound, the rest Unschedulable with both nodes' reasons counted;
+#     deleting one bound Pod lets exactly one more bind
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -109,9 +110,11 @@ for i in range(30):
 until(lambda: len(bound("burst")) >= 5)
 time.sleep(5)
 check(len(bound("burst")) == 5, f"burst of 30 on a 5-pod node: {len(bound('burst'))} bound")
-reported = until(lambda: all(scheduled(p).get("message") == want
-                            for p in pods("burst").values() if not p["spec"].get("nodeName")))
-check(reported, "all 25 unbound report Too many pods")
+# Two nodes now: "small" refuses on the selector, "five" on the count.
+want2 = "0/2 nodes are available: 1 Too many pods, 1 node missing label kubernetes.io/hostname=five."
+msgs = lambda: {scheduled(p).get("message") for p in pods("burst").values() if not p["spec"].get("nodeName")}
+until(lambda: msgs() == {want2})
+check(msgs() == {want2}, f"all 25 unbound report {want2!r} (got {msgs()})")
 gone = bound("burst")[0]
 req("DELETE", f"/api/v1/namespaces/burst/pods/{gone}?gracePeriodSeconds=0")
 until(lambda: gone not in pods("burst") and len(bound("burst")) >= 5)
