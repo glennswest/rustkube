@@ -127,6 +127,10 @@ for n in created:
     print(f"  {n:10s} {lat[n]:8.1f} ms  {full[n]:9.1f} ms{split}")
 p50, p99 = pct(vals, 50), pct(vals, 99)
 print(f"ADDED → bound: n={len(vals)} p50={p50:.1f} ms p99={p99:.1f} ms max={max(vals):.1f} ms")
+slow = max(lat, key=lat.get); t = scheduled_at(slow)
+if t is not None:
+    print(f"slowest: {slow} {lat[slow]:.1f} ms = scheduler {(t - added[slow][1]) * 1000:.1f} ms"
+          f" + bind write → seen {(seen[slow][1] - t) * 1000:.1f} ms")
 fv = list(full.values())
 print(f"create POST → bound (not bounded): p50={pct(fv, 50):.1f} ms p99={pct(fv, 99):.1f} ms")
 check(len(vals) == len(created), f"all {len(created)} pods bound")
