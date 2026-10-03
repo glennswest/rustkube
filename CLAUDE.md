@@ -95,18 +95,23 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Pods beyond allocatable.pods (#194, P1) — IN PROGRESS 2026-10-03
+### Pods beyond allocatable.pods (#194, P1) — COMPLETE 2026-10-03
 pvetest1 (stormcos_qa turbomode run 4bbb76be8f): 1,000 Pods bound to a node
-with `allocatable.pods = 110`. The scheduler charges CPU/memory per node but
-never counts Pods, and a pod with no requests skipped resource fit entirely.
-- [ ] NodeUsage counts non-terminal Pods per node (watch, binds, assumptions;
-      VMIs take no pod slot — rustkube-node runs no virt-launcher); a Pod is
-      refused "Too many pods" at `allocatable.pods`
-- [ ] Unplaceable Pod gets `PodScheduled=False/Unschedulable` with an
-      upstream-shaped "0/N nodes are available: …" message, written only when
-      it changes (FailedScheduling events stay #138)
-- [ ] Unit tests: 2-pod node + 3 Pods leaves one unscheduled, binds it when
-      one finishes; e2e rig on dev; sc-build; golden; close #194
+with `allocatable.pods = 110`. The scheduler charged CPU/memory per node but
+never counted Pods, and a pod with no requests skipped resource fit entirely.
+- [x] 6957abc: NodeUsage counts non-terminal Pods per node (watch, binds,
+      assumptions; VMIs take no slot — rustkube-node runs no virt-launcher);
+      "Too many pods" at `allocatable.pods`, checked after the placement
+      filters (f1c902b)
+- [x] Unplaceable Pod gets `PodScheduled=False/Unschedulable`, "0/N nodes are
+      available: …", written only when it changes (Events stay #138)
+- [x] At f1c902b: scheduler units 65 (3 new); `test/e2e/pod-limit.sh` 10/10;
+      workspace 448 passed / 4 ignored; indexed-safety 11/11,
+      scheduler-failover 19/19, schedule-latency pass (fastetcd v1.12.0).
+      golden-rustkube-71422ae4df20 (stormcos#164); #194 closed. Auto-filed
+      #195 was the rig's own expectation, closed
+- [ ] After the release: stormcos_qa turbomode on pvetest1 holds 110 per node
+      (the run also needs the rustkube-node pod-IP fix filed with #194)
 
 ### Scheduler create→bind latency (#190, P1) — SHIPPED 2026-10-03
 pvetest1: kubelet's `scheduled` 156→393 ms, growing pod by pod. That number is

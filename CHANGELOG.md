@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-03
+- **docs:** #194 verified on dev at f1c902b (pod-limit 10/10, workspace 448 passed, scheduler rigs pass) and built as golden-rustkube-71422ae4df20 (stormcos#164).
 - **fix:** The scheduler holds a node to its `allocatable.pods` (#194). It counted CPU and memory per node but never Pods, and a Pod with no requests skipped resource fit, so on pvetest1 1,000 BestEffort Pods were bound to a 110-pod node. Non-terminal Pods, bound or with a bind in flight, are now counted per node, and a Pod is refused "Too many pods" at the limit. `Succeeded`/`Failed` Pods free their slot; VMIs take none (rustkube-node runs no virt-launcher Pod).
 - **feat:** A Pod no node will take gets `PodScheduled=False`, reason `Unschedulable`, with upstream's message shape (`0/1 nodes are available: 1 Too many pods.`), written only when it changes (#194). `scheduler_schedule_attempts_total{result="unschedulable"}` now counts such Pods. Resource-fit reasons are upstream's `Insufficient cpu`/`Insufficient memory` without the amounts, so the message does not change with every bind.
 - **test:** `test/e2e/pod-limit.sh` (#194): 3 Pods on a 2-pod node, one held back until another finishes; a burst of 30 onto a 5-pod node binds exactly 5.
