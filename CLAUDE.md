@@ -95,7 +95,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### DaemonSet pod not back after a reboot (#189, P0) — BLOCKED on rustkube-node#129, 2026-10-02
+### DaemonSet pod not back after a reboot (#189, P0) — BLOCKED on stormcos#231, 2026-10-02
 server3 11.65 after the power-cut reboot: cilium DS desired 1 / current 0, no pod.
 - [x] Live read of server3's kube-system (23:22 UTC): the DS controller is NOT
       stuck — 32 cilium pods created since the reboot, each `Failed` within
@@ -106,7 +106,12 @@ server3 11.65 after the power-cut reboot: cilium DS desired 1 / current 0, no po
       checks/mounts them on the host; pod should stay Pending, not Failed);
       #189 proposed after it. No rustkube code change: DS behaviour matches
       upstream's DaemonSet controller
-- [ ] After rustkube-node#129 ships: stormcentral's install reboot step shows
+- [x] rustkube-node#129 closed: the real cause is a full 60 MiB host root
+      holding /var/lib/kubelet + /var/log/pods (ENOSPC). Kubelet now keeps such
+      pods Pending with the errno (golden-rustkube-node-cb302b196e29). Host fix
+      is stormcos#231 (832b627, own kubelet-data/pod-logs volumes), open until
+      released; #189 proposed after it. Still no rustkube change
+- [ ] After stormcos#231 ships: stormcentral's install reboot step shows
       cilium back within 60 s of node Ready; then close #189
 
 ### Stored CRDs not served after a restart (#185, P0) — SHIPPED 2026-10-02
