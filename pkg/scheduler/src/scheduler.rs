@@ -525,9 +525,51 @@ impl Scheduler {
             .collect();
         let mut vmis: Option<Subscription> = None;
         let mut failures: HashMap<ScheduleKey, u32> = HashMap::new();
+        // Bind writes in flight. Placement stays serialized — each choice is
+        // reserved before its write, so the next Pod sees the capacity — but
+        // the next Pod no longer waits for the previous one's write (#190).
+        // Each bind holds its Work, so its Pod is not placed again until the
+        // write has answered; dropping the set with the loop (lost
+        // leadership) aborts them, as dropping the loop aborted the one
+        // inline write before.
+        let mut binds: tokio::task::JoinSet<BindDone> = tokio::task::JoinSet::new();
         loop {
-            let work = ready
-                .next_by(|a, b| {
+            let work = tokio::select! {
+                biased;
+                Some(done) = binds.join_next(), if !binds.is_empty() => {
+                    let Ok(done) = done else { continue };
+                    let BindDone { work, node, queued, ok } = done;
+                    let key = work.key().clone();
+                    if ok {
+                        failures.remove(&key);
+                        let waited = queued.map(|at| at.elapsed());
+                        if let Some(waited) = waited {
+                            crate::metrics_server::record_e2e_latency(
+                                waited.as_secs_f64(),
+                                "scheduled",
+                            );
+                        }
+                        info!(
+                            ?key,
+                            %node,
+                            ms = waited.map(|w| w.as_secs_f64() * 1000.0),
+                            "workload bound"
+                        );
+                        crate::metrics_server::record_attempt("scheduled");
+                    } else {
+                        crate::metrics_server::record_attempt("error");
+                        let n = failures.entry(key.clone()).or_default();
+                        *n = n.saturating_add(1);
+                        ready.add_at(
+                            key,
+                            tokio::time::Instant::now()
+                                + Duration::from_millis((100_u64 << (*n).min(8)).min(30_000)),
+                        );
+                    }
+                    drop(work);
+                    continue;
+                }
+                work = ready.next_by(|a, b| {
                     let state = observed.lock().unwrap();
                     let a = state.pending.get(a);
                     let b = state.pending.get(b);
@@ -535,8 +577,8 @@ impl Scheduler {
                         .unwrap_or(0)
                         .cmp(&a.map(pod_priority).unwrap_or(0))
                         .then_with(|| a.map(creation_ts).cmp(&b.map(creation_ts)))
-                })
-                .await;
+                }), if binds.len() < MAX_BINDS_IN_FLIGHT => work,
+            };
             ready.cancel_deadline(work.key());
             let key = work.key().clone();
             let wake = ready.clone();
@@ -578,7 +620,7 @@ impl Scheduler {
                     };
                     let Some(object) = source.map(|feed| feed.get(&key.1)).transpose()?.flatten()
                     else {
-                        return Ok::<(), anyhow::Error>(());
+                        return Ok::<Option<Bind>, anyhow::Error>(None);
                     };
                     observed.lock().unwrap().observe(
                         key.0,
@@ -589,7 +631,7 @@ impl Scheduler {
                         },
                     );
                     if !pending_workload(key.0, &object) {
-                        return Ok(());
+                        return Ok(None);
                     }
                     let mut nodes = dependencies[0].feed.list()?;
                     let (mut state, assumed) = observed.lock().unwrap().snapshot(&key);
@@ -604,28 +646,11 @@ impl Scheduler {
                         let ns = object["metadata"]["namespace"]
                             .as_str()
                             .unwrap_or("default");
-                        // Read before the bind: its watch event may clear it.
-                        let queued = observed.lock().unwrap().queued.get(&key).copied();
                         match self
                             .schedule_pod(ns, &object, &nodes, &state, &volumes, &observed, &key)
                             .await
                         {
-                            Ok(Placement::Bound(node)) => {
-                                let waited = queued.map(|at| at.elapsed());
-                                if let Some(waited) = waited {
-                                    crate::metrics_server::record_e2e_latency(
-                                        waited.as_secs_f64(),
-                                        "scheduled",
-                                    );
-                                }
-                                info!(
-                                    ?key,
-                                    %node,
-                                    ms = waited.map(|w| w.as_secs_f64() * 1000.0),
-                                    "workload bound"
-                                );
-                                crate::metrics_server::record_attempt("scheduled");
-                            }
+                            Ok(Placement::Bind(bind)) => return Ok(Some(bind)),
                             Ok(Placement::WaitingForVolumes(node)) => {
                                 observed
                                     .lock()
@@ -638,10 +663,37 @@ impl Scheduler {
                             }
                         }
                     }
-                    Ok(())
+                    Ok(None)
                 },
             )
             .await;
+            if let (Ok(Some(bind)), false) = (&result, failed) {
+                let api = self.api.clone();
+                let wake = ready.clone();
+                let retry = key.clone();
+                let Bind { node, path, body } = bind.clone();
+                // Read before the write: the bound Pod's watch event clears it.
+                let queued = observed.lock().unwrap().queued.get(&key).copied();
+                binds.spawn(async move {
+                    let (result, failed) = apimachinery::reactor::scope_object(
+                        move |delay| {
+                            wake.add_at(retry.clone(), tokio::time::Instant::now() + delay);
+                        },
+                        api.update(&path, &body),
+                    )
+                    .await;
+                    if let Err(error) = &result {
+                        debug!(%error, %path, "bind not written");
+                    }
+                    BindDone {
+                        work,
+                        node,
+                        queued,
+                        ok: result.is_ok() && !failed,
+                    }
+                });
+                continue;
+            }
             if result.is_err() || failed {
                 let n = failures.entry(key.clone()).or_default();
                 *n = n.saturating_add(1);
@@ -939,14 +991,11 @@ impl Scheduler {
             }
         ]);
 
-        self.api
-            .update(
-                &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
-                &bound_pod,
-            )
-            .await?;
-
-        Ok(Placement::Bound(chosen_name.to_string()))
+        Ok(Placement::Bind(Bind {
+            node: chosen_name.to_string(),
+            path: format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
+            body: bound_pod,
+        }))
     }
 }
 
@@ -1191,10 +1240,29 @@ fn indexed_volume_state(
     Ok(state)
 }
 
+/// Most bind writes outstanding at once (#190).
+const MAX_BINDS_IN_FLIGHT: usize = 16;
+
+/// A bind write: the Pod with `spec.nodeName` set, PUT to `path`.
+#[derive(Clone)]
+struct Bind {
+    node: String,
+    path: String,
+    body: Value,
+}
+
+/// A finished bind write, with the queue ownership it held.
+struct BindDone {
+    work: apimachinery::workqueue::Work<ScheduleKey>,
+    node: String,
+    queued: Option<std::time::Instant>,
+    ok: bool,
+}
+
 /// What a scheduling pass decided for one pod.
 enum Placement {
-    /// Bound to this node.
-    Bound(String),
+    /// Bind to this node: capacity is reserved, the write is the caller's.
+    Bind(Bind),
     /// The node is chosen and written onto the pod's claims, but the pod is
     /// deliberately not bound until those claims are.
     WaitingForVolumes(String),
