@@ -75,7 +75,7 @@ def create(name):
     req("POST", NS + "/pods", {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name},
         "spec": {"containers": [{"name": "c", "image": "unused",
                  "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}}}]}})
-    return sent, wall
+    return sent, wall, time.time()
 def bound(name, limit=60):
     end = time.monotonic() + limit
     with cond:
@@ -106,11 +106,13 @@ def scheduled_at(n):
     at = seen[n][2]["metadata"].get("annotations", {}).get("storm.io/scheduled-at", "")
     try: return datetime.datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
     except ValueError: return None
-print("  pod        create→seen  (create→bind write, bind write→seen)")
+print("  pod        create→seen  (create POST, ack→bind write, bind write→seen)")
 for n in created:
     if n not in lat: continue
     t = scheduled_at(n)
-    split = "" if t is None else f"  ({(t - created[n][1]) * 1000:6.1f}, {(seen[n][1] - t) * 1000:6.1f})"
+    post = (created[n][2] - created[n][1]) * 1000
+    split = f"  ({post:6.1f}" + ("" if t is None else
+        f", {(t - created[n][2]) * 1000:6.1f}, {(seen[n][1] - t) * 1000:6.1f}") + ")"
     print(f"  {n:10s} {lat[n]:7.1f} ms{split}")
 p50, p99 = pct(vals, 50), pct(vals, 99)
 print(f"create → bound seen: n={len(vals)} p50={p50:.1f} ms p99={p99:.1f} ms max={max(vals):.1f} ms")
@@ -137,7 +139,15 @@ for n in created:
         bad.append(f"{n}: {at} outside create {created[n][1]:.6f} .. seen {seen[n][1]:.6f}")
 check(not bad, "storm.io/scheduled-at is a sub-second bind time between create and watch event"
       + ("" if not bad else ": " + "; ".join(bad[:3])))
+# Where the time went: the apiserver's request and datastore timings for pods.
+conn.request("GET", "/metrics", headers=H); m = conn.getresponse().read().decode()
+for line in m.splitlines():
+    if ('resource="pods"' in line or 'type="pods"' in line) and \
+       ("etcd_request_duration" in line or "apiserver_request_duration" in line) and \
+       ('quantile="0.5"' in line or 'quantile="0.99"' in line or "_count" in line or "_sum" in line):
+        print("  " + line)
 sys.exit(failed)
 PY
+grep -o 'workload bound.*' "$W/sched.log" | grep -o 'ms=[0-9.]*' | tr '\n' ' ' | sed 's/^/scheduler queued→bound: /'; echo
 [ -f "$W/sched.log" ] && [ "$FAIL" -ne 0 ] && { echo "---- scheduler log (tail)"; tail -40 "$W/sched.log"; }
 report
