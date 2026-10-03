@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 #
 # Pod creation → bound latency on an idle single Node (#190), measured from
-# outside the scheduler: the client's monotonic clock from just before the
-# create POST to the watch event that first carries spec.nodeName — the same
-# path a kubelet sees a bound pod by. No kubelet, no controller-manager.
+# outside the scheduler on one watch stream and one monotonic clock: from the
+# pod's ADDED event (the create is committed and visible to watchers) to the
+# first event that carries spec.nodeName — the path a kubelet sees a bound pod
+# by. The create POST's own time is printed beside it, not bounded: a lone
+# write after idle pays a full datastore fsync, which no scheduler can help.
+# No kubelet, no controller-manager.
 #
 #   - five pods 4 s apart (the issue's shape), then a burst of 20 back to
 #     back, then ten more 1 s apart with 25 already bound: p50 and p99 over
@@ -52,7 +55,7 @@ node["status"] = {"capacity": res, "allocatable": res, "conditions": [{"type": "
 req("PUT", "/api/v1/nodes/solo/status", node)
 
 # --- the watch: when each pod is first seen bound ----------------------------
-seen, cond = {}, threading.Condition()
+seen, added, cond = {}, {}, threading.Condition()
 rv = req("GET", NS + "/pods")["metadata"]["resourceVersion"]
 def watch():
     c = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=600)
@@ -64,6 +67,7 @@ def watch():
         now, wall = time.monotonic(), time.time()
         ev = json.loads(line); pod = ev["object"]
         name = pod["metadata"].get("name")
+        added.setdefault(name, now)
         if pod.get("spec", {}).get("nodeName"):
             with cond:
                 seen.setdefault(name, (now, wall, pod)); cond.notify_all()
@@ -98,7 +102,8 @@ for name in created:
     if not bound(name):
         check(False, f"{name} bound within 60 s")
 
-lat = {n: (seen[n][0] - created[n][0]) * 1000 for n in created if n in seen}
+lat = {n: (seen[n][0] - added[n]) * 1000 for n in created if n in seen}
+full = {n: (seen[n][0] - created[n][0]) * 1000 for n in lat}
 def pct(v, p):
     v = sorted(v); return v[min(len(v) - 1, int(round(p / 100 * (len(v) - 1))))]
 vals = list(lat.values())
@@ -106,16 +111,18 @@ def scheduled_at(n):
     at = seen[n][2]["metadata"].get("annotations", {}).get("storm.io/scheduled-at", "")
     try: return datetime.datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
     except ValueError: return None
-print("  pod        create→seen  (create POST, ack→bind write, bind write→seen)")
+print("  pod        ADDED→bound  create→bound  (create POST, ack→bind write, bind write→seen)")
 for n in created:
     if n not in lat: continue
     t = scheduled_at(n)
     post = (created[n][2] - created[n][1]) * 1000
     split = f"  ({post:6.1f}" + ("" if t is None else
         f", {(t - created[n][2]) * 1000:6.1f}, {(seen[n][1] - t) * 1000:6.1f}") + ")"
-    print(f"  {n:10s} {lat[n]:7.1f} ms{split}")
+    print(f"  {n:10s} {lat[n]:8.1f} ms  {full[n]:9.1f} ms{split}")
 p50, p99 = pct(vals, 50), pct(vals, 99)
-print(f"create → bound seen: n={len(vals)} p50={p50:.1f} ms p99={p99:.1f} ms max={max(vals):.1f} ms")
+print(f"ADDED → bound: n={len(vals)} p50={p50:.1f} ms p99={p99:.1f} ms max={max(vals):.1f} ms")
+fv = list(full.values())
+print(f"create POST → bound (not bounded): p50={pct(fv, 50):.1f} ms p99={pct(fv, 99):.1f} ms")
 check(len(vals) == len(created), f"all {len(created)} pods bound")
 check(p50 < P50, f"p50 {p50:.1f} ms < {P50:g} ms")
 check(p99 < P99, f"p99 {p99:.1f} ms < {P99:g} ms")
