@@ -174,6 +174,12 @@ pub async fn serve(listener: TcpListener, app: Router, cfg: ServerConfig) -> any
                 continue;
             }
         };
+        // As Go's net package does by default: a watch writes one small frame
+        // per event, and with Nagle on, the second of two quick events waited
+        // for the client's delayed ACK — 40 ms on Linux (#190).
+        if let Err(e) = stream.set_nodelay(true) {
+            tracing::debug!("TCP_NODELAY: {e}");
+        }
         let acceptor = acceptor.clone();
         let app = app.clone();
         tokio::spawn(async move {

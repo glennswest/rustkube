@@ -1016,6 +1016,13 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
                 "SECURITY: serving plain HTTP on {addr} (--insecure) — credentials travel \
                  in cleartext; do not use in production"
             );
+            // TCP_NODELAY, as for TLS (crate::tls::serve, #190).
+            use axum::serve::ListenerExt;
+            let listener = listener.tap_io(|tcp| {
+                if let Err(e) = tcp.set_nodelay(true) {
+                    tracing::debug!("TCP_NODELAY: {e}");
+                }
+            });
             axum::serve(listener, app).await?;
         }
     }
