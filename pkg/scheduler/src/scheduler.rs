@@ -658,6 +658,11 @@ impl Scheduler {
                                     .reserve(key.clone(), &object, &node, true);
                                 crate::metrics_server::record_attempt("unschedulable");
                             }
+                            Ok(Placement::Unschedulable(why)) => {
+                                crate::metrics_server::record_attempt("unschedulable");
+                                debug!(%why, ?key, "pod not placed");
+                                self.report_pod_unschedulable(ns, &object, &why).await;
+                            }
                             Err(error) => {
                                 debug!(%error,?key,"workload not placed");
                             }
@@ -848,6 +853,45 @@ impl Scheduler {
         }
     }
 
+    /// Set `PodScheduled=False`, reason `Unschedulable`, as upstream does,
+    /// so `kubectl describe` says why a Pod is Pending (#194). Written only
+    /// when the condition differs: every placement change re-tries every
+    /// pending Pod, and a write per retry would be a write per pending Pod
+    /// per finished Pod. The bind replaces it with `PodScheduled=True`.
+    async fn report_pod_unschedulable(&self, ns: &str, pod: &Value, why: &str) {
+        let name = pod["metadata"]["name"].as_str().unwrap_or("");
+        let current = pod["status"]["conditions"]
+            .as_array()
+            .and_then(|c| c.iter().find(|c| c["type"] == "PodScheduled"));
+        if current.is_some_and(|c| {
+            c["status"] == "False" && c["reason"] == "Unschedulable" && c["message"] == why
+        }) {
+            return;
+        }
+        // The transition time moves only when the status does.
+        let since = current
+            .filter(|c| c["status"] == "False")
+            .and_then(|c| c["lastTransitionTime"].as_str().map(str::to_string))
+            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        let body = json!({
+            "metadata": {"uid": pod["metadata"]["uid"]},
+            "status": {"conditions": [{
+                "type": "PodScheduled",
+                "status": "False",
+                "reason": "Unschedulable",
+                "message": why,
+                "lastTransitionTime": since,
+            }]},
+        });
+        if let Err(e) = self
+            .api
+            .patch(&format!("/api/v1/namespaces/{ns}/pods/{name}/status"), &body)
+            .await
+        {
+            debug!("could not report that {ns}/{name} is unschedulable: {e}");
+        }
+    }
+
     async fn schedule_pod(
         &self,
         namespace: &str,
@@ -869,15 +913,22 @@ impl Scheduler {
         // per-node filters first would report "no node was suitable" for a pod
         // that was never placeable anywhere (#65).
         if let Some(reason) = volumebinding::rwop_conflict(pod, namespace, volumes, &state.placed) {
-            return Err(anyhow::anyhow!("{reason}"));
+            return Ok(Placement::Unschedulable(reason));
         }
 
-        // Phase 1: Filter — find nodes that can run this pod
+        // Phase 1: Filter — find nodes that can run this pod, keeping why
+        // each other node was refused for the Pod's PodScheduled condition.
+        let mut refused: Vec<String> = Vec::new();
         let feasible: Vec<&Value> = nodes
             .iter()
             .filter(|node| {
-                let result = filter::run_filters(pod, node, state.used(node), state, nodes);
-                if !matches!(result, FilterResult::Pass) {
+                let used = state.used(node);
+                let result = match filter::pod_count_filter(node, used) {
+                    FilterResult::Pass => filter::run_filters(pod, node, used, state, nodes),
+                    fail => fail,
+                };
+                if let FilterResult::Fail(reason) = result {
+                    refused.push(reason);
                     return false;
                 }
                 // Storage last: it is the filter that needs the extra listing,
@@ -887,6 +938,7 @@ impl Scheduler {
                     Ok(()) => true,
                     Err(reason) => {
                         debug!("node rejected for {namespace}/{pod_name}: {reason}");
+                        refused.push(reason.to_string());
                         false
                     }
                 }
@@ -894,9 +946,10 @@ impl Scheduler {
             .collect();
 
         if feasible.is_empty() {
-            return Err(anyhow::anyhow!(
-                "no feasible nodes for pod {namespace}/{pod_name}"
-            ));
+            return Ok(Placement::Unschedulable(unschedulable_message(
+                nodes.len(),
+                &refused,
+            )));
         }
 
         // Phase 2: Score — rank feasible nodes
@@ -999,6 +1052,25 @@ impl Scheduler {
     }
 }
 
+/// Upstream's FailedScheduling shape: `0/3 nodes are available: 1 Too many
+/// pods, 2 node is not Ready.` Reasons are counted, most common first, so the
+/// message stays the same while the cluster does.
+fn unschedulable_message(nodes: usize, refused: &[String]) -> String {
+    if nodes == 0 {
+        return "0/0 nodes are available: no nodes are registered.".into();
+    }
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for reason in refused {
+        match counts.iter_mut().find(|(r, _)| r == reason) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((reason.clone(), 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let parts: Vec<String> = counts.iter().map(|(r, n)| format!("{n} {r}")).collect();
+    format!("0/{nodes} nodes are available: {}.", parts.join(", "))
+}
+
 /// Annotation on a bound Pod: when the scheduler wrote the binding, RFC3339
 /// to the microsecond (`PodScheduled`'s lastTransitionTime is whole seconds).
 pub const SCHEDULED_AT: &str = "storm.io/scheduled-at";
@@ -1018,6 +1090,23 @@ struct SchedulingState {
     /// When each pending workload was first seen pending, for
     /// `scheduler_e2e_scheduling_duration_seconds`.
     queued: HashMap<ScheduleKey, std::time::Instant>,
+}
+/// Charge a placed workload to its node: its requests, and a Pod slot
+/// unless it is a VMI (#194).
+fn charge(usage: &mut HashMap<String, NodeUsage>, vm: bool, node: String, pod: &Value) {
+    let (cpu, mem) = filter::pod_requests(pod);
+    let used = usage.entry(node).or_default();
+    used.cpu_milli += cpu;
+    used.mem_bytes += mem;
+    used.pods += u64::from(!vm);
+}
+/// The inverse of `charge`.
+fn uncharge(usage: &mut HashMap<String, NodeUsage>, vm: bool, node: String, pod: &Value) {
+    let (cpu, mem) = filter::pod_requests(pod);
+    let used = usage.entry(node).or_default();
+    used.cpu_milli -= cpu;
+    used.mem_bytes -= mem;
+    used.pods -= u64::from(!vm);
 }
 fn pending_workload(vm: bool, object: &Value) -> bool {
     if !object["metadata"]["deletionTimestamp"].is_null() {
@@ -1059,10 +1148,7 @@ impl SchedulingState {
         self.queued.remove(key);
         self.assumptions.remove(key);
         if let Some((node, pod)) = self.placed.remove(key) {
-            let (cpu, mem) = filter::pod_requests(&pod);
-            let used = self.usage.entry(node).or_default();
-            used.cpu_milli -= cpu;
-            used.mem_bytes -= mem;
+            uncharge(&mut self.usage, key.0, node, &pod);
         }
     }
     fn observe(&mut self, vm: bool, delta: &Delta) {
@@ -1079,10 +1165,7 @@ impl SchedulingState {
             };
             let key = (vm, key);
             if let Some((node, old)) = self.placed.remove(&key) {
-                let (cpu, mem) = filter::pod_requests(&old);
-                let used = self.usage.entry(node).or_default();
-                used.cpu_milli -= cpu;
-                used.mem_bytes -= mem;
+                uncharge(&mut self.usage, vm, node, &old);
             }
             self.pending.remove(&key);
             if pending_workload(vm, object) {
@@ -1104,10 +1187,7 @@ impl SchedulingState {
                 self.queued.remove(&key);
             }
             if let Some((node, pod)) = placed_workload(vm, object) {
-                let (cpu, mem) = filter::pod_requests(&pod);
-                let used = self.usage.entry(node.clone()).or_default();
-                used.cpu_milli += cpu;
-                used.mem_bytes += mem;
+                charge(&mut self.usage, vm, node.clone(), &pod);
                 self.placed.insert(key, (node, pod));
             }
         }
@@ -1137,10 +1217,7 @@ impl SchedulingState {
                 reserved.object.clone()
             };
             pod["spec"]["nodeName"] = json!(reserved.node);
-            let (cpu, mem) = filter::pod_requests(&pod);
-            let used = state.usage.entry(reserved.node.clone()).or_default();
-            used.cpu_milli += cpu;
-            used.mem_bytes += mem;
+            charge(&mut state.usage, key.0, reserved.node.clone(), &pod);
             state.placed.push((reserved.node.clone(), pod));
         }
         (state, self.assumptions.get(current).map(|a| a.node.clone()))
@@ -1263,6 +1340,8 @@ struct BindDone {
 enum Placement {
     /// Bind to this node: capacity is reserved, the write is the caller's.
     Bind(Bind),
+    /// No node will do; the message is for `PodScheduled=False` (#194).
+    Unschedulable(String),
     /// The node is chosen and written onto the pod's claims, but the pod is
     /// deliberately not bound until those claims are.
     WaitingForVolumes(String),
@@ -1400,7 +1479,11 @@ mod reservation_tests {
                 &key,
             )
             .await;
-        let error = result.err().expect("a missing claim cannot be placed").to_string();
+        let error = match result {
+            Err(e) => e.to_string(),
+            Ok(Placement::Unschedulable(why)) => why,
+            Ok(_) => panic!("a missing claim cannot be placed"),
+        };
         assert!(error.contains("claim ns/late"), "reached the claim path: {error}");
         let state = observed.lock().unwrap();
         assert!(state.assumptions.is_empty(), "no write, so no reservation");
@@ -1476,6 +1559,83 @@ mod reservation_tests {
         assert_eq!(
             state.snapshot(&other).0.usage["node"].mem_bytes,
             2 * 1024 * 1024 * 1024
+        );
+    }
+
+    fn best_effort(name: &str) -> Value {
+        json!({"metadata":{"namespace":"ns","name":name,"uid":name,"resourceVersion":"v1"},
+            "spec":{"containers":[{"name":"c"}]}})
+    }
+    fn two_pod_node() -> Value {
+        json!({"metadata":{"name":"small"},"status":{
+            "allocatable":{"cpu":"4","memory":"8Gi","pods":"2"},
+            "conditions":[{"type":"Ready","status":"True"}]}})
+    }
+    async fn place(state: &SchedulingState, p: &Value) -> Placement {
+        let sched = Scheduler::new("http://127.0.0.1:1");
+        let key = (false, Key::of(p).unwrap());
+        let (snapshot, _) = state.snapshot(&key);
+        sched
+            .schedule_pod(
+                "ns",
+                p,
+                &[two_pod_node()],
+                &snapshot,
+                &Default::default(),
+                &Mutex::new(SchedulingState::default()),
+                &key,
+            )
+            .await
+            .expect("no API error on this path")
+    }
+    #[tokio::test]
+    async fn a_full_node_leaves_the_third_pod_unscheduled_until_one_finishes() {
+        // #194: BestEffort Pods request nothing, so resource fit passed them
+        // all and 1,000 landed on a 110-pod node.
+        let mut state = SchedulingState::default();
+        let mut a = best_effort("a");
+        a["spec"]["nodeName"] = json!("small");
+        state.observe(false, &changed(a.clone()));
+        // The second is only assumed (bind write in flight): it holds a slot.
+        let b = best_effort("b");
+        state.observe(false, &changed(b.clone()));
+        state.reserve((false, Key::of(&b).unwrap()), &b, "small", false);
+        let c = best_effort("c");
+        state.observe(false, &changed(c.clone()));
+        match place(&state, &c).await {
+            Placement::Unschedulable(why) => assert_eq!(
+                why, "0/1 nodes are available: 1 Too many pods.",
+                "upstream's reason and shape"
+            ),
+            _ => panic!("a third Pod must not bind to a 2-pod node"),
+        }
+        // A Succeeded Pod no longer counts against allocatable.pods.
+        a["status"]["phase"] = json!("Succeeded");
+        a["metadata"]["resourceVersion"] = json!("v2");
+        state.observe(false, &changed(a));
+        assert!(matches!(place(&state, &c).await, Placement::Bind(b) if b.node == "small"));
+    }
+    #[test]
+    fn a_vmi_takes_no_pod_slot_and_a_deleted_pod_frees_its_own() {
+        let mut state = SchedulingState::default();
+        let vmi = json!({"metadata":{"name":"vm","namespace":"ns","uid":"vm","resourceVersion":"v"},
+            "spec":{"domain":{"memory":{"guest":"1Gi"}}},"status":{"nodeName":"small","phase":"Running"}});
+        state.observe(true, &changed(vmi));
+        let mut a = best_effort("a");
+        a["spec"]["nodeName"] = json!("small");
+        state.observe(false, &changed(a.clone()));
+        state.observe(false, &changed(a.clone())); // re-observed: still one
+        let other = (false, Key::of(&best_effort("z")).unwrap());
+        assert_eq!(state.snapshot(&other).0.usage["small"].pods, 1);
+        state.observe(false, &Delta { old: Some(a), new: None, affected: Default::default() });
+        assert_eq!(state.snapshot(&other).0.usage["small"].pods, 0);
+    }
+    #[test]
+    fn the_unschedulable_message_counts_reasons_most_common_first() {
+        let refused = ["node is not Ready", "Too many pods", "Too many pods"].map(String::from);
+        assert_eq!(
+            unschedulable_message(3, &refused),
+            "0/3 nodes are available: 2 Too many pods, 1 node is not Ready."
         );
     }
 }

@@ -345,7 +345,7 @@ mod tests {
             crate::filter::FilterResult::Pass
         ));
         // With 12 GiB already promised, it does not.
-        let used = crate::filter::NodeUsage { cpu_milli: 0, mem_bytes: 12 * 1024 * 1024 * 1024 };
+        let used = crate::filter::NodeUsage { cpu_milli: 0, mem_bytes: 12 * 1024 * 1024 * 1024, pods: 0 };
         assert!(matches!(
             crate::filter::run_filters(&shim, &node, used, &state, nodes),
             crate::filter::FilterResult::Fail(_)

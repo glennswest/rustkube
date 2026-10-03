@@ -310,11 +310,16 @@ exists.
   `nodeSelector`, required node affinity (which is how `kubernetes.io/arch`
   is enforced), `nodeName`, inter-pod affinity and anti-affinity, topology
   spread (`DoNotSchedule`), resource fit (pod-level requests honoured, #73),
+  Pod count: at most `allocatable.pods` non-terminal Pods per node, bound or
+  with a bind in flight; VMIs take no slot (#194),
   and volume binding: PV node affinity, `CSIStorageCapacity`,
   `ReadWriteOncePod`, and `selected-node` for `WaitForFirstConsumer` claims.
 - **Scores**, summed: least requested, image locality, preferred node
   affinity, preferred pod affinity, and topology spread (`ScheduleAnyway`).
 - VirtualMachineInstances are scheduled too (#72).
+- A Pod no node will take gets `PodScheduled=False`, reason `Unschedulable`,
+  message as upstream's (`0/1 nodes are available: 1 Too many pods.`),
+  written only when it changes. No `FailedScheduling`/`Scheduled` Events (#138).
 
 It **does not preempt**: `preemption.rs` computes victims but nothing calls it
 (#84). It **ignores `schedulingGates`** and binds gated pods (#87). There is

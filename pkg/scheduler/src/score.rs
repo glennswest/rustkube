@@ -183,7 +183,7 @@ mod accounting_tests {
         let empty = score_node(&pod, &big, NodeUsage::default(), &st, &[]);
         let half = score_node(
             &pod, &big,
-            NodeUsage { cpu_milli: 4000, mem_bytes: 8 * 1024 * 1024 * 1024 },
+            NodeUsage { cpu_milli: 4000, mem_bytes: 8 * 1024 * 1024 * 1024, pods: 0 },
             &st, &[],
         );
         assert!(half < empty, "a half-full node must score lower ({half} vs {empty})");
@@ -198,7 +198,7 @@ mod accounting_tests {
         let small_empty = score_node(&pod, &node("s", "2", "4Gi"), NodeUsage::default(), &st, &[]);
         let big_full = score_node(
             &pod, &node("b", "64", "256Gi"),
-            NodeUsage { cpu_milli: 63_000, mem_bytes: 250 * 1024 * 1024 * 1024 },
+            NodeUsage { cpu_milli: 63_000, mem_bytes: 250 * 1024 * 1024 * 1024, pods: 0 },
             &st, &[],
         );
         assert!(small_empty > big_full, "{small_empty} should beat {big_full}");

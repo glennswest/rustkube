@@ -23,7 +23,34 @@ pub enum FilterResult {
 pub struct NodeUsage {
     pub cpu_milli: u64,
     pub mem_bytes: u64,
+    /// Non-terminal Pods bound or assumed to the node, held against
+    /// `allocatable.pods` (#194). VMIs take no slot: rustkube-node runs a
+    /// VM without a virt-launcher Pod.
+    pub pods: u64,
 }
+
+/// The upstream NodeResourcesFit "pods" check: a node holds at most
+/// `allocatable.pods` non-terminal Pods (#194).
+///
+/// Separate from `run_filters` because a VMI shim goes through those too, and
+/// a VM is not a Pod on the node. Checked before resource fit's "requests
+/// nothing, fits anywhere" shortcut: a BestEffort Pod still takes a slot, and
+/// that shortcut is how 1,000 of them landed on a 110-pod node. A node with no
+/// `allocatable.pods` is not limited.
+pub fn pod_count_filter(node: &Value, used: NodeUsage) -> FilterResult {
+    let limit = match &node["status"]["allocatable"]["pods"] {
+        Value::String(s) => s.trim().parse::<u64>().ok(),
+        Value::Number(n) => n.as_u64(),
+        _ => None,
+    };
+    match limit {
+        Some(limit) if used.pods >= limit => FilterResult::Fail(TOO_MANY_PODS.into()),
+        _ => FilterResult::Pass,
+    }
+}
+
+/// Upstream's reason text, which clients and tests match on.
+pub const TOO_MANY_PODS: &str = "Too many pods";
 
 /// Run all filters on a pod-node pair.
 pub fn run_filters(
@@ -197,22 +224,17 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: NodeUsage) -> FilterResu
         // already bound to it.
         let node_cpu = parse_cpu_millis(cpu_str).saturating_sub(used.cpu_milli);
         if total_cpu_milli > node_cpu {
-            return FilterResult::Fail(format!(
-                "insufficient CPU: requested {total_cpu_milli}m, free {node_cpu}m \
-                 ({}m already requested)",
-                used.cpu_milli
-            ));
+            // Upstream's text, without the amounts: the reasons are counted
+            // into a Pod's PodScheduled message, which is rewritten whenever
+            // it changes, and free capacity changes with every bind (#194).
+            return FilterResult::Fail("Insufficient cpu".into());
         }
     }
 
     if let Some(mem_str) = allocatable["memory"].as_str() {
         let node_mem = parse_memory_bytes(mem_str).saturating_sub(used.mem_bytes);
         if total_mem_bytes > node_mem {
-            return FilterResult::Fail(format!(
-                "insufficient memory: requested {total_mem_bytes}B, free {node_mem}B \
-                 ({}B already requested)",
-                used.mem_bytes
-            ));
+            return FilterResult::Fail("Insufficient memory".into());
         }
     }
 
@@ -311,6 +333,19 @@ pub fn parse_memory_bytes(s: &str) -> u64 {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn pod_count_stops_at_allocatable_pods() {
+        let node = |pods: Value| json!({"status": {"allocatable": {"pods": pods}}});
+        let used = |pods| NodeUsage { pods, ..Default::default() };
+        assert!(matches!(pod_count_filter(&node(json!("110")), used(109)), FilterResult::Pass));
+        assert!(matches!(
+            pod_count_filter(&node(json!("110")), used(110)),
+            FilterResult::Fail(r) if r == TOO_MANY_PODS
+        ));
+        assert!(matches!(pod_count_filter(&node(json!(2)), used(2)), FilterResult::Fail(_)));
+        // No allocatable.pods reported: not limited.
+        assert!(matches!(pod_count_filter(&json!({}), used(1000)), FilterResult::Pass));
+    }
 
     #[test]
     fn test_parse_cpu() {

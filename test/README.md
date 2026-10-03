@@ -140,6 +140,12 @@ POST, scheduler, bind write → seen) is printed. End-to-end p99 is bounded only
 with `RK_SCHED_P99_MS`, because on the shared build box the bind write's
 datastore time stalls under other jobs' I/O. Run with `RK_RELEASE=1` (#190).
 
+`e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
+(#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
+reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too
+many pods." until one bound Pod is Succeeded; a burst of 30 onto a 5-pod Node
+binds exactly 5, and deleting one lets exactly one more bind.
+
 `e2e/scheduler-failover.sh` runs two electing schedulers: the leader is
 paused past its lease, the standby takes over, the resumed old leader binds
 nothing, the standby is killed and the old leader takes over again — a

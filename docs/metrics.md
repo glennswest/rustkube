@@ -109,9 +109,10 @@ scheduler_schedule_attempts_total{result="scheduled"|"unschedulable"|"error"}
 ```
 
 VMI outcomes are counted in `scheduler_schedule_attempts_total` too.
-Successful Pod binds, failed bind writes (`error`) and volume waits increment
-the counter. A Pod with no feasible node is only logged, so this is not a
-complete denominator for success rates (#90).
+Successful Pod binds, failed bind writes (`error`), volume waits and Pods
+with no feasible node (`unschedulable`, #194) increment the counter. An
+unschedulable Pod is counted on every retry, so this is not a denominator for
+success rates (#90).
 
 `scheduler_e2e_scheduling_duration_seconds{result="scheduled"}` times each
 bound Pod from when the scheduler first saw it pending to when its bind write
