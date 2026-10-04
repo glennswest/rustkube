@@ -95,16 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Static admin token from install-config (#188, P1) — IN PROGRESS 2026-10-03
+### Static admin token from install-config (#188, P1) — COMPLETE 2026-10-03
 storminstall writes `apiToken`; stormpump#78 writes it on first boot to
 `/state/config/token-auth.csv` (0600) as `<token>,system:admin,system:admin,"system:masters"`;
-stormcos#256 passes the path. rustkube has no static-token authenticator.
-- [ ] `--token-auth-file` (upstream format: token,user,uid[,"g1,g2"]), checked
-      before the JWT path, constant-time; file followed (written later,
-      replaced, removed → revoked) without restart; TokenReview answers it
-- [ ] Unit tests (parse, quoting, compare, reload/removal); README flag +
-      authentication list, docs/certificates.md; CHANGELOG
-- [ ] sc-build; answer the contract on #188 (path/format accepted as-is)
+stormcos#256 passes the path. Path and format accepted as stormpump wrote them.
+- [x] ff60e56 `--token-auth-file` (upstream format), checked before the JWT
+      path, constant-time; re-read every 5 s (late write, rotate, remove →
+      revoked; malformed keeps last good); TokenReview answers it
+- [x] 16b5c0b README/certificates.md/CHANGELOG; 3aed8c3 `test/e2e/token-auth.sh`
+- [x] sc-build: apiserver 216 (9 new); token-auth.sh 13/13 at 3aed8c3;
+      workspace at 3aed8c3 exit 0 (448 passed, 4 ignored)
+- [ ] After the release + stormcos#256: `sc` logs in to a node with apiToken
 
 ### Pods beyond allocatable.pods (#194, P1) — COMPLETE 2026-10-03
 pvetest1 (stormcos_qa turbomode run 4bbb76be8f): 1,000 Pods bound to a node
