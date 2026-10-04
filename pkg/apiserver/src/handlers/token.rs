@@ -70,16 +70,22 @@ pub async fn create_serviceaccount_token(
 /// An invalid token is **not** an error: the review succeeded and its answer is
 /// `authenticated: false`. Returning 401 here would conflate "this caller may
 /// not ask" with "the token they asked about is bad".
+///
+/// A static token from `--token-auth-file` (#188) is answered too, as
+/// upstream's TokenReview consults every token authenticator.
 pub async fn create_token_review(
     axum::extract::Extension(keys): axum::extract::Extension<crate::auth::SigningKeys>,
+    static_tokens: Option<axum::extract::Extension<crate::token_file::StaticTokens>>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> impl axum::response::IntoResponse {
     let token = body["spec"]["token"].as_str().unwrap_or("");
     let audiences = body["spec"]["audiences"].clone();
 
-    let status = match keys.validate_token(token) {
-        Some(data) => {
-            let (username, groups) = data.claims.identity();
+    let identity = static_tokens
+        .and_then(|t| t.authenticate(token))
+        .or_else(|| keys.validate_token(token).map(|data| data.claims.identity()));
+    let status = match identity {
+        Some((username, groups)) => {
             serde_json::json!({
                 "authenticated": true,
                 "user": { "username": username, "groups": groups },

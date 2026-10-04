@@ -25,6 +25,7 @@ use tracing::{error, info};
 fn build_router(
     state: AppState,
     signing_keys: SigningKeys,
+    static_tokens: crate::token_file::StaticTokens,
     rbac: Arc<RbacEngine>,
     anonymous_auth: bool,
 ) -> Router {
@@ -726,9 +727,11 @@ fn build_router(
         }))
         .layer(middleware::from_fn(move |req, next| {
             let keys = signing_keys.clone();
+            let static_tokens = static_tokens.clone();
             async move {
                 let mut req: axum::extract::Request = req;
                 req.extensions_mut().insert(keys);
+                req.extensions_mut().insert(static_tokens);
                 req.extensions_mut()
                     .insert(auth::AnonymousAuth(anonymous_auth));
                 auth::auth_middleware(req, next).await
@@ -899,6 +902,13 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         }
     };
 
+    // Static bearer tokens (--token-auth-file, #188): install-config's
+    // apiToken, written by stormpump on first boot. Followed, not read once.
+    let static_tokens = match &config.token_auth_file {
+        Some(path) => crate::token_file::StaticTokens::follow(path.clone()),
+        None => crate::token_file::StaticTokens::none(),
+    };
+
     // Initialize RBAC engine
     let rbac = Arc::new(
         RbacEngine::new(storage.clone())
@@ -919,7 +929,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let prom = apimachinery::metrics::install("kube-apiserver")
         .ok_or_else(|| anyhow::anyhow!("prometheus recorder could not be installed"))?;
 
-    let app = build_router(state, signing_keys, rbac, config.anonymous_auth)
+    let app = build_router(state, signing_keys, static_tokens, rbac, config.anonymous_auth)
         .route(
             "/metrics",
             axum::routing::get({

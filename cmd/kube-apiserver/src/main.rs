@@ -83,6 +83,12 @@ struct Cli {
     #[arg(long = "service-account-signing-key-file")]
     service_account_signing_key: Option<PathBuf>,
 
+    /// Static bearer tokens, one `token,user,uid[,"group1,group2"]` line each
+    /// (upstream's --token-auth-file format). Re-read when it changes; a
+    /// missing file means no static tokens, and removing it revokes them.
+    #[arg(long = "token-auth-file")]
+    token_auth_file: Option<PathBuf>,
+
     /// Address advertised to in-cluster clients; registered as an endpoint of
     /// the default/kubernetes Service. Defaults to --bind-addr when concrete.
     #[arg(long = "advertise-address")]
@@ -128,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
         manifest_dir: cli.manifest_dir,
         service_account_key: cli.service_account_key,
         service_account_signing_key: cli.service_account_signing_key,
+        token_auth_file: cli.token_auth_file,
         advertise_address: cli.advertise_address,
         data_dir: cli.data_dir,
         service_cidr: cli.service_cidr,

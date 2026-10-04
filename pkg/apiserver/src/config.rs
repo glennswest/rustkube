@@ -43,6 +43,9 @@ pub struct ApiServerConfig {
     /// Must be the counterpart of `service_account_key`, and identical on every
     /// replica so tokens validate cluster-wide (#11).
     pub service_account_signing_key: Option<PathBuf>,
+    /// Static bearer tokens, kube-apiserver's `--token-auth-file` format
+    /// (`token,user,uid[,"groups"]`), followed for changes (#188).
+    pub token_auth_file: Option<PathBuf>,
     /// Allow anonymous authentication (default true for dev). Even when true,
     /// anonymous is only bound to discovery/health unless `dev_anonymous_admin`
     /// is also set (#16).
@@ -80,6 +83,7 @@ impl Default for ApiServerConfig {
             cluster_domain: "cluster.local".into(),
             service_account_key: None,
             service_account_signing_key: None,
+            token_auth_file: None,
             anonymous_auth: true,
             dev_anonymous_admin: false,
             insecure: false,

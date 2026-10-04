@@ -2,7 +2,9 @@
 //!
 //! Extracts user identity from incoming requests, first match wins:
 //! 1. x509 client certificate — CN is the user, each O a group
-//! 2. Bearer token (JWT) — `Authorization: Bearer <token>`
+//! 2. Bearer token — `Authorization: Bearer <token>`: a static token from
+//!    `--token-auth-file` ([`crate::token_file`], #188), else a JWT signed
+//!    with the ServiceAccount key
 //! 3. `system:anonymous`, only if `--anonymous-auth`; otherwise 401
 
 use axum::extract::Request;
@@ -179,21 +181,23 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
                 groups: with_authenticated(id.groups.clone()),
             })
         } else if let Some(auth_header) = request.headers().get("authorization") {
-            // 2. Bearer token, validated against the SA/JWT signing keys.
+            // 2. Bearer token: a static token from --token-auth-file, else a
+            //    JWT validated against the SA signing keys.
             auth_header
                 .to_str()
                 .ok()
                 .and_then(|h| h.strip_prefix("Bearer "))
                 .and_then(|token| {
-                    request
-                        .extensions()
-                        .get::<SigningKeys>()
-                        .and_then(|keys| keys.validate_token(token))
+                    let ext = request.extensions();
+                    ext.get::<crate::token_file::StaticTokens>()
+                        .and_then(|t| t.authenticate(token))
+                        .or_else(|| {
+                            ext.get::<SigningKeys>()
+                                .and_then(|keys| keys.validate_token(token))
+                                .map(|td| td.claims.identity())
+                        })
                 })
-                .map(|td| {
-                    let (username, groups) = td.claims.identity();
-                    UserInfo { username, groups: with_authenticated(groups) }
-                })
+                .map(|(username, groups)| UserInfo { username, groups: with_authenticated(groups) })
         } else {
             None
         };
@@ -327,6 +331,65 @@ pub(crate) mod tests {
             "exp": in_ten_years(),
         }));
         assert!(SigningKeys::generate().validate_token(&token).is_none());
+    }
+
+    /// Run one request through `auth_middleware` with the given bearer token
+    /// and anonymous auth off; the identity it settled on, or the status.
+    async fn whoami(token: &str) -> Result<UserInfo, StatusCode> {
+        use tower::ServiceExt;
+        let app = axum::Router::new()
+            .route(
+                "/",
+                axum::routing::get(|axum::Extension(u): axum::Extension<UserInfo>| async move {
+                    format!("{}|{}", u.username, u.groups.join(","))
+                }),
+            )
+            .layer(axum::middleware::from_fn(|mut req: Request, next: Next| async move {
+                req.extensions_mut().insert(test_keys());
+                req.extensions_mut().insert(crate::token_file::StaticTokens::from_text(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef,system:admin,system:admin,\"system:masters\"\n",
+                ));
+                req.extensions_mut().insert(AnonymousAuth(false));
+                auth_middleware(req, next).await
+            }));
+        let req = axum::http::Request::get("/")
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        if resp.status() != StatusCode::OK {
+            return Err(resp.status());
+        }
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 16).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        let (username, groups) = text.split_once('|').unwrap();
+        Ok(UserInfo {
+            username: username.into(),
+            groups: groups.split(',').map(String::from).collect(),
+        })
+    }
+
+    #[tokio::test]
+    async fn the_install_config_token_is_system_admin_in_system_masters() {
+        // #188: install-config's apiToken, as stormpump#78 writes it.
+        let u = whoami("0123456789abcdef0123456789abcdef0123456789abcdef").await.unwrap();
+        assert_eq!(u.username, "system:admin");
+        assert_eq!(u.groups, ["system:masters", "system:authenticated"]);
+    }
+
+    #[tokio::test]
+    async fn a_wrong_static_token_is_401_and_a_jwt_still_works() {
+        assert_eq!(
+            whoami("0123456789abcdef0123456789abcdef0123456789abcdee").await.unwrap_err(),
+            StatusCode::UNAUTHORIZED
+        );
+        let jwt = sign(serde_json::json!({
+            "sub": "system:node:node-a",
+            "groups": ["system:nodes"],
+            "exp": in_ten_years(),
+        }));
+        let u = whoami(&jwt).await.unwrap();
+        assert_eq!(u.username, "system:node:node-a");
     }
 
     #[test]

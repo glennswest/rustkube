@@ -28,6 +28,7 @@ pub mod table;
 #[cfg(test)]
 pub(crate) mod test_store;
 pub mod tls;
+pub mod token_file;
 pub mod watch;
 pub mod watch_cache;
 
