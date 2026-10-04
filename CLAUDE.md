@@ -95,6 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Static admin token from install-config (#188, P1) — IN PROGRESS 2026-10-03
+storminstall writes `apiToken`; stormpump#78 writes it on first boot to
+`/state/config/token-auth.csv` (0600) as `<token>,system:admin,system:admin,"system:masters"`;
+stormcos#256 passes the path. rustkube has no static-token authenticator.
+- [ ] `--token-auth-file` (upstream format: token,user,uid[,"g1,g2"]), checked
+      before the JWT path, constant-time; file followed (written later,
+      replaced, removed → revoked) without restart; TokenReview answers it
+- [ ] Unit tests (parse, quoting, compare, reload/removal); README flag +
+      authentication list, docs/certificates.md; CHANGELOG
+- [ ] sc-build; answer the contract on #188 (path/format accepted as-is)
+
 ### Pods beyond allocatable.pods (#194, P1) — COMPLETE 2026-10-03
 pvetest1 (stormcos_qa turbomode run 4bbb76be8f): 1,000 Pods bound to a node
 with `allocatable.pods = 110`. The scheduler charged CPU/memory per node but
