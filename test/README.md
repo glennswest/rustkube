@@ -170,6 +170,15 @@ Under load the datastore's linearizable Range sets the pace, so compare with
 (fastetcd#71): on the default v1.6.1 a linearizable Range queues behind
 writes, and the load numbers measure that queue.
 
+`e2e/token-auth.sh` (#188) starts the apiserver with `--token-auth-file`
+pointing at a file that does not exist yet, then writes stormpump#78's line
+(`<token>,system:admin,system:admin,"system:masters"`) and checks the token is
+accepted within the 5 s re-read, can write, and is `system:admin` in
+`system:masters` by TokenReview; that a near-miss token is refused, the JWT
+path still works and the token is never logged; that a rewrite rotates it, a
+malformed rewrite keeps the last good token, and removing the file revokes it.
+`RK_APISERVER_ARGS` (lib.sh) passes the extra flag.
+
 `e2e/crd-restart.sh` (#185) creates two CRDs (two served versions, cluster
 scope) with a CR each, then checks that `/apis`, each group-version and the CRs
 are served after an apiserver restart, after a "reboot" (datastore and

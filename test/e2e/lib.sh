@@ -16,6 +16,7 @@
 #   RK_FASTETCD_REF  source tag/branch (default v1.6.1, snapshot-safe Range)
 #   RK_FASTETCD  path to a fastetcd server binary
 #   RK_RELEASE=1 build both release (as shipped) rather than debug, for timing
+#   RK_APISERVER_ARGS  extra kube-apiserver flags (word-split; no spaces in values)
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
 # each; without an override the rig chooses a free block outside the host
 # ephemeral range just before starting servers (Linux /proc required).
@@ -127,7 +128,7 @@ done
   --tls-cert-file "$W/apiserver.crt" --tls-private-key-file "$W/apiserver.key" \
   --etcd-servers http://127.0.0.1:$ETCD --anonymous-auth false \
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
-  >"$W/apiserver.log" 2>&1 &
+  ${RK_APISERVER_ARGS:-} >"$W/apiserver.log" 2>&1 &
 API_PID=$!
 # Six minutes: on a loaded build box the bootstrap writes alone have taken
 # three.
