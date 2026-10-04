@@ -130,10 +130,16 @@ kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
 back to anonymous when enabled, #115):
 1. an x509 client certificate verified against `--client-ca-file` — CN is
    the user, each O a group;
-2. a bearer JWT signed with the ServiceAccount key (RS256 with
-   `--service-account-*-file`, otherwise an ephemeral HS256 key). A
-   ServiceAccount's groups come from its name. What an offline-minted token
-   must carry is in [docs/certificates.md](docs/certificates.md);
+2. a bearer token: first a static token from `--token-auth-file`
+   (`token,user,uid[,"group1,group2"]`, upstream's format; compared in
+   constant time; the file is re-read every 5 s, so it may appear late,
+   change, or be removed to revoke — a malformed rewrite keeps the last good
+   set; #188). stormcos writes install-config's `apiToken` there as
+   `system:admin` in `system:masters` (stormpump#78). Otherwise a JWT signed
+   with the ServiceAccount key (RS256 with `--service-account-*-file`,
+   otherwise an ephemeral HS256 key). A ServiceAccount's groups come from its
+   name. What an offline-minted token must carry is in
+   [docs/certificates.md](docs/certificates.md);
 3. otherwise `system:anonymous`, if `--anonymous-auth` is true; else 401.
 
 **Impersonation** (`Impersonate-User`, `-Group`, `-Uid`; `kubectl --as`): the
@@ -144,7 +150,7 @@ identity, plus `system:authenticated`. `Impersonate-Extra-*` is ignored.
 TokenRequest (`serviceaccounts/{name}/token`) mints an unbound token with a
 fixed 24-hour lifetime; the request body, `expirationSeconds` included, is
 ignored, so a token names a ServiceAccount, not the pod holding it (#182).
-TokenReview is served.
+TokenReview is served, and answers static tokens too.
 
 **Authorization** is RBAC against the stored Roles and Bindings, plus
 SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview and
@@ -351,6 +357,7 @@ override environment values.
 | `--dev-anonymous-admin` | | `false` | **dev only**: anonymous is `cluster-admin` (needs `--anonymous-auth true`) |
 | `--service-account-signing-key-file` | | — | RSA private key (PEM) that signs tokens |
 | `--service-account-key-file` | | — | its public key (SPKI PEM). RSA requires both files; if either is absent, the code falls back to an ephemeral HS256 key that dies with the process |
+| `--token-auth-file` | | — | static bearer tokens, `token,user,uid[,"groups"]` per line; followed for changes, a missing file is no tokens (#188) |
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order; created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |

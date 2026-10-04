@@ -131,6 +131,24 @@ What such a token must carry:
 
 Every authenticated request is also in `system:authenticated`.
 
+### Static admin token (`--token-auth-file`, #188)
+
+Not a certificate or JWT: install-config's `apiToken` (storminstall), which
+`sc` and the console log in with. stormpump#78 writes it on first boot to
+`/state/config/token-auth.csv`, mode 0600, one line in kube-apiserver's
+`--token-auth-file` format:
+
+```
+<token>,system:admin,system:admin,"system:masters"
+```
+
+stormcos#256 passes that path as `--token-auth-file`. The apiserver checks a
+bearer token against the file before the JWT path, in constant time, and
+re-reads the file every 5 s: a token written after boot works without a
+restart, a rewritten token replaces the old one, and removing the file (an
+install-config without `apiToken`) revokes it. A malformed file is logged and
+the previously loaded tokens are kept. Tokens are never logged.
+
 Check a node's token with the node's own CA:
 
 ```
