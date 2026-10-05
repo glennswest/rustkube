@@ -125,7 +125,7 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service (Endpoints +
 EndpointSlices), Namespace cascade, node lifecycle, PDB, garbage collector,
 PersistentVolume binding, attach/detach, the in-kubelet `stormblock`
-provisioner, root CA publisher, CSR, PodMigration, VirtualMachine, HPA\*,
+provisioner, root CA publisher, CSR, PodMigration, VirtualMachine, VMI migration, HPA\*,
 Gateway\*.
 
 **Scheduler** (`pkg/scheduler`): filters — readiness, taints, selectors,
