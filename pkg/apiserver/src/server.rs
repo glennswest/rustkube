@@ -441,6 +441,14 @@ fn build_router(
             "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachines/{name}/restart",
             axum::routing::put(crate::handlers::kubevirt::vm_restart),
         )
+        .route(
+            "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachines/{name}/migrate",
+            axum::routing::put(crate::handlers::kubevirt::vm_migrate),
+        )
+        .route(
+            "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances/{name}/migrate",
+            axum::routing::put(crate::handlers::kubevirt::vmi_migrate),
+        )
         // pods/log — what `kubectl logs` actually calls. Registered before the
         // generic {resource}/{name}/status route so the more specific path
         // wins, and separate from it because a log is proxied to the node

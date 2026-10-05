@@ -840,12 +840,13 @@ pub async fn api_authorization_v1_resources() -> impl IntoResponse {
 /// `virtctl` looks the group up here before it opens anything, so a group that
 /// is routed but not discoverable is one the client will not try.
 ///
-/// The two console doors and the three VirtualMachine lifecycle verbs.
+/// The two console doors, the three VirtualMachine lifecycle verbs, and
+/// `migrate` on a VM (what `virtctl migrate` calls) or a bare instance,
+/// which creates a VirtualMachineInstanceMigration (#184).
 ///
 /// Still absent, deliberately rather than stubbed: `pause`, `unpause`,
 /// `freeze` and `softreboot` need a QMP client stormvm does not have
-/// (stormvm#9), and `migrate` needs a migration object and a controller
-/// (rustkube-node#40). Advertising a verb that answers 404 is worse for a
+/// (stormvm#9). Advertising a verb that answers 404 is worse for a
 /// client than not advertising it, because `virtctl` reports the VM as
 /// refusing rather than the feature as missing.
 pub async fn api_kubevirt_subresources_v1_resources() -> impl IntoResponse {
@@ -887,6 +888,20 @@ pub async fn api_kubevirt_subresources_v1_resources() -> impl IntoResponse {
                 "singularName": "",
                 "namespaced": true,
                 "kind": "VirtualMachine",
+                "verbs": ["update"]
+            },
+            {
+                "name": "virtualmachines/migrate",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "VirtualMachine",
+                "verbs": ["update"]
+            },
+            {
+                "name": "virtualmachineinstances/migrate",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "VirtualMachineInstance",
                 "verbs": ["update"]
             }
         ]

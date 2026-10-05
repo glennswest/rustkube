@@ -1,6 +1,7 @@
 //! `subresources.kubevirt.io/v1` — the console doors `virtctl` reaches for,
-//! and the VirtualMachine `start`/`stop`/`restart` subresources, which set
-//! `spec.running`.
+//! the VirtualMachine `start`/`stop`/`restart` subresources, which set
+//! `spec.running`, and `migrate`, which creates a
+//! VirtualMachineInstanceMigration (#184).
 //!
 //! `oc get vmi` already works, because `VirtualMachineInstance` is applied as
 //! an ordinary CRD and a CRD gets its object and `/status`. What a CRD cannot
@@ -213,6 +214,134 @@ async fn load_vm(state: &AppState, namespace: &str, name: &str) -> Result<Value,
         .map_err(|_| ApiError::not_found("virtualmachines", name))
 }
 
+/// `PUT /apis/subresources.kubevirt.io/v1/namespaces/{ns}/virtualmachines/{name}/migrate`
+///
+/// What `virtctl migrate <vm>` calls. Like upstream's virt-api it does no
+/// moving itself: it creates a `VirtualMachineInstanceMigration` for the
+/// VM's instance, and the migration controller, the scheduler and the two
+/// kubelets do the rest (#184).
+pub async fn vm_migrate(
+    State(state): State<AppState>,
+    Path((namespace, name)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Err(e) = load_vm(&state, &namespace, &name).await {
+        return e.into_response();
+    }
+    migrate(state, namespace, name, body, "VM").await
+}
+
+/// `PUT .../virtualmachineinstances/{name}/migrate` — the same for an
+/// instance that has no VirtualMachine.
+pub async fn vmi_migrate(
+    State(state): State<AppState>,
+    Path((namespace, name)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> Response {
+    migrate(state, namespace, name, body, "VMI").await
+}
+
+async fn migrate(state: AppState, namespace: String, name: String, body: axum::body::Bytes, what: &str) -> Response {
+    let conflict = |message: String| {
+        ApiError { status: StatusCode::CONFLICT, reason: "Conflict".into(), message }.into_response()
+    };
+    if state
+        .crd_registry
+        .lookup(KUBEVIRT, "v1", "virtualmachineinstancemigrations")
+        .await
+        .is_none()
+    {
+        return ApiError {
+            status: StatusCode::NOT_FOUND,
+            reason: "NotFound".into(),
+            message: "VirtualMachineInstanceMigration is not served: its CRD \
+                      (virtualmachineinstancemigrations.kubevirt.io) is not installed"
+                .into(),
+        }
+        .into_response();
+    }
+    // MigrateOptions: dryRun and addedNodeSelector.
+    let opts: Value = if body.iter().all(u8::is_ascii_whitespace) {
+        Value::Null
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(v) => v,
+            Err(e) => return ApiError::bad_request(&format!("MigrateOptions: {e}")).into_response(),
+        }
+    };
+    if opts["addedNodeSelector"].as_object().is_some_and(|m| !m.is_empty()) {
+        // The scheduler does not read it; taking it and ignoring it would
+        // place the machine somewhere the caller excluded.
+        return ApiError::invalid("addedNodeSelector is not supported").into_response();
+    }
+    let vmi = match state
+        .storage
+        .get(&ResourceStorage::namespaced_key(
+            &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachineinstances"),
+            &namespace,
+            &name,
+        ))
+        .await
+    {
+        Ok(v) => v,
+        Err(_) => return conflict(format!("{what} is not running")),
+    };
+    if vmi["status"]["phase"].as_str() != Some("Running") || node_of(&vmi).is_none() {
+        return conflict(format!("{what} is not running"));
+    }
+    if let Some(m) = apimachinery::kubevirt::active_migration(&vmi) {
+        return conflict(format!(
+            "VirtualMachineInstance {namespace}/{name} is already migrating (migration uid {})",
+            m["migrationUid"].as_str().unwrap_or("")
+        ));
+    }
+    let migration = serde_json::json!({
+        "apiVersion": "kubevirt.io/v1",
+        "kind": "VirtualMachineInstanceMigration",
+        "metadata": {"generateName": format!("kubevirt-migrate-{}-", what.to_lowercase()), "namespace": namespace},
+        "spec": {"vmiName": name},
+    });
+    let dry_run = opts["dryRun"]
+        .as_array()
+        .is_some_and(|d| d.iter().any(|v| v == "All"));
+    if dry_run {
+        return ok_message(&format!("migration of {namespace}/{name} would be created (dry run)"));
+    }
+    match crate::crd::crd_create_ns(
+        State(state),
+        Path((KUBEVIRT.into(), "v1".into(), namespace.clone(), "virtualmachineinstancemigrations".into())),
+        axum::Json(migration),
+    )
+    .await
+    {
+        Ok(created) => {
+            let resp = created.into_response();
+            let (parts, body) = resp.into_parts();
+            if !parts.status.is_success() {
+                return Response::from_parts(parts, body);
+            }
+            let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap_or_default();
+            let created: Value = serde_json::from_slice(&bytes).unwrap_or_default();
+            ok_message(&format!(
+                "migration {} of {namespace}/{name} created",
+                created["metadata"]["name"].as_str().unwrap_or("")
+            ))
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+fn ok_message(message: &str) -> Response {
+    axum::Json(serde_json::json!({
+        "kind": "Status",
+        "apiVersion": "v1",
+        "metadata": {},
+        "status": "Success",
+        "message": message,
+    }))
+    .into_response()
+}
+
 /// What KubeVirt's subresource verbs answer with: a plain `Status` success.
 fn ok(namespace: &str, name: &str, what: &str) -> Response {
     axum::Json(serde_json::json!({
@@ -267,5 +396,112 @@ mod tests {
         // as a name would send the console at a host called "".
         assert_eq!(node_of(&json!({"status": {"nodeName": ""}})), None);
         assert_eq!(node_of(&json!({})), None);
+    }
+
+    mod migrate {
+        use super::*;
+        use crate::crd::CrdRegistry;
+        use crate::test_store::MemStore;
+        use std::sync::Arc;
+
+        fn crd(plural: &str, kind: &str) -> Value {
+            json!({
+                "metadata": {"name": format!("{plural}.kubevirt.io")},
+                "spec": {"group": "kubevirt.io", "scope": "Namespaced",
+                         "names": {"plural": plural, "kind": kind},
+                         "versions": [{"name": "v1", "served": true, "storage": true}]}
+            })
+        }
+
+        async fn state(with_crd: bool) -> AppState {
+            let registry = Arc::new(CrdRegistry::new());
+            registry.register(&crd("virtualmachineinstances", "VirtualMachineInstance")).await;
+            if with_crd {
+                registry
+                    .register(&crd("virtualmachineinstancemigrations", "VirtualMachineInstanceMigration"))
+                    .await;
+            }
+            AppState {
+                storage: Arc::new(ResourceStorage::new(Arc::new(MemStore::default()))),
+                crd_registry: registry,
+                service_cidr: "10.96.0.0/12".into(),
+            }
+        }
+
+        fn vmi_key() -> String {
+            ResourceStorage::namespaced_key(
+                &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachineinstances"),
+                "ns",
+                "vm",
+            )
+        }
+
+        async fn put_vmi(state: &AppState, status: Value) {
+            state
+                .storage
+                .create(&vmi_key(), json!({"metadata": {"name": "vm", "namespace": "ns", "uid": "v1"}, "status": status}))
+                .await
+                .unwrap();
+        }
+
+        async fn call(state: &AppState, body: &str) -> (StatusCode, Value) {
+            let resp = vmi_migrate(
+                State(state.clone()),
+                Path(("ns".into(), "vm".into())),
+                axum::body::Bytes::from(body.to_string()),
+            )
+            .await;
+            let code = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 16).await.unwrap();
+            (code, serde_json::from_slice(&bytes).unwrap_or_default())
+        }
+
+        #[tokio::test]
+        async fn migrate_creates_a_migration_for_the_vmi() {
+            let st = state(true).await;
+            put_vmi(&st, json!({"phase": "Running", "nodeName": "a"})).await;
+            let (code, out) = call(&st, "{}").await;
+            assert_eq!(code, StatusCode::OK, "{out}");
+            let name = out["message"].as_str().unwrap().split(' ').nth(1).unwrap().to_string();
+            assert!(name.starts_with("kubevirt-migrate-vmi-"), "{name}");
+            let key = ResourceStorage::namespaced_key(
+                &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachineinstancemigrations"),
+                "ns",
+                &name,
+            );
+            let m = st.storage.get(&key).await.unwrap();
+            assert_eq!(m["spec"]["vmiName"], "vm");
+            assert_eq!(m["kind"], "VirtualMachineInstanceMigration");
+            assert!(m["metadata"]["uid"].as_str().is_some_and(|u| !u.is_empty()));
+        }
+
+        #[tokio::test]
+        async fn migrate_refuses_what_cannot_move() {
+            // No CRD: not served, said so.
+            let st = state(false).await;
+            put_vmi(&st, json!({"phase": "Running", "nodeName": "a"})).await;
+            assert_eq!(call(&st, "").await.0, StatusCode::NOT_FOUND);
+            // Not running.
+            let st = state(true).await;
+            assert_eq!(call(&st, "").await.0, StatusCode::CONFLICT);
+            put_vmi(&st, json!({"phase": "Scheduling"})).await;
+            assert_eq!(call(&st, "").await.0, StatusCode::CONFLICT);
+            // Already migrating.
+            let st = state(true).await;
+            put_vmi(&st, json!({"phase": "Running", "nodeName": "a",
+                                "migrationState": {"migrationUid": "m0", "sourceNode": "a"}})).await;
+            let (code, out) = call(&st, "").await;
+            assert_eq!(code, StatusCode::CONFLICT);
+            assert!(out["message"].as_str().unwrap().contains("already migrating"));
+            // A selector the scheduler would not honour.
+            let st = state(true).await;
+            put_vmi(&st, json!({"phase": "Running", "nodeName": "a"})).await;
+            let (code, _) = call(&st, r#"{"addedNodeSelector": {"zone": "b"}}"#).await;
+            assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+            // Dry run: answered, nothing created.
+            let (code, out) = call(&st, r#"{"dryRun": ["All"]}"#).await;
+            assert_eq!(code, StatusCode::OK);
+            assert!(out["message"].as_str().unwrap().contains("dry run"));
+        }
     }
 }
