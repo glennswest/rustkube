@@ -104,8 +104,10 @@ in anger.
 
 With both `--service-account-signing-key-file` and
 `--service-account-key-file` set, the apiserver verifies a bearer token by its
-RS256 signature against the public key, and nothing else — no ServiceAccount
-or Secret is looked up. (With either missing, it falls back to an ephemeral
+RS256 signature against the public key, its times, issuer and audience — and,
+only for a token carrying the `kubernetes.io` claim (TokenRequest's, #182),
+that its ServiceAccount and bound object still exist. A token without that
+claim is not looked up. (With either missing, it falls back to an ephemeral
 HS256 key and accepts only tokens it minted itself; a verify-only replica with
 just the public key is not possible.) Anything holding the matching
 `--service-account-signing-key-file` can therefore mint a token offline. Two
@@ -127,7 +129,9 @@ What such a token must carry:
 | `exp` | required | seconds since the epoch. There is no non-expiring token: long-lived means a far `exp` (the scripts here use ten years) |
 | `groups` | optional | a user's groups. **Ignored for a ServiceAccount**, whose groups are always `system:serviceaccounts` and `system:serviceaccounts:<ns>`, as upstream derives them |
 | `iat` | optional | informational |
-| `aud` | must be absent | no audiences are configured, so a token that names one is refused |
+| `aud` | optional | if present, must name one of `--api-audiences` (default `https://kubernetes.default.svc`); absent means "for this apiserver" (#182) |
+| `iss` | optional | if present, must be `--service-account-issuer` |
+| `kubernetes.io` | optional | upstream's bound-token claim: if present, its `serviceaccount` (and `pod`/`secret`/`node`) must exist with the uids named, and `sub` must be that ServiceAccount |
 
 Every authenticated request is also in `system:authenticated`.
 

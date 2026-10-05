@@ -147,10 +147,27 @@ caller needs the `impersonate` verb on the `users` (or `serviceaccounts`),
 `groups` and `uids` it names, and the request is then authorized as that
 identity, plus `system:authenticated`. `Impersonate-Extra-*` is ignored.
 
-TokenRequest (`serviceaccounts/{name}/token`) mints an unbound token with a
-fixed 24-hour lifetime; the request body, `expirationSeconds` included, is
-ignored, so a token names a ServiceAccount, not the pod holding it (#182).
-TokenReview is served, and answers static tokens too.
+TokenRequest (`serviceaccounts/{name}/token`) mints upstream's token shape
+(#182): `iss` (`--service-account-issuer`), `aud` from `spec.audiences`
+(default `--api-audiences`, which defaults to the issuer), `nbf`, `jti`, and
+the `kubernetes.io` claim naming the ServiceAccount and, with
+`spec.boundObjectRef`, the Pod, Secret or Node it is bound to (uid checked;
+a Pod must run as that ServiceAccount, and its node is named too).
+`expirationSeconds` is honoured from 600 s to 2^32 s; **left out, a token
+lasts 24 h**, not upstream's hour, because rustkube-node asks without it and
+never refreshes (rustkube-node#122). A pod-bound request for 3607 s for the
+API audiences — a projected token volume's — gets a year with `warnafter`
+at 3607 s, as upstream (`--service-account-extend-token-expiration`).
+A JWT authenticates to the apiserver only if its `aud` (when it has one)
+names an API audience, its `iss` (when it has one) is ours, and — for a
+token with a `kubernetes.io` claim — its ServiceAccount and bound object
+still exist with the uids it was issued for (a deleted pod's token lasts a
+minute past its `deletionTimestamp`). Those objects are read from the watch
+cache, and a refusal is confirmed from the datastore. TokenReview checks
+`spec.audiences` the same way, answers static tokens too, and reports
+`status.user.uid` and the pod in `status.user.extra`
+(`authentication.kubernetes.io/pod-name`, `pod-uid`, `node-name`,
+`node-uid`, `credential-id`).
 
 **Authorization** is RBAC against the stored Roles and Bindings, plus
 SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview and
@@ -358,6 +375,9 @@ override environment values.
 | `--service-account-signing-key-file` | | — | RSA private key (PEM) that signs tokens |
 | `--service-account-key-file` | | — | its public key (SPKI PEM). RSA requires both files; if either is absent, the code falls back to an ephemeral HS256 key that dies with the process |
 | `--token-auth-file` | | — | static bearer tokens, `token,user,uid[,"groups"]` per line; followed for changes, a missing file is no tokens (#188) |
+| `--service-account-issuer` | | `https://kubernetes.default.svc` | `iss` of minted tokens; a token naming another issuer is refused (#182) |
+| `--api-audiences` | | the issuer | audiences a token must be for to authenticate here, comma-separated; TokenRequest's default `aud` |
+| `--service-account-extend-token-expiration` | | `true` | a pod-bound 3607 s TokenRequest gets a year with `warnafter` at 3607 s |
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order; created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |
