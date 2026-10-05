@@ -95,20 +95,24 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Pod-bound ServiceAccount tokens (#182, P2) — IN PROGRESS 2026-10-05
+### Pod-bound ServiceAccount tokens (#182, P2) — COMPLETE 2026-10-05
 Upstream/OpenShift shape, for stormcos#54's metadata service (host-network
 caller → its pod by token). Kubelet half (send boundObjectRef + 3607 s,
 rotate) is rustkube-node#122.
-- [ ] TokenRequest: `spec.audiences` (default `--api-audiences`, default the
-      issuer), `spec.expirationSeconds` (min 600 s; absent stays 24 h until
-      the kubelet rotates), `spec.boundObjectRef` Pod/Secret/Node (uid checked,
-      pod's SA must match); claims `iss`/`aud`/`nbf`/`jti` + `kubernetes.io`;
-      3607 s pod-bound → 1 y with `warnafter` (`--service-account-extend-token-expiration`)
-- [ ] Authentication + TokenReview: `aud` must meet the apiserver's (review:
-      `spec.audiences`); bound SA/pod/secret/node must exist with that uid
-      (pod deleted > 60 s ago → refused), watch cache first, store on a miss;
-      `status.user.uid` + `extra` pod-name/pod-uid/node-name/node-uid/credential-id
-- [ ] Unit tests, e2e `test/e2e/bound-token.sh`, README/certificates.md/CHANGELOG
+- [x] 725dfcd TokenRequest: `spec.audiences` (default `--api-audiences`,
+      default `--service-account-issuer` = https://kubernetes.default.svc),
+      `expirationSeconds` 600 s–2^32 (absent stays 24 h until the kubelet
+      rotates), `boundObjectRef` Pod/Secret/Node (uid 409, other SA 400);
+      claims `iss`/`aud`/`nbf`/`jti` + `kubernetes.io`; pod-bound 3607 s → 1 y
+      + `warnafter` (`--service-account-extend-token-expiration`)
+- [x] Authentication + TokenReview: `aud`/`iss` checked when present; bound
+      SA/object must exist with that uid (deleted > 60 s ago → refused), watch
+      cache first, store on a miss; review reports uid + extra pod/node/jti
+- [x] apiserver 227 tests (11 new); `test/e2e/bound-token.sh` 24/24 at
+      214cb8f (fastetcd v1.12.0); workspace at c8a4404 468 passed / 4 ignored;
+      token-auth.sh 13/13. golden-rustkube-152acbd2a1f0 (stormcos#164)
+- [ ] After the release + rustkube-node#122: a pod's projected token is
+      pod-bound (TokenReview names the pod), stormcos#54 can use it
 
 ### Static admin token from install-config (#188, P1) — COMPLETE 2026-10-03
 storminstall writes `apiToken`; stormpump#78 writes it on first boot to
