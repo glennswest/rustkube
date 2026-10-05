@@ -95,14 +95,20 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### VMI launcher Pods (#203, P1) — IN PROGRESS 2026-10-05
+### VMI launcher Pods (#203, P1) — COMPLETE 2026-10-05
 Owner's choice B on rustkube-node#88: the controller makes KubeVirt's
 `virt-launcher-<vmi>-<5>` Pod for a pod-network VMI; the kubelet adopts it
 (CNI identity for Cilium, status, deletion — rustkube-node 3d9d26e).
-- [ ] `vmilauncher.rs`: one per VMI on `status.nodeName` (pod network as
-      stormvm-spec reads it, `storm.io/bridge` wins); a migration target gets
-      its own (`kubevirt.io/migrationJobUID`); the loser is deleted
-- [ ] Units; e2e on the API rig (stand-in kubelet); README/CHANGELOG/docs
+- [x] 61d980e `vmilauncher.rs`: one per VMI on `status.nodeName` (pod
+      network as stormvm-spec reads it, `storm.io/bridge` wins); a migration
+      target gets its own (`kubevirt.io/migrationJobUID`); the loser is deleted
+- [x] 6 units; `test/e2e/vmi-launcher.sh` 24/24 at 944b89f (fastetcd v1.12.0);
+      workspace 495 passed / 4 ignored; vm-runstrategy, vmi-migration,
+      pod-limit 0 failed. #204 (rig's own bug) closed
+- [x] Filed rustkube-node#152: kubelet's `launcher_for` must pick the Pod on
+      its own node (two launchers during a migration)
+- [ ] After the release + rustkube-node#88 on a node: a pod-network VM is a
+      Cilium endpoint with the launcher's identity, reachable via a Service
 
 ### VirtualMachineInstanceMigration (#184, P3) — COMPLETE 2026-10-05
 Control-plane half of live migration; node half rustkube-node#40. Contract is
