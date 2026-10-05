@@ -95,24 +95,26 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### VirtualMachineInstanceMigration (#184, P3) — IN PROGRESS 2026-10-05
+### VirtualMachineInstanceMigration (#184, P3) — COMPLETE 2026-10-05
 Control-plane half of live migration; node half rustkube-node#40. Contract is
 upstream KubeVirt's VMI `status.migrationState`: controller writes
 `migrationUid`/`sourceNode`/`mode`; **scheduler** writes `targetNode` (same
-filters/scores as VMI placement, source excluded, charged on both nodes while
-in flight); target kubelet writes `targetNodeAddress`; source kubelet writes
-`startTimestamp`, then `completed`/`failed`/`endTimestamp`; controller moves
-VMI `status.nodeName` on success. Phases Pending → Scheduling → Scheduled →
-PreparingTarget → TargetReady → Running → Succeeded/Failed.
-- [ ] CRD `virtualmachineinstancemigrations.kubevirt.io` — lives in stormcos's
-      90-virtualmachineinstances-crd.yaml (file there); rigs apply it
-- [ ] controller-manager `vmimigration.rs` (finalizer `kubevirt.io/migrationJobFinalize`,
-      delete = abort, one active migration per VMI, Scheduling 5 min /
-      pre-Running 15 min timeouts)
-- [ ] scheduler: target placement + unschedulable condition on the migration
-- [ ] apiserver: `virtualmachines/{name}/migrate` (virtctl) and
-      `virtualmachineinstances/{name}/migrate` create one; advertised
-- [ ] Unit tests, e2e `test/e2e/vmi-migration.sh` (fake kubelets), docs
+filters/scores as VMI placement, source excluded, charged on both nodes until
+failed or moved); target kubelet writes `targetNodeAddress`; source kubelet
+writes `startTimestamp`, then `completed`/`failed`/`endTimestamp`; controller
+moves VMI `status.nodeName` on success.
+- [x] CRD filed as stormcos#288 (YAML in the issue); rigs apply it
+- [x] 8d998b4 controller `vmimigration.rs` (finalizer abort, one per VMI,
+      5 min / 15 min timeouts); 18f5465 + 74d9eeb scheduler target placement
+      (74d9eeb: target stays charged between `completed` and the move — the
+      first rig run caught the overcommit); e33455a `migrate` subresources
+- [x] Units: apimachinery 106, apiserver 229, controller-manager 76,
+      scheduler 69 (21 new). `test/e2e/vmi-migration.sh` 31/31 at 74d9eeb
+      (fastetcd v1.12.0); workspace 489 passed / 4 ignored at 549180c;
+      vm-runstrategy 10/10, pod-limit pass, scheduler-failover 19/19.
+      golden-rustkube-0fe2570f64e1 (stormcos#164). #202 (first rig run) closed
+- [ ] After stormcos#288 + rustkube-node#40: a real stormvm migration
+      between two nodes (the abort-while-sending path is unit-tested only)
 
 ### Pod-bound ServiceAccount tokens (#182, P2) — COMPLETE 2026-10-05
 Upstream/OpenShift shape, for stormcos#54's metadata service (host-network
