@@ -15,6 +15,10 @@ use jsonwebtoken::{
     decode, encode, Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use crate::storage::ResourceStorage;
 
 /// Authenticated user identity, stored as a request extension.
 #[derive(Debug, Clone)]
@@ -54,14 +58,72 @@ pub fn x509_identity_from_der(der: &[u8]) -> Option<X509Identity> {
 /// `kube-system/node-admin` token stormcert mints on each node (#79) — only
 /// has to carry `sub` and `exp`. `groups` is optional, and ignored for a
 /// ServiceAccount subject (see [`Claims::identity`]); `iat` is informational.
-#[derive(Debug, Serialize, Deserialize)]
+///
+/// A token from TokenRequest carries upstream's full set (#182): `iss`,
+/// `aud`, `nbf`, `jti`, and the `kubernetes.io` claim naming the
+/// ServiceAccount and the object the token is bound to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Claims {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
     pub sub: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aud: Option<Aud>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<String>,
     #[serde(default)]
     pub iat: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nbf: Option<u64>,
     pub exp: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jti: Option<String>,
+    #[serde(rename = "kubernetes.io", default, skip_serializing_if = "Option::is_none")]
+    pub kubernetes: Option<KubeClaims>,
+}
+
+/// `aud`: one audience or several, as RFC 7519 allows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Aud {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Aud {
+    fn list(&self) -> Vec<String> {
+        match self {
+            Aud::One(a) => vec![a.clone()],
+            Aud::Many(v) => v.clone(),
+        }
+    }
+}
+
+/// Upstream's private `kubernetes.io` claim: the ServiceAccount, and the
+/// Pod, Secret or Node the token is bound to. A pod-bound token also names
+/// the pod's node, for information only.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KubeClaims {
+    pub namespace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<ObjectClaim>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pod: Option<ObjectClaim>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<ObjectClaim>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serviceaccount: Option<ObjectClaim>,
+    /// Set on an extended token (3607 s asked, a year given): when a
+    /// well-behaved client should have replaced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warnafter: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ObjectClaim {
+    pub name: String,
+    #[serde(default)]
+    pub uid: String,
 }
 
 impl Claims {
@@ -82,6 +144,43 @@ impl Claims {
         };
         (self.sub.clone(), groups)
     }
+
+    /// Upstream's `user.extra` for a bound token: the pod and its node, and
+    /// the token's id.
+    fn extra(&self) -> BTreeMap<String, Vec<String>> {
+        let mut extra = BTreeMap::new();
+        let mut put = |k: &str, v: &str| {
+            if !v.is_empty() {
+                extra.insert(format!("authentication.kubernetes.io/{k}"), vec![v.to_string()]);
+            }
+        };
+        if let Some(kc) = &self.kubernetes {
+            if let Some(pod) = &kc.pod {
+                put("pod-name", &pod.name);
+                put("pod-uid", &pod.uid);
+            }
+            if let Some(node) = &kc.node {
+                put("node-name", &node.name);
+                put("node-uid", &node.uid);
+            }
+        }
+        if let Some(jti) = &self.jti {
+            put("credential-id", &format!("JTI={jti}"));
+        }
+        extra
+    }
+}
+
+/// Who a bearer token authenticates as, with what TokenReview reports
+/// besides the name and groups.
+#[derive(Debug, Clone)]
+pub struct TokenUser {
+    pub username: String,
+    pub uid: String,
+    pub groups: Vec<String>,
+    pub extra: BTreeMap<String, Vec<String>>,
+    /// The audiences asked about that the token is good for.
+    pub audiences: Vec<String>,
 }
 
 /// The namespace of a `system:serviceaccount:<ns>:<name>` username, or None
@@ -91,7 +190,16 @@ fn serviceaccount_namespace(username: &str) -> Option<&str> {
     (!ns.is_empty() && !name.is_empty() && !name.contains(':')).then_some(ns)
 }
 
-/// Signing keys for JWT token creation and validation.
+/// Default `--service-account-issuer`, and so the default API audience:
+/// OpenShift's, the Service name every pod reaches the apiserver by.
+pub const DEFAULT_ISSUER: &str = "https://kubernetes.default.svc";
+
+/// A deleted object's tokens stay good this long past its
+/// `deletionTimestamp`, as upstream allows, so a terminating pod can finish.
+const DELETED_GRACE_SECS: i64 = 60;
+
+/// Signing keys for JWT token creation and validation, with the issuer and
+/// audiences tokens are minted and checked against.
 #[derive(Clone)]
 pub struct SigningKeys {
     pub encoding: EncodingKey,
@@ -99,20 +207,40 @@ pub struct SigningKeys {
     /// Algorithm the keys were built for — RS256 for a real ServiceAccount
     /// keypair, HS256 for the ephemeral dev key.
     algorithm: Algorithm,
+    issuer: Arc<str>,
+    /// `--api-audiences`: what a token must be for to authenticate here.
+    audiences: Arc<[String]>,
+    /// `--service-account-extend-token-expiration`.
+    extend_expiration: bool,
+    /// Where bound objects are looked up. Without it a bound token is
+    /// refused: its binding could not be checked.
+    bound: Option<Arc<ResourceStorage>>,
 }
 
 impl SigningKeys {
+    fn with_keys(encoding: EncodingKey, decoding: DecodingKey, algorithm: Algorithm) -> Self {
+        Self {
+            encoding,
+            decoding,
+            algorithm,
+            issuer: DEFAULT_ISSUER.into(),
+            audiences: vec![DEFAULT_ISSUER.to_string()].into(),
+            extend_expiration: true,
+            bound: None,
+        }
+    }
+
     /// Generate an ephemeral HMAC-SHA256 signing key (dev only).
     ///
     /// Tokens signed with this die on restart and are rejected by every other
     /// apiserver replica — use `from_rsa_pem` in any real cluster (#11).
     pub fn generate() -> Self {
         let secret = uuid::Uuid::new_v4().to_string();
-        Self {
-            encoding: EncodingKey::from_secret(secret.as_bytes()),
-            decoding: DecodingKey::from_secret(secret.as_bytes()),
-            algorithm: Algorithm::HS256,
-        }
+        Self::with_keys(
+            EncodingKey::from_secret(secret.as_bytes()),
+            DecodingKey::from_secret(secret.as_bytes()),
+            Algorithm::HS256,
+        )
     }
 
     /// Load the ServiceAccount RS256 keypair: a PKCS#1/PKCS#8 private key PEM
@@ -125,30 +253,201 @@ impl SigningKeys {
         private_pem: &[u8],
         public_pem: &[u8],
     ) -> Result<Self, jsonwebtoken::errors::Error> {
-        Ok(Self {
-            encoding: EncodingKey::from_rsa_pem(private_pem)?,
-            decoding: DecodingKey::from_rsa_pem(public_pem)?,
-            algorithm: Algorithm::RS256,
+        Ok(Self::with_keys(
+            EncodingKey::from_rsa_pem(private_pem)?,
+            DecodingKey::from_rsa_pem(public_pem)?,
+            Algorithm::RS256,
+        ))
+    }
+
+    /// Issuer and API audiences (`--service-account-issuer`,
+    /// `--api-audiences`; no audiences means the issuer), and whether a
+    /// pod-bound 3607 s token is extended to a year.
+    pub fn with_token_config(
+        mut self,
+        issuer: &str,
+        audiences: &[String],
+        extend_expiration: bool,
+    ) -> Self {
+        self.issuer = issuer.into();
+        self.audiences = if audiences.is_empty() {
+            vec![issuer.to_string()].into()
+        } else {
+            audiences.to_vec().into()
+        };
+        self.extend_expiration = extend_expiration;
+        self
+    }
+
+    /// Check bound tokens' objects in `storage`.
+    pub fn with_bound_objects(mut self, storage: Arc<ResourceStorage>) -> Self {
+        self.bound = Some(storage);
+        self
+    }
+
+    pub fn issuer(&self) -> &str {
+        &self.issuer
+    }
+
+    pub fn api_audiences(&self) -> &[String] {
+        &self.audiences
+    }
+
+    pub fn extend_expiration(&self) -> bool {
+        self.extend_expiration
+    }
+
+    /// Create a 24 h JWT for a user, for this apiserver's audiences: the
+    /// apiserver's own credential toward the kubelet.
+    pub fn create_token(&self, username: &str, groups: &[String]) -> Option<String> {
+        let now = chrono::Utc::now().timestamp() as u64;
+        self.sign(&Claims {
+            iss: Some(self.issuer.to_string()),
+            sub: username.to_string(),
+            aud: Some(Aud::Many(self.audiences.to_vec())),
+            groups: groups.to_vec(),
+            iat: now,
+            nbf: Some(now),
+            exp: now + 86400,
+            jti: Some(uuid::Uuid::new_v4().to_string()),
+            kubernetes: None,
         })
     }
 
-    /// Create a JWT token for a user.
-    pub fn create_token(&self, username: &str, groups: &[String]) -> Option<String> {
-        let now = chrono::Utc::now().timestamp() as u64;
-        let claims = Claims {
-            sub: username.to_string(),
-            groups: groups.to_vec(),
-            iat: now,
-            exp: now + 86400, // 24 hours
-        };
-        encode(&Header::new(self.algorithm), &claims, &self.encoding).ok()
+    /// Sign `claims` as they are.
+    pub fn sign(&self, claims: &Claims) -> Option<String> {
+        encode(&Header::new(self.algorithm), claims, &self.encoding).ok()
     }
 
-    /// Validate a JWT token and extract claims.
-    pub fn validate_token(&self, token: &str) -> Option<TokenData<Claims>> {
+    /// Signature, `exp`/`nbf` and `iss` (when present, it must be ours).
+    /// Audiences and bindings are not checked here.
+    fn verify(&self, token: &str) -> Option<TokenData<Claims>> {
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
-        decode::<Claims>(token, &self.decoding, &validation).ok()
+        validation.validate_nbf = true;
+        // Checked by `audiences_for`: a token with no `aud` (stormcert's,
+        // gen-node-token.sh's) is for this apiserver.
+        validation.validate_aud = false;
+        let data = decode::<Claims>(token, &self.decoding, &validation).ok()?;
+        match &data.claims.iss {
+            Some(iss) if **iss != *self.issuer => None,
+            _ => Some(data),
+        }
+    }
+
+    /// Which of `wanted` (the API audiences when empty) the token is for. A
+    /// token with no `aud` is for the API audiences only.
+    fn audiences_for(&self, claims: &Claims, wanted: &[String]) -> Vec<String> {
+        let wanted: &[String] = if wanted.is_empty() { &self.audiences } else { wanted };
+        let has = match &claims.aud {
+            Some(aud) => aud.list(),
+            None => self.audiences.to_vec(),
+        };
+        wanted.iter().filter(|a| has.contains(a)).cloned().collect()
+    }
+
+    /// Validate a JWT for this apiserver — signature, times, issuer and
+    /// audience, but not the bound object (see [`Self::authenticate`]).
+    pub fn validate_token(&self, token: &str) -> Option<TokenData<Claims>> {
+        let data = self.verify(token)?;
+        (!self.audiences_for(&data.claims, &[]).is_empty()).then_some(data)
+    }
+
+    /// Authenticate a JWT for `audiences` (the API audiences when empty):
+    /// valid, for one of them, and — if it is bound — its ServiceAccount and
+    /// bound object still the ones it was issued for.
+    pub async fn authenticate(&self, token: &str, audiences: &[String]) -> Option<TokenUser> {
+        let claims = self.verify(token)?.claims;
+        let audiences = self.audiences_for(&claims, audiences);
+        if audiences.is_empty() {
+            return None;
+        }
+        if let Some(kc) = &claims.kubernetes {
+            if !self.binding_holds(&claims.sub, kc).await {
+                return None;
+            }
+        }
+        let (username, groups) = claims.identity();
+        let uid = claims
+            .kubernetes
+            .as_ref()
+            .and_then(|kc| kc.serviceaccount.as_ref())
+            .map(|sa| sa.uid.clone())
+            .unwrap_or_default();
+        Some(TokenUser { username, uid, groups, extra: claims.extra(), audiences })
+    }
+
+    /// The ServiceAccount the token names and the object it is bound to
+    /// still exist with the uids it was issued for, as upstream's validator
+    /// checks. A pod's node is information, not a binding.
+    async fn binding_holds(&self, sub: &str, kc: &KubeClaims) -> bool {
+        let Some(storage) = &self.bound else { return false };
+        let ns = kc.namespace.as_str();
+        let Some(sa) = &kc.serviceaccount else { return false };
+        if sub != format!("system:serviceaccount:{ns}:{}", sa.name) {
+            return false;
+        }
+        if !object_holds(storage, "serviceaccounts", Some(ns), sa).await {
+            return false;
+        }
+        if let Some(pod) = &kc.pod {
+            return object_holds(storage, "pods", Some(ns), pod).await;
+        }
+        if let Some(secret) = &kc.secret {
+            return object_holds(storage, "secrets", Some(ns), secret).await;
+        }
+        if let Some(node) = &kc.node {
+            return object_holds(storage, "nodes", None, node).await;
+        }
+        true
+    }
+}
+
+/// `want` exists with its uid and was not deleted more than a minute ago.
+/// Read from the watch cache; a refusal is confirmed from the store, since
+/// the cache can trail a just-created object by milliseconds.
+async fn object_holds(
+    storage: &ResourceStorage,
+    resource: &str,
+    namespace: Option<&str>,
+    want: &ObjectClaim,
+) -> bool {
+    let (key, prefix) = match namespace {
+        Some(ns) => (
+            ResourceStorage::namespaced_key(resource, ns, &want.name),
+            ResourceStorage::all_namespaces_prefix(resource),
+        ),
+        None => (
+            ResourceStorage::cluster_key(resource, &want.name),
+            ResourceStorage::cluster_prefix(resource),
+        ),
+    };
+    let cached = storage
+        .watch_cache()
+        .get(&prefix, &key)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+    if cached.as_ref().is_some_and(|o| object_matches(o, want)) {
+        return true;
+    }
+    match storage.get(&key).await {
+        Ok(obj) => object_matches(&obj, want),
+        Err(_) => false,
+    }
+}
+
+fn object_matches(obj: &serde_json::Value, want: &ObjectClaim) -> bool {
+    let meta = &obj["metadata"];
+    if !want.uid.is_empty() && meta["uid"].as_str() != Some(want.uid.as_str()) {
+        return false;
+    }
+    match meta["deletionTimestamp"].as_str() {
+        Some(ts) => chrono::DateTime::parse_from_rfc3339(ts).is_ok_and(|t| {
+            t.timestamp() + DELETED_GRACE_SECS > chrono::Utc::now().timestamp()
+        }),
+        None => true,
     }
 }
 
@@ -180,24 +479,28 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
                 username: id.username.clone(),
                 groups: with_authenticated(id.groups.clone()),
             })
-        } else if let Some(auth_header) = request.headers().get("authorization") {
+        } else if let Some(token) = request
+            .headers()
+            .get("authorization")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .map(str::to_string)
+        {
             // 2. Bearer token: a static token from --token-auth-file, else a
-            //    JWT validated against the SA signing keys.
-            auth_header
-                .to_str()
-                .ok()
-                .and_then(|h| h.strip_prefix("Bearer "))
-                .and_then(|token| {
-                    let ext = request.extensions();
-                    ext.get::<crate::token_file::StaticTokens>()
-                        .and_then(|t| t.authenticate(token))
-                        .or_else(|| {
-                            ext.get::<SigningKeys>()
-                                .and_then(|keys| keys.validate_token(token))
-                                .map(|td| td.claims.identity())
-                        })
-                })
-                .map(|(username, groups)| UserInfo { username, groups: with_authenticated(groups) })
+            //    JWT for this apiserver's audiences, its binding still held.
+            let ext = request.extensions();
+            let static_user = ext
+                .get::<crate::token_file::StaticTokens>()
+                .and_then(|t| t.authenticate(&token));
+            let keys = ext.get::<SigningKeys>().cloned();
+            let identity = match (static_user, keys) {
+                (Some(id), _) => Some(id),
+                (None, Some(keys)) => {
+                    keys.authenticate(&token, &[]).await.map(|u| (u.username, u.groups))
+                }
+                (None, None) => None,
+            };
+            identity.map(|(username, groups)| UserInfo { username, groups: with_authenticated(groups) })
         } else {
             None
         };
@@ -313,15 +616,59 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_token_naming_an_audience_is_refused() {
-        // No audiences are configured, so none can be checked; a minter must
-        // leave `aud` out (docs/certificates.md).
-        let token = sign(serde_json::json!({
+    fn a_token_must_be_for_this_apiserver() {
+        // #182: `aud`, when present, must name an API audience (by default
+        // the issuer); a token for another audience is someone else's.
+        let ours = sign(serde_json::json!({
             "sub": "system:serviceaccount:kube-system:node-admin",
             "aud": ["https://kubernetes.default.svc"],
             "exp": in_ten_years(),
         }));
+        assert!(test_keys().validate_token(&ours).is_some());
+        let one = sign(serde_json::json!({
+            "sub": "system:serviceaccount:kube-system:node-admin",
+            "aud": "https://kubernetes.default.svc",
+            "exp": in_ten_years(),
+        }));
+        assert!(test_keys().validate_token(&one).is_some());
+        let theirs = sign(serde_json::json!({
+            "sub": "system:serviceaccount:kube-system:node-admin",
+            "aud": ["vault"],
+            "exp": in_ten_years(),
+        }));
+        assert!(test_keys().validate_token(&theirs).is_none());
+        let keys = test_keys().with_token_config("https://issuer.example", &["vault".into()], true);
+        assert!(keys.validate_token(&theirs).is_some());
+        assert!(keys.validate_token(&ours).is_none());
+    }
+
+    #[test]
+    fn a_token_from_another_issuer_is_refused() {
+        let token = sign(serde_json::json!({
+            "iss": "https://elsewhere.example",
+            "sub": "system:serviceaccount:kube-system:node-admin",
+            "exp": in_ten_years(),
+        }));
         assert!(test_keys().validate_token(&token).is_none());
+        let token = sign(serde_json::json!({
+            "iss": "https://kubernetes.default.svc",
+            "sub": "system:serviceaccount:kube-system:node-admin",
+            "exp": in_ten_years(),
+        }));
+        assert!(test_keys().validate_token(&token).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_forged_binding_for_another_serviceaccount_is_refused() {
+        // `sub` and the `kubernetes.io` ServiceAccount must agree.
+        let token = sign(serde_json::json!({
+            "sub": "system:serviceaccount:kube-system:node-admin",
+            "exp": in_ten_years(),
+            "kubernetes.io": {"namespace": "n", "serviceaccount": {"name": "app", "uid": "u"}},
+        }));
+        let store = std::sync::Arc::new(crate::test_store::MemStore::default());
+        let keys = test_keys().with_bound_objects(std::sync::Arc::new(ResourceStorage::new(store)));
+        assert!(keys.authenticate(&token, &[]).await.is_none());
     }
 
     #[test]

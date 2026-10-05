@@ -46,6 +46,15 @@ pub struct ApiServerConfig {
     /// Static bearer tokens, kube-apiserver's `--token-auth-file` format
     /// (`token,user,uid[,"groups"]`), followed for changes (#188).
     pub token_auth_file: Option<PathBuf>,
+    /// `iss` of the ServiceAccount tokens this apiserver mints; a token
+    /// naming another issuer is refused (#182).
+    pub service_account_issuer: String,
+    /// Audiences a token must be for to authenticate to this apiserver, and
+    /// the default `aud` of a TokenRequest. Empty: the issuer (#182).
+    pub api_audiences: Vec<String>,
+    /// Give a pod-bound 3607 s TokenRequest a year, with `warnafter` at
+    /// 3607 s, as upstream does for clients that do not refresh (#182).
+    pub service_account_extend_token_expiration: bool,
     /// Allow anonymous authentication (default true for dev). Even when true,
     /// anonymous is only bound to discovery/health unless `dev_anonymous_admin`
     /// is also set (#16).
@@ -84,6 +93,9 @@ impl Default for ApiServerConfig {
             service_account_key: None,
             service_account_signing_key: None,
             token_auth_file: None,
+            service_account_issuer: crate::auth::DEFAULT_ISSUER.into(),
+            api_audiences: Vec::new(),
+            service_account_extend_token_expiration: true,
             anonymous_auth: true,
             dev_anonymous_admin: false,
             insecure: false,

@@ -421,6 +421,16 @@ impl WatchCache {
         Ok((version, snap.iter().map(|(k, (v, _))| (k.clone(), v.clone())).collect()))
     }
 
+    /// One object under `prefix` as the cache holds it, without copying the
+    /// rest of the prefix. Like [`Self::snapshot`] it can trail a write by
+    /// the pump's few milliseconds; the token authenticator (#182) reads the
+    /// store when this answer would refuse.
+    pub async fn get(&self, prefix: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        let cache = self.ensure(prefix).await?;
+        let snap = cache.snapshot.lock().unwrap();
+        Ok(snap.get(key).map(|(v, _)| v.clone()))
+    }
+
     /// LIST `prefix` from the in-memory snapshot (seeded once from the store,
     /// then kept current by the pump), paginated by key. Continue tokens are the
     /// last returned key, so all pages are served consistently from the cache —

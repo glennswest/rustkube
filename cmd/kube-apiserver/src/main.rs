@@ -89,6 +89,21 @@ struct Cli {
     #[arg(long = "token-auth-file")]
     token_auth_file: Option<PathBuf>,
 
+    /// `iss` of minted ServiceAccount tokens; a token naming another issuer
+    /// is refused. Also the default --api-audiences.
+    #[arg(long = "service-account-issuer", default_value = "https://kubernetes.default.svc")]
+    service_account_issuer: String,
+
+    /// Audiences a token must be for to authenticate here, comma-separated;
+    /// also a TokenRequest's default audiences. Defaults to the issuer.
+    #[arg(long = "api-audiences", value_delimiter = ',')]
+    api_audiences: Vec<String>,
+
+    /// Give a pod-bound TokenRequest for 3607 s (a projected token volume) a
+    /// year, with `warnafter` at 3607 s, as upstream does.
+    #[arg(long = "service-account-extend-token-expiration", default_value_t = true, action = clap::ArgAction::Set)]
+    service_account_extend_token_expiration: bool,
+
     /// Address advertised to in-cluster clients; registered as an endpoint of
     /// the default/kubernetes Service. Defaults to --bind-addr when concrete.
     #[arg(long = "advertise-address")]
@@ -135,6 +150,9 @@ async fn main() -> anyhow::Result<()> {
         service_account_key: cli.service_account_key,
         service_account_signing_key: cli.service_account_signing_key,
         token_auth_file: cli.token_auth_file,
+        service_account_issuer: cli.service_account_issuer,
+        api_audiences: cli.api_audiences,
+        service_account_extend_token_expiration: cli.service_account_extend_token_expiration,
         advertise_address: cli.advertise_address,
         data_dir: cli.data_dir,
         service_cidr: cli.service_cidr,

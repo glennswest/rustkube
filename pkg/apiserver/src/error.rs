@@ -70,6 +70,14 @@ impl ApiError {
         }
     }
 
+    pub fn bad_request(message: &str) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            reason: "BadRequest".into(),
+            message: message.into(),
+        }
+    }
+
     pub fn invalid(message: &str) -> Self {
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,

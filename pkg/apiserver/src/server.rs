@@ -902,6 +902,21 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         }
     };
 
+    // Issuer, audiences and bound-object checks for ServiceAccount tokens
+    // (#182).
+    let signing_keys = signing_keys
+        .with_token_config(
+            &config.service_account_issuer,
+            &config.api_audiences,
+            config.service_account_extend_token_expiration,
+        )
+        .with_bound_objects(storage.clone());
+    tracing::info!(
+        "ServiceAccount tokens: issuer {}, API audiences {:?}",
+        signing_keys.issuer(),
+        signing_keys.api_audiences()
+    );
+
     // Static bearer tokens (--token-auth-file, #188): install-config's
     // apiToken, written by stormpump on first boot. Followed, not read once.
     let static_tokens = match &config.token_auth_file {
