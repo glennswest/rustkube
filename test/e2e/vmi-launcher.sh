@@ -91,7 +91,9 @@ node("a"); node("b")
 
 NS = "/apis/kubevirt.io/v1/namespaces/default"
 SUB = "/apis/subresources.kubevirt.io/v1/namespaces/default"
-def vmi(name): return call("GET", f"{NS}/virtualmachineinstances/{name}")[1]
+def vmi(name):  # {} until it exists: a 404's Status has a string `status`
+    code, out = call("GET", f"{NS}/virtualmachineinstances/{name}")
+    return out if code == 200 else {}
 def vm(name, annotations=None, labels=None):
     req("POST", f"{NS}/virtualmachines", {"apiVersion": "kubevirt.io/v1", "kind": "VirtualMachine",
         "metadata": {"name": name}, "spec": {"runStrategy": "Always", "template": {
