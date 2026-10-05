@@ -108,7 +108,9 @@ scheduler_pending_virtualmachines{queue="active"}
 scheduler_schedule_attempts_total{result="scheduled"|"unschedulable"|"error"}
 ```
 
-VMI outcomes are counted in `scheduler_schedule_attempts_total` too.
+VMI outcomes are counted in `scheduler_schedule_attempts_total` too, and so
+are migration targets (#184); `scheduler_pending_virtualmachines` includes
+running VMIs whose migration waits for a target.
 Successful Pod binds, failed bind writes (`error`), volume waits and Pods
 with no feasible node (`unschedulable`, #194) increment the counter. An
 unschedulable Pod is counted on every retry, so this is not a denominator for

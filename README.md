@@ -78,7 +78,12 @@ nothing is proxied to them, #83),
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `rustkube.io/v1alpha1` (PodMigration) and
-`subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet).
+`subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet;
+`start`/`stop`/`restart`; and `migrate` on a VirtualMachine — what `virtctl
+migrate` calls — or a VirtualMachineInstance, which creates a
+VirtualMachineInstanceMigration: 404 while that CRD is not installed, 409 for
+an instance not `Running` or already migrating; `dryRun` honoured,
+`addedNodeSelector` refused, #184).
 
 `scheduling.k8s.io/v1` (PriorityClass) and `authentication.k8s.io/v1`
 (TokenReview) are served and advertised in `/apis` (#85).
@@ -260,8 +265,9 @@ state changes. Controllers run concurrently on Tokio; a change during a
 reconcile queues another pass. Successful idle passes have no poll interval:
 watch heartbeats and routine reconnects wake nothing, and an idle control
 plane makes no API requests (`test/e2e/deadlines.sh`) — except on a cluster
-without KubeVirt, where the VirtualMachine controller starts regardless and
-retries the unserved API every 30 s (#172; the rig does not count those 404s).
+without KubeVirt, where the VirtualMachine and VMI-migration controllers start
+regardless and retry the unserved API every 30 s (#172; the rig does not count
+those 404s).
 Timers remain for semantic deadlines (cron, heartbeat expiry, backoff, job/VM
 and migration deadlines, Event TTL), API recovery and leader Leases.
 
@@ -299,8 +305,32 @@ class, the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approv
 (`start`/`stop`/`restart`; a failed VMI is recreated with backoff under
 `Always`/`RerunOnFailure`/`running: true` and left under `Once`/`Manual`,
 the VM reading `CrashLoopBackOff` or `Failed` with the VMI's message on a
-`Failure` condition, #104). Events are emitted for creates, deletes and
-scaling, and expired ones are deleted.
+`Failure` condition, #104), and VirtualMachineInstanceMigration (#184, below).
+Events are emitted for creates, deletes and scaling, and expired ones are
+deleted.
+
+**VMI live migration** (#184) is upstream KubeVirt's shape, coordinated
+through the VMI's `status.migrationState`; the CRD
+`virtualmachineinstancemigrations.kubevirt.io` ships with stormcos's KubeVirt
+manifest (stormcos#288), and the transfer itself is the kubelets'
+(rustkube-node#40). The controller claims the VMI (`migrationUid`,
+`sourceNode`, `mode: PreCopy`) once it is `Running` on a node, one migration
+per VMI at a time (a second waits in `Pending`); the scheduler writes
+`targetNode`; the target kubelet writes `targetNodeAddress`; the source
+kubelet writes `startTimestamp`, then `completed` or `failed`/`failureReason`.
+The migration's phase follows: `Pending → Scheduling → Scheduled →
+PreparingTarget → TargetReady → Running → Succeeded | Failed`, recorded in
+`status.phaseTransitionTimestamps`, with the VMI's `migrationState` mirrored
+into its own status. On success the controller moves the VMI's
+`status.nodeName` (and a `kubevirt.io/nodeName` label, if it has one).
+Scheduling unfinished after 5 min, or not sending 15 min after creation:
+`Failed`, and the VMI's `migrationState` is marked failed so the target
+tears down. A missing or stopped VMI fails it. Deleting an unfinished
+migration aborts it (finalizer `kubevirt.io/migrationJobFinalize`): before
+sending, the controller marks the VMI's migration failed with
+`abortRequested`/`abortStatus: Succeeded`; while sending, it sets
+`abortRequested` and waits up to 5 min for the source to answer. Progress
+and timeouts of a running transfer are the source's.
 
 Two are placeholders: **HPA** reads no metrics — its "utilization" is the
 fraction of Ready pods, and it never scales down (#89) — and **Gateway API**
@@ -339,7 +369,14 @@ exists.
   `ReadWriteOncePod`, and `selected-node` for `WaitForFirstConsumer` claims.
 - **Scores**, summed: least requested, image locality, preferred node
   affinity, preferred pod affinity, and topology spread (`ScheduleAnyway`).
-- VirtualMachineInstances are scheduled too (#72).
+- VirtualMachineInstances are scheduled too (#72), and so is a migrating
+  VMI's target (#184): the same filters and scores, the source node
+  excluded, written as `status.migrationState.targetNode`. The target is
+  charged from when it is chosen until the migration fails, or succeeds and
+  the VMI has been moved there — so for the whole migration the machine
+  holds capacity on both nodes. No node for it: condition
+  `TargetScheduled=False` (reason `Unschedulable`, each node's reason) on the
+  migration, `True` once one is found.
 - A Pod no node will take gets `PodScheduled=False`, reason `Unschedulable`,
   message as upstream's (`0/1 nodes are available: 1 Too many pods.`),
   written only when it changes. No `FailedScheduling`/`Scheduled` Events (#138).
