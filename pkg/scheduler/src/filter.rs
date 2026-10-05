@@ -24,8 +24,8 @@ pub struct NodeUsage {
     pub cpu_milli: u64,
     pub mem_bytes: u64,
     /// Non-terminal Pods bound or assumed to the node, held against
-    /// `allocatable.pods` (#194). VMIs take no slot: rustkube-node runs a
-    /// VM without a virt-launcher Pod.
+    /// `allocatable.pods` (#194). A VMI takes no slot itself: a pod-network
+    /// VMI's launcher Pod (#203) is the Pod that counts.
     pub pods: u64,
 }
 

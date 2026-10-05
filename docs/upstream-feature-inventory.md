@@ -71,7 +71,8 @@ ServiceAccount, deletion cascade), node lifecycle (with taint-based eviction),
 PodDisruptionBudget status, garbage collector (background / foreground /
 orphan), PersistentVolume binder, attach/detach, stormblock provisioner, CSR
 approve + sign, PodMigration, VirtualMachine, VirtualMachineInstanceMigration
-(control-plane half; the transfer is rustkube-node#40, #184). Leader election ✅.
+(control-plane half; the transfer is rustkube-node#40, #184), VMI launcher
+Pods (#203). Leader election ✅.
 
 🟡 placeholders: HPA (no metrics, cannot scale down, #89); Gateway API (status
 only, hardcoded address, #91).

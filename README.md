@@ -305,9 +305,31 @@ class, the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approv
 (`start`/`stop`/`restart`; a failed VMI is recreated with backoff under
 `Always`/`RerunOnFailure`/`running: true` and left under `Once`/`Manual`,
 the VM reading `CrashLoopBackOff` or `Failed` with the VMI's message on a
-`Failure` condition, #104), and VirtualMachineInstanceMigration (#184, below).
+`Failure` condition, #104), VMI launcher Pods (#203, below), and
+VirtualMachineInstanceMigration (#184, below).
 Events are emitted for creates, deletes and scaling, and expired ones are
 deleted.
+
+**VMI launcher Pods** (#203; the kubelet half is rustkube-node#88). A VMI
+on the pod network — an interface whose network is `pod: {}`, unless a
+`storm.io/bridge` or `storm.io/bridge.<interface>` annotation puts it on a
+host bridge, as stormvm reads the spec — gets KubeVirt's `virt-launcher`
+Pod once it has `status.nodeName`, because Cilium (endpoint identity, and so
+NetworkPolicy) and Services read a Pod, not a VMI. The Pod is
+`virt-launcher-<vmi>-<5 random>` in the VMI's namespace, carries the VMI's
+labels plus `kubevirt.io: virt-launcher`, `kubevirt.io/created-by: <vmi uid>`
+and `vm.kubevirt.io/name`, is owned by the VMI (`controller`,
+`blockOwnerDeletion`: deleting the VMI deletes it), and has `spec.nodeName`
+set (never scheduled separately), one placeholder container `compute` and no
+resource requests (the VMI is charged; the Pod takes its node's pod slot).
+Its status is the kubelet's: it adopts the Pod instead of running it, names
+it in the CNI ADD, writes `phase`, `podIP`/`podIPs` and Ready, and confirms
+its deletion once the machine is gone. One per VMI; a launcher deleted from
+under a live VMI is replaced, one that ended is left. During a live
+migration the target node gets its own, labelled
+`kubevirt.io/migrationJobUID`, as upstream's target Pod; when the VMI moves
+the source's is deleted, and when the migration fails the target's is. A
+VMI that finished (`Failed`/`Succeeded`) gets nothing new.
 
 **VMI live migration** (#184) is upstream KubeVirt's shape, coordinated
 through the VMI's `status.migrationState`; the CRD
@@ -364,7 +386,8 @@ exists.
   is enforced), `nodeName`, inter-pod affinity and anti-affinity, topology
   spread (`DoNotSchedule`), resource fit (pod-level requests honoured, #73),
   Pod count: at most `allocatable.pods` non-terminal Pods per node, bound or
-  with a bind in flight; VMIs take no slot (#194),
+  with a bind in flight (#194); a VMI takes one through its launcher Pod
+  (#203), not itself,
   and volume binding: PV node affinity, `CSIStorageCapacity`,
   `ReadWriteOncePod`, and `selected-node` for `WaitForFirstConsumer` claims.
 - **Scores**, summed: least requested, image locality, preferred node
