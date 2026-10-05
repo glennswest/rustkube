@@ -30,12 +30,12 @@ print(json.dumps(json.loads(base64.urlsafe_b64decode(p + '=' * (-len(p) % 4)))))
 PY
 }
 cl() { python3 -c "import json; c=json.load(open('$W/claims')); print($1)"; }
-tokreq() { # <spec-json> — HTTP code; token in $TOK
-  local c
+TOK=; c=
+tokreq() { # <spec-json> — HTTP code in $c, token in $TOK (not a subshell)
   c=$(req POST /api/v1/namespaces/$NS/serviceaccounts/app/token \
     "{\"apiVersion\":\"authentication.k8s.io/v1\",\"kind\":\"TokenRequest\",\"spec\":$1}")
-  TOK=; [ "$c" = 201 ] || [ "$c" = 200 ] && TOK=$(jq_ 'd["status"]["token"]')
-  echo "$c"
+  TOK=
+  if [ "$c" = 201 ] || [ "$c" = 200 ]; then TOK=$(jq_ 'd["status"]["token"]'); fi
 }
 review() { # <token> <audiences-json> — status JSON in $W/out
   req POST /apis/authentication.k8s.io/v1/tokenreviews \
@@ -67,7 +67,7 @@ pod q default >/dev/null
   || fail "setup: sa=$SA_UID pod=$POD_UID node=$NODE_UID"
 
 # --- the projected volume's request: pod-bound, 3607 s ------------------------
-c=$(tokreq "{\"expirationSeconds\":3607,\"boundObjectRef\":{\"kind\":\"Pod\",\"apiVersion\":\"v1\",\"name\":\"p\",\"uid\":\"$POD_UID\"}}")
+tokreq "{\"expirationSeconds\":3607,\"boundObjectRef\":{\"kind\":\"Pod\",\"apiVersion\":\"v1\",\"name\":\"p\",\"uid\":\"$POD_UID\"}}"
 [ -n "$TOK" ] && pass "TokenRequest bound to the pod ($c)" || fail "TokenRequest: $c $(cat "$W/out")"
 EXP_TS=$(jq_ 'd["status"]["expirationTimestamp"]')
 POD_TOK=$TOK
@@ -100,7 +100,7 @@ review "$POD_TOK" '["vault"]'
   || fail "review vault: $(cat "$W/out")"
 
 # --- audiences and expirationSeconds -----------------------------------------
-tokreq '{"audiences":["vault"],"expirationSeconds":600}' >/dev/null
+tokreq '{"audiences":["vault"],"expirationSeconds":600}'
 claims "$TOK"
 [ "$(cl 'c["aud"]')" = "['vault']" ] && [ "$(cl 'c["exp"]-c["iat"]')" = 600 ] \
   && pass "audiences + expirationSeconds 600 honoured" || fail "vault token: $(cat "$W/claims")"
@@ -108,14 +108,14 @@ claims "$TOK"
 review "$TOK" '["vault"]'
 [ "$(jq_ 'd["status"]["authenticated"]')" = True ] && pass "TokenReview for vault: authenticated" \
   || fail "review vault token: $(cat "$W/out")"
-c=$(tokreq '{"expirationSeconds":599}'); [ "$c" = 422 ] && pass "599 s refused (422)" || fail "599 s: $c"
-c=$(tokreq '{"boundObjectRef":{"kind":"Pod","name":"p","uid":"not-the-uid"}}')
+tokreq '{"expirationSeconds":599}'; [ "$c" = 422 ] && pass "599 s refused (422)" || fail "599 s: $c"
+tokreq '{"boundObjectRef":{"kind":"Pod","name":"p","uid":"not-the-uid"}}'
 [ "$c" = 409 ] && pass "wrong pod uid refused (409)" || fail "wrong uid: $c"
-c=$(tokreq '{"boundObjectRef":{"kind":"Pod","name":"q"}}')
+tokreq '{"boundObjectRef":{"kind":"Pod","name":"q"}}'
 [ "$c" = 400 ] && pass "pod of another ServiceAccount refused (400)" || fail "other SA pod: $c"
-c=$(tokreq '{"boundObjectRef":{"kind":"Pod","name":"nope"}}')
+tokreq '{"boundObjectRef":{"kind":"Pod","name":"nope"}}'
 [ "$c" = 404 ] && pass "missing pod refused (404)" || fail "missing pod: $c"
-tokreq '{}' >/dev/null; UNBOUND=$TOK
+tokreq '{}'; UNBOUND=$TOK
 [ "$(as "$UNBOUND")" = 200 ] && pass "unbound token authenticates" || fail "unbound: $(as "$UNBOUND")"
 [ "$(as "$ADMIN")" = 200 ] && pass "a token with no aud/iss (stormcert's shape) still works" || fail "legacy: $(as "$ADMIN")"
 
