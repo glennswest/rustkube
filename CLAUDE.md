@@ -95,6 +95,21 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Pod-bound ServiceAccount tokens (#182, P2) — IN PROGRESS 2026-10-05
+Upstream/OpenShift shape, for stormcos#54's metadata service (host-network
+caller → its pod by token). Kubelet half (send boundObjectRef + 3607 s,
+rotate) is rustkube-node#122.
+- [ ] TokenRequest: `spec.audiences` (default `--api-audiences`, default the
+      issuer), `spec.expirationSeconds` (min 600 s; absent stays 24 h until
+      the kubelet rotates), `spec.boundObjectRef` Pod/Secret/Node (uid checked,
+      pod's SA must match); claims `iss`/`aud`/`nbf`/`jti` + `kubernetes.io`;
+      3607 s pod-bound → 1 y with `warnafter` (`--service-account-extend-token-expiration`)
+- [ ] Authentication + TokenReview: `aud` must meet the apiserver's (review:
+      `spec.audiences`); bound SA/pod/secret/node must exist with that uid
+      (pod deleted > 60 s ago → refused), watch cache first, store on a miss;
+      `status.user.uid` + `extra` pod-name/pod-uid/node-name/node-uid/credential-id
+- [ ] Unit tests, e2e `test/e2e/bound-token.sh`, README/certificates.md/CHANGELOG
+
 ### Static admin token from install-config (#188, P1) — COMPLETE 2026-10-03
 storminstall writes `apiToken`; stormpump#78 writes it on first boot to
 `/state/config/token-auth.csv` (0600) as `<token>,system:admin,system:admin,"system:masters"`;
