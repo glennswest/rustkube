@@ -128,6 +128,14 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
             name.into(),
         ));
     }
+    // A VirtualMachineInstanceMigration names its VMI (#184).
+    if let Some(vmi) = object["spec"]["vmiName"].as_str() {
+        result.insert(Index::Reference(
+            key.namespace.clone(),
+            "VirtualMachineInstance".into(),
+            vmi.into(),
+        ));
+    }
     for field in ["sourceNode", "targetNode"] {
         if let Some(node) = object["spec"][field].as_str() {
             result.insert(Index::Node(node.into()));

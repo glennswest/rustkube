@@ -31,6 +31,7 @@ pub mod runner;
 pub mod service;
 pub mod stormblock;
 pub mod virtualmachine;
+pub mod vmimigration;
 pub mod statefulset;
 
 pub use runner::{ClientConfig, ControllerManager};
