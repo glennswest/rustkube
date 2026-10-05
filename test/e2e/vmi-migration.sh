@@ -161,7 +161,7 @@ check(until(lambda: vmi("second").get("status", {}).get("nodeName") == src),
       f"source freed: second guest placed on {src}")
 
 # --- the source reports failure ----------------------------------------------
-# a and b are each 2Gi used of 3Gi now: make room on c for a failure run.
+# a and b are each 2Gi used of 3Gi now: a fourth node takes the target.
 node("d", "8Gi")
 code, m2, _ = migrate("virtualmachineinstances/vm")
 check(code == 200, f"second migration created ({m2})")
@@ -185,7 +185,7 @@ check(st.get("failed") is True and st.get("abortRequested") is True and st.get("
       f"abort recorded on the VMI ({st.get('failureReason')})")
 
 # --- no node for the target ---------------------------------------------------
-n = req("GET", "/api/v1/nodes/d"); n["spec"]["unschedulable"] = True; req("PUT", "/api/v1/nodes/d", n)
+n = req("GET", "/api/v1/nodes/d"); n.setdefault("spec", {})["unschedulable"] = True; req("PUT", "/api/v1/nodes/d", n)
 time.sleep(1)
 code, m4, _ = migrate("virtualmachineinstances/vm")
 def cond(name):
@@ -194,7 +194,7 @@ def cond(name):
 c = until(lambda: cond(m4).get("status") == "False" and cond(m4))
 check(c and c.get("reason") == "Unschedulable", f"TargetScheduled=False: {c and c.get('message')}")
 check(phase(m4) == "Scheduling", f"waits in Scheduling ({phase(m4)})")
-n = req("GET", "/api/v1/nodes/d"); n["spec"]["unschedulable"] = False; req("PUT", "/api/v1/nodes/d", n)
+n = req("GET", "/api/v1/nodes/d"); n.setdefault("spec", {})["unschedulable"] = False; req("PUT", "/api/v1/nodes/d", n)
 check(until(lambda: state().get("targetNode") == "d"), "uncordoned: target placed")
 check(until(lambda: cond(m4).get("status") == "True"), "TargetScheduled=True")
 call("DELETE", f"{NS}/virtualmachineinstancemigrations/{m4}")

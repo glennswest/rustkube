@@ -1298,13 +1298,25 @@ fn placed_workload(vm: bool, object: &Value) -> Option<(String, Value)> {
             .map(|n| (n.into(), object.clone()))
     }
 }
-/// A migrating VMI's target node, charged like a second placement (#184).
+/// A migrating VMI's target node, charged like a second placement (#184):
+/// from when it is chosen until the migration fails, or succeeds *and* the
+/// controller has moved `status.nodeName` there. Between the source's
+/// `completed` and that move the machine is running on the target while the
+/// VMI still names the source; releasing the target then would let another
+/// workload take the memory the machine is in.
 fn migration_target(vm: bool, object: &Value) -> Option<(String, Value)> {
     if !vm || virtualmachine::is_terminal(object) {
         return None;
     }
-    apimachinery::kubevirt::migration_target(object)
-        .map(|n| (n.to_string(), virtualmachine::scheduling_shim(object)))
+    let state = &object["status"]["migrationState"];
+    let target = state["targetNode"].as_str().filter(|n| !n.is_empty())?;
+    if state["migrationUid"].as_str().is_none_or(str::is_empty)
+        || state["failed"].as_bool() == Some(true)
+        || (state["completed"].as_bool() == Some(true) && virtualmachine::node_of(object) == Some(target))
+    {
+        return None;
+    }
+    Some((target.to_string(), virtualmachine::scheduling_shim(object)))
 }
 impl SchedulingState {
     fn remove(&mut self, key: &ScheduleKey) {
@@ -1890,8 +1902,12 @@ mod reservation_tests {
         let usage = state.snapshot(&other).0.usage;
         assert_eq!(usage["a"].mem_bytes, 2 * gib);
         assert_eq!(usage["c"].mem_bytes, 2 * gib);
-        // Succeeded: the controller moved it; only the target holds it.
+        // Completed, not yet moved: the machine is on c, the VMI names a.
         seen["status"]["migrationState"]["completed"] = json!(true);
+        state.observe(true, &changed(seen.clone()));
+        let usage = state.snapshot(&other).0.usage;
+        assert_eq!(usage["c"].mem_bytes, 2 * gib, "the target stays charged until the move");
+        // Moved: only the target holds it.
         seen["status"]["nodeName"] = json!("c");
         state.observe(true, &changed(seen));
         let usage = state.snapshot(&other).0.usage;
