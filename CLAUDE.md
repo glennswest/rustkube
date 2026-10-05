@@ -95,6 +95,25 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### VirtualMachineInstanceMigration (#184, P3) — IN PROGRESS 2026-10-05
+Control-plane half of live migration; node half rustkube-node#40. Contract is
+upstream KubeVirt's VMI `status.migrationState`: controller writes
+`migrationUid`/`sourceNode`/`mode`; **scheduler** writes `targetNode` (same
+filters/scores as VMI placement, source excluded, charged on both nodes while
+in flight); target kubelet writes `targetNodeAddress`; source kubelet writes
+`startTimestamp`, then `completed`/`failed`/`endTimestamp`; controller moves
+VMI `status.nodeName` on success. Phases Pending → Scheduling → Scheduled →
+PreparingTarget → TargetReady → Running → Succeeded/Failed.
+- [ ] CRD `virtualmachineinstancemigrations.kubevirt.io` — lives in stormcos's
+      90-virtualmachineinstances-crd.yaml (file there); rigs apply it
+- [ ] controller-manager `vmimigration.rs` (finalizer `kubevirt.io/migrationJobFinalize`,
+      delete = abort, one active migration per VMI, Scheduling 5 min /
+      pre-Running 15 min timeouts)
+- [ ] scheduler: target placement + unschedulable condition on the migration
+- [ ] apiserver: `virtualmachines/{name}/migrate` (virtctl) and
+      `virtualmachineinstances/{name}/migrate` create one; advertised
+- [ ] Unit tests, e2e `test/e2e/vmi-migration.sh` (fake kubelets), docs
+
 ### Pod-bound ServiceAccount tokens (#182, P2) — COMPLETE 2026-10-05
 Upstream/OpenShift shape, for stormcos#54's metadata service (host-network
 caller → its pod by token). Kubelet half (send boundObjectRef + 3607 s,
