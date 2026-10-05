@@ -95,6 +95,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### VMI launcher Pods (#203, P1) — IN PROGRESS 2026-10-05
+Owner's choice B on rustkube-node#88: the controller makes KubeVirt's
+`virt-launcher-<vmi>-<5>` Pod for a pod-network VMI; the kubelet adopts it
+(CNI identity for Cilium, status, deletion — rustkube-node 3d9d26e).
+- [ ] `vmilauncher.rs`: one per VMI on `status.nodeName` (pod network as
+      stormvm-spec reads it, `storm.io/bridge` wins); a migration target gets
+      its own (`kubevirt.io/migrationJobUID`); the loser is deleted
+- [ ] Units; e2e on the API rig (stand-in kubelet); README/CHANGELOG/docs
+
 ### VirtualMachineInstanceMigration (#184, P3) — COMPLETE 2026-10-05
 Control-plane half of live migration; node half rustkube-node#40. Contract is
 upstream KubeVirt's VMI `status.migrationState`: controller writes
