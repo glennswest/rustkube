@@ -362,6 +362,10 @@ pub struct Scheduler {
     identity: String,
     /// How long to wait for the apiserver to serve before running anyway.
     startup_timeout: Duration,
+    /// Last "no target" message written per migration uid (#184), so a
+    /// migration that stays unschedulable is not re-listed and re-written on
+    /// every placement change.
+    migration_reports: Mutex<HashMap<String, String>>,
 }
 
 impl Scheduler {
@@ -371,6 +375,7 @@ impl Scheduler {
             leader_elect: true,
             identity: default_identity(),
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
+            migration_reports: Mutex::default(),
         }
     }
 
@@ -381,6 +386,7 @@ impl Scheduler {
             leader_elect: true,
             identity: default_identity(),
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
+            migration_reports: Mutex::default(),
         })
     }
 
@@ -638,7 +644,11 @@ impl Scheduler {
                     if let Some(node) = assumed {
                         nodes.retain(|n| n["metadata"]["name"] == node);
                     }
-                    if key.0 {
+                    if key.0 && virtualmachine::node_of(&object).is_some() {
+                        // Placed and pending: a migration wants its target (#184).
+                        self.schedule_migration_target(&object, &nodes, &state, &observed, &key)
+                            .await;
+                    } else if key.0 {
                         self.schedule_virtual_machine(&object, &nodes, &mut state, &observed, &key)
                             .await;
                     } else {
@@ -823,6 +833,114 @@ impl Scheduler {
                 crate::metrics_server::record_attempt("error");
                 error!("Could not place {ns}/{name} on {chosen}: {e}");
             }
+        }
+    }
+
+    /// Choose where a migrating VMI goes (#184): the filters and scores its
+    /// placement gets, the node it is on excluded, written as
+    /// `status.migrationState.targetNode` — the migration's equivalent of a
+    /// bind. The target is charged from the moment it is chosen until the
+    /// migration ends, so nothing else is promised the memory the machine is
+    /// moving into.
+    async fn schedule_migration_target(
+        &self,
+        vmi: &Value,
+        nodes: &[Value],
+        state: &ClusterState,
+        observed: &Mutex<SchedulingState>,
+        key: &ScheduleKey,
+    ) {
+        let name = vmi["metadata"]["name"].as_str().unwrap_or("");
+        let ns = vmi["metadata"]["namespace"].as_str().unwrap_or("default");
+        let source = virtualmachine::node_of(vmi).unwrap_or("");
+        let uid = vmi["status"]["migrationState"]["migrationUid"].as_str().unwrap_or("").to_string();
+        let shim = virtualmachine::scheduling_shim(vmi);
+        let (chosen, refused) = choose_migration_target(&shim, source, nodes, state);
+        let Some(chosen) = chosen else {
+            let why = if refused.is_empty() {
+                "no other node is registered".to_string()
+            } else {
+                refused.join("; ")
+            };
+            crate::metrics_server::record_attempt("unschedulable");
+            debug!("No node can take migrating VirtualMachineInstance {ns}/{name}: {why}");
+            self.report_migration(ns, &uid, false, &format!("no node can take this migration: {why}"))
+                .await;
+            return;
+        };
+        let body = json!({
+            "metadata": {"uid": vmi["metadata"]["uid"], "resourceVersion": vmi["metadata"]["resourceVersion"]},
+            "status": {"migrationState": {"targetNode": chosen}},
+        });
+        observed.lock().unwrap().reserve_target(key.clone(), vmi, &chosen);
+        match self.api.patch_merge(&virtualmachine::status_path(ns, name), &body).await {
+            Ok(_) => {
+                crate::metrics_server::record_attempt("scheduled");
+                info!("Migration target for VirtualMachineInstance {ns}/{name}: {source} -> {chosen}");
+                self.report_migration(ns, &uid, true, &format!("target node {chosen}")).await;
+            }
+            Err(e) => {
+                observed.lock().unwrap().target_assumptions.remove(key);
+                crate::metrics_server::record_attempt("error");
+                error!("Could not record migration target {chosen} for {ns}/{name}: {e}");
+            }
+        }
+    }
+
+    /// Say on the VirtualMachineInstanceMigration whether its target could be
+    /// placed: condition `TargetScheduled`. Written when the message changes;
+    /// a scheduled one only if an unschedulable one was written before.
+    async fn report_migration(&self, ns: &str, migration_uid: &str, scheduled: bool, message: &str) {
+        if migration_uid.is_empty() {
+            return;
+        }
+        {
+            let mut reports = self.migration_reports.lock().unwrap();
+            let last = reports.get(migration_uid);
+            if last.map(String::as_str) == Some(message) || (scheduled && last.is_none()) {
+                return;
+            }
+            if scheduled {
+                reports.remove(migration_uid);
+            } else {
+                reports.insert(migration_uid.to_string(), message.to_string());
+            }
+        }
+        let list = match self
+            .api
+            .list(&format!("/apis/kubevirt.io/v1/namespaces/{ns}/virtualmachineinstancemigrations"))
+            .await
+        {
+            Ok(l) => l,
+            Err(e) => {
+                debug!("could not find the migration {migration_uid}: {e}");
+                return;
+            }
+        };
+        let Some(name) = list["items"].as_array().and_then(|items| {
+            items
+                .iter()
+                .find(|m| m["metadata"]["uid"].as_str() == Some(migration_uid))
+                .and_then(|m| m["metadata"]["name"].as_str().map(str::to_string))
+        }) else {
+            return;
+        };
+        let body = json!({"status": {"conditions": [{
+            "type": "TargetScheduled",
+            "status": if scheduled { "True" } else { "False" },
+            "reason": if scheduled { "Scheduled" } else { "Unschedulable" },
+            "message": message,
+            "lastTransitionTime": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        }]}});
+        if let Err(e) = self
+            .api
+            .patch_merge(
+                &format!("/apis/kubevirt.io/v1/namespaces/{ns}/virtualmachineinstancemigrations/{name}/status"),
+                &body,
+            )
+            .await
+        {
+            debug!("could not report on migration {ns}/{name}: {e}");
         }
     }
 
@@ -1074,6 +1192,35 @@ fn unschedulable_message(nodes: usize, refused: &[String]) -> String {
     format!("0/{nodes} nodes are available: {}.", parts.join(", "))
 }
 
+/// The best node for a migrating VMI's target other than `source`, and why
+/// each other node was refused.
+fn choose_migration_target(
+    shim: &Value,
+    source: &str,
+    nodes: &[Value],
+    state: &ClusterState,
+) -> (Option<String>, Vec<String>) {
+    let mut refused = Vec::new();
+    let mut best: Option<(&Value, i64)> = None;
+    for node in nodes {
+        let n = node_name_of(node);
+        if n == source {
+            refused.push(format!("{n}: the VM is already there"));
+            continue;
+        }
+        match filter::run_filters(shim, node, state.used(node), state, nodes) {
+            FilterResult::Pass => {
+                let score = score::score_node(shim, node, state.used(node), state, nodes);
+                if best.is_none_or(|(_, b)| score > b) {
+                    best = Some((node, score));
+                }
+            }
+            FilterResult::Fail(reason) => refused.push(format!("{n}: {reason}")),
+        }
+    }
+    (best.map(|(n, _)| node_name_of(n).to_string()).filter(|n| !n.is_empty()), refused)
+}
+
 /// Annotation on a bound Pod: when the scheduler wrote the binding, RFC3339
 /// to the microsecond (`PodScheduled`'s lastTransitionTime is whole seconds).
 pub const SCHEDULED_AT: &str = "storm.io/scheduled-at";
@@ -1090,6 +1237,10 @@ struct SchedulingState {
     placed: HashMap<ScheduleKey, (String, Value)>,
     usage: HashMap<String, NodeUsage>,
     assumptions: HashMap<ScheduleKey, Assumption>,
+    /// Migrating VMIs charged to their target node as well (#184).
+    targets: HashMap<ScheduleKey, (String, Value)>,
+    /// Targets chosen whose write has not been seen back yet.
+    target_assumptions: HashMap<ScheduleKey, (String, Value)>,
     /// When each pending workload was first seen pending, for
     /// `scheduler_e2e_scheduling_duration_seconds`.
     queued: HashMap<ScheduleKey, std::time::Instant>,
@@ -1116,7 +1267,9 @@ fn pending_workload(vm: bool, object: &Value) -> bool {
         return false;
     }
     if vm {
-        !virtualmachine::is_terminal(object) && virtualmachine::node_of(object).is_none()
+        !virtualmachine::is_terminal(object)
+            && (virtualmachine::node_of(object).is_none()
+                || apimachinery::kubevirt::wants_migration_target(object))
     } else {
         !matches!(
             object["status"]["phase"].as_str(),
@@ -1145,12 +1298,24 @@ fn placed_workload(vm: bool, object: &Value) -> Option<(String, Value)> {
             .map(|n| (n.into(), object.clone()))
     }
 }
+/// A migrating VMI's target node, charged like a second placement (#184).
+fn migration_target(vm: bool, object: &Value) -> Option<(String, Value)> {
+    if !vm || virtualmachine::is_terminal(object) {
+        return None;
+    }
+    apimachinery::kubevirt::migration_target(object)
+        .map(|n| (n.to_string(), virtualmachine::scheduling_shim(object)))
+}
 impl SchedulingState {
     fn remove(&mut self, key: &ScheduleKey) {
         self.pending.remove(key);
         self.queued.remove(key);
         self.assumptions.remove(key);
+        self.target_assumptions.remove(key);
         if let Some((node, pod)) = self.placed.remove(key) {
+            uncharge(&mut self.usage, key.0, node, &pod);
+        }
+        if let Some((node, pod)) = self.targets.remove(key) {
             uncharge(&mut self.usage, key.0, node, &pod);
         }
     }
@@ -1189,11 +1354,27 @@ impl SchedulingState {
                 self.assumptions.remove(&key);
                 self.queued.remove(&key);
             }
+            if let Some((node, old)) = self.targets.remove(&key) {
+                uncharge(&mut self.usage, vm, node, &old);
+            }
+            let target = migration_target(vm, object);
+            if target.is_some() || !apimachinery::kubevirt::wants_migration_target(object) {
+                self.target_assumptions.remove(&key);
+            }
+            if let Some((node, shim)) = target {
+                charge(&mut self.usage, vm, node.clone(), &shim);
+                self.targets.insert(key.clone(), (node, shim));
+            }
             if let Some((node, pod)) = placed_workload(vm, object) {
                 charge(&mut self.usage, vm, node.clone(), &pod);
                 self.placed.insert(key, (node, pod));
             }
         }
+    }
+    fn reserve_target(&mut self, key: ScheduleKey, object: &Value, node: &str) {
+        let mut shim = virtualmachine::scheduling_shim(object);
+        shim["spec"]["nodeName"] = json!(node);
+        self.target_assumptions.insert(key, (node.into(), shim));
     }
     fn reserve(&mut self, key: ScheduleKey, object: &Value, node: &str, waiting: bool) {
         self.assumptions.insert(
@@ -1208,8 +1389,15 @@ impl SchedulingState {
     fn snapshot(&self, current: &ScheduleKey) -> (ClusterState, Option<String>) {
         let mut state = ClusterState {
             usage: self.usage.clone(),
-            placed: self.placed.values().cloned().collect(),
+            placed: self.placed.values().chain(self.targets.values()).cloned().collect(),
         };
+        for (key, (node, shim)) in &self.target_assumptions {
+            if key == current || self.targets.contains_key(key) {
+                continue;
+            }
+            charge(&mut state.usage, key.0, node.clone(), shim);
+            state.placed.push((node.clone(), shim.clone()));
+        }
         for (key, reserved) in &self.assumptions {
             if key == current || self.placed.contains_key(key) {
                 continue;
@@ -1247,6 +1435,9 @@ fn scheduling_feed(
                     let before = delta.old.as_ref().and_then(|o| placed_workload(vm, o));
                     let after = delta.new.as_ref().and_then(|o| placed_workload(vm, o));
                     placement_changed |= before != after;
+                    // A migration target taken or released moves capacity too.
+                    placement_changed |= delta.old.as_ref().and_then(|o| migration_target(vm, o))
+                        != delta.new.as_ref().and_then(|o| migration_target(vm, o));
                     state.observe(vm, delta);
                     for object in delta.old.iter().chain(delta.new.iter()) {
                         if let Ok(key) = Key::of(object) {
@@ -1640,5 +1831,86 @@ mod reservation_tests {
             unschedulable_message(3, &refused),
             "0/3 nodes are available: 2 Too many pods, 1 node is not Ready."
         );
+    }
+
+    fn node(name: &str, memory: &str) -> Value {
+        json!({"metadata":{"name":name},"status":{
+            "allocatable":{"cpu":"8","memory":memory,"pods":"110"},
+            "conditions":[{"type":"Ready","status":"True"}]}})
+    }
+
+    fn migrating(target: Option<&str>) -> Value {
+        let mut state = json!({"migrationUid":"m1","sourceNode":"a","completed":false,"failed":false});
+        if let Some(t) = target {
+            state["targetNode"] = json!(t);
+        }
+        json!({"metadata":{"name":"vm","namespace":"ns","uid":"vm","resourceVersion":"v"},
+            "spec":{"domain":{"cpu":{"cores":1},"memory":{"guest":"2Gi"}}},
+            "status":{"nodeName":"a","phase":"Running","migrationState":state}})
+    }
+
+    #[test]
+    fn a_migration_target_is_never_the_source_and_must_fit() {
+        let nodes = [node("a", "64Gi"), node("b", "1Gi"), node("c", "16Gi")];
+        let shim = virtualmachine::scheduling_shim(&migrating(None));
+        let (chosen, refused) = choose_migration_target(&shim, "a", &nodes, &ClusterState::default());
+        assert_eq!(chosen.as_deref(), Some("c"));
+        assert!(refused.iter().any(|r| r.starts_with("a: the VM is already there")), "{refused:?}");
+        assert!(refused.iter().any(|r| r.starts_with("b: ")), "{refused:?}");
+        let (chosen, refused) = choose_migration_target(&shim, "a", &nodes[..2], &ClusterState::default());
+        assert_eq!(chosen, None);
+        assert_eq!(refused.len(), 2);
+    }
+
+    #[test]
+    fn a_vmi_waiting_for_a_target_is_pending_and_one_with_a_target_is_not() {
+        assert!(pending_workload(true, &migrating(None)));
+        assert!(!pending_workload(true, &migrating(Some("c"))));
+        let mut done = migrating(Some("c"));
+        done["status"]["migrationState"]["completed"] = json!(true);
+        assert!(!pending_workload(true, &done));
+    }
+
+    #[test]
+    fn a_migrating_vmi_is_charged_on_both_nodes_until_it_ends() {
+        let gib = 1024 * 1024 * 1024;
+        let mut state = SchedulingState::default();
+        let other = (false, Key::of(&pod("b", "v")).unwrap());
+        let vm_key = (true, Key::of(&migrating(None)).unwrap());
+        state.observe(true, &changed(migrating(None)));
+        assert_eq!(state.snapshot(&other).0.usage["a"].mem_bytes, 2 * gib);
+        // Chosen, not yet seen back: the assumption holds the target.
+        state.reserve_target(vm_key.clone(), &migrating(None), "c");
+        assert_eq!(state.snapshot(&other).0.usage["c"].mem_bytes, 2 * gib);
+        // Seen back: charged once, not twice.
+        let mut seen = migrating(Some("c"));
+        seen["metadata"]["resourceVersion"] = json!("v2");
+        state.observe(true, &changed(seen.clone()));
+        assert!(state.target_assumptions.is_empty());
+        let usage = state.snapshot(&other).0.usage;
+        assert_eq!(usage["a"].mem_bytes, 2 * gib);
+        assert_eq!(usage["c"].mem_bytes, 2 * gib);
+        // Succeeded: the controller moved it; only the target holds it.
+        seen["status"]["migrationState"]["completed"] = json!(true);
+        seen["status"]["nodeName"] = json!("c");
+        state.observe(true, &changed(seen));
+        let usage = state.snapshot(&other).0.usage;
+        assert_eq!(usage["a"].mem_bytes, 0);
+        assert_eq!(usage["c"].mem_bytes, 2 * gib);
+    }
+
+    #[test]
+    fn a_failed_migration_frees_its_target() {
+        let gib = 1024 * 1024 * 1024;
+        let mut state = SchedulingState::default();
+        let other = (false, Key::of(&pod("b", "v")).unwrap());
+        state.observe(true, &changed(migrating(Some("c"))));
+        assert_eq!(state.snapshot(&other).0.usage["c"].mem_bytes, 2 * gib);
+        let mut failed = migrating(Some("c"));
+        failed["status"]["migrationState"]["failed"] = json!(true);
+        state.observe(true, &changed(failed));
+        let usage = state.snapshot(&other).0.usage;
+        assert_eq!(usage["c"].mem_bytes, 0);
+        assert_eq!(usage["a"].mem_bytes, 2 * gib);
     }
 }
