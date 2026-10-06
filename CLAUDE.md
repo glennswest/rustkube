@@ -95,6 +95,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Reflector's own WATCH deadline is not an outage (#207, P2) — IN PROGRESS 2026-10-06
+The apiserver ignores `timeoutSeconds` (#165), so the reflector's 330 s
+reqwest timeout ended every watch: warn "reflector WATCH reconnecting",
+`Unavailable` (feed unsynced, GC fails closed), reconnect counted + backoff,
+recovery wake on resume — every informer, every ~5.5 min.
+- [ ] `reflector.rs`: own deadline (tokio, not reqwest's) on an open stream
+      → `Ended::Deadline`, resume from the revision at once; not opening by
+      the deadline stays an outage. Units with a 200 ms deadline
+- [ ] `test/e2e/watch-deadline.sh`: idle cm + scheduler 400 s — watches
+      resumed, no reconnect warning, no LIST, reconnect counter unchanged
+- [ ] sc-build: apimachinery units, the rig (and its control on the old
+      code), workspace; docs/CHANGELOG; close #207
+
 ### VMI launcher Pods (#203, P1) — COMPLETE 2026-10-05
 Owner's choice B on rustkube-node#88: the controller makes KubeVirt's
 `virt-launcher-<vmi>-<5>` Pod for a pod-network VMI; the kubelet adopts it
