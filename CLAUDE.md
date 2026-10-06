@@ -95,6 +95,21 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Client cert + client CA reload (#105, P1) — IN PROGRESS 2026-10-06
+controller-manager/scheduler build reqwest once with `Identity::from_pem`;
+the apiserver reads `--client-ca-file` once. Owner (#161): certs roll
+routinely, so every stormcert renewal hits this.
+- [ ] `apimachinery::tls_reload`: `certified_key` (moved from apiserver
+      tls.rs, #93 key-match), `ReloadingKey` (server + client resolver),
+      30 s content-change watcher; `client_config` (CA roots, insecure,
+      reloading identity) handed to reqwest via `use_preconfigured_tls`
+- [ ] CM + scheduler: `--client-certificate/--client-key` paths watched
+- [ ] apiserver: `--client-ca-file` watched; each accept takes the current
+      ServerConfig (bad/empty CA keeps the old one)
+- [ ] Units; e2e rig: renew CM/scheduler client cert to a new pair, old
+      one revoked by CA swap → still authorized; apiserver CA swap
+- [ ] README/certificates.md/CHANGELOG; sc-build; golden; close #105
+
 ### RBAC escalation prevention (#98, P1) — COMPLETE 2026-10-06
 Any caller who may write RoleBindings could bind any role (cluster-admin in
 one's own project). Upstream's rule: a binding needs `bind` on the role or
