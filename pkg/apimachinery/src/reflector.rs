@@ -218,6 +218,41 @@ pub async fn run_events(
     url: String,
     changed: impl Fn(Change) -> bool + Send + Sync,
 ) {
+    run_events_with(client, url, changed, WatchTiming::default()).await;
+}
+
+/// How long one WATCH lasts. The server is asked to end it at `server`
+/// (`timeoutSeconds`); the reflector ends it itself at `client` if the
+/// server has not, so a silent connection cannot hang forever. Either end
+/// is routine: the watch resumes from its last revision at once.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WatchTiming {
+    server: Duration,
+    client: Duration,
+}
+impl Default for WatchTiming {
+    fn default() -> Self {
+        Self {
+            server: Duration::from_secs(300),
+            client: Duration::from_secs(330),
+        }
+    }
+}
+
+/// How a WATCH that did not fail ended.
+enum Ended {
+    /// The server closed the stream.
+    Closed,
+    /// The reflector's own deadline passed with the stream still open.
+    Deadline,
+}
+
+pub(crate) async fn run_events_with(
+    client: reqwest::Client,
+    url: String,
+    changed: impl Fn(Change) -> bool + Send + Sync,
+    timing: WatchTiming,
+) {
     let mut observed = Observed::default();
     let mut retry = Duration::from_millis(100);
     loop {
@@ -250,9 +285,17 @@ pub async fn run_events(
             }
         }
         let started = tokio::time::Instant::now();
-        let result = watch(&client, &url, &mut observed, &changed).await;
+        let result = watch(&client, &url, &mut observed, &changed, timing).await;
         match result {
-            Ok(()) => {
+            // The stream was healthy until our own deadline (#207): a server
+            // that overran `timeoutSeconds` (#165), not an outage. Resume
+            // from the last revision with the feed still synchronized.
+            Ok(Ended::Deadline) => {
+                tracing::debug!(%url, revision = %observed.revision, "reflector WATCH deadline; resuming");
+                retry = Duration::from_millis(100);
+                continue;
+            }
+            Ok(Ended::Closed) => {
                 // A healthy server-side timeout resumes immediately. Repeated
                 // immediate EOFs are a transport failure and must not hot loop.
                 if started.elapsed() > Duration::from_secs(1) {
@@ -274,20 +317,22 @@ async fn watch(
     url: &str,
     observed: &mut Observed,
     changed: &(impl Fn(Change) -> bool + Send + Sync),
-) -> anyhow::Result<()> {
-    let response = client
-        .get(url)
-        // Bounds both opening and an unresponsive stream. A watch which
-        // expires normally reconnects from its last revision, without a LIST.
-        .timeout(Duration::from_secs(330))
-        .query(&[
-            ("watch", "true"),
-            ("allowWatchBookmarks", "true"),
-            ("timeoutSeconds", "300"),
-            ("resourceVersion", &observed.revision),
-        ])
-        .send()
-        .await?;
+    timing: WatchTiming,
+) -> anyhow::Result<Ended> {
+    // One deadline bounds both opening and an unresponsive stream. Failing
+    // to open by then is an outage; an open stream reaching it is a routine
+    // end, told apart from a transport error (#207).
+    let deadline = tokio::time::Instant::now() + timing.client;
+    let server_timeout = timing.server.as_secs().max(1).to_string();
+    let request = client.get(url).query(&[
+        ("watch", "true"),
+        ("allowWatchBookmarks", "true"),
+        ("timeoutSeconds", server_timeout.as_str()),
+        ("resourceVersion", &observed.revision),
+    ]);
+    let response = tokio::time::timeout_at(deadline, request.send())
+        .await
+        .map_err(|_| anyhow::anyhow!("watch did not open within {:?}", timing.client))??;
     if response.status().as_u16() == 410 {
         observed.revision.clear();
         anyhow::bail!("watch revision expired");
@@ -295,7 +340,12 @@ async fn watch(
     let mut stream = response.error_for_status()?.bytes_stream();
     changed(Change::Connected);
     let mut frames = Frames::default();
-    while let Some(chunk) = stream.next().await {
+    loop {
+        let chunk = match tokio::time::timeout_at(deadline, stream.next()).await {
+            Err(_) => return Ok(Ended::Deadline),
+            Ok(None) => break,
+            Ok(Some(chunk)) => chunk,
+        };
         let events = match frames.push(&chunk?) {
             Ok(events) => events,
             Err(error) => {
@@ -322,7 +372,7 @@ async fn watch(
         }
     }
     // Do not advance revision on a partial frame; reconnect replays it.
-    Ok(())
+    Ok(Ended::Closed)
 }
 
 #[cfg(test)]
@@ -459,6 +509,122 @@ mod transport_tests {
         .unwrap();
         assert!(state.lists.load(Ordering::SeqCst) >= 2);
         assert_eq!(&state.revisions.lock().unwrap()[..2], &["10", "12"]);
+        task.abort();
+        server.abort();
+    }
+
+    /// The reflector's own deadline on a stream the server never closes
+    /// (#207, server side #165) is a routine end: it resumes from the last
+    /// revision at once, with no LIST, no `Unavailable` and no backoff.
+    #[tokio::test]
+    async fn own_deadline_resumes_without_an_outage() {
+        async fn overrun(
+            State(state): State<Arc<Server>>,
+            Query(query): Query<HashMap<String, String>>,
+        ) -> Response {
+            if query.get("watch").map(String::as_str) != Some("true") {
+                state.lists.fetch_add(1, Ordering::SeqCst);
+                return axum::Json(json!({"metadata":{"resourceVersion":"10"},"items":[]}))
+                    .into_response();
+            }
+            assert_eq!(query.get("timeoutSeconds").map(String::as_str), Some("1"));
+            state
+                .revisions
+                .lock()
+                .unwrap()
+                .push(query.get("resourceVersion").cloned().unwrap_or_default());
+            let first = state.watches.fetch_add(1, Ordering::SeqCst) == 0;
+            // Ignores timeoutSeconds: never closes. The first carries an event.
+            let head = if first {
+                "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"name\":\"p\",\"uid\":\"u\",\"resourceVersion\":\"11\"}}}\n"
+            } else {
+                "{\"type\":\"BOOKMARK\",\"object\":{\"metadata\":{\"resourceVersion\":\"11\"}}}\n"
+            };
+            let body = futures::stream::once(async move {
+                Ok::<_, std::io::Error>(bytes::Bytes::from_static(head.as_bytes()))
+            })
+            .chain(futures::stream::pending());
+            axum::body::Body::from_stream(body).into_response()
+        }
+        let state = Arc::new(Server::default());
+        let (url, server) = serve(
+            Router::new()
+                .route("/pods", get(overrun))
+                .with_state(state.clone()),
+        )
+        .await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let timing = WatchTiming {
+            server: Duration::from_secs(1),
+            client: Duration::from_millis(200),
+        };
+        let started = std::time::Instant::now();
+        let task = tokio::spawn(run_events_with(
+            reqwest::Client::new(),
+            url,
+            move |change| {
+                log.lock().unwrap().push(match change {
+                    Change::Reset { .. } => "reset",
+                    Change::Connected => "connected",
+                    Change::Applied { .. } => "applied",
+                    Change::Unavailable => "unavailable",
+                });
+                true
+            },
+            timing,
+        ));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while state.watches.load(Ordering::SeqCst) < 5 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        // Five watches of 200 ms each: resumed at once, no 100 ms+ backoff
+        // growing between them.
+        assert!(started.elapsed() < Duration::from_millis(1500));
+        task.abort();
+        server.abort();
+        let seen = seen.lock().unwrap().clone();
+        assert!(!seen.contains(&"unavailable"), "{seen:?}");
+        assert_eq!(seen.iter().filter(|c| **c == "reset").count(), 1, "{seen:?}");
+        assert_eq!(state.lists.load(Ordering::SeqCst), 1);
+        let revisions = state.revisions.lock().unwrap().clone();
+        assert_eq!(&revisions[..3], &["10", "11", "11"]);
+    }
+
+    /// A watch that does not even open by the deadline is an outage.
+    #[tokio::test]
+    async fn a_watch_that_never_opens_is_unavailable() {
+        async fn silent(Query(query): Query<HashMap<String, String>>) -> Response {
+            if query.get("watch").map(String::as_str) == Some("true") {
+                futures::future::pending::<()>().await;
+            }
+            axum::Json(json!({"metadata":{"resourceVersion":"10"},"items":[]})).into_response()
+        }
+        let (url, server) = serve(Router::new().route("/pods", get(silent))).await;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let timing = WatchTiming {
+            server: Duration::from_secs(1),
+            client: Duration::from_millis(100),
+        };
+        let task = tokio::spawn(run_events_with(
+            reqwest::Client::new(),
+            url,
+            move |change| {
+                if matches!(change, Change::Unavailable | Change::Connected) {
+                    let _ = tx.send(matches!(change, Change::Unavailable));
+                }
+                true
+            },
+            timing,
+        ));
+        let unavailable = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(unavailable, "a watch that never opened reported Connected");
         task.abort();
         server.abort();
     }
