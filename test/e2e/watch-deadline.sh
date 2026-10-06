@@ -31,12 +31,15 @@ warnings() { # <log> — reconnect warnings so far
 
 # Let both open their watches and settle. Startup may legitimately retry.
 sleep 20
+series() { curl --max-time 5 -sk "$API/metrics" | grep '^apiserver_request_total{' | grep 'verb="list"'; }
+series >"$W/lists.before"
 watch0=$(counter watch); list0=$(counter list)
 cm0=$(warnings "$W/cm.log"); sched0=$(warnings "$W/sched.log")
 rc0=$(reconnects)
 echo "rig: idle from $(date -u +%H:%M:%S): $watch0 watches, $list0 lists, reconnect counter '${rc0}'"
 sleep 400   # longer than the 330 s client deadline
 watch1=$(counter watch); list1=$(counter list)
+series >"$W/lists.after"
 cm1=$(warnings "$W/cm.log"); sched1=$(warnings "$W/sched.log")
 rc1=$(reconnects)
 echo "rig: idle to $(date -u +%H:%M:%S): $watch1 watches, $list1 lists, reconnect counter '${rc1}'"
@@ -51,7 +54,9 @@ else fail "scheduler logged reflector WATCH reconnecting $((sched1 - sched0)) ti
   sed 's/\x1b\[[0-9;]*m//g' "$W/sched.log" | grep 'reflector WATCH reconnecting' | tail -5; fi
 # Only the scrapes' own requests are not LISTs; nothing relisted.
 if [ "$list1" -eq "$list0" ]; then pass "no LIST while idle (watches resumed from their revisions)"
-else fail "$((list1 - list0)) LISTs while idle"; fi
+else fail "$((list1 - list0)) LISTs while idle"
+  awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) print "  +" d, $1 }' "$W/lists.before" "$W/lists.after"
+  sed 's/\x1b\[[0-9;]*m//g' "$W/cm.log" "$W/sched.log" | grep -E ' WARN ' | grep -v '404 Not Found' | tail -20; fi
 # 10257 is fixed; another rig on the box may own it, so this check only
 # counts when the port answered both times.
 if [ -n "$rc0" ] && [ -n "$rc1" ]; then
