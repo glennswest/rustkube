@@ -45,6 +45,43 @@ expires() {
     openssl x509 -in "$1" -noout -enddate 2>/dev/null | cut -d= -f2
 }
 
+# These functions are called as `renew_x || {...}`, and bash ignores `set -e`
+# inside anything called that way — so every step below checks itself. Before
+# #93 a failed `openssl x509 -req` fell through to the moves: the new key
+# replaced the old one, the certificate did not, the run said "untouched", and
+# the apiserver served a key that matched nothing.
+
+# Remove the scratch files of a renewal of $1.
+discard() {
+    rm -f "$1.key.new" "$1.crt.new" "$1.csr"
+}
+
+# Put $1.key.new + $1.crt.new in place, only once both exist and are a pair.
+# The key goes first and the certificate second; the apiserver refuses a pair
+# whose public keys differ, so a reload between the two keeps serving the old
+# pair, and the next one picks up the new.
+install_pair() {
+    local base="$1" kpub cpub
+    [ -s "$base.key.new" ] && [ -s "$base.crt.new" ] || {
+        echo "  $base: renewal produced no key or certificate" >&2
+        discard "$base"; return 1
+    }
+    kpub="$(openssl pkey -in "$base.key.new" -pubout 2>/dev/null)" &&
+        cpub="$(openssl x509 -in "$base.crt.new" -noout -pubkey 2>/dev/null)" &&
+        [ -n "$kpub" ] && [ "$kpub" = "$cpub" ] || {
+        echo "  $base: the new key does not match the new certificate" >&2
+        discard "$base"; return 1
+    }
+    rm -f "$base.csr"
+    mv "$base.key.new" "$base.key" || { discard "$base"; return 1; }
+    mv "$base.crt.new" "$base.crt" || {
+        # The key is already in place: a certificate that cannot be moved
+        # is an operator problem now, say so rather than "untouched".
+        echo "  $base: NEW KEY INSTALLED BUT THE CERTIFICATE COULD NOT BE — restore $base.crt.new by hand" >&2
+        return 1
+    }
+}
+
 # Renew a client cert, preserving its subject — the subject *is* the identity
 # RBAC binds to, so re-deriving it by hand is how a renewal quietly locks a
 # component out.
@@ -57,17 +94,18 @@ renew_client() {
     fi
     local subj
     subj="$(openssl x509 -in "$base.crt" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')"
-    openssl genrsa -out "$base.key.new" 2048 2>/dev/null
+    [ -n "$subj" ] || { echo "  $base: cannot read the old subject" >&2; return 1; }
+    discard "$base"
+    openssl genrsa -out "$base.key.new" 2048 2>/dev/null &&
     openssl req -new -key "$base.key.new" -subj "/$(echo "$subj" | tr ',' '/')" \
-        -out "$base.csr" 2>/dev/null
+        -out "$base.csr" 2>/dev/null &&
     openssl x509 -req -in "$base.csr" -CA ca.crt -CAkey ca.key -CAcreateserial \
         -days "$DAYS" -extfile <(printf "extendedKeyUsage=clientAuth") \
-        -out "$base.crt.new" 2>/dev/null
-    rm -f "$base.csr"
-    # Key and cert are swapped together: a moment with the new key and the old
-    # cert is a moment where nothing works.
-    mv "$base.key.new" "$base.key"
-    mv "$base.crt.new" "$base.crt"
+        -out "$base.crt.new" 2>/dev/null || {
+        echo "  $base: openssl failed" >&2
+        discard "$base"; return 1
+    }
+    install_pair "$base" || return 1
     echo "  $base: renewed, now valid until $(expires "$base.crt")  [$subj]"
     RESTART_NEEDED=1
 }
@@ -94,14 +132,16 @@ renew_serving() {
         sans="DNS:kubernetes,DNS:kubernetes.default,DNS:kubernetes.default.svc,DNS:kubernetes.default.svc.cluster.local,DNS:localhost,IP:127.0.0.1,IP:$KUBE_SVC_IP"
         echo "  $base: no SANs found on the old cert, using the defaults" >&2
     fi
-    openssl genrsa -out "$base.key.new" 2048 2>/dev/null
-    openssl req -new -key "$base.key.new" -subj "/CN=kube-apiserver" -out "$base.csr" 2>/dev/null
+    discard "$base"
+    openssl genrsa -out "$base.key.new" 2048 2>/dev/null &&
+    openssl req -new -key "$base.key.new" -subj "/CN=kube-apiserver" -out "$base.csr" 2>/dev/null &&
     openssl x509 -req -in "$base.csr" -CA ca.crt -CAkey ca.key -CAcreateserial \
         -days "$DAYS" -extfile <(printf "subjectAltName=%s\nextendedKeyUsage=serverAuth\n" "$sans") \
-        -out "$base.crt.new" 2>/dev/null
-    rm -f "$base.csr"
-    mv "$base.key.new" "$base.key"
-    mv "$base.crt.new" "$base.crt"
+        -out "$base.crt.new" 2>/dev/null || {
+        echo "  $base: openssl failed" >&2
+        discard "$base"; return 1
+    }
+    install_pair "$base" || return 1
     echo "  $base: renewed, now valid until $(expires "$base.crt")"
     echo "         SANs: $sans"
     echo "         the apiserver reloads this within 30s — no restart"
