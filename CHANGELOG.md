@@ -208,6 +208,9 @@
 
 ## [Unreleased]
 
+### 2026-10-06
+- **chore:** test-fixture credentials marked `not a secret` (inline, or `.github/secret_scanning.yml` for files that cannot hold a comment) — owner
+
 <!-- New unreleased changes go here -->
 
 ## [v0.18.0] — 2026-09-28
