@@ -941,8 +941,9 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let state = AppState {
         storage,
         crd_registry,
-            service_cidr: config.service_cidr.clone(),
-};
+        service_cidr: config.service_cidr.clone(),
+        admission: Default::default(),
+    };
     // Prometheus recorder + /metrics, shared with the other components
     // (apimachinery::metrics) so the `process_*` family and the build-info
     // gauge are the same everywhere. Unlike the scheduler and the controller

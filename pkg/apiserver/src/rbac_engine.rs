@@ -804,9 +804,11 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
         }
     }
 
-    // Insert user info for handlers to use
+    // Insert user info for handlers to use, and run the handler with the
+    // write's admission attributes so its webhooks see who asked (#82).
+    let attrs = crate::admission::RequestAttrs::of(&path, &method, request.uri().query(), user.clone());
     request.extensions_mut().insert(user);
-    Ok(next.run(request).await)
+    Ok(crate::admission::in_request(attrs, next.run(request)).await)
 }
 
 /// Check if a path is an API discovery path (no resource component).
@@ -891,7 +893,7 @@ fn parse_authorization_request(
 
 /// Parse path segments into (api_group, resource, namespace, name).
 #[allow(clippy::type_complexity)]
-fn parse_path_segments(
+pub(crate) fn parse_path_segments(
     segments: &[&str],
 ) -> Option<(
     String,

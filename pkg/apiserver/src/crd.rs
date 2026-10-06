@@ -655,6 +655,8 @@ pub async fn crd_create_ns(
     let name = crate::handlers::resource::object_name(&mut body)?;
     crate::handlers::resource::check_body_namespace(&body, &namespace)?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
+    crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
+    crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
@@ -972,6 +974,8 @@ pub async fn crd_create_cluster(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let name = crate::handlers::resource::object_name(&mut body)?;
+    crate::handlers::resource::ensure_metadata_pub(&mut body, &name, None);
+    crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, None);
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
 

@@ -18,11 +18,17 @@ use serde_json::{json, Value};
 pub async fn create_eviction(
     State(state): State<AppState>,
     Path((namespace, name)): Path<(String, String)>,
-    // Body is a policy/v1 Eviction; we don't need its fields beyond the target.
-    _body: axum::body::Bytes,
+    // Body is a policy/v1 Eviction; only admission webhooks read it.
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     let pod_key = ResourceStorage::namespaced_key("pods", &namespace, &name);
     let pod = state.storage.get(&pod_key).await?;
+    // `pods/eviction` CREATE, as upstream admits it (#82).
+    let mut eviction: Value = serde_json::from_slice(&body).unwrap_or_else(|_| {
+        json!({"apiVersion": "policy/v1", "kind": "Eviction",
+               "metadata": {"name": name, "namespace": namespace}})
+    });
+    crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut eviction), None).await?;
     let pod_labels = pod["metadata"]["labels"].clone();
 
     // Every PDB in the namespace whose selector matches this pod must permit one

@@ -359,6 +359,8 @@ pub async fn create_cluster_resource(
         &state.storage, &resource, None, &mut body, &state.service_cidr,
     )
     .await?;
+    crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
+    ensure_metadata(&mut body, &name, None);
 
     let key = ResourceStorage::cluster_key(&resource, &name);
     let obj = state.storage.create(&key, body).await?;
@@ -381,6 +383,9 @@ pub async fn create_namespaced_resource(
         &state.storage, &resource, Some(&namespace), &mut body, &state.service_cidr,
     )
         .await?;
+    // Admission webhooks (#82); a patch cannot move the object.
+    crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
+    ensure_metadata(&mut body, &name, Some(&namespace));
 
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
     let obj = state.storage.create(&key, body).await?;
@@ -535,6 +540,8 @@ pub(crate) async fn put_object(
     if key.starts_with("/registry/persistentvolumeclaims/") {
         crate::builtin_admission::pvc_update(&state.storage, &existing, &body).await?;
     }
+    crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
+    keep_server_fields(&mut body, &existing, name, namespace);
     persist_or_finalize(state, key, body).await
 }
 
@@ -683,6 +690,7 @@ pub(crate) async fn perform_delete(
     kind: &str,
 ) -> Result<Value, ApiError> {
     check_preconditions(&obj, opts)?;
+    crate::admission::admit(state, crate::admission::Operation::Delete, None, Some(&obj)).await?;
 
     // Finalizers the object must outlive: any it already carries, plus the one
     // implied by a Foreground/Orphan propagation policy.
@@ -792,6 +800,7 @@ pub(crate) async fn terminate_namespace(
 ) -> Result<Value, ApiError> {
     let key = ResourceStorage::cluster_key("namespaces", name);
     check_preconditions(&obj, opts)?;
+    crate::admission::admit(state, crate::admission::Operation::Delete, None, Some(&obj)).await?;
     // Dry-run: report the object without starting termination.
     if opts.dry_run {
         return Ok(obj);
@@ -1340,6 +1349,10 @@ where
         // the conformance suite's own ConfigMap patch sends
         // `creationTimestamp: null`, which used to delete it (#67).
         keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
+        // Admission webhooks (#82) for a PATCH and every `/status` write;
+        // again each attempt, as upstream admits inside GuaranteedUpdate.
+        crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut obj), Some(&before)).await?;
+        keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
         // Swap against what was read, whatever the patch did to the field.
         obj["metadata"]["resourceVersion"] = Value::String(read_rv);
         match persist_or_finalize(state, key, obj).await {
@@ -1412,6 +1425,8 @@ pub(crate) async fn patch_stored_object(
                     )
                         .await?;
                 }
+                crate::admission::admit(state, crate::admission::Operation::Create, Some(&mut obj), None).await?;
+                ensure_metadata(&mut obj, name, namespace);
                 match state.storage.create(key, obj).await {
                     // Somebody created it between the read and the create:
                     // apply to theirs, as the next attempt will.
@@ -2358,6 +2373,7 @@ mod status_put_tests {
             storage: Arc::new(ResourceStorage::new(Arc::new(MemStore::default()))),
             crd_registry: Arc::new(CrdRegistry::new()),
             service_cidr: "10.96.0.0/12".into(),
+            admission: Default::default(),
         }
     }
 

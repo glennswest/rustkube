@@ -1,777 +1,1000 @@
-//! Admission webhook client (mutating + validating).
+//! Admission webhooks: `MutatingWebhookConfiguration` and
+//! `ValidatingWebhookConfiguration`, called on every write (#82).
 //!
-//! **Not wired into the request path** (#82): webhook configurations are
-//! stored and served, but no handler calls this, so no webhook is ever
-//! called. The only admission that runs is `builtin_admission`.
+//! This module used to be a webhook client that no handler called, so a
+//! stored configuration was accepted and had no effect: a validating policy
+//! that should refuse a request let it through, and a mutating one (cert-
+//! manager's, Kyverno's, a defaulting webhook) never ran.
 //!
-//! What it implements:
-//! 1. Mutating webhooks (can modify objects)
-//! 2. Validating webhooks (can accept/reject)
+//! **How a write reaches it.** The RBAC middleware, once a request is
+//! authorized, runs the rest of the request inside [`in_request`], which
+//! records who is asking and what for (verb, group/version/resource,
+//! subresource, namespace, name, dryRun) in a task-local. The write paths
+//! call [`admit`] with the object they are about to store, after the built-in
+//! admission (`builtin_admission`), as upstream runs its built-in plugins
+//! before the webhooks:
 //!
-//! Webhooks are configured via MutatingWebhookConfiguration and ValidatingWebhookConfiguration
-//! resources. Each webhook has rules for matching resources and operations.
+//! - CREATE: built-in and custom-resource POST, server-side apply's upsert,
+//!   `pods/eviction`;
+//! - UPDATE: PUT (`put_object`), and everything under `guaranteed_update` —
+//!   PATCH of an object, PUT and PATCH of `/status` (with `subResource`
+//!   `status`), approval;
+//! - DELETE: DELETE of one object, and each object of a `deletecollection`.
+//!
+//! A write a handler makes that the request did not name — the Namespace a
+//! ProjectRequest creates, the Pod an eviction deletes — is not admitted
+//! under the request's attributes: [`admit`] checks the verb and the name.
+//! Writes the apiserver makes for itself (bootstrap, manifests) have no
+//! request and are not admitted, as upstream's are not.
+//!
+//! **What is honoured**, as upstream's dispatcher does: configurations in
+//! name order, webhooks in their order; `rules` (operations, apiGroups,
+//! apiVersions, resources with subresources and wildcards, scope);
+//! `namespaceSelector` (the namespace's labels, or a Namespace's own);
+//! `objectSelector` (new or old object); `failurePolicy` (default `Fail`);
+//! `timeoutSeconds` (default 10, 1–30); `sideEffects` against a dry run;
+//! `reinvocationPolicy: IfNeeded`; JSONPatch responses; `warnings` as
+//! `Warning` headers. Validating webhooks are called in parallel; the first
+//! refusal in configuration order is the answer. A webhook is reached by
+//! `clientConfig.url`, or by `service`, through the Service's ClusterIP with
+//! TLS verified for `<name>.<namespace>.svc` against `caBundle` (upstream's
+//! default resolver).
+//!
+//! **Not honoured:** `matchConditions` are CEL, which this apiserver does not
+//! evaluate; a webhook that has them is called as if they all matched (its
+//! own handler still sees the request), never skipped. `matchPolicy` is
+//! moot while each resource is served at one version. Only AdmissionReview
+//! `v1` is spoken. Objects in `admissionregistration.k8s.io` are never sent
+//! to webhooks (upstream exempts them, so a broken webhook cannot lock out
+//! its own repair), nor are `events.k8s.io` writes, which are stored in
+//! their core/v1 form.
 
+use crate::auth::UserInfo;
 use crate::error::ApiError;
+use crate::handlers::AppState;
 use crate::storage::ResourceStorage;
-use serde::{Deserialize, Serialize};
+use crate::watch_cache::SnapshotVersion;
+use axum::http::StatusCode;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::future::Future;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, warn};
 
-/// Admission review request/response envelope (K8s admission.k8s.io/v1)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionReview {
-    pub api_version: String,
-    pub kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request: Option<AdmissionRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response: Option<AdmissionResponse>,
+tokio::task_local! {
+    static REQUEST: Arc<RequestAttrs>;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionRequest {
-    pub uid: String,
-    pub kind: GroupVersionKind,
-    pub resource: GroupVersionResource,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sub_resource: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_kind: Option<GroupVersionKind>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_resource: Option<GroupVersionResource>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_sub_resource: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    pub operation: String,
-    pub user_info: UserInfo,
-    pub object: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_object: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dry_run: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub options: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GroupVersionKind {
-    pub group: String,
-    pub version: String,
-    pub kind: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GroupVersionResource {
+/// Who asked for a write, and what for: upstream's admission attributes.
+#[derive(Debug)]
+pub struct RequestAttrs {
+    pub user: UserInfo,
+    /// `create`, `update`, `patch` or `delete`.
+    pub verb: &'static str,
     pub group: String,
     pub version: String,
     pub resource: String,
+    pub subresource: Option<String>,
+    pub namespace: Option<String>,
+    pub name: Option<String>,
+    pub dry_run: bool,
+    warnings: Mutex<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UserInfo {
-    pub username: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uid: Option<String>,
-    #[serde(default)]
-    pub groups: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionResponse {
-    pub uid: String,
-    pub allowed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<ResponseStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub patch: Option<String>, // base64-encoded JSON patch
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub patch_type: Option<String>, // "JSONPatch"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audit_annotations: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub warnings: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseStatus {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<i32>,
-}
-
-/// Webhook configuration (parsed from MutatingWebhookConfiguration or ValidatingWebhookConfiguration)
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct WebhookConfig {
-    pub name: String,
-    pub client_config: ClientConfig,
-    pub rules: Vec<RuleWithOperations>,
-    pub failure_policy: FailurePolicy,
-    pub timeout_seconds: Option<i32>,
-    pub namespace_selector: Option<Value>,
-    pub object_selector: Option<Value>,
-    pub side_effects: Option<String>,
-    pub admission_review_versions: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ClientConfig {
-    pub url: Option<String>,
-    pub service: Option<ServiceReference>,
-    pub ca_bundle: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ServiceReference {
-    pub namespace: String,
-    pub name: String,
-    pub path: Option<String>,
-    pub port: Option<i32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RuleWithOperations {
-    pub operations: Vec<String>, // CREATE, UPDATE, DELETE, CONNECT
-    pub api_groups: Vec<String>,
-    pub api_versions: Vec<String>,
-    pub resources: Vec<String>,
-    pub scope: Option<String>, // Cluster, Namespaced, *
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FailurePolicy {
-    Ignore,
-    Fail,
-}
-
-/// Admission webhook chain (mutating + validating)
-pub struct AdmissionChain {
-    mutating: Vec<WebhookConfig>,
-    validating: Vec<WebhookConfig>,
-    client: reqwest::Client,
-}
-
-impl AdmissionChain {
-    /// Create a new empty admission chain with default HTTP client
-    pub fn new() -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
-        Self {
-            mutating: Vec::new(),
-            validating: Vec::new(),
-            client,
-        }
-    }
-
-    /// Load webhooks from storage
-    pub async fn load_webhooks(storage: &ResourceStorage) -> Self {
-        let mut chain = Self::new();
-
-        // Load mutating webhooks
-        let prefix = ResourceStorage::cluster_prefix("mutatingwebhookconfigurations");
-        match storage.list(&prefix, 500, None).await {
-            Ok((configs, _, _)) => {
-                for config in &configs {
-                    if let Some(webhooks) = parse_mutating_webhooks(config) {
-                        chain.mutating.extend(webhooks);
-                    }
-                }
-                debug!("Loaded {} mutating webhooks", chain.mutating.len());
-            }
-            Err(e) => {
-                warn!("Failed to load mutating webhooks: {}", e);
-            }
-        }
-
-        // Load validating webhooks
-        let prefix = ResourceStorage::cluster_prefix("validatingwebhookconfigurations");
-        match storage.list(&prefix, 500, None).await {
-            Ok((configs, _, _)) => {
-                for config in &configs {
-                    if let Some(webhooks) = parse_validating_webhooks(config) {
-                        chain.validating.extend(webhooks);
-                    }
-                }
-                debug!("Loaded {} validating webhooks", chain.validating.len());
-            }
-            Err(e) => {
-                warn!("Failed to load validating webhooks: {}", e);
-            }
-        }
-
-        chain
-    }
-
-    /// Run mutating webhooks against an object
-    ///
-    /// Applies patches from webhooks in order. Returns error if any webhook
-    /// fails and has failurePolicy=Fail.
-    pub async fn run_mutating(
-        &self,
-        obj: &mut Value,
-        kind: &str,
-        operation: &str,
-        namespace: Option<&str>,
-    ) -> Result<(), ApiError> {
-        for webhook in &self.mutating {
-            if !matches_rules(&webhook.rules, kind, operation) {
-                continue;
-            }
-
-            debug!(
-                "Running mutating webhook: {} for {}/{}",
-                webhook.name, kind, operation
-            );
-
-            match self.call_webhook(webhook, obj, None, kind, operation, namespace).await {
-                Ok(response) => {
-                    if !response.allowed {
-                        let msg = response
-                            .status
-                            .and_then(|s| s.message)
-                            .unwrap_or_else(|| "Webhook denied request".to_string());
-                        return Err(ApiError::forbidden(&msg));
-                    }
-
-                    // Apply JSON patch if provided
-                    if let Some(patch_b64) = response.patch {
-                        if response.patch_type.as_deref() == Some("JSONPatch") {
-                            if let Err(e) = apply_json_patch(obj, &patch_b64) {
-                                warn!("Failed to apply patch from webhook {}: {}", webhook.name, e);
-                                if webhook.failure_policy == FailurePolicy::Fail {
-                                    return Err(ApiError::internal(&format!(
-                                        "Webhook patch failed: {}",
-                                        e
-                                    )));
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Mutating webhook {} failed: {}", webhook.name, e);
-                    if webhook.failure_policy == FailurePolicy::Fail {
-                        return Err(e);
-                    }
-                    // Ignore failure and continue
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Run validating webhooks against an object
-    ///
-    /// Returns error if any webhook rejects the object or fails with failurePolicy=Fail.
-    pub async fn run_validating(
-        &self,
-        obj: &Value,
-        kind: &str,
-        operation: &str,
-        namespace: Option<&str>,
-    ) -> Result<(), ApiError> {
-        for webhook in &self.validating {
-            if !matches_rules(&webhook.rules, kind, operation) {
-                continue;
-            }
-
-            debug!(
-                "Running validating webhook: {} for {}/{}",
-                webhook.name, kind, operation
-            );
-
-            match self.call_webhook(webhook, obj, None, kind, operation, namespace).await {
-                Ok(response) => {
-                    if !response.allowed {
-                        let msg = response
-                            .status
-                            .and_then(|s| s.message)
-                            .unwrap_or_else(|| "Webhook denied request".to_string());
-                        return Err(ApiError::forbidden(&msg));
-                    }
-                }
-                Err(e) => {
-                    warn!("Validating webhook {} failed: {}", webhook.name, e);
-                    if webhook.failure_policy == FailurePolicy::Fail {
-                        return Err(e);
-                    }
-                    // Ignore failure and continue
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Call a webhook via HTTP POST
-    async fn call_webhook(
-        &self,
-        webhook: &WebhookConfig,
-        obj: &Value,
-        old_obj: Option<&Value>,
-        kind: &str,
-        operation: &str,
-        namespace: Option<&str>,
-    ) -> Result<AdmissionResponse, ApiError> {
-        let url = webhook
-            .client_config
-            .url
-            .as_ref()
-            .ok_or_else(|| ApiError::internal("Webhook URL not configured"))?;
-
-        let request = AdmissionRequest {
-            uid: uuid::Uuid::new_v4().to_string(),
-            kind: GroupVersionKind {
-                group: "".to_string(), // TODO: parse from kind
-                version: "v1".to_string(),
-                kind: kind.to_string(),
-            },
-            resource: GroupVersionResource {
-                group: "".to_string(),
-                version: "v1".to_string(),
-                resource: kind.to_lowercase() + "s",
-            },
-            sub_resource: None,
-            request_kind: None,
-            request_resource: None,
-            request_sub_resource: None,
-            name: obj.get("metadata").and_then(|m| m.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()),
-            namespace: namespace.map(|s| s.to_string()),
-            operation: operation.to_uppercase(),
-            user_info: UserInfo {
-                username: "system:admin".to_string(), // TODO: pass real user
-                uid: None,
-                groups: vec!["system:masters".to_string()],
-                extra: None,
-            },
-            object: obj.clone(),
-            old_object: old_obj.cloned(),
-            dry_run: None,
-            options: None,
+impl RequestAttrs {
+    /// The attributes of a write to the API, or `None` for anything else.
+    pub fn of(
+        path: &str,
+        method: &axum::http::Method,
+        query: Option<&str>,
+        user: UserInfo,
+    ) -> Option<Self> {
+        let verb = match method.as_str() {
+            "POST" => "create",
+            "PUT" => "update",
+            "PATCH" => "patch",
+            "DELETE" => "delete",
+            _ => return None,
         };
-
-        let review = AdmissionReview {
-            api_version: "admission.k8s.io/v1".to_string(),
-            kind: "AdmissionReview".to_string(),
-            request: Some(request),
-            response: None,
+        let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        let version = match segments.as_slice() {
+            ["api", v, ..] => v.to_string(),
+            ["apis", _, v, ..] => v.to_string(),
+            _ => return None,
         };
-
-        let timeout = webhook
-            .timeout_seconds
-            .map(|s| Duration::from_secs(s as u64))
-            .unwrap_or(Duration::from_secs(10));
-
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .unwrap_or_else(|_| self.client.clone());
-
-        let resp = client
-            .post(url)
-            .json(&review)
-            .send()
-            .await
-            .map_err(|e| ApiError::internal(&format!("Webhook request failed: {}", e)))?;
-
-        if !resp.status().is_success() {
-            return Err(ApiError::internal(&format!(
-                "Webhook returned status {}",
-                resp.status()
-            )));
-        }
-
-        let review_resp: AdmissionReview = resp
-            .json()
-            .await
-            .map_err(|e| ApiError::internal(&format!("Failed to parse webhook response: {}", e)))?;
-
-        review_resp
-            .response
-            .ok_or_else(|| ApiError::internal("Webhook response missing"))
+        let (group, resource, namespace, name, subresource) =
+            crate::rbac_engine::parse_path_segments(&segments)?;
+        // `/api/v1/namespaces/{name}` is read as the namespace itself, for
+        // RBAC; a Namespace is cluster-scoped and has no namespace here.
+        let namespace = namespace.filter(|_| resource != "namespaces");
+        let dry_run = form_urlencoded::parse(query.unwrap_or("").as_bytes())
+            .any(|(k, v)| k == "dryRun" && v == "All");
+        Some(Self {
+            user,
+            verb,
+            group,
+            version,
+            resource,
+            subresource,
+            namespace,
+            name,
+            dry_run,
+            warnings: Mutex::new(Vec::new()),
+        })
     }
 }
 
-impl Default for AdmissionChain {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Check if webhook rules match the given resource and operation
-fn matches_rules(rules: &[RuleWithOperations], kind: &str, operation: &str) -> bool {
-    if rules.is_empty() {
-        return true; // No rules = match all
-    }
-
-    for rule in rules {
-        // Check operation
-        if !rule.operations.is_empty()
-            && !rule.operations.iter().any(|op| op == "*" || op.eq_ignore_ascii_case(operation))
-        {
-            continue;
-        }
-
-        // Check resource (simplistic matching for now)
-        let resource_name = kind.to_lowercase() + "s";
-        if !rule.resources.is_empty()
-            && !rule
-                .resources
-                .iter()
-                .any(|r| r == "*" || r.eq_ignore_ascii_case(&resource_name))
-        {
-            continue;
-        }
-
-        // Match found
-        return true;
-    }
-
-    false
-}
-
-/// Apply a base64-encoded JSON patch to an object
-fn apply_json_patch(obj: &mut Value, patch_b64: &str) -> Result<(), String> {
-    let patch_bytes = {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(patch_b64)
-            .map_err(|e| format!("Invalid base64: {}", e))?
+/// Run a request's handler with its admission attributes, and return the
+/// webhooks' warnings as `Warning` headers, as upstream does.
+pub async fn in_request(
+    attrs: Option<RequestAttrs>,
+    handler: impl Future<Output = axum::response::Response>,
+) -> axum::response::Response {
+    let Some(attrs) = attrs else {
+        return handler.await;
     };
-
-    let patch_ops: Vec<Value> =
-        serde_json::from_slice(&patch_bytes).map_err(|e| format!("Invalid JSON patch: {}", e))?;
-
-    for op in patch_ops {
-        apply_patch_operation(obj, &op)?;
-    }
-
-    Ok(())
-}
-
-/// Apply a single JSON patch operation
-fn apply_patch_operation(obj: &mut Value, op: &Value) -> Result<(), String> {
-    let op_type = op
-        .get("op")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing op field")?;
-    let path = op
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing path field")?;
-
-    match op_type {
-        "add" | "replace" => {
-            let value = op.get("value").ok_or("Missing value field")?.clone();
-            set_json_pointer(obj, path, value)?;
-        }
-        "remove" => {
-            remove_json_pointer(obj, path)?;
-        }
-        _ => {
-            // copy, move, test not implemented yet
-            warn!("Unsupported patch operation: {}", op_type);
+    let attrs = Arc::new(attrs);
+    let mut response = REQUEST.scope(attrs.clone(), handler).await;
+    let warnings = std::mem::take(&mut *attrs.warnings.lock().unwrap());
+    for warning in warnings {
+        if let Ok(value) = axum::http::HeaderValue::from_str(&warning_header(&warning)) {
+            response.headers_mut().append(axum::http::header::WARNING, value);
         }
     }
-
-    Ok(())
+    response
 }
 
-/// Set a value at a JSON pointer path
-fn set_json_pointer(obj: &mut Value, path: &str, value: Value) -> Result<(), String> {
-    if path.is_empty() {
-        *obj = value;
+/// `299 - "<text>"`, the text quoted and kept to printable ASCII.
+fn warning_header(text: &str) -> String {
+    let clean: String = text
+        .chars()
+        .map(|c| if c.is_ascii() && !c.is_ascii_control() { c } else { ' ' })
+        .collect::<String>()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    format!("299 - \"{clean}\"")
+}
+
+/// What a write does, as webhooks' `rules.operations` name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Create,
+    Update,
+    Delete,
+}
+
+impl Operation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Operation::Create => "CREATE",
+            Operation::Update => "UPDATE",
+            Operation::Delete => "DELETE",
+        }
+    }
+    fn options_kind(self) -> &'static str {
+        match self {
+            Operation::Create => "CreateOptions",
+            Operation::Update => "UpdateOptions",
+            Operation::Delete => "DeleteOptions",
+        }
+    }
+}
+
+/// Run the mutating then the validating webhooks over a write the current
+/// request is making. `object` is what will be stored (absent for DELETE),
+/// and a mutating webhook's patch is applied to it; `old` is what is stored
+/// now (absent for CREATE).
+///
+/// Does nothing outside a request, for a write the request did not name, or
+/// when no webhook is configured.
+pub async fn admit(
+    state: &AppState,
+    op: Operation,
+    object: Option<&mut Value>,
+    old: Option<&Value>,
+) -> Result<(), ApiError> {
+    let Ok(request) = REQUEST.try_with(Arc::clone) else {
+        return Ok(());
+    };
+    let verb_matches = match op {
+        // Server-side apply creates a missing object from a PATCH.
+        Operation::Create => matches!(request.verb, "create" | "patch"),
+        Operation::Update => matches!(request.verb, "update" | "patch"),
+        Operation::Delete => request.verb == "delete",
+    };
+    if !verb_matches {
+        return Ok(());
+    }
+    if let Some(name) = &request.name {
+        let named = object
+            .as_deref()
+            .or(old)
+            .and_then(|o| o["metadata"]["name"].as_str());
+        if named.is_some_and(|n| n != name) {
+            return Ok(());
+        }
+    }
+    if matches!(
+        request.group.as_str(),
+        "admissionregistration.k8s.io" | "events.k8s.io"
+    ) {
+        return Ok(());
+    }
+    let mutating = state.admission.hooks(&state.storage, MUTATING).await;
+    let validating = state.admission.hooks(&state.storage, VALIDATING).await;
+    if mutating.is_empty() && validating.is_empty() {
         return Ok(());
     }
 
-    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let mut current = obj;
+    let mut current = object.as_deref().cloned().unwrap_or(Value::Null);
+    let identity = (
+        current["metadata"]["name"].clone(),
+        current["metadata"]["namespace"].clone(),
+    );
+    let mut call = Call {
+        state,
+        request: &request,
+        op,
+        old,
+        namespace_labels: None,
+    };
 
-    for (i, part) in parts.iter().enumerate() {
-        let is_last = i == parts.len() - 1;
-
-        if is_last {
-            if let Some(obj_map) = current.as_object_mut() {
-                obj_map.insert(part.to_string(), value.clone());
-            } else if let Some(arr) = current.as_array_mut() {
-                if *part == "-" {
-                    arr.push(value.clone());
-                } else if let Ok(idx) = part.parse::<usize>() {
-                    if idx <= arr.len() {
-                        arr.insert(idx, value.clone());
-                    } else {
-                        return Err(format!("Array index out of bounds: {}", idx));
-                    }
-                } else {
-                    return Err(format!("Invalid array index: {}", part));
-                }
-            } else {
-                return Err("Path does not exist".to_string());
+    // Mutating, in order; then once more for each `IfNeeded` webhook whose
+    // output a later webhook changed.
+    let mut reinvoke: Vec<(usize, Value)> = Vec::new();
+    for (i, hook) in mutating.iter().enumerate() {
+        if call.matches(hook, &current).await {
+            call.mutate(hook, &mut current).await?;
+            if hook.reinvoke_if_needed {
+                reinvoke.push((i, current.clone()));
             }
-        } else if let Some(obj_map) = current.as_object_mut() {
-            current = obj_map
-                .entry(part.to_string())
-                .or_insert_with(|| json!({}));
-        } else {
-            return Err("Path does not exist".to_string());
         }
     }
+    for (i, after) in reinvoke {
+        if after != current {
+            let hook = &mutating[i];
+            if call.matches(hook, &current).await {
+                call.mutate(hook, &mut current).await?;
+            }
+        }
+    }
+    if let Some(object) = object {
+        // A patch cannot move the object: its key was chosen by its name.
+        if current["metadata"].is_object() {
+            for (field, value) in [("name", &identity.0), ("namespace", &identity.1)] {
+                if value.is_string() {
+                    current["metadata"][field] = value.clone();
+                }
+            }
+        }
+        *object = current.clone();
+    }
 
+    // Validating, in parallel; the first refusal in order is the answer.
+    let mut matched = Vec::new();
+    for hook in validating.iter() {
+        if call.matches(hook, &current).await {
+            matched.push(hook);
+        }
+    }
+    let call = &call;
+    let current = &current;
+    let results = futures::future::join_all(
+        matched
+            .iter()
+            .map(|hook| async move { (*hook, call.invoke(hook, current).await) }),
+    )
+    .await;
+    for (hook, result) in results {
+        match result {
+            Ok(response) => {
+                call.take_warnings(&response);
+                if response["allowed"].as_bool() != Some(true) {
+                    return Err(denied(&hook.name, &response["status"]));
+                }
+            }
+            Err(e) => call.failed(hook, e)?,
+        }
+    }
     Ok(())
 }
 
-/// Remove a value at a JSON pointer path
-fn remove_json_pointer(obj: &mut Value, path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("Cannot remove root".to_string());
-    }
+const MUTATING: &str = "/registry/mutatingwebhookconfigurations/";
+const VALIDATING: &str = "/registry/validatingwebhookconfigurations/";
 
-    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let mut current = obj;
-
-    for (i, part) in parts.iter().enumerate() {
-        let is_last = i == parts.len() - 1;
-
-        if is_last {
-            if let Some(obj_map) = current.as_object_mut() {
-                obj_map.remove(*part);
-            } else if let Some(arr) = current.as_array_mut() {
-                if let Ok(idx) = part.parse::<usize>() {
-                    if idx < arr.len() {
-                        arr.remove(idx);
-                    } else {
-                        return Err(format!("Array index out of bounds: {}", idx));
-                    }
-                } else {
-                    return Err(format!("Invalid array index: {}", part));
-                }
-            } else {
-                return Err("Path does not exist".to_string());
-            }
-            return Ok(());
-        } else if let Some(obj_map) = current.as_object_mut() {
-            current = obj_map
-                .get_mut(*part)
-                .ok_or("Path does not exist")?;
-        } else {
-            return Err("Path does not exist".to_string());
-        }
-    }
-
-    Ok(())
+/// One admission check in flight.
+struct Call<'a> {
+    state: &'a AppState,
+    request: &'a RequestAttrs,
+    op: Operation,
+    old: Option<&'a Value>,
+    /// The request namespace's labels, read once when a selector needs them.
+    namespace_labels: Option<Value>,
 }
 
-/// Parse mutating webhooks from a MutatingWebhookConfiguration resource
-fn parse_mutating_webhooks(config: &Value) -> Option<Vec<WebhookConfig>> {
-    let webhooks = config.get("webhooks")?.as_array()?;
-    let mut result = Vec::new();
-
-    for webhook in webhooks {
-        if let Some(wh) = parse_webhook(webhook) {
-            result.push(wh);
+impl Call<'_> {
+    /// Does `hook` want this request? Rules, then the selectors.
+    async fn matches(&mut self, hook: &Hook, object: &Value) -> bool {
+        let r = self.request;
+        let namespaced = r.namespace.is_some();
+        if !hook.rules.iter().any(|rule| {
+            rule.matches(
+                self.op,
+                &r.group,
+                &r.version,
+                &r.resource,
+                r.subresource.as_deref().unwrap_or(""),
+                namespaced,
+            )
+        }) {
+            return false;
         }
-    }
-
-    Some(result)
-}
-
-/// Parse validating webhooks from a ValidatingWebhookConfiguration resource
-fn parse_validating_webhooks(config: &Value) -> Option<Vec<WebhookConfig>> {
-    let webhooks = config.get("webhooks")?.as_array()?;
-    let mut result = Vec::new();
-
-    for webhook in webhooks {
-        if let Some(wh) = parse_webhook(webhook) {
-            result.push(wh);
-        }
-    }
-
-    Some(result)
-}
-
-/// Parse a single webhook from configuration
-fn parse_webhook(webhook: &Value) -> Option<WebhookConfig> {
-    let name = webhook.get("name")?.as_str()?.to_string();
-
-    let client_config = webhook.get("clientConfig")?;
-    let url = client_config.get("url").and_then(|u| u.as_str()).map(|s| s.to_string());
-    let service = client_config.get("service").and_then(|s| {
-        Some(ServiceReference {
-            namespace: s.get("namespace")?.as_str()?.to_string(),
-            name: s.get("name")?.as_str()?.to_string(),
-            path: s.get("path").and_then(|p| p.as_str()).map(|s| s.to_string()),
-            port: s.get("port").and_then(|p| p.as_i64()).map(|p| p as i32),
-        })
-    });
-
-    let failure_policy = webhook
-        .get("failurePolicy")
-        .and_then(|f| f.as_str())
-        .map(|s| {
-            if s.eq_ignore_ascii_case("Ignore") {
-                FailurePolicy::Ignore
-            } else {
-                FailurePolicy::Fail
-            }
-        })
-        .unwrap_or(FailurePolicy::Fail);
-
-    let timeout_seconds = webhook
-        .get("timeoutSeconds")
-        .and_then(|t| t.as_i64())
-        .map(|t| t as i32);
-
-    let rules = webhook
-        .get("rules")
-        .and_then(|r| r.as_array())
-        .map(|rules_arr| {
-            rules_arr
+        if let Some(selector) = &hook.object_selector {
+            let objects = [Some(object).filter(|o| !o.is_null()), self.old];
+            if !objects
                 .iter()
-                .filter_map(|rule| {
-                    Some(RuleWithOperations {
-                        operations: rule
-                            .get("operations")?
-                            .as_array()?
-                            .iter()
-                            .filter_map(|o| o.as_str().map(|s| s.to_string()))
-                            .collect(),
-                        api_groups: rule
-                            .get("apiGroups")
-                            .and_then(|g| g.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        api_versions: rule
-                            .get("apiVersions")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        resources: rule
-                            .get("resources")?
-                            .as_array()?
-                            .iter()
-                            .filter_map(|r| r.as_str().map(|s| s.to_string()))
-                            .collect(),
-                        scope: rule.get("scope").and_then(|s| s.as_str()).map(|s| s.to_string()),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+                .flatten()
+                .any(|o| apimachinery::selector::matches(selector, &labels_of(o)))
+            {
+                return false;
+            }
+        }
+        if let Some(selector) = &hook.namespace_selector {
+            let labels = if r.resource == "namespaces" && r.namespace.is_none() {
+                // A Namespace is matched by its own labels.
+                labels_of(if object.is_null() { self.old.unwrap_or(object) } else { object })
+            } else if let Some(ns) = &r.namespace {
+                self.namespace_labels(ns).await
+            } else {
+                // Other cluster-scoped objects are never filtered by it.
+                return true;
+            };
+            if !apimachinery::selector::matches(selector, &labels) {
+                return false;
+            }
+        }
+        true
+    }
 
-    let admission_review_versions = webhook
-        .get("admissionReviewVersions")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_else(|| vec!["v1".to_string()]);
+    async fn namespace_labels(&mut self, ns: &str) -> Value {
+        if let Some(labels) = &self.namespace_labels {
+            return labels.clone();
+        }
+        let key = ResourceStorage::cluster_key("namespaces", ns);
+        let cached = self
+            .state
+            .storage
+            .watch_cache()
+            .get("/registry/namespaces/", &key)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+        let namespace = match cached {
+            Some(n) => Some(n),
+            None => self.state.storage.get(&key).await.ok(),
+        };
+        let labels = namespace.map(|n| labels_of(&n)).unwrap_or_else(|| json!({}));
+        self.namespace_labels = Some(labels.clone());
+        labels
+    }
 
-    Some(WebhookConfig {
-        name,
-        client_config: ClientConfig {
-            url,
+    /// Call a mutating webhook and apply its patch.
+    async fn mutate(&self, hook: &Hook, object: &mut Value) -> Result<(), ApiError> {
+        let response = match self.invoke(hook, object).await {
+            Ok(r) => r,
+            Err(e) => return self.failed(hook, e),
+        };
+        self.take_warnings(&response);
+        if response["allowed"].as_bool() != Some(true) {
+            return Err(denied(&hook.name, &response["status"]));
+        }
+        let Some(patch) = response["patch"].as_str().filter(|p| !p.is_empty()) else {
+            return Ok(());
+        };
+        if self.op == Operation::Delete {
+            return Ok(());
+        }
+        // A patch that cannot be applied is an error whatever the failure
+        // policy, as upstream: the webhook answered, and answered wrongly.
+        let bad = |why: String| {
+            ApiError::internal(&format!(
+                "Internal error occurred: admission webhook \"{}\" returned an invalid patch: {why}",
+                hook.name
+            ))
+        };
+        match response["patchType"].as_str() {
+            Some("JSONPatch") => {}
+            other => return Err(bad(format!("unsupported patchType {other:?}"))),
+        }
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(patch)
+            .map_err(|e| bad(e.to_string()))?;
+        let patch: json_patch::Patch =
+            serde_json::from_slice(&bytes).map_err(|e| bad(e.to_string()))?;
+        let mut patched = object.clone();
+        json_patch::patch(&mut patched, &patch).map_err(|e| bad(e.to_string()))?;
+        *object = patched;
+        Ok(())
+    }
+
+    /// A call that did not answer: refused under `failurePolicy: Fail`,
+    /// passed over under `Ignore`.
+    fn failed(&self, hook: &Hook, error: CallError) -> Result<(), ApiError> {
+        match error {
+            CallError::Refused(e) => Err(e),
+            CallError::Failed(why) if hook.fail_closed => Err(ApiError::internal(&format!(
+                "Internal error occurred: failed calling webhook \"{}\": {why}",
+                hook.name
+            ))),
+            CallError::Failed(why) => {
+                warn!(webhook = %hook.name, %why, "admission webhook failed; ignored (failurePolicy Ignore)");
+                Ok(())
+            }
+        }
+    }
+
+    fn take_warnings(&self, response: &Value) {
+        if let Some(ws) = response["warnings"].as_array() {
+            let mut out = self.request.warnings.lock().unwrap();
+            out.extend(ws.iter().filter_map(Value::as_str).map(str::to_owned));
+        }
+    }
+
+    /// Send the AdmissionReview and return its `response`.
+    async fn invoke(&self, hook: &Hook, object: &Value) -> Result<Value, CallError> {
+        let r = self.request;
+        // Only DELETE honours dryRun in this apiserver; telling a webhook
+        // a create is a dry run when it will be stored would be a lie.
+        let dry_run = r.dry_run && self.op == Operation::Delete;
+        if dry_run && !matches!(hook.side_effects.as_str(), "None" | "NoneOnDryRun") {
+            return Err(CallError::Refused(ApiError::bad_request(&format!(
+                "admission webhook \"{}\" does not support dry run",
+                hook.name
+            ))));
+        }
+        if !hook.review_versions.is_empty() && !hook.review_versions.iter().any(|v| v == "v1") {
+            return Err(CallError::Failed(format!(
+                "webhook does not accept admission.k8s.io/v1 AdmissionReview (accepts {:?})",
+                hook.review_versions
+            )));
+        }
+        let uid = uuid::Uuid::new_v4().to_string();
+        let review = json!({
+            "apiVersion": "admission.k8s.io/v1",
+            "kind": "AdmissionReview",
+            "request": review_request(r, self.op, &uid, object, self.old, dry_run),
+        });
+        let (url, client) = self
+            .state
+            .admission
+            .endpoint(&self.state.storage, hook)
+            .await
+            .map_err(CallError::Failed)?;
+        debug!(webhook = %hook.name, %url, op = self.op.as_str(), "calling admission webhook");
+        let answer = client
+            .post(&url)
+            .timeout(hook.timeout)
+            .json(&review)
+            .send()
+            .await
+            .map_err(|e| CallError::Failed(format!("Post \"{url}\": {}", error_chain(&e))))?;
+        let status = answer.status();
+        if !status.is_success() {
+            return Err(CallError::Failed(format!("webhook answered HTTP {status}")));
+        }
+        let body: Value = answer
+            .json()
+            .await
+            .map_err(|e| CallError::Failed(format!("reading the AdmissionReview answer: {e}")))?;
+        let response = body["response"].clone();
+        if !response.is_object() {
+            return Err(CallError::Failed("the AdmissionReview answer has no response".into()));
+        }
+        if response["uid"].as_str() != Some(uid.as_str()) {
+            return Err(CallError::Failed(format!(
+                "expected response.uid={uid:?}, got {}",
+                response["uid"]
+            )));
+        }
+        Ok(response)
+    }
+}
+
+/// Why a webhook gave no answer.
+enum CallError {
+    /// Not called at all, whatever the failure policy (a dry run it cannot do).
+    Refused(ApiError),
+    /// Called and failed: unreachable, timed out, a bad answer.
+    Failed(String),
+}
+
+/// The `request` half of an AdmissionReview.
+fn review_request(
+    r: &RequestAttrs,
+    op: Operation,
+    uid: &str,
+    object: &Value,
+    old: Option<&Value>,
+    dry_run: bool,
+) -> Value {
+    // The kind is the object's own: a `/status` write is of the parent kind,
+    // a `pods/eviction` of an Eviction.
+    let typed = Some(object).filter(|o| !o.is_null()).or(old);
+    let (kind_group, kind_version, kind) = match typed {
+        Some(o) => {
+            let api_version = o["apiVersion"].as_str().unwrap_or("");
+            let (g, v) = api_version.rsplit_once('/').unwrap_or(("", api_version));
+            let kind = o["kind"].as_str().map(str::to_owned).unwrap_or_else(|| {
+                crate::handlers::resource::resource_to_kind(&r.resource)
+            });
+            let (g, v) = if v.is_empty() { (r.group.as_str(), r.version.as_str()) } else { (g, v) };
+            (g.to_string(), v.to_string(), kind)
+        }
+        None => (
+            r.group.clone(),
+            r.version.clone(),
+            crate::handlers::resource::resource_to_kind(&r.resource),
+        ),
+    };
+    let gvk = json!({"group": kind_group, "version": kind_version, "kind": kind});
+    let gvr = json!({"group": r.group, "version": r.version, "resource": r.resource});
+    let name = r
+        .name
+        .clone()
+        .or_else(|| typed.and_then(|o| o["metadata"]["name"].as_str()).map(str::to_owned));
+    let mut req = json!({
+        "uid": uid,
+        "kind": gvk,
+        "resource": gvr,
+        "requestKind": gvk,
+        "requestResource": gvr,
+        "operation": op.as_str(),
+        "userInfo": {"username": r.user.username, "groups": r.user.groups},
+        "object": object,
+        "oldObject": old.cloned().unwrap_or(Value::Null),
+        "dryRun": dry_run,
+        "options": {"apiVersion": "meta.k8s.io/v1", "kind": op.options_kind()},
+    });
+    if let Some(sub) = &r.subresource {
+        req["subResource"] = json!(sub);
+        req["requestSubResource"] = json!(sub);
+    }
+    if let Some(name) = name {
+        req["name"] = json!(name);
+    }
+    if let Some(ns) = &r.namespace {
+        req["namespace"] = json!(ns);
+    }
+    req
+}
+
+/// A refusal, worded and coded as upstream's `ToStatusErr`.
+fn denied(webhook: &str, status: &Value) -> ApiError {
+    let by = format!("admission webhook \"{webhook}\" denied the request");
+    let message = status["message"].as_str().filter(|m| !m.is_empty());
+    let reason = status["reason"].as_str().filter(|m| !m.is_empty());
+    let message = match (message, reason) {
+        (Some(m), _) => format!("{by}: {m}"),
+        (None, Some(r)) => format!("{by}: {r}"),
+        (None, None) => format!("{by} without explanation"),
+    };
+    let code = status["code"]
+        .as_u64()
+        .and_then(|c| u16::try_from(c).ok())
+        .filter(|c| *c >= 400)
+        .and_then(|c| StatusCode::from_u16(c).ok())
+        .unwrap_or(StatusCode::BAD_REQUEST);
+    ApiError {
+        status: code,
+        reason: reason.map(str::to_owned).unwrap_or_else(|| match code {
+            StatusCode::FORBIDDEN => "Forbidden".into(),
+            StatusCode::UNPROCESSABLE_ENTITY => "Invalid".into(),
+            StatusCode::CONFLICT => "Conflict".into(),
+            _ => "BadRequest".into(),
+        }),
+        message,
+    }
+}
+
+fn labels_of(object: &Value) -> Value {
+    match &object["metadata"]["labels"] {
+        Value::Object(m) => Value::Object(m.clone()),
+        _ => json!({}),
+    }
+}
+
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut source = e.source();
+    while let Some(s) = source {
+        out.push_str(": ");
+        out.push_str(&s.to_string());
+        source = s.source();
+    }
+    out
+}
+
+/// One webhook of a configuration, as admission uses it.
+#[derive(Debug, Clone)]
+struct Hook {
+    name: String,
+    url: Option<String>,
+    service: Option<ServiceRef>,
+    /// PEM, decoded from `caBundle`.
+    ca_bundle: Option<Vec<u8>>,
+    rules: Vec<Rule>,
+    fail_closed: bool,
+    timeout: Duration,
+    namespace_selector: Option<Value>,
+    object_selector: Option<Value>,
+    side_effects: String,
+    review_versions: Vec<String>,
+    reinvoke_if_needed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ServiceRef {
+    namespace: String,
+    name: String,
+    path: String,
+    port: u16,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Rule {
+    operations: Vec<String>,
+    api_groups: Vec<String>,
+    api_versions: Vec<String>,
+    resources: Vec<String>,
+    scope: String,
+}
+
+impl Rule {
+    fn matches(
+        &self,
+        op: Operation,
+        group: &str,
+        version: &str,
+        resource: &str,
+        subresource: &str,
+        namespaced: bool,
+    ) -> bool {
+        let has = |list: &[String], want: &str| list.iter().any(|x| x == "*" || x == want);
+        has(&self.operations, op.as_str())
+            && has(&self.api_groups, group)
+            && has(&self.api_versions, version)
+            // `pods` is the resource alone, `pods/status` one subresource,
+            // `*` every resource and `*/*` everything; as upstream's Matcher.
+            && self.resources.iter().any(|r| {
+                let (res, sub) = r.split_once('/').unwrap_or((r.as_str(), ""));
+                (res == "*" || res == resource) && (sub == "*" || sub == subresource)
+            })
+            && match self.scope.as_str() {
+                "Cluster" => !namespaced,
+                "Namespaced" => namespaced,
+                _ => true,
+            }
+    }
+}
+
+/// Parse every webhook of a stored configuration, in its order.
+fn parse_configuration(config: &Value, mutating: bool) -> Vec<Hook> {
+    let strings = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+            .unwrap_or_default()
+    };
+    let selector = |v: &Value| -> Option<Value> {
+        // Absent and `{}` both select everything.
+        v.as_object().filter(|m| !m.is_empty()).map(|_| v.clone())
+    };
+    let mut out = Vec::new();
+    for w in config["webhooks"].as_array().into_iter().flatten() {
+        let Some(name) = w["name"].as_str() else { continue };
+        let client = &w["clientConfig"];
+        let service = client["service"].as_object().map(|s| ServiceRef {
+            namespace: s.get("namespace").and_then(Value::as_str).unwrap_or("").into(),
+            name: s.get("name").and_then(Value::as_str).unwrap_or("").into(),
+            path: s.get("path").and_then(Value::as_str).unwrap_or("").into(),
+            port: s
+                .get("port")
+                .and_then(Value::as_u64)
+                .and_then(|p| u16::try_from(p).ok())
+                .unwrap_or(443),
+        });
+        let ca_bundle = client["caBundle"].as_str().and_then(|b| {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.decode(b).ok()
+        });
+        let rules = w["rules"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| Rule {
+                operations: strings(&r["operations"]),
+                api_groups: strings(&r["apiGroups"]),
+                api_versions: strings(&r["apiVersions"]),
+                resources: strings(&r["resources"]),
+                scope: r["scope"].as_str().unwrap_or("*").into(),
+            })
+            .collect();
+        out.push(Hook {
+            name: name.into(),
+            url: client["url"].as_str().map(str::to_owned),
             service,
-            ca_bundle: None, // TODO: parse caBundle
-        },
-        rules,
-        failure_policy,
-        timeout_seconds,
-        namespace_selector: webhook.get("namespaceSelector").cloned(),
-        object_selector: webhook.get("objectSelector").cloned(),
-        side_effects: webhook.get("sideEffects").and_then(|s| s.as_str()).map(|s| s.to_string()),
-        admission_review_versions,
-    })
+            ca_bundle,
+            rules,
+            fail_closed: w["failurePolicy"].as_str() != Some("Ignore"),
+            timeout: Duration::from_secs(w["timeoutSeconds"].as_u64().unwrap_or(10).clamp(1, 30)),
+            namespace_selector: selector(&w["namespaceSelector"]),
+            object_selector: selector(&w["objectSelector"]),
+            side_effects: w["sideEffects"].as_str().unwrap_or("Unknown").into(),
+            review_versions: strings(&w["admissionReviewVersions"]),
+            reinvoke_if_needed: mutating && w["reinvocationPolicy"].as_str() == Some("IfNeeded"),
+        });
+    }
+    out
+}
+
+/// The webhook configurations, parsed once per change, and the HTTP clients
+/// that reach them. Shared by every request (`AppState::admission`).
+#[derive(Default)]
+pub struct Webhooks {
+    views: Mutex<HashMap<&'static str, (SnapshotVersion, Arc<Vec<Hook>>)>>,
+    clients: Mutex<HashMap<ClientKey, reqwest::Client>>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ClientKey {
+    ca_bundle: Option<Vec<u8>>,
+    resolve: Option<(String, SocketAddr)>,
+}
+
+impl Webhooks {
+    /// The webhooks under `prefix`, configurations in name order — from the
+    /// watch cache, which every apiserver replica keeps current, so a
+    /// configuration applies to the next write after it is stored (the
+    /// cache trails the write by its pump's few milliseconds, as upstream's
+    /// informer does). The store answers when the cache cannot.
+    async fn hooks(&self, storage: &ResourceStorage, prefix: &'static str) -> Arc<Vec<Hook>> {
+        let mutating = prefix == MUTATING;
+        let cache = storage.watch_cache();
+        if let Ok(version) = cache.version(prefix).await {
+            if let Some((v, hooks)) = self.views.lock().unwrap().get(prefix) {
+                if *v == version {
+                    return hooks.clone();
+                }
+            }
+            if let Ok((version, items)) = cache.snapshot(prefix).await {
+                let mut configs: Vec<(String, Value)> = items
+                    .into_iter()
+                    .filter_map(|(k, b)| serde_json::from_slice(&b).ok().map(|v| (k, v)))
+                    .collect();
+                configs.sort_by(|a, b| a.0.cmp(&b.0));
+                let hooks: Arc<Vec<Hook>> = Arc::new(
+                    configs.iter().flat_map(|(_, c)| parse_configuration(c, mutating)).collect(),
+                );
+                self.views.lock().unwrap().insert(prefix, (version, hooks.clone()));
+                return hooks;
+            }
+        }
+        let mut configs = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            match storage.list(prefix, 500, token.as_deref()).await {
+                Ok((items, next, _)) => {
+                    configs.extend(items);
+                    match next {
+                        Some(t) => token = Some(t),
+                        None => break,
+                    }
+                }
+                Err(e) => {
+                    // No configuration can be read: nothing to call. Logged,
+                    // because a webhook that should refuse is passed over.
+                    warn!(%prefix, error = %e, "admission webhook configurations unreadable");
+                    break;
+                }
+            }
+        }
+        configs.sort_by(|a, b| a["metadata"]["name"].as_str().cmp(&b["metadata"]["name"].as_str()));
+        Arc::new(configs.iter().flat_map(|c| parse_configuration(c, mutating)).collect())
+    }
+
+    /// Where a webhook is, and a client that verifies it.
+    async fn endpoint(
+        &self,
+        storage: &ResourceStorage,
+        hook: &Hook,
+    ) -> Result<(String, reqwest::Client), String> {
+        let (url, resolve) = match (&hook.url, &hook.service) {
+            (Some(url), _) => (url.clone(), None),
+            (None, Some(s)) => {
+                let key = ResourceStorage::namespaced_key("services", &s.namespace, &s.name);
+                let svc = storage
+                    .get(&key)
+                    .await
+                    .map_err(|e| format!("service {}/{}: {}", s.namespace, s.name, e.message))?;
+                let ip: IpAddr = svc["spec"]["clusterIP"]
+                    .as_str()
+                    .and_then(|ip| ip.parse().ok())
+                    .ok_or_else(|| {
+                        format!("service {}/{} has no ClusterIP", s.namespace, s.name)
+                    })?;
+                let host = format!("{}.{}.svc", s.name, s.namespace);
+                (
+                    format!("https://{host}:{}{}", s.port, s.path),
+                    Some((host, SocketAddr::new(ip, s.port))),
+                )
+            }
+            (None, None) => return Err("clientConfig names neither url nor service".into()),
+        };
+        let key = ClientKey { ca_bundle: hook.ca_bundle.clone(), resolve };
+        if let Some(client) = self.clients.lock().unwrap().get(&key) {
+            return Ok((url, client.clone()));
+        }
+        let mut builder = reqwest::Client::builder().no_proxy();
+        if let Some(pem) = &key.ca_bundle {
+            builder = builder.tls_built_in_root_certs(false);
+            let certs = reqwest::Certificate::from_pem_bundle(pem)
+                .map_err(|e| format!("caBundle: {e}"))?;
+            if certs.is_empty() {
+                return Err("caBundle holds no certificate".into());
+            }
+            for cert in certs {
+                builder = builder.add_root_certificate(cert);
+            }
+        }
+        if let Some((host, addr)) = &key.resolve {
+            builder = builder.resolve(host, *addr);
+        }
+        let client = builder.build().map_err(|e| format!("webhook client: {e}"))?;
+        self.clients.lock().unwrap().insert(key, client.clone());
+        Ok((url, client))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_json_patch_add() {
-        let mut obj = json!({
-            "metadata": {
-                "name": "test"
-            }
-        });
-
-        set_json_pointer(&mut obj, "/metadata/labels", json!({"app": "test"})).unwrap();
-
-        assert_eq!(
-            obj.get("metadata")
-                .unwrap()
-                .get("labels")
-                .unwrap()
-                .get("app")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-            "test"
-        );
+    fn rule(ops: &[&str], resources: &[&str], scope: &str) -> Rule {
+        Rule {
+            operations: ops.iter().map(|s| s.to_string()).collect(),
+            api_groups: vec!["".into()],
+            api_versions: vec!["v1".into()],
+            resources: resources.iter().map(|s| s.to_string()).collect(),
+            scope: scope.into(),
+        }
     }
 
     #[test]
-    fn test_json_patch_remove() {
-        let mut obj = json!({
-            "metadata": {
-                "name": "test",
-                "labels": {
-                    "app": "test"
-                }
-            }
-        });
+    fn resources_match_as_upstream_with_subresources_apart() {
+        let pods = rule(&["CREATE", "UPDATE"], &["pods"], "*");
+        assert!(pods.matches(Operation::Create, "", "v1", "pods", "", true));
+        assert!(pods.matches(Operation::Update, "", "v1", "pods", "", true));
+        assert!(!pods.matches(Operation::Delete, "", "v1", "pods", "", true));
+        assert!(!pods.matches(Operation::Update, "", "v1", "pods", "status", true));
+        assert!(!pods.matches(Operation::Create, "", "v1", "services", "", true));
+        assert!(!pods.matches(Operation::Create, "apps", "v1", "pods", "", true));
 
-        remove_json_pointer(&mut obj, "/metadata/labels/app").unwrap();
+        let status = rule(&["*"], &["pods/status"], "*");
+        assert!(status.matches(Operation::Update, "", "v1", "pods", "status", true));
+        assert!(!status.matches(Operation::Update, "", "v1", "pods", "", true));
 
-        assert!(obj
-            .get("metadata")
-            .unwrap()
-            .get("labels")
-            .unwrap()
-            .get("app")
-            .is_none());
+        let all = rule(&["*"], &["*"], "*");
+        assert!(all.matches(Operation::Delete, "", "v1", "secrets", "", true));
+        assert!(!all.matches(Operation::Update, "", "v1", "pods", "status", true));
+        let everything = rule(&["*"], &["*/*"], "*");
+        assert!(everything.matches(Operation::Update, "", "v1", "pods", "status", true));
+        let any_status = rule(&["*"], &["*/status"], "*");
+        assert!(any_status.matches(Operation::Update, "", "v1", "nodes", "status", false));
+        assert!(!any_status.matches(Operation::Update, "", "v1", "nodes", "", false));
     }
 
     #[test]
-    fn test_matches_rules() {
-        let rules = vec![RuleWithOperations {
-            operations: vec!["CREATE".to_string(), "UPDATE".to_string()],
-            api_groups: vec!["".to_string()],
-            api_versions: vec!["v1".to_string()],
-            resources: vec!["pods".to_string()],
-            scope: None,
-        }];
+    fn scope_separates_cluster_from_namespaced() {
+        let cluster = rule(&["*"], &["*"], "Cluster");
+        assert!(cluster.matches(Operation::Create, "", "v1", "nodes", "", false));
+        assert!(!cluster.matches(Operation::Create, "", "v1", "pods", "", true));
+        let namespaced = rule(&["*"], &["*"], "Namespaced");
+        assert!(namespaced.matches(Operation::Create, "", "v1", "pods", "", true));
+        assert!(!namespaced.matches(Operation::Create, "", "v1", "nodes", "", false));
+    }
 
-        assert!(matches_rules(&rules, "Pod", "CREATE"));
-        assert!(matches_rules(&rules, "Pod", "UPDATE"));
-        assert!(!matches_rules(&rules, "Pod", "DELETE"));
-        assert!(!matches_rules(&rules, "Service", "CREATE"));
+    #[test]
+    fn a_configuration_parses_with_upstream_defaults() {
+        let config = json!({"webhooks": [
+            {"name": "a.example.com", "clientConfig": {"url": "https://x/a"},
+             "rules": [{"operations": ["CREATE"], "apiGroups": [""], "apiVersions": ["v1"],
+                        "resources": ["configmaps"]}],
+             "sideEffects": "None", "admissionReviewVersions": ["v1"]},
+            {"name": "b.example.com", "failurePolicy": "Ignore", "timeoutSeconds": 99,
+             "reinvocationPolicy": "IfNeeded", "namespaceSelector": {},
+             "objectSelector": {"matchLabels": {"x": "y"}},
+             "clientConfig": {"service": {"namespace": "ns", "name": "svc", "path": "/m"},
+                              "caBundle": "LS0tLS0="}}
+        ]});
+        let hooks = parse_configuration(&config, true);
+        assert_eq!(hooks.len(), 2);
+        let (a, b) = (&hooks[0], &hooks[1]);
+        assert!(a.fail_closed);
+        assert_eq!(a.timeout, Duration::from_secs(10));
+        assert_eq!(a.rules[0].scope, "*");
+        assert!(!a.reinvoke_if_needed);
+        assert!(!b.fail_closed);
+        assert_eq!(b.timeout, Duration::from_secs(30));
+        assert!(b.reinvoke_if_needed);
+        assert!(b.namespace_selector.is_none(), "{{}} selects everything");
+        assert!(b.object_selector.is_some());
+        let s = b.service.as_ref().unwrap();
+        assert_eq!((s.namespace.as_str(), s.name.as_str(), s.path.as_str(), s.port), ("ns", "svc", "/m", 443));
+        assert_eq!(b.ca_bundle.as_deref(), Some(&b"-----"[..]));
+        // Validating webhooks have no reinvocation.
+        assert!(!parse_configuration(&config, false)[1].reinvoke_if_needed);
+    }
+
+    #[test]
+    fn a_refusal_reads_and_codes_as_upstream() {
+        let e = denied("deny.example.com", &json!({"code": 403, "message": "no thanks"}));
+        assert_eq!(e.status, StatusCode::FORBIDDEN);
+        assert_eq!(e.message, "admission webhook \"deny.example.com\" denied the request: no thanks");
+        let e = denied("d", &json!({"code": 200}));
+        assert_eq!(e.status, StatusCode::BAD_REQUEST);
+        assert_eq!(e.message, "admission webhook \"d\" denied the request without explanation");
+        let e = denied("d", &Value::Null);
+        assert_eq!(e.status, StatusCode::BAD_REQUEST);
+        let e = denied("d", &json!({"reason": "Because"}));
+        assert_eq!(e.message, "admission webhook \"d\" denied the request: Because");
+    }
+
+    #[test]
+    fn write_attributes_come_from_the_path() {
+        let user = || UserInfo { username: "u".into(), groups: vec![] };
+        let post = axum::http::Method::POST;
+        let a = RequestAttrs::of("/api/v1/namespaces/demo/configmaps", &post, None, user()).unwrap();
+        assert_eq!((a.verb, a.group.as_str(), a.version.as_str(), a.resource.as_str()), ("create", "", "v1", "configmaps"));
+        assert_eq!(a.namespace.as_deref(), Some("demo"));
+        assert!(a.name.is_none() && !a.dry_run);
+        let put = axum::http::Method::PUT;
+        let a = RequestAttrs::of("/apis/apps/v1/namespaces/demo/deployments/web/status", &put, None, user()).unwrap();
+        assert_eq!((a.group.as_str(), a.version.as_str(), a.resource.as_str()), ("apps", "v1", "deployments"));
+        assert_eq!((a.name.as_deref(), a.subresource.as_deref()), (Some("web"), Some("status")));
+        let del = axum::http::Method::DELETE;
+        let a = RequestAttrs::of("/api/v1/namespaces/demo", &del, Some("dryRun=All"), user()).unwrap();
+        assert_eq!(a.resource, "namespaces");
+        assert!(a.namespace.is_none() && a.dry_run);
+        assert!(RequestAttrs::of("/api/v1/pods", &axum::http::Method::GET, None, user()).is_none());
+        assert!(RequestAttrs::of("/healthz", &post, None, user()).is_none());
+    }
+
+    #[test]
+    fn the_review_names_the_object_kind_and_the_request_resource() {
+        let attrs = RequestAttrs::of(
+            "/api/v1/namespaces/demo/pods/web/eviction",
+            &axum::http::Method::POST,
+            None,
+            UserInfo { username: "alice".into(), groups: vec!["devs".into()] },
+        )
+        .unwrap();
+        let eviction = json!({"apiVersion": "policy/v1", "kind": "Eviction", "metadata": {"name": "web"}});
+        let r = review_request(&attrs, Operation::Create, "u1", &eviction, None, false);
+        assert_eq!(r["kind"], json!({"group": "policy", "version": "v1", "kind": "Eviction"}));
+        assert_eq!(r["resource"], json!({"group": "", "version": "v1", "resource": "pods"}));
+        assert_eq!(r["subResource"], "eviction");
+        assert_eq!((r["name"].as_str(), r["namespace"].as_str()), (Some("web"), Some("demo")));
+        assert_eq!(r["operation"], "CREATE");
+        assert_eq!(r["userInfo"], json!({"username": "alice", "groups": ["devs"]}));
+        assert_eq!(r["options"]["kind"], "CreateOptions");
+        assert!(r["oldObject"].is_null());
+    }
+
+    #[test]
+    fn warnings_are_quoted_printable_ascii() {
+        assert_eq!(warning_header("say \"hi\"\n"), "299 - \"say \\\"hi\\\" \"");
     }
 }

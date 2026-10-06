@@ -25,4 +25,6 @@ pub struct AppState {
     pub crd_registry: Arc<CrdRegistry>,
     /// The range ClusterIPs are allocated from.
     pub service_cidr: String,
+    /// Admission webhook configurations and their clients (#82).
+    pub admission: Arc<crate::admission::Webhooks>,
 }

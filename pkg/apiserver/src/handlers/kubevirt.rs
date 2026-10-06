@@ -425,6 +425,7 @@ mod tests {
                 storage: Arc::new(ResourceStorage::new(Arc::new(MemStore::default()))),
                 crd_registry: registry,
                 service_cidr: "10.96.0.0/12".into(),
+                admission: Default::default(),
             }
         }
 
