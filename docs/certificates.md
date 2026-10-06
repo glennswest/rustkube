@@ -8,8 +8,9 @@ StormCOS, stormcert issues the files rustkube consumes. Its agent already has
 80% of their lifetime. Enabling that loop in the golden is tracked by
 [stormcos#119](https://github.com/glennswest/stormcos/issues/119); do not infer
 that a running node has renewal enabled merely because the command exists.
-Rustkube's serving-pair validation remains [#93](https://github.com/glennswest/rustkube/issues/93),
-and client-identity/trust reload remains [#105](https://github.com/glennswest/rustkube/issues/105).
+The apiserver refuses a serving key that does not match its certificate
+([#93](https://github.com/glennswest/rustkube/issues/93), below);
+client-identity/trust reload remains [#105](https://github.com/glennswest/rustkube/issues/105).
 
 As of 2026-09-29, #20 needs a scope decision: its original roadmap calls for
 an in-cluster renewer and CA rotation, while stormcert owns issuance and
@@ -42,15 +43,17 @@ their certificate once at startup, so a renewed cert on disk did nothing until
 the process restarted — which meant the only way to rotate a ten-year PKI was
 to redeploy the control plane, which is why nobody would.
 
-A cert file that cannot be read or does not parse is **kept, not applied**:
-the running certificate is known good, and replacing it with a parse failure
-would take TLS down at exactly the moment someone is touching the PKI. The
-failure is logged and the old certificate keeps serving.
-
-What is **not** checked is that the new key matches the new certificate. A
-pair caught between the two writes, or a key written without its
-certificate, is applied, and handshakes fail until the next tick puts a
-matching pair in place (#93). Only the serving pair is watched: the client CA
+A pair that cannot be read, does not parse, or whose **key is not the
+certificate's** is **kept, not applied** (#93): the running certificate is
+known good, and replacing it would take TLS down at exactly the moment
+someone is touching the PKI. The key's public key is compared with the
+certificate's (RSA, ECDSA and Ed25519 keys all report theirs; a key that
+could not would be refused, not trusted). So a renewer caught between writing
+the key and writing the certificate, or one that wrote only the key, leaves
+the old pair serving; the refusal is logged once per change on disk, and the
+next change is looked at again. The same check runs at startup, where a
+mismatched pair stops the apiserver instead of failing every handshake.
+Only the serving pair is watched: the client CA
 (`--client-ca-file`) is read once at startup, and a `--tls` certificate is
 never reloaded.
 
@@ -68,10 +71,13 @@ It preserves what the old certificate said: the **subject** on a client cert
 (the subject *is* the identity RBAC binds to, so re-deriving it by hand is how a
 renewal quietly locks a component out) and the **SANs** on a serving cert (a
 renewal that drops a SAN is a certificate that no longer answers for the name a
-client dialled). It writes the key and then the certificate, with two
-moves, so for a moment the new key sits beside the old certificate; and if
-signing fails after the key has been moved, the pair on disk no longer
-matches although the script reports the old certificate untouched (#93).
+client dialled). Every step is checked (the renew functions run under `||`,
+where bash ignores `set -e`): the new key and certificate are written beside
+the old ones, compared by public key, and only then moved into place, key
+first. A failure at any step removes the new files and leaves the old pair
+untouched, as the run reports, and the run exits 1. The moment between the two
+moves is harmless to the apiserver, which refuses the mismatched pair it might
+see (#93).
 `DAYS` (default 3650) sets the renewed lifetime, `PKI` (default
 `/etc/kubernetes/pki`) where the files are, `KUBE_SVC_IP` the Service IP SAN.
 
@@ -177,8 +183,8 @@ rotating the signing key (below).
   token first.
 - **Renewal integration.** Standalone `renew-certs.sh` is run by a person or
   timer. StormCOS has stormcert-agent's renewal loop, with deployment tracked
-  by stormcos#119. Rustkube still needs safe serving-pair validation (#93) and
-  client credential/trust reload (#105). A second issuance controller here
+  by stormcos#119. The serving-pair check (#93) is in place; rustkube still
+  needs client credential/trust reload (#105). A second issuance controller here
   would overlap stormcert; #20's scope must be reconciled first.
 - **cert-manager CRD compatibility** (#20 phase 3) — `Issuer`/`ClusterIssuer`/
   `Certificate` for workload and Ingress certificates.

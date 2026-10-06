@@ -52,7 +52,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | Server-Side Apply (`managedFields`, conflicts) | core | ✅ | v0.7.31–32 (#45) |
 | Strategic-merge / JSON / merge patch | core | ✅ | strategic merge uses a fixed table of `patchMergeKey`s, not per-type schema; Service ports are wrong (#150) |
 | protobuf wire codec | core | ✅ | both directions (v0.7.14) |
-| TLS listener, serving-cert hot reload | core | 🟡 | pair matching missing (#93); client identity/trust do not reload (#105) |
+| TLS listener, serving-cert hot reload | core | 🟡 | mismatched pair refused (#93); client identity/trust do not reload (#105) |
 | AuthN: x509 client cert, ServiceAccount/bearer JWT | core | 🟡 | rejected bearer can fall back to anonymous (#115); TokenRequest honours audiences, lifetime (unset: 24 h, not 1 h) and Pod/Secret/Node binding (#182) |
 | AuthN: OIDC, webhook, bootstrap tokens | core | 🔴 | |
 | AuthZ: RBAC | core | 🟡 | no escalation prevention (#98) |

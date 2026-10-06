@@ -428,7 +428,7 @@ override environment values.
 | `--etcd-cacert`, `--etcd-cert`, `--etcd-key` | `ETCD_CACERT`, `ETCD_CERT`, `ETCD_KEY` | — | TLS / mutual TLS to fastetcd |
 | `--bind-addr` | | `0.0.0.0` | |
 | `--secure-port` | | `6443` | |
-| `--tls-cert-file`, `--tls-private-key-file` | | — | serving cert; **reloaded when the files change**, no restart |
+| `--tls-cert-file`, `--tls-private-key-file` | | — | serving cert; **reloaded when the files change**, no restart; a key that is not the cert's is refused (#93) |
 | `--tls` | | off | serve a self-signed cert generated at start, held in memory only; DNS SANs `kubernetes…` and `localhost`, no IP SANs |
 | `--insecure` | | `false` | allow plain HTTP when no TLS is configured; without it the server refuses to start |
 | `--client-ca-file` | | — | enables x509 client-certificate authentication |
