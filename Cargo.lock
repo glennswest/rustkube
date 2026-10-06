@@ -114,6 +114,8 @@ dependencies = [
  "prost-reflect",
  "rcgen",
  "reqwest",
+ "rustls",
+ "rustls-pemfile",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -121,6 +123,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "webpki-roots",
  "x509-parser",
 ]
 

@@ -1018,20 +1018,18 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             }
             let (cfg, resolver) =
                 crate::tls::server_config(&cert, &key, client_ca.as_deref())?;
+            let cfg: crate::tls::CurrentConfig = Arc::new(std::sync::RwLock::new(Arc::new(cfg)));
+            // A rotated client CA applies to new connections without a
+            // restart (#105).
+            if let Some(ca_path) = &config.client_ca {
+                crate::tls::watch_client_ca(cfg.clone(), resolver.clone(), ca_path.clone());
+            }
             // Renewal takes effect without a restart (#20). Only for a cert
             // that came from a file: an auto-generated one has nowhere to be
             // renewed from, and watching a path nobody writes is a task that
             // does nothing forever.
             if let (Some(cert_path), Some(key_path)) = (&config.tls_cert, &config.tls_key) {
-                crate::tls::watch_cert_files(
-                    resolver,
-                    cert_path.clone(),
-                    key_path.clone(),
-                );
-                info!(
-                    "watching {} for a renewed serving certificate",
-                    cert_path.display()
-                );
+                crate::tls::watch_cert_files(resolver, cert_path.clone(), key_path.clone());
             }
             crate::tls::serve(listener, app, cfg).await?;
         }

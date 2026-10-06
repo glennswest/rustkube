@@ -18,6 +18,7 @@ pub mod protobuf;
 pub mod quantity;
 pub mod selector;
 pub mod startup;
+pub mod tls_reload;
 
 pub use error::{Error, Result};
 

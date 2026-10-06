@@ -127,6 +127,7 @@ async fn run() -> anyhow::Result<()> {
             client_cert_pem: read_pem(cli.client_cert.as_deref(), "client certificate", wait)
                 .await?,
             client_key_pem: read_pem(cli.client_key.as_deref(), "client key", wait).await?,
+            client_files: cli.client_cert.clone().zip(cli.client_key.clone()),
             token,
             insecure: cli.insecure,
         };

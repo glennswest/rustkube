@@ -49,6 +49,10 @@ pub struct ClientConfig {
     pub client_cert_pem: Option<Vec<u8>>,
     /// Client private key (PEM) for mutual TLS.
     pub client_key_pem: Option<Vec<u8>>,
+    /// Where the client certificate and key were read from. When set, the
+    /// files are followed and a renewed pair is presented from the next
+    /// connection on (#105).
+    pub client_files: Option<(std::path::PathBuf, std::path::PathBuf)>,
     /// Bearer token.
     pub token: Option<String>,
     /// Skip server certificate verification.
@@ -95,26 +99,17 @@ impl ApiClient {
 
     /// Build a client with TLS + auth (for HTTPS apiservers / drop-in use).
     pub fn configured(base_url: &str, cfg: ClientConfig) -> anyhow::Result<Self> {
-        let mut b = reqwest::Client::builder();
-        if cfg.insecure {
-            b = b.danger_accept_invalid_certs(true);
-        }
-        if let Some(ca) = &cfg.ca_pem {
-            b = b.add_root_certificate(reqwest::Certificate::from_pem(ca)?);
-        }
-        if let (Some(cert), Some(key)) = (&cfg.client_cert_pem, &cfg.client_key_pem) {
-            let mut pem = cert.clone();
-            pem.push(b'\n');
-            pem.extend_from_slice(key);
-            b = b.identity(reqwest::Identity::from_pem(&pem)?);
-        }
-        if let Some(token) = &cfg.token {
-            let mut headers = reqwest::header::HeaderMap::new();
-            let mut val = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
-            val.set_sensitive(true);
-            headers.insert(reqwest::header::AUTHORIZATION, val);
-            b = b.default_headers(headers);
-        }
+        let pair = match (&cfg.client_cert_pem, &cfg.client_key_pem) {
+            (Some(cert), Some(key)) => Some((cert.as_slice(), key.as_slice())),
+            _ => None,
+        };
+        let b = apimachinery::tls_reload::api_client_builder(
+            cfg.ca_pem.as_deref(),
+            cfg.insecure,
+            pair,
+            cfg.client_files.as_ref().map(|(c, k)| (c.as_path(), k.as_path())),
+            cfg.token.as_deref(),
+        )?;
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: b.build()?,

@@ -93,6 +93,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 # provider, a C library that a cross build needs target libc headers for (#68).
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
 rustls-pemfile = { version = "2" }
+# The webpki roots reqwest trusts by default, kept when the components hand
+# reqwest their own rustls config (#105).
+webpki-roots = { version = "1" }
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 x509-parser = { version = "0.16" }
 
