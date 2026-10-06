@@ -108,6 +108,7 @@ the cert and kept going after a failed `openssl` (called under `||`, so no
       df35db7 500 passed / 4 ignored. `test/e2e/serving-cert.sh` 15/15 at
       70fad5e (fastetcd v1.12.0); control (be616b7 tls.rs) fails 4 — #213,
       with #211/#212 (shallow-checkout attempts), closed as control runs
+- [x] golden-rustkube-ce546522ad2b (stormcos#306); #93 closed
 
 ### Reflector's own WATCH deadline is not an outage (#207, P2) — COMPLETE 2026-10-06
 The apiserver ignores `timeoutSeconds` (#165), so the reflector's 330 s
