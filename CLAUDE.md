@@ -108,7 +108,8 @@ recovery wake on resume — every informer, every ~5.5 min.
       watches resumed in 400 s idle, 0 reconnect warnings, 0 LISTs, counter
       0. Control (4bfa056 reverse-applied): cm 51 + scheduler 8 warnings,
       73 LISTs. Rig counts no `/metrics` scrapes (apiserver labels them list)
-- [x] Workspace sc-build at 3a6567e: 488 passed / 4 ignored, exit 0
+- [x] Workspace sc-build at 3a6567e: 488 passed / 4 ignored, exit 0.
+      golden-rustkube-b8b7c5ee394b (stormcos#109); #207 closed
 
 ### VMI launcher Pods (#203, P1) — COMPLETE 2026-10-05
 Owner's choice B on rustkube-node#88: the controller makes KubeVirt's
