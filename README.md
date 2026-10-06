@@ -467,7 +467,7 @@ override environment values.
 | `--tls-cert-file`, `--tls-private-key-file` | | — | serving cert; **reloaded when the files change**, no restart; a key that is not the cert's is refused (#93) |
 | `--tls` | | off | serve a self-signed cert generated at start, held in memory only; DNS SANs `kubernetes…` and `localhost`, no IP SANs |
 | `--insecure` | | `false` | allow plain HTTP when no TLS is configured; without it the server refuses to start |
-| `--client-ca-file` | | — | enables x509 client-certificate authentication |
+| `--client-ca-file` | | — | enables x509 client-certificate authentication; **reloaded when the file changes**, for new connections (#105) |
 | `--anonymous-auth` | | `true` | `false` answers 401 to unauthenticated requests |
 | `--dev-anonymous-admin` | | `false` | **dev only**: anonymous is `cluster-admin` (needs `--anonymous-auth true`) |
 | `--service-account-signing-key-file` | | — | RSA private key (PEM) that signs tokens |
@@ -488,7 +488,7 @@ override environment values.
 |---|---|---|---|
 | `--apiserver` | `APISERVER_URL` | `http://127.0.0.1:6443` | an `https://` URL turns on TLS |
 | `--certificate-authority` | | — | CA bundle for the apiserver |
-| `--client-certificate`, `--client-key` | | — | mutual TLS identity |
+| `--client-certificate`, `--client-key` | | — | mutual TLS identity; **reloaded when the files change**, no restart; a key that is not the cert's is refused (#105) |
 | `--token` | `APISERVER_TOKEN` | — | bearer token |
 | `--token-file` | | — | bearer token from a file |
 | `--insecure-skip-tls-verify` | | off | |

@@ -9,8 +9,11 @@ StormCOS, stormcert issues the files rustkube consumes. Its agent already has
 [stormcos#119](https://github.com/glennswest/stormcos/issues/119); do not infer
 that a running node has renewal enabled merely because the command exists.
 The apiserver refuses a serving key that does not match its certificate
-([#93](https://github.com/glennswest/rustkube/issues/93), below);
-client-identity/trust reload remains [#105](https://github.com/glennswest/rustkube/issues/105).
+([#93](https://github.com/glennswest/rustkube/issues/93), below). The
+controller-manager's and scheduler's client certificates and the apiserver's
+client CA are followed on disk as well
+([#105](https://github.com/glennswest/rustkube/issues/105)), so a stormcert
+renewal needs no restart anywhere in the control plane.
 
 As of 2026-09-29, #20 needs a scope decision: its original roadmap calls for
 an in-cluster renewer and CA rotation, while stormcert owns issuance and
@@ -25,12 +28,20 @@ No new issuer or trust-root migration should be inferred from this roadmap.
 |---|---|---|
 | cluster CA | `deploy/gen-pki.sh`, 10 years | manual, and a rollover — see below |
 | apiserver serving cert | `gen-pki.sh` per master, SANs per node | `deploy/renew-certs.sh`, **no restart** |
-| controller-manager / scheduler / admin client certs | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh` + restart |
+| controller-manager / scheduler client certs | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh`, **no restart** (#105) |
+| admin client cert | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh` (the client reads it per run) |
 | kubelet bootstrap client cert (`CN=kubelet-bootstrap`, `O=system:bootstrappers`) | `gen-pki.sh` | `deploy/renew-certs.sh` |
 | kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves the `kubernetes.io/kube-apiserver-client-kubelet` signer, and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file` | the kubelet re-requests |
 | service-account signing key | `gen-pki.sh` | not rotatable yet (see below) |
 
-## The apiserver reloads its serving certificate
+## Certificates reload without a restart
+
+The serving pair, the components' client pairs and the client CA are all
+followed on disk by one mechanism (`apimachinery::tls_reload`): every 30 s,
+by content rather than mtime; a change that does not parse, or a pair whose
+key is not its certificate's, is kept out and logged once.
+
+### The apiserver's serving certificate
 
 rustls asks a resolver for the certificate on **every handshake**, so the
 serving cert is swappable while the process runs. The apiserver watches its
@@ -53,9 +64,30 @@ the key and writing the certificate, or one that wrote only the key, leaves
 the old pair serving; the refusal is logged once per change on disk, and the
 next change is looked at again. The same check runs at startup, where a
 mismatched pair stops the apiserver instead of failing every handshake.
-Only the serving pair is watched: the client CA
-(`--client-ca-file`) is read once at startup, and a `--tls` certificate is
-never reloaded.
+A `--tls` certificate (generated in memory) is never reloaded.
+
+### The controller-manager's and scheduler's client certificates (#105)
+
+`--client-certificate`/`--client-key` are followed the same way. The client is
+built with its own rustls config whose client-certificate resolver is the
+reloading pair, so the next new connection presents the renewed certificate;
+the reqwest client itself (cloned into every informer) is never rebuilt.
+Connections already open keep the certificate they were opened with: reqwest
+drops one idle for 90 s, and watches are reopened at least every ~5.5 min, so
+the old certificate goes out of use within minutes — inside the 20 % of its
+life stormcert leaves. A mismatched pair (key renewed, certificate not yet) is
+refused at startup and kept out on a reload.
+
+### The apiserver's client CA (#105)
+
+`--client-ca-file` is followed too. A changed bundle builds a new TLS config
+(same serving resolver, a verifier over the new roots), and each accepted
+connection takes the config current when it arrives; open connections keep
+the one they were authenticated with. A bundle that does not parse or holds
+no certificate is kept out. This is what makes a client-CA rollover possible:
+write the bundle with old and new CA, renew the client certificates from the
+new one, then write the new CA alone. `test/e2e/client-cert-reload.sh` does
+exactly that.
 
 ## Renewing
 
@@ -81,17 +113,14 @@ see (#93).
 `DAYS` (default 3650) sets the renewed lifetime, `PKI` (default
 `/etc/kubernetes/pki`) where the files are, `KUBE_SVC_IP` the Service IP SAN.
 
-The apiserver picks up its new serving cert within 30 seconds. The controller
-manager and the scheduler build their TLS identity once at startup and need a
-restart — cheap and safe: they are stateless, leader-elected, and since #58
-they wait for a credential file rather than exiting when one is briefly
-missing.
+The apiserver picks up its new serving cert, and the controller manager and
+the scheduler their new client certs, within 30 seconds (#105) — no restart.
 
 ## Knowing before it matters
 
 `apiserver_certificate_expiration_seconds{name="serving"|"client-ca"}` is the
 `notAfter` as a unix timestamp. `serving` is refreshed when the cert is
-reloaded; `client-ca` is set once at startup. The
+reloaded; `client-ca` when the bundle is (#105). The
 alerting rule:
 
 ```
@@ -183,8 +212,8 @@ rotating the signing key (below).
   token first.
 - **Renewal integration.** Standalone `renew-certs.sh` is run by a person or
   timer. StormCOS has stormcert-agent's renewal loop, with deployment tracked
-  by stormcos#119. The serving-pair check (#93) is in place; rustkube still
-  needs client credential/trust reload (#105). A second issuance controller here
+  by stormcos#119. The serving-pair check (#93) and client credential/trust
+  reload (#105) are in place. A second issuance controller here
   would overlap stormcert; #20's scope must be reconciled first.
 - **cert-manager CRD compatibility** (#20 phase 3) — `Issuer`/`ClusterIssuer`/
   `Certificate` for workload and Ingress certificates.
