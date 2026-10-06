@@ -210,6 +210,15 @@ the scheduler's pending Pods) ran on each one; and a routine watch reconnect
 counted as a reset, requeueing every object whenever a watch timed out. A
 feed now delivers nothing for a heartbeat or revision-only echo, and resets
 only on a new snapshot or on reconnecting after an outage.
+A third (#207): the reflector bounds each WATCH itself at 330 s (it asks for
+`timeoutSeconds=300`, which the apiserver ignores, #165), and that deadline
+was handled as a transport failure — a warning, every feed unsynchronized
+(the GC failing closed), a counted reconnect with backoff, and a recovery
+reset on resume, per watch every ~5.5 min. Reaching its own deadline on an
+open stream now resumes from the last revision at once; a watch that cannot
+open by then is still an outage. `test/e2e/watch-deadline.sh` idles the
+controller-manager and scheduler for 400 s and requires resumed watches with
+no reconnect warning, no LIST and no counted reconnect.
 `test/e2e/deadlines.sh` holds each semantic deadline to its moment (cron start,
 Job `activeDeadlineSeconds`, Event TTL, Lease grace, ReplicaSet recreation
 backoff; measured at +0.1–1.8 s) and requires an idle control plane to make no

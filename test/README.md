@@ -160,6 +160,12 @@ requires an idle control plane to make no API requests for a minute — the
 VirtualMachine controller's 30 s retries of an unserved KubeVirt API are
 listed, not counted (#172).
 
+`e2e/watch-deadline.sh` (#207) idles the controller-manager and scheduler
+for 400 s, past the reflector's own 330 s WATCH deadline, and requires that
+their watches ended and resumed (the apiserver saw new WATCHes) with no
+`reflector WATCH reconnecting` warning, no LIST, and — when the fixed metrics
+port 10257 is the rig's own — no change in `rustkube_watch_reconnects_total`.
+
 `e2e/get-latency.sh` (#177) times GET against LIST for a ServiceAccount that
 RBAC must authorize and for system:masters, idle and under 40 clients renewing
 Leases; counts datastore calls per authorized GET (one); checks that a grant

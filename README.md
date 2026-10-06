@@ -263,7 +263,9 @@ One process, leader-elected on the Lease `kube-system/kube-controller-manager`.
 Collection LIST/WATCH streams enqueue deduplicated work as
 state changes. Controllers run concurrently on Tokio; a change during a
 reconcile queues another pass. Successful idle passes have no poll interval:
-watch heartbeats and routine reconnects wake nothing, and an idle control
+watch heartbeats and routine reconnects wake nothing — a watch reaching the
+reflector's own 330 s deadline resumes from its revision, synchronized, with
+no warning (`test/e2e/watch-deadline.sh`, #207) — and an idle control
 plane makes no API requests (`test/e2e/deadlines.sh`) — except on a cluster
 without KubeVirt, where the VirtualMachine and VMI-migration controllers start
 regardless and retry the unserved API every 30 s (#172; the rig does not count
