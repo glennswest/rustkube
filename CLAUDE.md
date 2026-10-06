@@ -110,6 +110,7 @@ bypasses; ownerReferences/finalizers-only updates skip.
       allowed. Workspace at 157c0fd 514 passed / 4 ignored, exit 0
 - [x] README/inventory/presentation/CHANGELOG. Namespace writes stay
       cluster-scoped (safe to relax now; not changed)
+- [x] golden-rustkube-5b99942904e4 (stormcos#306); #98 closed
 
 ### Admission webhooks wired into writes (#82, P1) — COMPLETE 2026-10-06
 `admission.rs` had a webhook client nothing called; rewritten and wired.
