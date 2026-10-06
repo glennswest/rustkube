@@ -53,8 +53,13 @@ tick() { sleep 35; }
 # scheduler can bind; a Deployment per check that only the controller-manager
 # can turn into a ReplicaSet.
 k -X POST "$API/api/v1/nodes" -d '{"apiVersion":"v1","kind":"Node","metadata":{"name":"n1","labels":{"kubernetes.io/hostname":"n1"}}}' >/dev/null
-k -X PATCH -H 'Content-Type: application/merge-patch+json' "$API/api/v1/nodes/n1/status" \
-  -d '{"status":{"capacity":{"cpu":"8","memory":"16Gi","pods":"110"},"allocatable":{"cpu":"8","memory":"16Gi","pods":"110"},"conditions":[{"type":"Ready","status":"True"}]}}' >/dev/null
+k "$API/api/v1/nodes/n1" | python3 -c '
+import json, sys
+n = json.load(sys.stdin)
+res = {"cpu": "8", "memory": "16Gi", "pods": "110"}
+n["status"] = {"capacity": res, "allocatable": res, "conditions": [{"type": "Ready", "status": "True"}]}
+print(json.dumps(n))' | k -X PUT "$API/api/v1/nodes/n1/status" -d @- >/dev/null \
+  || { echo "setup: node n1 status not written"; exit 100; }
 k -X POST "$API/apis/coordination.k8s.io/v1/namespaces/kube-node-lease/leases" \
   -d '{"apiVersion":"coordination.k8s.io/v1","kind":"Lease","metadata":{"name":"n1"},"spec":{"holderIdentity":"n1","leaseDurationSeconds":40}}' >/dev/null
 ( while sleep 10; do
@@ -77,7 +82,8 @@ works() { # <label>: the controller-manager and the scheduler both act
     k "$API/api/v1/namespaces/default/pods/p-$n" | grep -q '"nodeName":"n1"' && { ok=1; break; }
     sleep 1
   done
-  [ -n "$ok" ] && pass "$n: scheduler acts (Pod bound)" || fail "$n: p-$n not bound"
+  [ -n "$ok" ] && pass "$n: scheduler acts (Pod bound)" \
+    || fail "$n: p-$n not bound: $(k "$API/api/v1/namespaces/default/pods/p-$n" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",{}).get("conditions"))')"
 }
 
 works start
@@ -124,4 +130,5 @@ API_PID=$!
 for _ in $(seq 120); do k "$API/readyz" >/dev/null && break; sleep 1; done
 works renewed
 
+[ "$FAIL" -ne 0 ] && { echo "---- scheduler log (tail)"; grep -v 'reflector LIST failed' "$W/sched.log" | tail -40; }
 report
