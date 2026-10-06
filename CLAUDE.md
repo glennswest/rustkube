@@ -130,7 +130,7 @@ bypasses; ownerReferences/finalizers-only updates skip.
       matchConditions follow-up filed #217
 - [x] golden-rustkube-af640123da63 (stormcos#306); #82 closed
 
-### 100-Pod burst: ~12 Pods wait ~60 s (#205, P1) — NEEDS OWNER 2026-10-06
+### 100-Pod burst: ~12 Pods wait ~60 s (#205, P1) — BLOCKED on stormcos#329, 2026-10-06
 Not a scheduler defect. Run 7277704177: BestEffort `sleep 60` Pods on one
 node that allows 110 Pods (rustkube-node's fixed `allocatable.pods`), with
 ~23 already in use. `peak_running_observed` was 87, and the rest bind as the first sleepers go
@@ -139,7 +139,12 @@ The scheduler has no 60 s interval (backoff caps at 25.6 s).
 - [x] Evidence + question posted on #205; `wait-owner`: A = configurable
       kubelet max-pods (rustkube-node + stormcos, recommended), B = QA burst
       sized/reported against free slots (stormcos_qa). No rustkube change
-- [ ] On the answer: file the chosen fix on its repo, propose #205 after it
+- [x] Owner chose A (2026-10-06): kubelet `--max-pods`, stormcos sets 250;
+      stormcos_qa reports slot wait apart from scheduling. Filed
+      rustkube-node#165, stormcos#329 (also: Cilium /24 ≈ 252 IPs per node);
+      commented stormcos_qa#49. #205 proposed after stormcos#329
+- [ ] After stormcos#329 ships: pvetest1 100-Pod burst schedules with no slot
+      wait (allocatable.pods 250); then close #205
 
 ### Serving-cert reload applies a mismatched pair (#93, P1) — COMPLETE 2026-10-06
 `tls.rs` reloaded any pair that parsed; `renew-certs.sh` moved the key before
