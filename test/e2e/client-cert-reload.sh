@@ -52,6 +52,12 @@ tick() { sleep 35; }
 # A stand-in Node kept alive by its Lease, and a Pod per check that only the
 # scheduler can bind; a Deployment per check that only the controller-manager
 # can turn into a ReplicaSet.
+# The Lease first, renewed: the node controller marks a node with a stale or
+# missing renewTime NotReady, and only a kubelet would mark it Ready again.
+now() { date -u +%Y-%m-%dT%H:%M:%S.%6NZ; }
+k -X POST "$API/apis/coordination.k8s.io/v1/namespaces/kube-node-lease/leases" \
+  -d "{\"apiVersion\":\"coordination.k8s.io/v1\",\"kind\":\"Lease\",\"metadata\":{\"name\":\"n1\"},\"spec\":{\"holderIdentity\":\"n1\",\"leaseDurationSeconds\":40,\"renewTime\":\"$(now)\"}}" >/dev/null \
+  || { echo "setup: lease n1 not created"; exit 100; }
 k -X POST "$API/api/v1/nodes" -d '{"apiVersion":"v1","kind":"Node","metadata":{"name":"n1","labels":{"kubernetes.io/hostname":"n1"}}}' >/dev/null
 k "$API/api/v1/nodes/n1" | python3 -c '
 import json, sys
@@ -60,12 +66,10 @@ res = {"cpu": "8", "memory": "16Gi", "pods": "110"}
 n["status"] = {"capacity": res, "allocatable": res, "conditions": [{"type": "Ready", "status": "True"}]}
 print(json.dumps(n))' | k -X PUT "$API/api/v1/nodes/n1/status" -d @- >/dev/null \
   || { echo "setup: node n1 status not written"; exit 100; }
-k -X POST "$API/apis/coordination.k8s.io/v1/namespaces/kube-node-lease/leases" \
-  -d '{"apiVersion":"coordination.k8s.io/v1","kind":"Lease","metadata":{"name":"n1"},"spec":{"holderIdentity":"n1","leaseDurationSeconds":40}}' >/dev/null
 ( while sleep 10; do
     k -X PATCH -H 'Content-Type: application/merge-patch+json' \
       "$API/apis/coordination.k8s.io/v1/namespaces/kube-node-lease/leases/n1" \
-      -d "{\"spec\":{\"renewTime\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000000Z)\"}}" >/dev/null 2>&1
+      -d "{\"spec\":{\"renewTime\":\"$(now)\"}}" >/dev/null 2>&1
   done ) &
 
 works() { # <label>: the controller-manager and the scheduler both act
