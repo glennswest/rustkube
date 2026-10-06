@@ -95,6 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### 100-Pod burst: ~12 Pods wait ~60 s (#205, P1) — NEEDS OWNER 2026-10-06
+Not a scheduler defect. Run 7277704177: BestEffort `sleep 60` Pods on one
+node that allows 110 Pods (rustkube-node's fixed `allocatable.pods`), with
+~23 already in use. `peak_running_observed` was 87, and the rest bind as the first sleepers go
+Succeeded at ~t+60 s (#194's limit, covered by `test/e2e/pod-limit.sh`).
+The scheduler has no 60 s interval (backoff caps at 25.6 s).
+- [x] Evidence + question posted on #205; `wait-owner`: A = configurable
+      kubelet max-pods (rustkube-node + stormcos, recommended), B = QA burst
+      sized/reported against free slots (stormcos_qa). No rustkube change
+- [ ] On the answer: file the chosen fix on its repo, propose #205 after it
+
 ### Serving-cert reload applies a mismatched pair (#93, P1) — COMPLETE 2026-10-06
 `tls.rs` reloaded any pair that parsed; `renew-certs.sh` moved the key before
 the cert and kept going after a failed `openssl` (called under `||`, so no
