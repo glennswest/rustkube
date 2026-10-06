@@ -192,6 +192,21 @@ path still works and the token is never logged; that a rewrite rotates it, a
 malformed rewrite keeps the last good token, and removing the file revokes it.
 `RK_APISERVER_ARGS` (lib.sh) passes the extra flag.
 
+`e2e/admission-webhook.sh` (#82) runs a Python HTTPS webhook (certificate
+from the rig's CA, sent as `caBundle`) and checks: a validating webhook with
+an `objectSelector` refuses a labelled ConfigMap create with upstream's
+message and code and is never sent an unlabelled one; a mutating webhook
+reached through a Service (fixed ClusterIP 127.0.0.7, TLS for
+`wh.webhooks.svc`) with a `namespaceSelector` patches creates in its namespace
+only, its warning comes back as a `Warning` header, and its review names the
+user, operation, kind, resource, name and namespace; a PATCH is an UPDATE with
+`oldObject`; a `nodes/status` PUT is admitted as subresource `status` and the
+main resource is not; DELETE and deletecollection are refused for a protected
+Secret; an unreachable webhook refuses under `failurePolicy: Fail` (500) and
+is passed over under `Ignore`; a Fail webhook on webhook configurations
+cannot block its own removal; and with the configurations deleted, writes
+are no longer refused.
+
 `e2e/crd-restart.sh` (#185) creates two CRDs (two served versions, cluster
 scope) with a CR each, then checks that `/apis`, each group-version and the CRs
 are served after an apiserver restart, after a "reboot" (datastore and

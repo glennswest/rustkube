@@ -232,9 +232,31 @@ PersistentVolumeClaim or PersistentVolume. **On update**: immutable
 ConfigMaps/Secrets and PriorityClass `value`; a PersistentVolumeClaim's
 spec is immutable but for growing `resources.requests.storage` on a Bound
 claim whose StorageClass has `allowVolumeExpansion` (403 otherwise; shrinking
-only back to `status.capacity`) — volume expansion, docs/storage.md. That is
-the whole chain: **admission webhooks are not called**. Webhook configurations
-are stored and served, and no request reaches a webhook (#82).
+only back to `status.capacity`) — volume expansion, docs/storage.md.
+
+**Admission webhooks** (#82) run after the built-in admission, on create
+(built-in and custom resources, server-side apply's upsert, `pods/eviction`),
+update (PUT, PATCH, and every `/status` write as subresource `status`), delete
+and each object of a deletecollection: mutating `MutatingWebhookConfiguration`
+webhooks in configuration-name order, then `ValidatingWebhookConfiguration`
+webhooks in parallel. Honoured: `rules` (operations, groups, versions,
+resources with subresources and wildcards, scope), `namespaceSelector`,
+`objectSelector`, `failurePolicy` (default `Fail`: a call that fails is a 500
+"failed calling webhook"), `timeoutSeconds` (default 10, 1–30), `sideEffects`
+against a dry-run delete, `reinvocationPolicy: IfNeeded`, JSONPatch, and the
+webhook's `warnings` as `Warning` headers; a refusal is upstream's "admission
+webhook \"…\" denied the request: …" with the webhook's code (≥ 400). The
+review carries the requesting user and groups, kind, resource, name,
+namespace, object and oldObject. A webhook is reached at `clientConfig.url`,
+or at a `service` through its ClusterIP with TLS verified for
+`<name>.<namespace>.svc` against `caBundle` (so the apiserver's host must
+reach ClusterIPs, as upstream's default). Not honoured: CEL `matchConditions`
+(the webhook is called as if they matched), AdmissionReview `v1beta1`, and
+client certificates to the webhook. Not admitted: `admissionregistration.k8s.io`
+objects (upstream exempts them), `events.k8s.io` writes, the kubevirt
+start/stop/restart and migrate verbs, ProjectRequest, TokenRequest and
+`namespaces/finalize`. Configurations are read from the watch cache, so one
+applies within milliseconds of being stored.
 
 **At boot**, idempotently: waits for the datastore; creates the `default`,
 `kube-system`, `kube-public` and `kube-node-lease` namespaces and backfills

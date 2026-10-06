@@ -91,8 +91,8 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 - **Groups:** core, apps, batch, autoscaling, policy, networking,
   discovery, events, coordination, rbac, authorization, certificates,
   storage, apiextensions (CRDs), gateway, `route.openshift.io`,
-  `project.openshift.io`, kubevirt subresources. Webhook configurations and
-  APIServices are stored but not acted on (#82, #83).
+  `project.openshift.io`, kubevirt subresources. Admission webhooks are
+  called on every write (#82); APIServices are stored but not acted on (#83).
 - **Wire:** JSON + protobuf, Table output, `PartialObjectMetadata`, watch with
   bookmarks and `sendInitialEvents`, pagination, label/field selectors.
 - **Writes:** create/update/delete with `DeleteOptions`, JSON / merge /
@@ -189,8 +189,8 @@ Metric names follow upstream's: `docs/metrics.md`.
 ## Planned — not in the code yet
 
 Built as modules but **not wired**:
-- admission webhooks (`admission.rs`, #82) · API aggregation
-  (`aggregation.rs`, #83) · scheduler preemption (`preemption.rs`, #84)
+- API aggregation (`aggregation.rs`, #83) · scheduler preemption
+  (`preemption.rs`, #84)
 
 Missing:
 - `/scale` subresource — `kubectl scale` fails (#86) · `schedulingGates` (#87)
@@ -214,7 +214,7 @@ Missing:
   Build configuration is not proof of deployment.
 - **rustkube-node#56** — the kubelet serves no exec/attach/port-forward, so
   `oc rsh`/`cp`/`port-forward` stop at the node.
-- **#82, #86** — webhooks, `kubectl scale`: what a
-  typical operator install trips over first.
+- **#86** — `kubectl scale`: what a typical operator install trips over
+  first, now that webhooks are called (#82).
 
 Every open issue: `gh issue list -R glennswest/rustkube`.

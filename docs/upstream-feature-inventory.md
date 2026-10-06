@@ -26,7 +26,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `apiextensions.k8s.io/v1` — CRD | core | 🟡 | served dynamically, keyed by group (#76), `/status` subresource; **no structural-schema validation, no conversion webhooks** |
 | `autoscaling/v2` — HorizontalPodAutoscaler | core | 🟡 | object served; the controller is a placeholder (#89) |
 | `apiregistration.k8s.io/v1` — APIService | core | 🔴 | objects stored; `aggregation.rs` is not wired in, nothing is proxied (#83) |
-| `admissionregistration.k8s.io/v1` — webhook configurations | core | 🔴 | objects stored; `admission.rs` is not wired in, no webhook is called (#82). ValidatingAdmissionPolicy absent |
+| `admissionregistration.k8s.io/v1` — webhook configurations | core | 🟡 | mutating + validating webhooks called on every write (#82); no CEL `matchConditions`, AdmissionReview v1 only. ValidatingAdmissionPolicy absent (#119) |
 | `networking.k8s.io/v1` — NetworkPolicy, Ingress, IngressClass | core | 🟡 | API served; no Ingress controller. NetworkPolicy is enforced by Cilium |
 | `discovery.k8s.io/v1` — EndpointSlice | core | ✅ | served; the Service controller writes them (v0.7.5, #22) |
 | `policy/v1` — PodDisruptionBudget, Eviction | core | ✅ | `eviction.rs` (429 when blocked), `pdb.rs` (v0.7.18, #7). Not: 500 on multiple matching PDBs, `unhealthyPodEvictionPolicy`, `disruptedPods` |
@@ -57,7 +57,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | AuthN: OIDC, webhook, bootstrap tokens | core | 🔴 | |
 | AuthZ: RBAC | core | 🟡 | no escalation prevention (#98) |
 | AuthZ: Node authorizer, webhook authorizer | core | 🔴 | `system:nodes` is bound to `cluster-admin` instead |
-| Admission: webhooks | core | 🔴 | not wired (#82) |
+| Admission: webhooks | core | 🟡 | wired (#82): rules, selectors, failurePolicy, reinvocation, JSONPatch, warnings; CEL `matchConditions` not evaluated |
 | Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS. 🔴 LimitRanger (#131), ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
 | Aggregation layer | core | 🔴 | not wired (#83) |
 | API Priority & Fairness, audit logging | optional | 🔴 | |
@@ -162,7 +162,7 @@ binder + StorageClass, Server-Side Apply, watch bookmarks, CSR, OpenAPI v3
 paths, `/status` optimistic concurrency (#78), Projects (#97).
 
 **Open, conformance-blocking:**
-1. Admission webhooks (#82), LimitRanger, ResourceQuota.
+1. LimitRanger, ResourceQuota (admission webhooks are wired, #82).
 2. Node authorizer (nodes are `cluster-admin` today); RBAC escalation prevention (#98).
 3. `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
