@@ -95,23 +95,21 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Admission webhooks wired into writes (#82, P1) — IN PROGRESS 2026-10-06
-`admission.rs` had a webhook client nothing called. Plan:
-- [ ] Request context (task-local, set after RBAC): user, verb, group/version/
-      resource/subresource, namespace, name, dryRun; Warning headers back
-- [ ] Configs from watch-cache views (sorted by name); rules (ops, groups,
-      versions, resources incl. subresources, scope), namespaceSelector,
-      objectSelector; admissionregistration objects never sent; CEL
-      matchConditions not evaluated (webhook called; documented)
-- [ ] Call: url or Service (ClusterIP, SNI `svc.ns.svc`, caBundle), timeout
-      1–30 s (default 10), uid checked; deny → upstream message/code;
-      call error → failurePolicy; JSONPatch; reinvocationPolicy IfNeeded;
-      validating webhooks in parallel; dryRun vs sideEffects
-- [ ] Wired: create (built-in, CR, apply-upsert), PUT, PATCH/status
-      (`guaranteed_update`), DELETE + deletecollection per item, eviction
-- [ ] Units + `test/e2e/admission-webhook.sh` (https webhook with caBundle:
-      deny create, mutate, failurePolicy Fail/Ignore, status, delete)
-- [ ] README/docs/CHANGELOG; sc-build; close #82
+### Admission webhooks wired into writes (#82, P1) — VERIFIED 2026-10-06
+`admission.rs` had a webhook client nothing called; rewritten and wired.
+- [x] cfb2858: request attributes in a task-local set after RBAC (user,
+      verb, GVR, subresource, namespace, name, dryRun), Warning headers back;
+      configs from watch-cache views; rules/scope/subresources, namespace +
+      object selectors, failurePolicy, timeout, sideEffects vs dry-run
+      delete, IfNeeded reinvocation, JSONPatch; url or Service (ClusterIP,
+      SNI `svc.ns.svc`, caBundle). Wired: create (built-in, CR, apply upsert,
+      pods/eviction), PUT, `guaranteed_update` (PATCH, /status), DELETE and
+      deletecollection items. admissionregistration + events.k8s.io exempt;
+      CEL matchConditions not evaluated (webhook called)
+- [x] apiserver 236 tests (7 new); `test/e2e/admission-webhook.sh` 20/20 at
+      54d14ba (fastetcd v1.12.0); workspace 504 passed / 4 ignored at 54d14ba
+- [ ] Control run (apiserver sources at 483a93b) must fail the rig; golden;
+      close #82
 
 ### 100-Pod burst: ~12 Pods wait ~60 s (#205, P1) — NEEDS OWNER 2026-10-06
 Not a scheduler defect. Run 7277704177: BestEffort `sleep 60` Pods on one
