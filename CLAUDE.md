@@ -108,8 +108,10 @@ clone requests. README's configuration tables come from the three CLI sources.
       CEL matchConditions not evaluated (webhook called)
 - [x] apiserver 236 tests (7 new); `test/e2e/admission-webhook.sh` 20/20 at
       54d14ba (fastetcd v1.12.0); workspace 504 passed / 4 ignored at 54d14ba
-- [ ] Control run (apiserver sources at 483a93b) must fail the rig; golden;
-      close #82
+- [x] Control: rig with pkg/apiserver/src at 483a93b fails 13 of 20 (no
+      webhook called); #214–#216 (control attempts) closed. CEL
+      matchConditions follow-up filed #217
+- [ ] Golden; close #82
 
 ### 100-Pod burst: ~12 Pods wait ~60 s (#205, P1) — NEEDS OWNER 2026-10-06
 Not a scheduler defect. Run 7277704177: BestEffort `sleep 60` Pods on one

@@ -251,7 +251,7 @@ namespace, object and oldObject. A webhook is reached at `clientConfig.url`,
 or at a `service` through its ClusterIP with TLS verified for
 `<name>.<namespace>.svc` against `caBundle` (so the apiserver's host must
 reach ClusterIPs, as upstream's default). Not honoured: CEL `matchConditions`
-(the webhook is called as if they matched), AdmissionReview `v1beta1`, and
+(the webhook is called as if they matched, #217), AdmissionReview `v1beta1`, and
 client certificates to the webhook. Not admitted: `admissionregistration.k8s.io`
 objects (upstream exempts them), `events.k8s.io` writes, the kubevirt
 start/stop/restart and migrate verbs, ProjectRequest, TokenRequest and
