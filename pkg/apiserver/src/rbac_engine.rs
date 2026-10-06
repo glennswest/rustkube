@@ -59,6 +59,12 @@ pub struct RbacEngine {
     views: Mutex<HashMap<&'static str, View>>,
 }
 
+impl std::fmt::Debug for RbacEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RbacEngine").field("dev_anonymous_admin", &self.dev_anonymous_admin).finish_non_exhaustive()
+    }
+}
+
 /// One prefix of RBAC objects, parsed once per change rather than per request.
 struct View {
     version: SnapshotVersion,
