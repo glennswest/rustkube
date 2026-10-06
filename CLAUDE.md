@@ -95,17 +95,21 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### RBAC escalation prevention (#98, P1) — IN PROGRESS 2026-10-06
+### RBAC escalation prevention (#98, P1) — COMPLETE 2026-10-06
 Any caller who may write RoleBindings could bind any role (cluster-admin in
 one's own project). Upstream's rule: a binding needs `bind` on the role or
 every rule of it held in the binding's scope; a role needs `escalate` or
-every rule held. `system:masters` bypasses; GC-only updates skip.
-- [ ] `escalation.rs`: coverage (upstream `Covers`: verbs/groups/resources
-      with `*/sub`, resourceNames, nonResourceURLs) + `confirm`, called from
-      `admission::admit` after mutating webhooks (every create/update path)
-- [ ] Units for coverage; `test/e2e/projects.sh`: project admin binding
-      cluster-admin refused, binding `edit`/`view` still allowed
-- [ ] README/docs/CHANGELOG; sc-build workspace + projects.sh; close #98
+every rule held (`aggregationRule` needs `escalate`). `system:masters`
+bypasses; ownerReferences/finalizers-only updates skip.
+- [x] 233fc70 `escalation.rs`: upstream `Covers` (verbs/groups/resources,
+      `*/sub` and `pods/*`, resourceNames, nonResourceURLs) + `confirm`,
+      called from `admission::admit` after mutating webhooks (POST, PUT,
+      PATCH, apply upsert); 157c0fd Debug for RbacEngine
+- [x] apiserver 246 tests (10 new); `test/e2e/projects.sh` 46/46 at 157c0fd
+      (fastetcd v1.12.0); control (hook disabled) fails 8 — every escalation
+      allowed. Workspace at 157c0fd 514 passed / 4 ignored, exit 0
+- [x] README/inventory/presentation/CHANGELOG. Namespace writes stay
+      cluster-scoped (safe to relax now; not changed)
 
 ### Admission webhooks wired into writes (#82, P1) — COMPLETE 2026-10-06
 `admission.rs` had a webhook client nothing called; rewritten and wired.
@@ -492,7 +496,7 @@ when each piece landed.
 - [x] LIST items carry resourceVersion and continuation pages request the
       first page's revision (64963b2, #111). The still-open issue label does
       not mean this code is absent; fastetcd snapshot correctness is #50 there.
-- [ ] RBAC escalation prevention (#98); until then Namespace writes stay
+- [x] RBAC escalation prevention (#98) — 2026-10-06; Namespace writes stay
       cluster-scoped (#97)
 - [ ] Secrets: `stringData` not folded into `data` (#101)
 - [x] PVC `status.phase` not defaulted to `Pending` on create (#102) — Pods,
