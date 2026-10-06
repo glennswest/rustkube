@@ -2,8 +2,10 @@
 //!
 //! Serves the Kubernetes REST API (core and built-in groups, CRDs,
 //! subresources) via axum, wire-compatible with kubectl, helm and client-go.
-//! Admission webhooks ([`admission`], #82) and aggregation ([`aggregation`],
-//! #83) are implemented as modules but not wired into the request path.
+//! Admission webhooks ([`admission`], #82) run on every write, with RBAC
+//! escalation prevention ([`escalation`], #98) between the mutating and the
+//! validating ones. Aggregation ([`aggregation`], #83) is a module that is not
+//! wired into the request path.
 
 pub mod admission;
 pub mod aggregation;
@@ -14,6 +16,7 @@ pub mod config;
 pub mod crd;
 pub mod discovery;
 pub mod error;
+pub mod escalation;
 pub mod events;
 pub mod eviction;
 pub mod handlers;

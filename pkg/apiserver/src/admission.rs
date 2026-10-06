@@ -80,6 +80,9 @@ pub struct RequestAttrs {
     pub namespace: Option<String>,
     pub name: Option<String>,
     pub dry_run: bool,
+    /// The authorizer, for escalation prevention (#98). `None` where the
+    /// request was not authorized by one (tests).
+    pub rbac: Option<Arc<crate::rbac_engine::RbacEngine>>,
     warnings: Mutex<Vec<String>>,
 }
 
@@ -121,6 +124,7 @@ impl RequestAttrs {
             namespace,
             name,
             dry_run,
+            rbac: None,
             warnings: Mutex::new(Vec::new()),
         })
     }
@@ -225,6 +229,9 @@ pub async fn admit(
     let mutating = state.admission.hooks(&state.storage, MUTATING).await;
     let validating = state.admission.hooks(&state.storage, VALIDATING).await;
     if mutating.is_empty() && validating.is_empty() {
+        if let Some(object) = object.as_deref() {
+            escalation(&request, object, old).await?;
+        }
         return Ok(());
     }
 
@@ -259,6 +266,9 @@ pub async fn admit(
                 call.mutate(hook, &mut current).await?;
             }
         }
+    }
+    if object.is_some() {
+        escalation(&request, &current, old).await?;
     }
     if let Some(object) = object {
         // A patch cannot move the object: its key was chosen by its name.
@@ -299,6 +309,25 @@ pub async fn admit(
         }
     }
     Ok(())
+}
+
+/// RBAC escalation prevention (#98) on a Role, ClusterRole or binding about
+/// to be stored: judged after the mutating webhooks, on what will be stored,
+/// and before the validating ones, as upstream's RBAC storage does.
+async fn escalation(request: &RequestAttrs, object: &Value, old: Option<&Value>) -> Result<(), ApiError> {
+    let Some(rbac) = &request.rbac else { return Ok(()) };
+    if !crate::escalation::applies(&request.group, &request.resource, request.subresource.as_deref()) {
+        return Ok(());
+    }
+    crate::escalation::confirm(
+        rbac,
+        &request.user,
+        &request.resource,
+        request.namespace.as_deref(),
+        object,
+        old,
+    )
+    .await
 }
 
 const MUTATING: &str = "/registry/mutatingwebhookconfigurations/";

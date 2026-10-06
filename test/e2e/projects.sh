@@ -87,6 +87,49 @@ expect_denied "bob (view): read secrets in demo" as "$BOB" bob get secrets -n de
 expect_denied "bob (view): delete in demo" as "$BOB" bob delete cm c1 -n demo
 expect_denied "bob (view): delete project demo" as "$BOB" bob delete project demo
 
+# --- escalation prevention (#98) -----------------------------------------------
+# A project admin shares what she holds, and nothing more.
+expect_denied "alice: bind cluster-admin in demo" as "$ALICE" alice create rolebinding ca -n demo --clusterrole=cluster-admin --user=alice
+expect_denied "alice: repoint her admin binding at cluster-admin" as "$ALICE" alice patch rolebinding admin -n demo --type=merge -p '{"roleRef":{"name":"cluster-admin"}}'
+expect_denied "alice: a Role granting everything" as "$ALICE" alice apply -f - <<'YAML'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: god, namespace: demo}
+rules: [{apiGroups: ["*"], resources: ["*"], verbs: ["*"]}]
+YAML
+expect_denied "alice: a Role granting update namespaces" as "$ALICE" alice create role ns-writer -n demo --verb=update --resource=namespaces
+expect_ok "alice: a Role within her rights" as "$ALICE" alice create role cm-reader -n demo --verb=get,list --resource=configmaps
+expect_ok "alice: bind that Role to bob" as "$ALICE" alice create rolebinding cm-reader -n demo --role=cm-reader --user=bob
+expect_ok "alice: add-role-to-user edit bob -n demo" as "$ALICE" alice adm policy add-role-to-user edit bob -n demo
+expect_ok "alice: edit her own binding's labels" as "$ALICE" alice label rolebinding admin -n demo reviewed=yes
+
+# Cluster scope: carol may write ClusterRoleBindings, and is no cluster-admin.
+CAROL=$(token carol '[]')
+as "$ADMIN" admin apply -f - >/dev/null <<'YAML'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: crb-writer}
+rules:
+- {apiGroups: ["rbac.authorization.k8s.io"], resources: ["clusterrolebindings", "clusterroles"], verbs: ["create", "get", "list"]}
+- {apiGroups: ["rbac.authorization.k8s.io"], resources: ["clusterroles"], verbs: ["bind"], resourceNames: ["view"]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: carol-crb-writer}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: crb-writer}
+subjects: [{kind: User, name: carol, apiGroup: rbac.authorization.k8s.io}]
+YAML
+expect_denied "carol: bind herself cluster-admin" as "$CAROL" carol create clusterrolebinding carol-root --clusterrole=cluster-admin --user=carol
+expect_denied "carol: bind edit (neither held nor bind)" as "$CAROL" carol create clusterrolebinding carol-edit --clusterrole=edit --user=carol
+expect_ok "carol: bind view (holds bind on it)" as "$CAROL" carol create clusterrolebinding carol-view --clusterrole=view --user=carol
+expect_ok "carol: bind crb-writer (holds every rule)" as "$CAROL" carol create clusterrolebinding carol-again --clusterrole=crb-writer --user=bob
+expect_denied "carol: a ClusterRole beyond her rights" as "$CAROL" carol create clusterrole wide --verb='*' --resource=secrets
+as "$ADMIN" admin create clusterrole escalator --verb=escalate --resource=clusterroles.rbac.authorization.k8s.io >/dev/null
+as "$ADMIN" admin create clusterrolebinding carol-escalator --clusterrole=escalator --user=carol >/dev/null
+expect_ok "carol: the same ClusterRole once she holds escalate" as "$CAROL" carol create clusterrole wide --verb='*' --resource=secrets
+expect_ok "admin (system:masters): binds anything" as "$ADMIN" admin create clusterrolebinding bob-root --clusterrole=cluster-admin --user=bob
+as "$ADMIN" admin delete clusterrolebinding bob-root >/dev/null
+
 # --- deletion cascades --------------------------------------------------------
 expect_ok "alice: delete project demo" as "$ALICE" alice delete project demo
 gone=

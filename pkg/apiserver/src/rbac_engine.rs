@@ -81,6 +81,18 @@ impl RbacEngine {
         self
     }
 
+    /// `system:masters`, or anonymous with `--dev-anonymous-admin`: allowed
+    /// everything without a binding being read.
+    pub fn is_superuser(&self, user: &UserInfo) -> bool {
+        user.groups.iter().any(|g| g == "system:masters")
+            || (self.dev_anonymous_admin && user.username == "system:anonymous")
+    }
+
+    /// The store the bindings and roles are read from.
+    pub(crate) fn storage(&self) -> &ResourceStorage {
+        &self.storage
+    }
+
     /// Check if the user is authorized for the given request.
     pub async fn authorize(&self, user: &UserInfo, req: &AuthorizationRequest) -> bool {
         self.authorize_with_reason(user, req).await.allowed
@@ -806,7 +818,10 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
 
     // Insert user info for handlers to use, and run the handler with the
     // write's admission attributes so its webhooks see who asked (#82).
-    let attrs = crate::admission::RequestAttrs::of(&path, &method, request.uri().query(), user.clone());
+    let mut attrs = crate::admission::RequestAttrs::of(&path, &method, request.uri().query(), user.clone());
+    if let Some(attrs) = attrs.as_mut() {
+        attrs.rbac = request.extensions().get::<Arc<RbacEngine>>().cloned();
+    }
     request.extensions_mut().insert(user);
     Ok(crate::admission::in_request(attrs, next.run(request)).await)
 }
@@ -869,12 +884,12 @@ fn parse_authorization_request(
     //
     // Upstream authorizes every verb there, and relies on RBAC escalation
     // prevention to stop a namespace admin granting themselves `update
-    // namespaces`. This apiserver has no escalation check: anyone who may
-    // write RoleBindings in `demo` — every project's admin — can bind
-    // cluster-admin in `demo`. Were writes authorized in `demo`, that binding
-    // would reach the Namespace object and its `pod-security` labels, which
-    // are what keep privileged pods off the node. So a Namespace's writes stay
-    // cluster-scoped, and a project's owner deletes it as a Project.
+    // namespaces`. That check now exists (`escalation`, #98): a project's
+    // admin can no longer bind cluster-admin in `demo`. Namespace writes were
+    // kept cluster-scoped while it did not, so that such a binding could not
+    // reach the Namespace object and its `pod-security` labels, which are
+    // what keep privileged pods off the node; they stay cluster-scoped, and
+    // a project's owner deletes it as a Project.
     let namespace = if api_group.is_empty() && resource == "namespaces" && verb != "get" {
         None
     } else {
