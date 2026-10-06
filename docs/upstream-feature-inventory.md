@@ -22,7 +22,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `apps/v1` — ControllerRevision; the `/scale` subresource | core | 🔴 | ControllerRevision is not in discovery and nothing writes one; `deployments/scale` is advertised with no route (#86) |
 | `batch/v1` — Job, CronJob | core | ✅ | |
 | `coordination.k8s.io/v1` — Lease | core | ✅ | leader election, node heartbeats |
-| `rbac.authorization.k8s.io/v1` | core | 🟡 | `rbac_engine.rs`; no ClusterRole `aggregationRule`; **no escalation prevention** — whoever may write a RoleBinding may grant any role (#98) |
+| `rbac.authorization.k8s.io/v1` | core | 🟡 | `rbac_engine.rs`; no ClusterRole `aggregationRule`; escalation prevention (`bind`/`escalate` or held rules, `escalation.rs`, #98) |
 | `apiextensions.k8s.io/v1` — CRD | core | 🟡 | served dynamically, keyed by group (#76), `/status` subresource; **no structural-schema validation, no conversion webhooks** |
 | `autoscaling/v2` — HorizontalPodAutoscaler | core | 🟡 | object served; the controller is a placeholder (#89) |
 | `apiregistration.k8s.io/v1` — APIService | core | 🔴 | objects stored; `aggregation.rs` is not wired in, nothing is proxied (#83) |
@@ -55,7 +55,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | TLS listener, serving-cert hot reload | core | 🟡 | mismatched pair refused (#93); client identity/trust do not reload (#105) |
 | AuthN: x509 client cert, ServiceAccount/bearer JWT | core | 🟡 | rejected bearer can fall back to anonymous (#115); TokenRequest honours audiences, lifetime (unset: 24 h, not 1 h) and Pod/Secret/Node binding (#182) |
 | AuthN: OIDC, webhook, bootstrap tokens | core | 🔴 | |
-| AuthZ: RBAC | core | 🟡 | no escalation prevention (#98) |
+| AuthZ: RBAC | core | 🟡 | escalation prevention since #98; no `aggregationRule` controller |
 | AuthZ: Node authorizer, webhook authorizer | core | 🔴 | `system:nodes` is bound to `cluster-admin` instead |
 | Admission: webhooks | core | 🟡 | wired (#82): rules, selectors, failurePolicy, reinvocation, JSONPatch, warnings; CEL `matchConditions` not evaluated |
 | Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS. 🔴 LimitRanger (#131), ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
@@ -163,7 +163,7 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
 
 **Open, conformance-blocking:**
 1. LimitRanger, ResourceQuota (admission webhooks are wired, #82).
-2. Node authorizer (nodes are `cluster-admin` today); RBAC escalation prevention (#98).
+2. Node authorizer (nodes are `cluster-admin` today).
 3. `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
 5. Scheduler: preemption (#84), scheduling gates (#87), Events/status (#138).

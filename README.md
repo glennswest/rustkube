@@ -189,6 +189,20 @@ read is one linearizable fastetcd Range; before fastetcd v1.9.0 that Range
 queued behind writes for up to seconds (fastetcd#71). On v1.9.0 the rig's
 GET p99 under 40-client Lease-renewal load is about 70 ms.
 
+**Escalation prevention** (#98), as upstream: writing a Role or ClusterRole
+needs the `escalate` verb on it, or every rule it grants already held by the
+caller (in the role's namespace; cluster-wide for a ClusterRole); one with an
+`aggregationRule` needs `escalate`. Writing a RoleBinding or
+ClusterRoleBinding needs the `bind` verb on the referenced role (by name, in
+the binding's namespace), or every rule of that role held in the binding's
+scope. Otherwise the write is 403 `attempting to grant RBAC permissions not
+currently held`, listing what is missing. Held means upstream's rule
+coverage: `*` holds anything, a `*` in the new rule needs a `*`, `*/status`
+and `pods/*` hold the subresources they name, resourceNames hold only those
+names. `system:masters` is never checked, nor an update that changes only
+ownerReferences or finalizers. It runs on every create/update path (POST,
+PUT, PATCH, server-side apply), after the mutating admission webhooks.
+
 **Projects** (`project.openshift.io/v1`, #97) are Namespaces with owners.
 Nothing is stored as a Project: each is the Namespace of the same name,
 translated on the way out, so deleting a project deletes its namespace and
@@ -210,8 +224,8 @@ the namespace cascade takes everything in it.
   else's. So is `get namespaces/{name}`, as upstream does. A project update
   changes only its display name and description; the Namespace's labels
   (`pod-security.kubernetes.io/enforce` among them) stay cluster-scoped to
-  write, because nothing here stops a project admin binding cluster-admin
-  inside their own project (#98).
+  write. A project admin can share only what `admin` holds: binding
+  cluster-admin, or writing a Role beyond `admin`, is refused (#98).
 - Sharing is RBAC: `oc adm policy add-role-to-user edit bob -n demo` binds
   one of `admin` (edit + roles/rolebindings + delete the project), `edit`
   (write workloads, read secrets, exec/attach/port-forward, VM start/stop)

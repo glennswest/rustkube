@@ -197,7 +197,7 @@ Missing:
 - a real HPA with a metrics API (#89, needs #83)
 - generic ephemeral volumes (#94); expansion and snapshot API integration
   now have upstream-sidecar tests (#63/#64), not full node acceptance
-- RBAC escalation prevention (#98) · Node authorizer
+- Node authorizer
 - validation of turbomode informers at scale and under failover (#146/#149)
 
 ---
@@ -207,8 +207,6 @@ Missing:
 - **#147 / #149 — turbomode live acceptance.** fastetcd#50 (inconsistent
   LIST snapshots) is fixed in v1.6.1 and the rig verifies it; latency at
   scale and three-master failover are still unproven on a live cluster.
-- **#98 — no RBAC escalation check.** Contained for projects by keeping
-  Namespace writes cluster-scoped; fixing it lifts that limit.
 - **stormcos#76 — partial auth wiring now exists.** Its build script supplies
   controller client certs; `sno`/`bastion` still grant anonymous-admin.
   Build configuration is not proof of deployment.
