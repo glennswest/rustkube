@@ -95,7 +95,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Admission webhooks wired into writes (#82, P1) — VERIFIED 2026-10-06
+### Admission webhooks wired into writes (#82, P1) — COMPLETE 2026-10-06
 `admission.rs` had a webhook client nothing called; rewritten and wired.
 - [x] cfb2858: request attributes in a task-local set after RBAC (user,
       verb, GVR, subresource, namespace, name, dryRun), Warning headers back;
@@ -111,7 +111,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [x] Control: rig with pkg/apiserver/src at 483a93b fails 13 of 20 (no
       webhook called); #214–#216 (control attempts) closed. CEL
       matchConditions follow-up filed #217
-- [ ] Golden; close #82
+- [x] golden-rustkube-af640123da63 (stormcos#306); #82 closed
 
 ### 100-Pod burst: ~12 Pods wait ~60 s (#205, P1) — NEEDS OWNER 2026-10-06
 Not a scheduler defect. Run 7277704177: BestEffort `sleep 60` Pods on one
@@ -457,7 +457,7 @@ provider). What exists now is in the README; the release history below says
 when each piece landed.
 
 ### Findings from the docs pass (#80)
-- [ ] Admission webhooks are never called (#82)
+- [x] Admission webhooks are never called (#82) — wired 2026-10-06
 - [ ] Aggregation proxies nothing (#83)
 - [ ] Scheduler never preempts (#84); ignores `schedulingGates` (#87)
 - [x] PriorityClass / TokenReview missing from `/apis` (#85) — fixed in
