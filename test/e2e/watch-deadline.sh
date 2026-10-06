@@ -17,9 +17,12 @@
 start_controller_manager
 start_scheduler
 
+# The apiserver counts a GET of /metrics itself as verb="list",
+# resource="metrics": the rig's own scrapes are not counted.
 counter() { # <verb> — apiserver requests of that verb, 404s excluded
   curl --max-time 5 -sk "$API/metrics" | grep '^apiserver_request_total{' |
-    grep "verb=\"$1\"" | grep -v 'code="404"' | awk '{ n += $2 } END { printf "%d\n", n }'
+    grep "verb=\"$1\"" | grep -v 'code="404"' | grep -v 'resource="metrics"' |
+    awk '{ n += $2 } END { printf "%d\n", n }'
 }
 reconnects() { # controller-manager's rustkube_watch_reconnects_total, or empty
   curl --max-time 5 -s http://127.0.0.1:10257/metrics 2>/dev/null |
@@ -52,7 +55,7 @@ else fail "controller-manager logged reflector WATCH reconnecting $((cm1 - cm0))
 if [ "$sched1" -eq "$sched0" ]; then pass "scheduler: no reflector WATCH reconnecting"
 else fail "scheduler logged reflector WATCH reconnecting $((sched1 - sched0)) times"
   sed 's/\x1b\[[0-9;]*m//g' "$W/sched.log" | grep 'reflector WATCH reconnecting' | tail -5; fi
-# Only the scrapes' own requests are not LISTs; nothing relisted.
+# Nothing relisted (KubeVirt's unserved 404 retries aside, #172).
 if [ "$list1" -eq "$list0" ]; then pass "no LIST while idle (watches resumed from their revisions)"
 else fail "$((list1 - list0)) LISTs while idle"
   awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) print "  +" d, $1 }' "$W/lists.before" "$W/lists.after"
