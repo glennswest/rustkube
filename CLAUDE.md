@@ -95,6 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Serving-cert reload applies a mismatched pair (#93, P1) — IN PROGRESS 2026-10-06
+`tls.rs` reloaded any pair that parsed; `renew-certs.sh` moved the key before
+the cert and kept going after a failed `openssl` (called under `||`, so no
+`set -e`). Owner (#161): certs roll routinely, so every renewal hits this.
+- [ ] `tls.rs`: one `certified_key` for startup and reload, refusing a pair
+      whose public keys differ (`CertifiedKey::keys_match`; rustls 0.23.37's
+      ring keys all implement `public_key`); reload tick as a testable fn
+- [ ] `renew-certs.sh`: every step checked, new pair verified to match before
+      either file is moved, `.new` files removed on failure
+- [ ] Units (rcgen pairs: match, swapped key, key-then-cert sequence); docs
+      certificates.md / inventory / CHANGELOG; sc-build; close #93
+
 ### Reflector's own WATCH deadline is not an outage (#207, P2) — COMPLETE 2026-10-06
 The apiserver ignores `timeoutSeconds` (#165), so the reflector's 330 s
 reqwest timeout ended every watch: warn "reflector WATCH reconnecting",
