@@ -173,6 +173,16 @@ leaves the old pair serving verified handshakes, logged once; a real renewal
 (SANs kept) is served without a restart; and an apiserver started on a
 mismatched pair exits with the reason. About three minutes.
 
+`e2e/client-cert-reload.sh` (#105) runs kube-controller-manager and
+kube-scheduler on x509 client certificates from client CA A, with
+`--client-ca-file`, and rolls them: the CA file becomes A+B (a B certificate
+is accepted without a restart); each component's pair is renewed from B key
+first (the mismatch refused once, the components still working), then the
+certificate (reload logged); the CA file becomes B alone (an A certificate is
+refused); and the apiserver restarts, so every connection is a new handshake —
+the controller-manager still turns a Deployment into a ReplicaSet and the
+scheduler still binds a Pod. About four minutes.
+
 `e2e/get-latency.sh` (#177) times GET against LIST for a ServiceAccount that
 RBAC must authorize and for system:masters, idle and under 40 clients renewing
 Leases; counts datastore calls per authorized GET (one); checks that a grant
