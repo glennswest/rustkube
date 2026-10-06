@@ -148,6 +148,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "prost",
+ "rcgen",
  "reqwest",
  "rustls",
  "rustls-pemfile",
