@@ -56,7 +56,7 @@ pkg/
 Objects are `serde_json::Value` throughout; no k8s-openapi types are used.
 
 **Built but not wired** — modules whose docs used to read as features:
-`apiserver::admission` (webhooks, #82), `apiserver::aggregation` (#83),
+`apiserver::aggregation` (#83),
 `scheduler::preemption` (#84), `scheduler::plugins` (unused traits),
 `apimachinery::{rbac, meta}` (unused types/helpers).
 
@@ -94,6 +94,24 @@ CSI is the third-party path. Sbregistry supplies blank templates, not PVC
 clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
+
+### Admission webhooks wired into writes (#82, P1) — IN PROGRESS 2026-10-06
+`admission.rs` had a webhook client nothing called. Plan:
+- [ ] Request context (task-local, set after RBAC): user, verb, group/version/
+      resource/subresource, namespace, name, dryRun; Warning headers back
+- [ ] Configs from watch-cache views (sorted by name); rules (ops, groups,
+      versions, resources incl. subresources, scope), namespaceSelector,
+      objectSelector; admissionregistration objects never sent; CEL
+      matchConditions not evaluated (webhook called; documented)
+- [ ] Call: url or Service (ClusterIP, SNI `svc.ns.svc`, caBundle), timeout
+      1–30 s (default 10), uid checked; deny → upstream message/code;
+      call error → failurePolicy; JSONPatch; reinvocationPolicy IfNeeded;
+      validating webhooks in parallel; dryRun vs sideEffects
+- [ ] Wired: create (built-in, CR, apply-upsert), PUT, PATCH/status
+      (`guaranteed_update`), DELETE + deletecollection per item, eviction
+- [ ] Units + `test/e2e/admission-webhook.sh` (https webhook with caBundle:
+      deny create, mutate, failurePolicy Fail/Ignore, status, delete)
+- [ ] README/docs/CHANGELOG; sc-build; close #82
 
 ### 100-Pod burst: ~12 Pods wait ~60 s (#205, P1) — NEEDS OWNER 2026-10-06
 Not a scheduler defect. Run 7277704177: BestEffort `sleep 60` Pods on one
