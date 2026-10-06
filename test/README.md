@@ -166,6 +166,13 @@ their watches ended and resumed (the apiserver saw new WATCHes) with no
 `reflector WATCH reconnecting` warning, no LIST, and — when the fixed metrics
 port 10257 is the rig's own — no change in `rustkube_watch_reconnects_total`.
 
+`e2e/serving-cert.sh` (#93) serves the rig's openssl RSA pair from files and
+checks, a reload tick (30 s) at a time: `deploy/renew-certs.sh` with a signing
+failure exits 1 and changes no file; a key written without its certificate
+leaves the old pair serving verified handshakes, logged once; a real renewal
+(SANs kept) is served without a restart; and an apiserver started on a
+mismatched pair exits with the reason. About three minutes.
+
 `e2e/get-latency.sh` (#177) times GET against LIST for a ServiceAccount that
 RBAC must authorize and for system:masters, idle and under 40 clients renewing
 Leases; counts datastore calls per authorized GET (one); checks that a grant

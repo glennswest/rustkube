@@ -95,17 +95,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Serving-cert reload applies a mismatched pair (#93, P1) — IN PROGRESS 2026-10-06
+### Serving-cert reload applies a mismatched pair (#93, P1) — COMPLETE 2026-10-06
 `tls.rs` reloaded any pair that parsed; `renew-certs.sh` moved the key before
 the cert and kept going after a failed `openssl` (called under `||`, so no
 `set -e`). Owner (#161): certs roll routinely, so every renewal hits this.
-- [ ] `tls.rs`: one `certified_key` for startup and reload, refusing a pair
-      whose public keys differ (`CertifiedKey::keys_match`; rustls 0.23.37's
-      ring keys all implement `public_key`); reload tick as a testable fn
-- [ ] `renew-certs.sh`: every step checked, new pair verified to match before
-      either file is moved, `.new` files removed on failure
-- [ ] Units (rcgen pairs: match, swapped key, key-then-cert sequence); docs
-      certificates.md / inventory / CHANGELOG; sc-build; close #93
+- [x] 125c277 `tls.rs`: one `certified_key` for startup and reload, refusing
+      a pair whose public keys differ (`CertifiedKey::keys_match`; rustls
+      0.23.37's ring keys all implement `public_key`); refusal logged once per
+      change. `renew-certs.sh`: every step checked, pair compared before
+      either move, `.new` files removed on failure
+- [x] 3 units (P-256/P-384/Ed25519; mismatch; reload sequence); workspace at
+      df35db7 500 passed / 4 ignored. `test/e2e/serving-cert.sh` 15/15 at
+      70fad5e (fastetcd v1.12.0); control (be616b7 tls.rs) fails 4 — #213,
+      with #211/#212 (shallow-checkout attempts), closed as control runs
 
 ### Reflector's own WATCH deadline is not an outage (#207, P2) — COMPLETE 2026-10-06
 The apiserver ignores `timeoutSeconds` (#165), so the reflector's 330 s
@@ -436,7 +438,7 @@ when each piece landed.
 - [ ] Metrics: reconcile metrics never emitted, no histogram buckets,
       unauthenticated apiserver `/metrics` (#90)
 - [ ] Gateway controller: hardcoded address, overwrites foreign classes (#91)
-- [ ] Serving-cert reload applies a mismatched key/cert pair (#93)
+- [x] Serving-cert reload applies a mismatched key/cert pair (#93) — fixed 2026-10-06
 - [x] `/status` PUT is conditional on the body's `resourceVersion` (#78),
       all four handlers; `test/e2e/status-rv.sh`
 
