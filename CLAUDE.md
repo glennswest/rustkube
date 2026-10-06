@@ -95,6 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### RBAC escalation prevention (#98, P1) — IN PROGRESS 2026-10-06
+Any caller who may write RoleBindings could bind any role (cluster-admin in
+one's own project). Upstream's rule: a binding needs `bind` on the role or
+every rule of it held in the binding's scope; a role needs `escalate` or
+every rule held. `system:masters` bypasses; GC-only updates skip.
+- [ ] `escalation.rs`: coverage (upstream `Covers`: verbs/groups/resources
+      with `*/sub`, resourceNames, nonResourceURLs) + `confirm`, called from
+      `admission::admit` after mutating webhooks (every create/update path)
+- [ ] Units for coverage; `test/e2e/projects.sh`: project admin binding
+      cluster-admin refused, binding `edit`/`view` still allowed
+- [ ] README/docs/CHANGELOG; sc-build workspace + projects.sh; close #98
+
 ### Admission webhooks wired into writes (#82, P1) — COMPLETE 2026-10-06
 `admission.rs` had a webhook client nothing called; rewritten and wired.
 - [x] cfb2858: request attributes in a task-local set after RBAC (user,
