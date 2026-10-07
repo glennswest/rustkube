@@ -1676,12 +1676,42 @@ fn strategic_merge_key(field: &str) -> Option<&'static str> {
         "conditions" => "type",
         "containers" | "initContainers" | "ephemeralContainers" | "volumes"
         | "volumeMounts" | "imagePullSecrets" | "env" | "envFrom" => "name",
+        // A container's ports; a Service's are keyed on port and protocol —
+        // `ports_key` tells them apart by what the entries hold (#150).
         "ports" => "containerPort",
         "ownerReferences" => "uid",
         "hostAliases" => "ip",
         "topologySpreadConstraints" => "topologyKey",
         _ => return None,
     })
+}
+
+/// Merge key of a Service's `spec.ports` (and any list of ports without
+/// `containerPort`): upstream's `listMapKey` port + protocol, protocol
+/// defaulting to TCP. Its `patchMergeKey` is `port` alone, but DNS has 53/TCP
+/// and 53/UDP, and keying on the number merged the two into one (#150).
+const SERVICE_PORT_KEY: &str = "port+protocol";
+
+/// Which key a `ports` list merges on: `containerPort` for a container's
+/// ports, which always carry one (the API requires it), else port +
+/// protocol. Merging a Service's ports by `containerPort`, which they never
+/// have, matched nothing: a patch to one port appended a duplicate (#150).
+fn ports_key(lists: &[&[Value]]) -> &'static str {
+    if lists.iter().any(|l| l.iter().any(|v| v.get("containerPort").is_some())) {
+        "containerPort"
+    } else {
+        SERVICE_PORT_KEY
+    }
+}
+
+/// An element's identity under `key`, or `None` if it has none.
+fn merge_id(v: &Value, key: &str) -> Option<Value> {
+    if key == SERVICE_PORT_KEY {
+        let port = v.get("port")?.clone();
+        let protocol = v.get("protocol").and_then(Value::as_str).unwrap_or("TCP");
+        return Some(json!([port, protocol]));
+    }
+    v.get(key).cloned()
 }
 
 /// List fields upstream merges as a set of scalars (`patchStrategy:"merge"`
@@ -1730,7 +1760,12 @@ pub(crate) fn strategic_merge(target: &mut Value, patch: &Value) {
             t.remove(k);
             continue;
         }
-        let mk = strategic_merge_key(k);
+        let mut mk = strategic_merge_key(k);
+        if k == "ports" {
+            if let (Some(Value::Array(tl)), Value::Array(pl)) = (t.get(k), pv) {
+                mk = Some(ports_key(&[tl.as_slice(), pl.as_slice()]));
+            }
+        }
         match t.get_mut(k) {
             Some(tv) if mk.is_some() && tv.is_array() && pv.is_array() => {
                 strategic_merge_list(
@@ -1760,7 +1795,8 @@ pub(crate) fn strategic_merge(target: &mut Value, patch: &Value) {
             }
         } else if let Some(field) = k.strip_prefix("$setElementOrder/") {
             if let (Some(list), Some(order)) = (t.get_mut(field).and_then(Value::as_array_mut), pv.as_array()) {
-                set_element_order(list, order, strategic_merge_key(field));
+                let key = if field == "ports" { Some(ports_key(&[list.as_slice(), order.as_slice()])) } else { strategic_merge_key(field) };
+                set_element_order(list, order, key);
             }
         }
     }
@@ -1775,7 +1811,7 @@ pub(crate) fn strategic_merge(target: &mut Value, patch: &Value) {
 fn set_element_order(list: &mut Vec<Value>, order: &[Value], key: Option<&str>) {
     let id = |v: &Value| -> Value {
         match key {
-            Some(k) => v.get(k).cloned().unwrap_or(Value::Null),
+            Some(k) => merge_id(v, k).unwrap_or(Value::Null),
             None => v.clone(),
         }
     };
@@ -1816,14 +1852,14 @@ fn strategic_merge_list(target: &mut Vec<Value>, patch: &[Value], key: &str) {
         return;
     }
     for pitem in patch {
-        let pkey = pitem.get(key);
+        let pkey = merge_id(pitem, key);
         if directive(pitem).as_deref() == Some("delete") {
-            if let Some(pk) = pkey {
-                target.retain(|t| t.get(key) != Some(pk));
+            if let Some(pk) = &pkey {
+                target.retain(|t| merge_id(t, key).as_ref() != Some(pk));
             }
             continue;
         }
-        match pkey.and_then(|pk| target.iter_mut().find(|t| t.get(key) == Some(pk))) {
+        match pkey.and_then(|pk| target.iter_mut().find(|t| merge_id(t, key) == Some(pk.clone()))) {
             Some(existing) => strategic_merge(existing, pitem),
             None => target.push(strip_directives(pitem)),
         }
@@ -2087,6 +2123,38 @@ mod tests {
         assert_eq!(obj["spec"]["replicas"], 3);
         assert!(obj["spec"].get("paused").is_none(), "null must delete the key");
         assert_eq!(obj["status"]["phase"], "A", "untouched fields survive");
+    }
+
+    /// A Service's ports merge on port + protocol, a container's on
+    /// containerPort (#150).
+    #[test]
+    fn service_ports_merge_by_port_and_protocol() {
+        let mut svc = json!({"spec": {"ports": [
+            {"name": "http", "port": 80, "targetPort": 8080},
+            {"name": "https", "port": 443, "targetPort": 8443}]}});
+        strategic_merge(&mut svc, &json!({"spec": {"ports": [{"port": 80, "targetPort": 9090}]}}));
+        assert_eq!(svc["spec"]["ports"], json!([
+            {"name": "http", "port": 80, "targetPort": 9090},
+            {"name": "https", "port": 443, "targetPort": 8443}]), "one changed, none added");
+
+        // DNS: 53/UDP and 53/TCP are two entries, not one.
+        let mut dns = json!({"spec": {"ports": [
+            {"name": "dns", "port": 53, "protocol": "UDP"}, {"name": "dns-tcp", "port": 53, "protocol": "TCP"}]}});
+        strategic_merge(&mut dns, &json!({"spec": {"ports": [{"port": 53, "protocol": "TCP", "targetPort": 5353}]}}));
+        let ports = dns["spec"]["ports"].as_array().unwrap();
+        assert_eq!(ports.len(), 2);
+        assert!(ports[0].get("targetPort").is_none() && ports[1]["targetPort"] == 5353);
+        // Protocol absent means TCP; and a delete by port + protocol.
+        strategic_merge(&mut dns, &json!({"spec": {"ports": [{"port": 53, "$patch": "delete"}]}}));
+        assert_eq!(dns["spec"]["ports"], json!([{"name": "dns", "port": 53, "protocol": "UDP"}]));
+
+        // A container's ports still merge on containerPort.
+        let mut pod = json!({"spec": {"containers": [{"name": "c", "ports": [
+            {"containerPort": 80, "name": "web"}, {"containerPort": 81}]}]}});
+        strategic_merge(&mut pod, &json!({"spec": {"containers": [{"name": "c", "ports": [
+            {"containerPort": 81, "name": "admin"}]}]}}));
+        assert_eq!(pod["spec"]["containers"][0]["ports"], json!([
+            {"containerPort": 80, "name": "web"}, {"containerPort": 81, "name": "admin"}]));
     }
 
     #[test]

@@ -127,8 +127,8 @@ different one is a 400), update, delete (with `DeleteOptions`: preconditions,
 `dryRun`, grace period, `propagationPolicy`), `deletecollection` with label
 and field selectors on every generic collection path and for custom resources
 (not across namespaces, and not for namespaces), JSON Patch, merge patch,
-strategic merge patch (fixed merge-key table; Service ports use the wrong
-key, #150) and
+strategic merge patch (fixed merge-key table; a Service's ports merge on port
+and protocol, a container's on containerPort, #150) and
 server-side apply with `managedFields` ownership and conflicts. The `/status`
 subresource; pod `eviction` gated by PodDisruptionBudgets; namespace
 `/finalize`; CSR `/approval`. A PUT to `/status` (and `/approval`) is

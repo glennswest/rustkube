@@ -107,6 +107,13 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Service ports in strategic merge patch (#150, P2) — WRITTEN, not yet built 2026-10-07
+- [x] `ports` keyed by content: `containerPort` when entries carry it, else
+      port + protocol (default TCP); `merge_id` used by merge, `$patch:
+      delete` and `$setElementOrder`; unit test; README/CHANGELOG
+- [ ] Compile + test when a build host exists (stormcentral#521); golden;
+      close #150
+
 ### Multi-master safety and failover (#149, P2) — rig written, not run 2026-10-07
 Real three-master hardware: none (owner on #162). The matrix that fits one
 host is a rig: `test/e2e/multi-master.sh` (rigs-night) with lib.sh
