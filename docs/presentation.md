@@ -132,7 +132,7 @@ Gateway\*.
 node and pod (anti-)affinity, topology spread, resource fit, volume binding
 incl. `CSIStorageCapacity` and `ReadWriteOncePod`; scores summed; VMIs placed.
 
-\* placeholders: HPA reads no metrics (#89); Gateway writes status only (#91).
+\* HPA is inert until there is a metrics source — no scaling, `ScalingActive=False` (#89); Gateway writes status only (#91).
 
 ---
 

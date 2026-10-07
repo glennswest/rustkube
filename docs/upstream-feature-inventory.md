@@ -24,7 +24,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `coordination.k8s.io/v1` — Lease | core | ✅ | leader election, node heartbeats |
 | `rbac.authorization.k8s.io/v1` | core | 🟡 | `rbac_engine.rs`; no ClusterRole `aggregationRule`; escalation prevention (`bind`/`escalate` or held rules, `escalation.rs`, #98) |
 | `apiextensions.k8s.io/v1` — CRD | core | 🟡 | served dynamically, keyed by group (#76), `/status` subresource; **no structural-schema validation, no conversion webhooks** |
-| `autoscaling/v2` — HorizontalPodAutoscaler | core | 🟡 | object served; the controller is a placeholder (#89) |
+| `autoscaling/v2` — HorizontalPodAutoscaler | core | 🟡 | object served; the controller is inert — no metrics source, `ScalingActive=False`, no scaling (#89) |
 | `apiregistration.k8s.io/v1` — APIService | core | 🔴 | objects stored; `aggregation.rs` is not wired in, nothing is proxied (#83) |
 | `admissionregistration.k8s.io/v1` — webhook configurations | core | 🟡 | mutating + validating webhooks called on every write (#82); no CEL `matchConditions`, AdmissionReview v1 only. ValidatingAdmissionPolicy absent (#119) |
 | `networking.k8s.io/v1` — NetworkPolicy, Ingress, IngressClass | core | 🟡 | API served; no Ingress controller. NetworkPolicy is enforced by Cilium |
@@ -74,7 +74,7 @@ approve + sign, PodMigration, VirtualMachine, VirtualMachineInstanceMigration
 (control-plane half; the transfer is rustkube-node#40, #184), VMI launcher
 Pods (#203). Leader election ✅.
 
-🟡 placeholders: HPA (no metrics, cannot scale down, #89); Gateway API (status
+🟡 placeholders: HPA (inert: no metrics source, scales nothing, #89); Gateway API (status
 only, hardcoded address, #91).
 
 ✅ the `kube-root-ca.crt` publisher (#67).

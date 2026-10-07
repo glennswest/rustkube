@@ -122,10 +122,20 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### HPA placeholder (#89, P2) — NEEDS OWNER 2026-10-07
-The issue leaves the choice to the owner. Asked, `wait-owner`: A inert with
-ScalingActive=False (recommended now), B remove the controller, C a real HPA
-from kubelets' /metrics/resource (own issue after A).
+### HPA (#89, P2) — A done; C's data source needs the owner 2026-10-07
+Owner (2026-10-07): real HPA now (C), CPU/memory from **cadvisor**, serve
+`metrics.k8s.io` (pods/nodes, `kubectl top`), upstream ratio + tolerance +
+scale-down stabilisation; until then A (inert and honest).
+- [x] A: `hpa.rs` changes no replica counts; status current = desired =
+      target's, AbleToScale=True / ScalingActive=False
+      (FailedGetResourceMetric), missing target FailedGetScale; no Pod
+      watch. Units; README/inventory/presentation/design/CHANGELOG
+- [ ] A: build on a build VM; golden
+- [ ] C: the standalone cadvisor (9096) cannot attribute stormpump pod
+      cgroups (cadvisor#3 open: `/stormpump/w<tag>-<n>`, only `id`), and has
+      no TLS/token on stormcos yet (stormcos#143). Per-pod CPU/memory exists
+      today only in the kubelet's `/stats/summary` / `/metrics/cadvisor`
+      (from stormpump QUERY). Asked the owner which source
 
 ### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401

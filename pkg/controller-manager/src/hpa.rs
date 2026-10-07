@@ -1,17 +1,21 @@
-//! Horizontal Pod Autoscaler (HPA) controller.
+//! Horizontal Pod Autoscaler (HPA) controller — **inert until there is a
+//! metrics source** (#89).
 //!
-//! **A placeholder** (#89). Indexed HorizontalPodAutoscaler workers
-//! scales their targets (Deployments, ReplicaSets, StatefulSets), but reads no
-//! metrics: "utilization" is the fraction of the target's pods that are Ready,
-//! whatever resource the HPA names, and the desired count starts at the
-//! current one and only rises, so it never scales down.
+//! It used to read no metrics at all: "utilization" was the fraction of the
+//! target's Pods that were Ready, and the desired count only rose, so every
+//! HPA drove its target to `maxReplicas` and kept it there. Owner's decision
+//! on #89: until a real HPA reads CPU/memory, this one changes no replica
+//! counts and says why in its status, as upstream's does when the resource
+//! metrics API answers nothing — `AbleToScale=True` (the target was read),
+//! `ScalingActive=False` (`FailedGetResourceMetric`), `desiredReplicas` equal
+//! to the current count. A target that cannot be read is `AbleToScale=False`
+//! (`FailedGetScale`).
 
 use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
 use apimachinery::informer::Index;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{info, warn};
 
 pub struct HpaController {
     api: Arc<ApiClient>,
@@ -30,203 +34,91 @@ impl HpaController {
         let hpa_name = hpa["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("HPA missing name"))?;
-        let min_replicas = hpa["spec"]["minReplicas"].as_u64().unwrap_or(1) as usize;
-        let max_replicas = hpa["spec"]["maxReplicas"].as_u64().unwrap_or(10) as usize;
-
-        // Get scale target ref
         let target_ref = &hpa["spec"]["scaleTargetRef"];
-        let target_kind = target_ref["kind"].as_str().unwrap_or("Deployment");
-        let target_name = target_ref["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("HPA missing scaleTargetRef.name"))?;
-        let target_api = match target_kind {
-            "Deployment" | "ReplicaSet" | "StatefulSet" => "apis/apps/v1",
-            _ => "apis/apps/v1",
+        let feed = match target_ref["kind"].as_str().unwrap_or("") {
+            "Deployment" => Some(0),
+            "ReplicaSet" => Some(1),
+            "StatefulSet" => Some(2),
+            _ => None,
         };
-        let target_resource = match target_kind {
-            "Deployment" => "deployments",
-            "ReplicaSet" => "replicasets",
-            "StatefulSet" => "statefulsets",
-            other => {
-                warn!("HPA {hpa_name}: unsupported target kind {other}");
-                return Ok(());
-            }
+        let target = match (feed, target_ref["name"].as_str()) {
+            (Some(i), Some(name)) => deps
+                .feed(i)
+                .select(&Index::Name(namespace.into(), name.into()))?
+                .into_iter()
+                .next(),
+            _ => None,
         };
-
-        let i = match target_kind {
-            "Deployment" => 0,
-            "ReplicaSet" => 1,
-            "StatefulSet" => 2,
-            _ => return Ok(()),
-        };
-        let targets = deps
-            .feed(i)
-            .select(&Index::Name(namespace.into(), target_name.into()))?;
-        let Some(target_obj) = targets.first() else {
-            return Ok(());
-        };
-        let current_replicas = target_obj["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
-        let pods = deps.feed(3).select(&Index::Owner(
-            target_obj["metadata"]["uid"].as_str().unwrap_or("").into(),
-        ))?;
-
-        // Count ready pods owned by target (simplified — real HPA uses metrics API)
-        let target_uid = target_obj["metadata"]["uid"].as_str().unwrap_or("");
-        let owned_pods: Vec<&Value> = pods
-            .iter()
-            .filter(|pod| {
-                pod["metadata"]["ownerReferences"]
-                    .as_array()
-                    .map(|refs| refs.iter().any(|r| r["uid"].as_str() == Some(target_uid)))
-                    .unwrap_or(false)
-            })
-            .filter(|pod| {
-                let phase = pod["status"]["phase"].as_str().unwrap_or("");
-                phase == "Running"
-            })
-            .collect();
-
-        // Compute desired replicas from metrics
-        let desired = self.compute_desired_replicas(hpa, &owned_pods, current_replicas);
-        let desired = desired.clamp(min_replicas, max_replicas);
-
-        if desired != current_replicas {
-            info!(
-                "HPA {namespace}/{hpa_name}: scaling {target_kind}/{target_name} from {current_replicas} to {desired}"
-            );
-            let mut updated = target_obj.clone();
-            updated["spec"]["replicas"] = json!(desired);
-            let _ = self
-                .api
-                .update(
-                    &format!(
-                        "/{target_api}/namespaces/{namespace}/{target_resource}/{target_name}"
-                    ),
-                    &updated,
-                )
-                .await;
-        }
-
-        // Update HPA status
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let mut updated_hpa = hpa.clone();
-        updated_hpa["status"] = json!({
-            "currentReplicas": current_replicas,
-            "desiredReplicas": desired,
-            "lastScaleTime": if desired != current_replicas { json!(now) } else { hpa["status"]["lastScaleTime"].clone() },
-            "currentMetrics": [],
-            "conditions": [{
-                "type": "ScalingActive",
-                "status": "True",
-                "lastTransitionTime": now
-            }]
-        });
-        owned::preserve_transition_times(&hpa["status"], &mut updated_hpa["status"]);
-        if hpa["status"] == updated_hpa["status"] {
+        let mut status = inert_status(hpa, target.as_ref(), &now);
+        owned::preserve_transition_times(&hpa["status"], &mut status);
+        if hpa["status"] == status {
             return Ok(());
         }
-        let _ = self
-            .api
+        let mut updated = hpa.clone();
+        updated["status"] = status;
+        self.api
             .update(
-                &format!(
-                    "/apis/autoscaling/v2/namespaces/{namespace}/horizontalpodautoscalers/{hpa_name}/status"
-                ),
-                &updated_hpa,
+                &format!("/apis/autoscaling/v2/namespaces/{namespace}/horizontalpodautoscalers/{hpa_name}/status"),
+                &updated,
             )
-            .await;
-
+            .await?;
         Ok(())
     }
+}
 
-    fn compute_desired_replicas(
-        &self,
-        hpa: &Value,
-        pods: &[&Value],
-        current_replicas: usize,
-    ) -> usize {
-        let metrics = hpa["spec"]["metrics"].as_array();
-        let metrics = match metrics {
-            Some(m) => m,
-            None => return current_replicas,
-        };
+/// The resource the HPA's first metric names (upstream's default: cpu).
+fn first_resource(hpa: &Value) -> String {
+    hpa["spec"]["metrics"]
+        .as_array()
+        .and_then(|m| m.first())
+        .map(|m| match m["type"].as_str() {
+            Some("Resource") => m["resource"]["name"].as_str().unwrap_or("cpu").to_string(),
+            Some("ContainerResource") => m["containerResource"]["name"].as_str().unwrap_or("cpu").to_string(),
+            Some(other) => other.to_ascii_lowercase(),
+            None => "cpu".to_string(),
+        })
+        .unwrap_or_else(|| "cpu".to_string())
+}
 
-        let mut max_desired = current_replicas;
-
-        for metric in metrics {
-            let metric_type = metric["type"].as_str().unwrap_or("");
-            match metric_type {
-                "Resource" => {
-                    let resource_name = metric["resource"]["name"].as_str().unwrap_or("cpu");
-                    let target_avg = metric["resource"]["target"]["averageUtilization"]
-                        .as_u64()
-                        .unwrap_or(80) as f64;
-
-                    let current_util = self.get_average_utilization(pods, resource_name);
-                    if current_util > 0.0 && target_avg > 0.0 {
-                        let ratio = current_util / target_avg;
-                        let desired = (current_replicas as f64 * ratio).ceil() as usize;
-                        max_desired = max_desired.max(desired);
-                    }
-                }
-                "Pods" => {
-                    let target_avg = metric["pods"]["target"]["averageValue"]
-                        .as_str()
-                        .and_then(|v| v.parse::<f64>().ok())
-                        .unwrap_or(100.0);
-                    // Simplified: use running pod count as metric
-                    let running = pods.len() as f64;
-                    if running > 0.0 && target_avg > 0.0 {
-                        let desired =
-                            (current_replicas as f64 * (running / target_avg)).ceil() as usize;
-                        max_desired = max_desired.max(desired);
-                    }
-                }
-                _ => {}
-            }
+/// The status an inert HPA reports: the target's count as both current and
+/// desired, and conditions saying it cannot scale for want of metrics.
+/// `lastScaleTime` is kept as it was; nothing scales.
+pub(crate) fn inert_status(hpa: &Value, target: Option<&Value>, now: &str) -> Value {
+    let condition = |kind: &str, status: &str, reason: &str, message: String| {
+        json!({"type": kind, "status": status, "reason": reason, "message": message, "lastTransitionTime": now})
+    };
+    let (current, conditions) = match target {
+        Some(t) => {
+            let current = t["spec"]["replicas"].as_u64().unwrap_or(1);
+            let resource = first_resource(hpa);
+            (current, vec![
+                condition("AbleToScale", "True", "SucceededGetScale",
+                    "the HPA controller was able to get the target's current scale".into()),
+                condition("ScalingActive", "False", "FailedGetResourceMetric", format!(
+                    "the HPA was unable to compute the replica count: failed to get {resource} utilization: \
+                     no metrics source: metrics.k8s.io is not served (rustkube#89)")),
+            ])
         }
-
-        // Limit scale velocity: max 2x up, scale down by 1 at a time
-        let scaled = if max_desired > current_replicas {
-            std::cmp::min(max_desired, current_replicas * 2)
-        } else if max_desired < current_replicas {
-            current_replicas - 1
-        } else {
-            current_replicas
-        };
-
-        std::cmp::max(scaled, 1)
+        None => {
+            let r = &hpa["spec"]["scaleTargetRef"];
+            (hpa["status"]["currentReplicas"].as_u64().unwrap_or(0), vec![condition(
+                "AbleToScale", "False", "FailedGetScale",
+                format!("the HPA controller was unable to get the target's current scale: {} {:?} not found or not supported",
+                    r["kind"].as_str().unwrap_or(""), r["name"].as_str().unwrap_or("")),
+            )])
+        }
+    };
+    let mut status = json!({
+        "currentReplicas": current,
+        "desiredReplicas": current,
+        "currentMetrics": [],
+        "conditions": conditions,
+    });
+    if !hpa["status"]["lastScaleTime"].is_null() {
+        status["lastScaleTime"] = hpa["status"]["lastScaleTime"].clone();
     }
-
-    fn get_average_utilization(&self, pods: &[&Value], _resource: &str) -> f64 {
-        if pods.is_empty() {
-            return 0.0;
-        }
-
-        // Simplified metric: count pods in various states as a proxy for utilization
-        // Real HPA would query metrics-server for actual CPU/memory usage
-        let total_pods = pods.len() as f64;
-        let ready_pods = pods
-            .iter()
-            .filter(|p| {
-                p["status"]["conditions"]
-                    .as_array()
-                    .map(|c| {
-                        c.iter().any(|cond| {
-                            cond["type"].as_str() == Some("Ready")
-                                && cond["status"].as_str() == Some("True")
-                        })
-                    })
-                    .unwrap_or(false)
-            })
-            .count() as f64;
-
-        // Estimate utilization as percentage of pods that are ready and presumably loaded
-        if total_pods > 0.0 {
-            (ready_pods / total_pods) * 100.0
-        } else {
-            0.0
-        }
-    }
+    status
 }
 
 #[async_trait::async_trait]
@@ -268,29 +160,6 @@ impl Controller for HpaController {
                 path: "/apis/apps/v1/statefulsets".into(),
                 route,
             },
-            Dependency {
-                path: "/api/v1/pods".into(),
-                route: Arc::new(|delta, primary| {
-                    let mut keys = Vec::new();
-                    for pod in delta.old.iter().chain(delta.new.iter()) {
-                        for owner in pod["metadata"]["ownerReferences"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                        {
-                            keys.extend(owned::keys_at(
-                                primary,
-                                Index::Target(
-                                    pod["metadata"]["namespace"].as_str().unwrap_or("").into(),
-                                    owner["kind"].as_str().unwrap_or("").into(),
-                                    owner["name"].as_str().unwrap_or("").into(),
-                                ),
-                            ));
-                        }
-                    }
-                    keys
-                }),
-            },
         ]
     }
     async fn reconcile(&self, hpa: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
@@ -300,5 +169,46 @@ impl Controller for HpaController {
             deps,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hpa(metrics: Value) -> Value {
+        json!({"metadata": {"name": "h", "namespace": "ns"},
+               "spec": {"scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": "web"},
+                        "minReplicas": 1, "maxReplicas": 10, "metrics": metrics}})
+    }
+
+    #[test]
+    fn an_hpa_changes_nothing_and_says_it_has_no_metrics() {
+        // #89: whatever the Pods' state, the count stays the target's own.
+        let deploy = json!({"spec": {"replicas": 3}});
+        let s = inert_status(&hpa(json!([{"type": "Resource", "resource": {"name": "memory",
+            "target": {"type": "Utilization", "averageUtilization": 50}}}])), Some(&deploy), "t");
+        assert_eq!((s["currentReplicas"].as_u64(), s["desiredReplicas"].as_u64()), (Some(3), Some(3)));
+        let c = s["conditions"].as_array().unwrap();
+        assert_eq!((c[0]["type"].as_str(), c[0]["status"].as_str(), c[0]["reason"].as_str()),
+                   (Some("AbleToScale"), Some("True"), Some("SucceededGetScale")));
+        assert_eq!((c[1]["type"].as_str(), c[1]["status"].as_str(), c[1]["reason"].as_str()),
+                   (Some("ScalingActive"), Some("False"), Some("FailedGetResourceMetric")));
+        assert!(c[1]["message"].as_str().unwrap().contains("failed to get memory utilization"));
+        assert!(s.get("lastScaleTime").is_none());
+        // No metrics listed: upstream's default, cpu.
+        let s = inert_status(&hpa(Value::Null), Some(&deploy), "t");
+        assert!(s["conditions"][1]["message"].as_str().unwrap().contains("failed to get cpu utilization"));
+    }
+
+    #[test]
+    fn a_missing_target_is_unable_to_scale_and_keeps_the_last_scale_time() {
+        let mut h = hpa(Value::Null);
+        h["status"] = json!({"currentReplicas": 4, "lastScaleTime": "2026-10-01T00:00:00Z"});
+        let s = inert_status(&h, None, "t");
+        assert_eq!((s["currentReplicas"].as_u64(), s["desiredReplicas"].as_u64()), (Some(4), Some(4)));
+        assert_eq!(s["conditions"][0]["reason"], "FailedGetScale");
+        assert_eq!(s["conditions"][0]["status"], "False");
+        assert_eq!(s["lastScaleTime"], "2026-10-01T00:00:00Z");
     }
 }

@@ -453,9 +453,13 @@ sending, the controller marks the VMI's migration failed with
 `abortRequested` and waits up to 5 min for the source to answer. Progress
 and timeouts of a running transfer are the source's.
 
-Two are placeholders: **HPA** reads no metrics — its "utilization" is the
-fraction of Ready pods, and it never scales down (#89) — and **Gateway API**
-writes status only, with a hardcoded address (#91).
+**HPA is inert** until it has a metrics source (#89): it changes no
+replica counts, and reports the target's count as current and desired with
+`AbleToScale=True` and `ScalingActive=False` (`FailedGetResourceMetric`, "no
+metrics source"), as upstream does when the resource metrics API answers
+nothing; a target it cannot read is `AbleToScale=False` (`FailedGetScale`).
+It used to scale every target to `maxReplicas` on Ready Pods. **Gateway API**
+is a placeholder: it writes status only, with a hardcoded address (#91).
 
 It has no ResourceQuota, ReplicationController, EndpointSliceMirroring,
 ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or
