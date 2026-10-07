@@ -229,6 +229,12 @@ Strict the CR created, pruned and warned about; a Strict JSON create with a
 repeated key refused; a default filled on create, and a default added to the
 CRD later shown on GET and LIST.
 
+Every rig that starts kube-controller-manager or kube-scheduler (through
+`lib.sh`, `scheduler-failover.sh`, `multi-master.sh`) runs them as
+`system:kube-controller-manager` / `system:kube-scheduler`, held to their
+bootstrap ClusterRoles (#176), so a missing permission fails a rig;
+`RK_CONTROL_PLANE_ADMIN=1` runs them as `system:masters` to compare.
+
 `e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too

@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **fix:** kube-controller-manager and kube-scheduler are no longer `cluster-admin` (#176; owner's decision there). Bootstrap now reconciles ClusterRoles `system:kube-controller-manager` and `system:kube-scheduler` (`control_plane_rbac.rs`) at every boot, and points the bindings of those users at them. A binding left on `cluster-admin` by an earlier release is repointed unless annotated `rbac.authorization.kubernetes.io/autoupdate: "false"`.
+  - The controller-manager reads, patches, updates and deletes every resource, as its garbage collector and namespace deletion need. It creates only what its controllers create: Pods, Events, ServiceAccounts, ConfigMaps, PVs, Endpoints, ReplicaSets, ControllerRevisions, Jobs, EndpointSlices, Leases, VolumeAttachments, VMIs, VMI migrations and PodMigrations. It approves and signs only kubelet client CSRs. It has no token requests, Secret/Namespace/RBAC creates, `bind`, `escalate` or `impersonate`; its RBAC updates stay under escalation prevention (#98).
+  - The scheduler gets the reads placement needs and writes Pods (bind), `pods/status`, PVCs (selected-node), VMI and VMI-migration status, its Lease and Events.
+  - `system:nodes` stays `cluster-admin` until a Node authorizer exists (#228).
+- **fix:** `pods/exec`, `pods/attach` and `pods/portforward` are authorized as `create` whatever the HTTP method, as upstream does since 1.31. A websocket GET was authorized as `get`, so anyone who could read Pods' subresources could open a shell.
+- **test:** `control_plane_rbac` units (what each role may and may not do). `test/e2e/lib.sh` runs the controller-manager and scheduler as their own users (`RK_CONTROL_PLANE_ADMIN=1` for the old behaviour), so every rig that starts them checks the roles.
 - **feat:** Custom resources follow their CRD version's structural schema (#121), in the new `schema.rs`.
   - **Defaulting:** `default` fills absent fields (or `null` ones where the field is not `nullable`) at every depth, on create, PUT, PATCH and apply, and on GET and LIST, so a default added to the CRD later shows on objects stored before it.
   - **Pruning:** undeclared fields are removed. `x-kubernetes-preserve-unknown-fields` and `additionalProperties` are honoured; root and `x-kubernetes-embedded-resource` objects keep `apiVersion`/`kind`/`metadata`, with `metadata` pruned to ObjectMeta.

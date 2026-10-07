@@ -318,9 +318,18 @@ older namespaces' phase and finalizer; migrates pre-#76 custom-resource keys;
 creates the bootstrap RBAC (below); registers itself in the `default/kubernetes`
 Service and Endpoints; then applies `--manifest-dir`.
 
-Bootstrap RBAC: `cluster-admin`; `system:masters`, `system:nodes`,
-`system:kube-controller-manager` and `system:kube-scheduler` bound to it
-(upstream binds least-privilege roles instead, #176);
+Bootstrap RBAC: `cluster-admin`; `system:masters` and `system:nodes` bound
+to it (a Node authorizer for kubelets is #228);
+`system:kube-controller-manager` and `system:kube-scheduler` bound to their
+own ClusterRoles of those names (#176), reconciled at every boot, and a
+binding left on `cluster-admin` by an earlier release repointed:
+the controller-manager reads, patches, updates and deletes everything (the
+garbage collector and namespace deletion walk everything) but creates only
+what its controllers create, and holds no token requests, RBAC creates,
+`bind`, `escalate` or `impersonate`; the scheduler reads what placement needs
+and writes Pods (the bind), `pods/status`, claims, VMI and migration status,
+its Lease and Events. `pods/exec`, `attach` and `portforward` are authorized
+as `create` whatever the method (upstream ≥ 1.31);
 `system:node-bootstrapper` (CSR create) for `system:bootstrappers`;
 `system:basic-user` (self-reviews) for `system:authenticated`;
 `system:discovery` for `system:anonymous`; the project roles `admin`,
