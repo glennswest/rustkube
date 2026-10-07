@@ -618,6 +618,25 @@ impl Strategy {
     }
 }
 
+/// Carry the fields the server owns from the stored object into its
+/// replacement: identity (name, namespace from the URL), `uid` and
+/// `creationTimestamp`. Shared by PUT and PATCH (#67).
+pub(crate) fn keep_server_fields(obj: &mut Value, stored: &Value, name: &str, namespace: Option<&str>) {
+    if !obj["metadata"].is_object() {
+        obj["metadata"] = json!({});
+    }
+    obj["metadata"]["name"] = json!(name);
+    if let Some(ns) = namespace {
+        obj["metadata"]["namespace"] = json!(ns);
+    }
+    for field in ["uid", "creationTimestamp"] {
+        match stored["metadata"].get(field) {
+            Some(v) if !v.is_null() => obj["metadata"][field] = v.clone(),
+            _ => {}
+        }
+    }
+}
+
 /// PUT — update a namespace-scoped resource.
 pub async fn update_namespaced_resource(
     State(state): State<AppState>,
