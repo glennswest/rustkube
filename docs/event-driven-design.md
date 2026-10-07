@@ -364,13 +364,19 @@ a cache known to contain it. Continuation pages must retain the same snapshot
 when a load balancer changes servers. A failed, stale or unsynchronized cache
 cannot authorize garbage collection, namespace finalization or node cleanup.
 
-The initial implementation uses authoritative datastore Range reads for LIST,
-with the first revision pinned on subsequent pages. This removes the old
-process-local recent-write freshness shortcut. It costs one datastore read per
-LIST page and per GET, `resourceVersion=0` included. The indexed informer
-work (#146) and the fastetcd snapshot fix (fastetcd#50, v1.6.1) are done;
-serving LIST and GET from the cache when it has reached the requested
-revision, as upstream's cacher does, is #171 and not implemented.
+A most-recent LIST or GET (no `resourceVersion`) is an authoritative
+datastore Range read, with the first revision pinned on continuation pages.
+A read that names a revision it can accept (`resourceVersion=0`, or `N` with
+the default `NotOlderThan` match) is served from the watch cache once the
+cache has reached it, as upstream's cacher does (#171): the cache of the
+resource's whole prefix answers a namespace's LIST (by key range) and a GET,
+so no read opens a datastore watch of its own. Not reached within 50 ms, it is
+the datastore, which is never older. `Exact` reads the datastore at that
+revision; continuation pages are the datastore pinned to the token's
+revision, including after a first page from the cache (its token carries the
+cache's revision, and the datastore at that revision is the same snapshot).
+`test/e2e/cache-reads.sh` compares cache and datastore answers and counts a
+relist storm's datastore Ranges (none).
 
 Authorization does use the cache (#177): RBAC reads ClusterRoleBindings,
 ClusterRoles, RoleBindings and Roles from views parsed from the watch cache's
@@ -382,8 +388,9 @@ per authorized GET (it was four).
 Watch compaction, cache eviction and subscriber lag terminate the stream with
 a Status error and force recovery rather than silently dropping changes.
 
-The watch cache's own revision wait (`WatchCache::list` with a minimum
-revision; no API LIST handler calls it today) is notified, not polled (#148).
+The watch cache's own revision wait (`WatchCache::read_page`/`read_one`
+with a minimum revision, on the LIST and GET path since #171) is notified,
+not polled (#148).
 The pump and the stall re-seed store the new snapshot revision and then wake
 every waiter; teardown (datastore watch lost, or a re-seed that found missed
 events) wakes them too. A waiter registers before it checks the revision, so

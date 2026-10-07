@@ -54,10 +54,19 @@ custom resources under `/registry/{group}/{plural}/…` (#76). `resourceVersion`
 is the store's `mod_revision`. Every write is a compare-and-swap; a PATCH
 without a `resourceVersion` retries the CAS the way upstream's
 `GuaranteedUpdate` does (#77). A watch cache sits in front of watches and
-feeds RBAC (below). GETs and LISTs read the shared datastore directly — one
-linearizable Range each, `resourceVersion=0` included; nothing is served from
-the cache yet (#171). Continuation pages request the first page's revision,
-even through another API server. That needs correct datastore snapshots,
+feeds RBAC (below). GETs and LISTs follow upstream's cacher (#171): with no
+`resourceVersion` they read the shared datastore (one linearizable Range);
+with `resourceVersion=0`, or `N` (`NotOlderThan`, the default match), they are
+answered from the watch cache of the whole resource once it has reached `N`
+(it waits up to 50 ms, then reads the datastore, which is never older);
+`resourceVersionMatch=Exact` reads the datastore at `N`; a non-numeric
+`resourceVersion` is a 400. So an informer relist storm after a restart is one
+seed per resource, not one Range per client;
+`apiserver_watch_cache_reads_total{operation,type}` counts what the cache
+answered beside `etcd_request_duration_seconds`. Continuation pages request
+the first page's revision, even through another API server — a page served
+from the cache hands out the same `{revision}:{key}` token, so the next page
+is the datastore at the cache's revision. That needs correct datastore snapshots,
 which fastetcd has from v1.6.1 ([fastetcd#50](https://github.com/glennswest/fastetcd/issues/50),
 fixed); `test/e2e/list-snapshot-race.sh` checks it. Compacted LIST revisions return 410; automatic
 compaction is absent (#139), and compacted watch error handling is incomplete
