@@ -109,6 +109,7 @@ report `status.observedGeneration` (stormcluster#12).
       control (generation writes removed) fails 18. #220 (the dropped
       function) closed
 - [x] README/test README/CHANGELOG
+- [x] golden-rustkube-06b2476d3811 (stormcos#333); #198 closed
 
 ### Stamp the requester on storage.storm.io CRs (#210, P1) — COMPLETE 2026-10-06
 stormdrive#45's controller SARs the creator of a `DriveOperation` before
