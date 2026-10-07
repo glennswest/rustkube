@@ -111,6 +111,7 @@ routinely, so every stormcert renewal hits this.
       control (reloads disabled) fails 10, every reload-dependent check.
       serving-cert.sh 15/15 at c6ddc0e. #218 (rig's own Lease setup) closed
 - [x] README/certificates.md/test README/CHANGELOG
+- [x] golden-rustkube-2ff21b9b3958 (stormcos#333); #105 closed
 
 ### RBAC escalation prevention (#98, P1) — COMPLETE 2026-10-06
 Any caller who may write RoleBindings could bind any role (cluster-admin in
