@@ -103,8 +103,11 @@ routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `start`/`stop`/`restart`; and `migrate` on a VirtualMachine — what `virtctl
 migrate` calls — or a VirtualMachineInstance, which creates a
 VirtualMachineInstanceMigration: 404 while that CRD is not installed, 409 for
-an instance not `Running` or already migrating; `dryRun` honoured,
-`addedNodeSelector` refused, #184).
+an instance not `Running` or already migrating; `dryRun` honoured, #184;
+`addedNodeSelector` is carried onto the migration's `spec.addedNodeSelector`
+and the scheduler adds it to the VMI's node selector for the target — a key
+the VMI already selects on keeps the VMI's value, a selector no node meets is
+`TargetScheduled=False`, a non-string value 422, #208).
 
 `scheduling.k8s.io/v1` (PriorityClass) and `authentication.k8s.io/v1`
 (TokenReview) are served and advertised in `/apis` (#85).

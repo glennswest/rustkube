@@ -227,6 +227,10 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/vmi-migration.sh` also covers `addedNodeSelector` (#208): it forces
+the second-choice node, one no node meets is `TargetScheduled=False`, and a
+non-string value is 422.
+
 `e2e/scale.sh` (#86, suite `rigs`): `kubectl scale` on a Deployment,
 ReplicaSet, StatefulSet and a CR with `subresources.scale`;
 `--current-replicas` mismatch refused; the Scale's shape; stale PUT 409,

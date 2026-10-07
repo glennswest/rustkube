@@ -121,6 +121,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
+### VMI migrate addedNodeSelector (#208, P2) — IN PROGRESS 2026-10-07
+- [x] cf83dc4 apiserver: MigrateOptions.addedNodeSelector → migration spec
+      (non-string 422); scheduler: reads the migration's selector, adds it to
+      the VMI's (VMI's keys win); units; vmi-migration.sh cases; docs
+- [ ] Build; rigs (vmi-migration in `rigs`, stormcentral#512); golden; close
+
 ### TokenRequest default back to 1 h (#206, P3) — SHIPPED 2026-10-07
 - [x] rustkube-node#122 (d25f05c, 0cdc142, e69287f) is in a318daf, the
       rustkube-node of published stormcos 11.88 (and every later compose)
