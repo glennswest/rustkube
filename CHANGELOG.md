@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **fix:** The Gateway API controller acts only on what is its own (#91), as upstream controllers do: GatewayClasses whose `controllerName` is `rustkube.io/gateway-controller`, the Gateways of those classes, and its own entries in an HTTPRoute's `status.parents`. It marked every other controller's class `Accepted=False/UnsupportedController`, wrote status on their Gateways, and replaced HTTPRoutes' whole `parents` list. With Cilium's Gateway API that meant fighting Cilium over its own class. Its Gateways no longer get the invented `status.addresses: 192.168.1.100`, and are `Programmed=False` (`Pending`, "no data plane") instead of `Programmed=True`: nothing listens (#70).
+- **test:** gateway units: class ownership, a Gateway's status without an address and not programmed, other controllers' route parents kept.
 - **feat:** API aggregation (#83). An APIService with a `service` makes its group/version an aggregated API, served through this apiserver as upstream's kube-aggregator does. `aggregation.rs` was a registry nothing called; it is rewritten and wired.
   - **Table:** every apiserver follows the stored APIServices through the watch cache (about a second).
   - **Availability:** each apiserver checks every APIService's backend every 5 s and writes its `Available` condition when it changes: `Local`, `ServiceNotFound`, `Passed` on a 2xx from `/apis/{group}/{version}`, `FailedDiscoveryCheck` otherwise.

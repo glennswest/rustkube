@@ -812,7 +812,8 @@ when each piece landed.
 - [ ] HPA placeholder: no metrics, never scales down (#89)
 - [ ] Metrics: reconcile metrics never emitted, no histogram buckets,
       unauthenticated apiserver `/metrics` (#90)
-- [ ] Gateway controller: hardcoded address, overwrites foreign classes (#91)
+- [x] Gateway controller: hardcoded address, overwrites foreign classes (#91)
+      — own classes only, no address, Programmed=False (2026-10-07)
 - [x] Serving-cert reload applies a mismatched key/cert pair (#93) — fixed 2026-10-06
 - [x] `/status` PUT is conditional on the body's `resourceVersion` (#78),
       all four handlers; `test/e2e/status-rv.sh`

@@ -75,7 +75,7 @@ approve + sign, PodMigration, VirtualMachine, VirtualMachineInstanceMigration
 Pods (#203). Leader election ✅.
 
 🟡 placeholders: HPA (inert: no metrics source, scales nothing, #89); Gateway API (status
-only, hardcoded address, #91).
+only, own classes only, `Programmed=False`, no address; #70, #91).
 
 ✅ the `kube-root-ca.crt` publisher (#67).
 

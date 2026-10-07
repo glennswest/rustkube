@@ -487,7 +487,12 @@ replica counts, and reports the target's count as current and desired with
 metrics source"), as upstream does when the resource metrics API answers
 nothing; a target it cannot read is `AbleToScale=False` (`FailedGetScale`).
 It used to scale every target to `maxReplicas` on Ready Pods. **Gateway API**
-is a placeholder: it writes status only, with a hardcoded address (#91).
+is status only, with no data plane (#70). It acts only on GatewayClasses
+whose `controllerName` is `rustkube.io/gateway-controller`, their Gateways,
+and its own entries in HTTPRoutes' `status.parents`; other controllers'
+classes, Gateways and route entries are left alone (#91). Its Gateways are
+`Accepted` and `Programmed=False` (`Pending`) with no `status.addresses`,
+since nothing listens.
 
 It has no ResourceQuota, ReplicationController, EndpointSliceMirroring,
 ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or

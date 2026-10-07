@@ -5,20 +5,35 @@
 //! Gateway and HTTPRoute objects and writes their conditions. It programs no
 //! proxy, so no traffic is routed (#70, #91). Execution uses indexed object workers.
 //!
-//! Reconciles:
-//! - GatewayClass: Validates controller name — and marks every class owned by
-//!   another controller `Accepted=False` (#91)
-//! - Gateway: Validates GatewayClass reference, writes a hardcoded placeholder
-//!   address (192.168.1.100, #91), updates listener status
-//! - HTTPRoute: Validates parentRefs (Gateway references), resolves backendRefs to Services
+//! It acts only on what is its own, as upstream controllers do (#91): a
+//! GatewayClass whose `controllerName` is [`CONTROLLER`], the Gateways of
+//! such a class, and its own entries in an HTTPRoute's `status.parents`.
+//! Classes, Gateways and route entries of other controllers (Cilium's, say)
+//! are left alone.
+//!
+//! - GatewayClass: `Accepted=True`
+//! - Gateway: `Accepted=True`, listeners' `Accepted` by protocol, and
+//!   `Programmed=False` (`Pending`) with no `status.addresses` — there is no
+//!   data plane, so it neither listens nor has an address (#70)
+//! - HTTPRoute: per parent Gateway of an own class, `Accepted` and
+//!   `ResolvedRefs` (backend Services exist); other controllers' parents kept
 
 use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
 use apimachinery::informer::Index;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
+
+/// The `controllerName` this controller answers to.
+pub const CONTROLLER: &str = "rustkube.io/gateway-controller";
+
+/// Whether a GatewayClass is this controller's. One without a
+/// `controllerName` is nobody's (the field is required).
+fn owns(class: &Value) -> bool {
+    class["spec"]["controllerName"].as_str() == Some(CONTROLLER)
+}
 
 pub struct GatewayController {
     api: Arc<ApiClient>,
@@ -53,25 +68,18 @@ impl GatewayController {
         let gc_name = gc["metadata"]["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("GatewayClass missing name"))?;
-        let controller_name = gc["spec"]["controllerName"]
-            .as_str()
-            .unwrap_or("rustkube.io/gateway-controller");
-
-        // Check if we manage this GatewayClass
-        let accepted = controller_name == "rustkube.io/gateway-controller";
-
+        // Another controller's class: its status is that controller's (#91).
+        if !owns(gc) {
+            return Ok(());
+        }
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let mut updated = gc.clone();
         updated["status"] = json!({
             "conditions": [{
                 "type": "Accepted",
-                "status": if accepted { "True" } else { "False" },
-                "reason": if accepted { "Accepted" } else { "UnsupportedController" },
-                "message": if accepted {
-                    "GatewayClass managed by RustKube".to_string()
-                } else {
-                    format!("Controller {controller_name} not supported")
-                },
+                "status": "True",
+                "reason": "Accepted",
+                "message": "GatewayClass managed by RustKube",
                 "lastTransitionTime": now,
                 "observedGeneration": gc["metadata"]["generation"].as_u64().unwrap_or(1)
             }]
@@ -104,79 +112,17 @@ impl GatewayController {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Gateway missing gatewayClassName"))?;
 
-        let gc_exists = !deps
+        // Only a Gateway of an own class. One of another controller's class
+        // is that controller's; one naming no known class is nobody's yet.
+        let class = deps
             .feed(0)
-            .select(&Index::Name("".into(), gateway_class_name.into()))?
-            .is_empty();
-
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let accepted = gc_exists;
-
-        // Process listeners
-        let listeners = gateway["spec"]["listeners"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let mut listener_statuses = Vec::new();
-
-        for listener in &listeners {
-            let listener_name = listener["name"].as_str().unwrap_or("unknown").to_string();
-            let protocol = listener["protocol"].as_str().unwrap_or("HTTP");
-
-            // Validate listener protocol
-            let supported = matches!(protocol, "HTTP" | "HTTPS" | "TCP" | "TLS");
-
-            listener_statuses.push(json!({
-                "name": listener_name,
-                "supportedKinds": [
-                    {"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"}
-                ],
-                "attachedRoutes": 0, // Updated by HTTPRoute reconciliation
-                "conditions": [{
-                    "type": "Accepted",
-                    "status": if supported { "True" } else { "False" },
-                    "reason": if supported { "Accepted" } else { "UnsupportedProtocol" },
-                    "message": if supported {
-                        format!("Listener {listener_name} accepted")
-                    } else {
-                        format!("Protocol {protocol} not supported")
-                    },
-                    "lastTransitionTime": now
-                }]
-            }));
+            .select(&Index::Name("".into(), gateway_class_name.into()))?;
+        if !class.first().is_some_and(owns) {
+            return Ok(());
         }
-
-        // Assign addresses (simplified: use a placeholder LoadBalancer IP)
-        let addresses = vec![json!({
-            "type": "IPAddress",
-            "value": "192.168.1.100" // Placeholder — real impl would allocate from pool
-        })];
-
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let mut updated = gateway.clone();
-        updated["status"] = json!({
-            "addresses": addresses,
-            "conditions": [{
-                "type": "Accepted",
-                "status": if accepted { "True" } else { "False" },
-                "reason": if accepted { "Accepted" } else { "InvalidGatewayClass" },
-                "message": if accepted {
-                    format!("Gateway accepted, using GatewayClass {gateway_class_name}")
-                } else {
-                    format!("GatewayClass {gateway_class_name} not found")
-                },
-                "lastTransitionTime": now,
-                "observedGeneration": gateway["metadata"]["generation"].as_u64().unwrap_or(1)
-            }, {
-                "type": "Programmed",
-                "status": if accepted { "True" } else { "False" },
-                "reason": if accepted { "Programmed" } else { "Pending" },
-                "message": if accepted { "Gateway programmed" } else { "Waiting for GatewayClass" },
-                "lastTransitionTime": now,
-                "observedGeneration": gateway["metadata"]["generation"].as_u64().unwrap_or(1)
-            }],
-            "listeners": listener_statuses
-        });
-
+        updated["status"] = gateway_status(gateway, gateway_class_name, &now);
         owned::preserve_transition_times(&gateway["status"], &mut updated["status"]);
         if gateway["status"] == updated["status"] {
             return Ok(());
@@ -191,9 +137,7 @@ impl GatewayController {
             )
             .await?;
 
-        if accepted {
-            info!("Gateway {namespace}/{gateway_name} accepted");
-        }
+        info!("Gateway {namespace}/{gateway_name} accepted");
 
         Ok(())
     }
@@ -203,6 +147,7 @@ impl GatewayController {
         namespace: &str,
         httproute: &Value,
         gateway_map: &HashMap<String, &Value>,
+        own_classes: &HashSet<String>,
         service_map: &HashMap<String, &Value>,
     ) -> anyhow::Result<()> {
         let httproute_name = httproute["metadata"]["name"]
@@ -222,31 +167,27 @@ impl GatewayController {
             let parent_namespace = parent_ref["namespace"].as_str().unwrap_or(namespace);
             let parent_kind = parent_ref["kind"].as_str().unwrap_or("Gateway");
 
-            // Check if parent Gateway exists
-            let parent_exists = if parent_kind == "Gateway" && parent_namespace == namespace {
-                gateway_map.contains_key(parent_name)
-            } else {
-                false
-            };
-
+            // Only a parent Gateway of an own class gets an entry from
+            // this controller; any other is another controller's to answer.
+            if parent_kind != "Gateway" || parent_namespace != namespace {
+                continue;
+            }
+            let Some(parent) = gateway_map.get(parent_name) else { continue };
+            if !parent["spec"]["gatewayClassName"].as_str().is_some_and(|c| own_classes.contains(c)) {
+                continue;
+            }
             let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-            if parent_exists {
-                valid_parents += 1;
-            }
+            valid_parents += 1;
 
             parent_statuses.push(json!({
                 "parentRef": parent_ref,
-                "controllerName": "rustkube.io/gateway-controller",
+                "controllerName": CONTROLLER,
                 "conditions": [{
                     "type": "Accepted",
-                    "status": if parent_exists { "True" } else { "False" },
-                    "reason": if parent_exists { "Accepted" } else { "InvalidParentRef" },
-                    "message": if parent_exists {
-                        format!("HTTPRoute accepted by Gateway {parent_name}")
-                    } else {
-                        format!("Parent Gateway {parent_name} not found")
-                    },
+                    "status": "True",
+                    "reason": "Accepted",
+                    "message": format!("HTTPRoute accepted by Gateway {parent_name}"),
                     "lastTransitionTime": now
                 }, {
                     "type": "ResolvedRefs",
@@ -299,9 +240,17 @@ impl GatewayController {
             }
         }
 
+        // Nothing of ours to say, and nothing of ours to take back: a route
+        // of other controllers' Gateways is not touched.
+        let had_ours = httproute["status"]["parents"]
+            .as_array()
+            .is_some_and(|p| p.iter().any(|p| p["controllerName"].as_str() == Some(CONTROLLER)));
+        if parent_statuses.is_empty() && !had_ours {
+            return Ok(());
+        }
         let mut updated = httproute.clone();
         updated["status"] = json!({
-            "parents": parent_statuses
+            "parents": merge_parents(&httproute["status"]["parents"], parent_statuses)
         });
 
         owned::preserve_transition_times(&httproute["status"], &mut updated["status"]);
@@ -324,6 +273,74 @@ impl GatewayController {
 
         Ok(())
     }
+}
+
+/// An own Gateway's status: accepted, listeners by protocol, and not
+/// programmed — no data plane, so no address (#70, #91).
+fn gateway_status(gateway: &Value, class: &str, now: &str) -> Value {
+    let generation = gateway["metadata"]["generation"].as_u64().unwrap_or(1);
+    let listeners: Vec<Value> = gateway["spec"]["listeners"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|l| {
+            let name = l["name"].as_str().unwrap_or("unknown");
+            let protocol = l["protocol"].as_str().unwrap_or("HTTP");
+            let supported = matches!(protocol, "HTTP" | "HTTPS" | "TCP" | "TLS");
+            json!({
+                "name": name,
+                "supportedKinds": [{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"}],
+                "attachedRoutes": 0,
+                "conditions": [{
+                    "type": "Accepted",
+                    "status": if supported { "True" } else { "False" },
+                    "reason": if supported { "Accepted" } else { "UnsupportedProtocol" },
+                    "message": if supported { format!("Listener {name} accepted") } else { format!("Protocol {protocol} not supported") },
+                    "lastTransitionTime": now,
+                    "observedGeneration": generation
+                }, {
+                    "type": "Programmed",
+                    "status": "False",
+                    "reason": "Pending",
+                    "message": "no data plane: rustkube programs no proxy (rustkube#70)",
+                    "lastTransitionTime": now,
+                    "observedGeneration": generation
+                }]
+            })
+        })
+        .collect();
+    json!({
+        "conditions": [{
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "message": format!("Gateway accepted, using GatewayClass {class}"),
+            "lastTransitionTime": now,
+            "observedGeneration": generation
+        }, {
+            "type": "Programmed",
+            "status": "False",
+            "reason": "Pending",
+            "message": "no data plane: rustkube programs no proxy and assigns no address (rustkube#70)",
+            "lastTransitionTime": now,
+            "observedGeneration": generation
+        }],
+        "listeners": listeners
+    })
+}
+
+/// An HTTPRoute's `status.parents`: other controllers' entries as they
+/// were, this controller's replaced by `ours`.
+fn merge_parents(existing: &Value, ours: Vec<Value>) -> Vec<Value> {
+    let mut out: Vec<Value> = existing
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["controllerName"].as_str() != Some(CONTROLLER))
+        .cloned()
+        .collect();
+    out.extend(ours);
+    out
 }
 
 struct GatewayWorker<'a> {
@@ -349,6 +366,7 @@ impl Controller for GatewayWorker<'_> {
             _ => &[
                 "/apis/gateway.networking.k8s.io/v1/gateways",
                 "/api/v1/services",
+                "/apis/gateway.networking.k8s.io/v1/gatewayclasses",
             ],
         };
         paths
@@ -402,6 +420,18 @@ impl Controller for GatewayWorker<'_> {
                         }
                     }
                 }
+                let own_classes: HashSet<String> = gateways
+                    .iter()
+                    .filter_map(|g| g["spec"]["gatewayClassName"].as_str())
+                    .filter(|c| {
+                        deps.feed(2)
+                            .select(&Index::Name("".into(), (*c).into()))
+                            .ok()
+                            .and_then(|v| v.first().map(owns))
+                            .unwrap_or(false)
+                    })
+                    .map(str::to_string)
+                    .collect();
                 let gateway_map = gateways
                     .iter()
                     .filter_map(|o| o["metadata"]["name"].as_str().map(|n| (n.to_string(), o)))
@@ -411,9 +441,50 @@ impl Controller for GatewayWorker<'_> {
                     .filter_map(|o| o["metadata"]["name"].as_str().map(|n| (n.to_string(), o)))
                     .collect();
                 self.controller
-                    .reconcile_httproute(ns, object, &gateway_map, &service_map)
+                    .reconcile_httproute(ns, object, &gateway_map, &own_classes, &service_map)
                     .await
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_own_class_is_owned() {
+        assert!(owns(&json!({"spec": {"controllerName": CONTROLLER}})));
+        assert!(!owns(&json!({"spec": {"controllerName": "io.cilium/gateway-controller"}})));
+        assert!(!owns(&json!({"spec": {}})), "no controllerName: nobody's");
+    }
+
+    #[test]
+    fn a_gateway_gets_no_invented_address_and_is_not_programmed() {
+        let gw = json!({"metadata": {"generation": 2}, "spec": {"listeners": [
+            {"name": "web", "protocol": "HTTP", "port": 80}, {"name": "udp", "protocol": "UDP", "port": 53}]}});
+        let s = gateway_status(&gw, "rk", "t");
+        assert!(s.get("addresses").is_none(), "no address is assigned, so none is written");
+        assert_eq!(s["conditions"][0]["status"], "True");
+        assert_eq!((s["conditions"][1]["type"].as_str(), s["conditions"][1]["status"].as_str(), s["conditions"][1]["reason"].as_str()),
+                   (Some("Programmed"), Some("False"), Some("Pending")));
+        assert_eq!(s["listeners"][0]["conditions"][0]["status"], "True");
+        assert_eq!(s["listeners"][1]["conditions"][0]["reason"], "UnsupportedProtocol");
+        assert_eq!(s["listeners"][0]["conditions"][1]["status"], "False");
+        assert_eq!(s["conditions"][0]["observedGeneration"], 2);
+    }
+
+    #[test]
+    fn another_controllers_route_parents_are_kept() {
+        let existing = json!([
+            {"parentRef": {"name": "cilium-gw"}, "controllerName": "io.cilium/gateway-controller", "conditions": [{"type": "Accepted"}]},
+            {"parentRef": {"name": "old"}, "controllerName": CONTROLLER, "conditions": []}
+        ]);
+        let ours = vec![json!({"parentRef": {"name": "rk-gw"}, "controllerName": CONTROLLER})];
+        let merged = merge_parents(&existing, ours);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0]["controllerName"], "io.cilium/gateway-controller");
+        assert_eq!(merged[1]["parentRef"]["name"], "rk-gw", "our stale entry replaced");
+        assert!(merge_parents(&Value::Null, vec![]).is_empty());
     }
 }
