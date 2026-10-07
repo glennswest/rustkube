@@ -67,12 +67,18 @@ const NO_PROVISIONER: &str = "kubernetes.io/no-provisioner";
 pub struct PersistentVolumeController {
     api: Arc<ApiClient>,
     events: EventRecorder,
+    /// Held while a claim chooses among unclaimed volumes and binds one, and
+    /// taken before the volume list is read, so the next chooser sees this
+    /// one's write — two claims must not both take one volume. Everything
+    /// else a claim does (protection, class, a volume already pre-bound to
+    /// it, status) runs in parallel (#147).
+    choosing: tokio::sync::Mutex<()>,
 }
 
 impl PersistentVolumeController {
     pub fn new(api: Arc<ApiClient>) -> Self {
         let events = EventRecorder::new(api.clone(), "persistentvolume-controller");
-        Self { api, events }
+        Self { api, events, choosing: tokio::sync::Mutex::new(()) }
     }
 
     pub async fn run(&self) {
@@ -742,6 +748,26 @@ pub fn volume_satisfies(
     true
 }
 
+/// Would this claim choose among volumes that are not already its own? Only
+/// an unbound claim with a candidate that is not pre-bound to it does; a
+/// volume a provisioner made for it (`claimRef` naming it) is no choice, and
+/// neither is a claim with no candidate (the provisioner's turn) or one
+/// already bound.
+pub fn needs_choice(pvs: &[Value], pvc: &Value, namespace: &str, claim_name: &str, class: Option<&str>) -> bool {
+    if pvc["spec"]["volumeName"].as_str().is_some_and(|v| !v.is_empty())
+        || !pvc["metadata"]["deletionTimestamp"].is_null()
+    {
+        return false;
+    }
+    match pick_volume(pvs, pvc, namespace, claim_name, class) {
+        Some(pv) => {
+            !(pv["spec"]["claimRef"]["name"].as_str() == Some(claim_name)
+                && pv["spec"]["claimRef"]["namespace"].as_str() == Some(namespace))
+        }
+        None => false,
+    }
+}
+
 /// Pick the volume that fits with the least waste.
 ///
 /// Smallest sufficient capacity first: handing a 1Ti volume to a claim asking
@@ -804,6 +830,25 @@ mod tests {
             },
             "status": {"phase": "Available"}
         })
+    }
+
+    /// Only choosing among volumes that are not the claim's own is
+    /// serialized (#147): a provisioned volume pre-bound to the claim, no
+    /// candidate at all, or a bound claim run in parallel.
+    #[test]
+    fn only_a_real_choice_is_serialized() {
+        let c = claim("1Gi", Some("fast"), &["ReadWriteOnce"]);
+        let free = volume("pv-free", "1Gi", "fast", &["ReadWriteOnce"]);
+        let mut mine = volume("pv-mine", "1Gi", "fast", &["ReadWriteOnce"]);
+        mine["spec"]["claimRef"] = json!({"namespace": "default", "name": "c1"});
+        assert!(needs_choice(&[free.clone()], &c, "default", "c1", Some("fast")));
+        assert!(!needs_choice(&[mine.clone()], &c, "default", "c1", Some("fast")));
+        // Pre-bound wins over a free one, so it is still no choice.
+        assert!(!needs_choice(&[free.clone(), mine], &c, "default", "c1", Some("fast")));
+        assert!(!needs_choice(&[], &c, "default", "c1", Some("fast")));
+        let mut bound = c.clone();
+        bound["spec"]["volumeName"] = json!("pv-free");
+        assert!(!needs_choice(&[free], &bound, "default", "c1", Some("fast")));
     }
 
     #[test]
@@ -932,9 +977,12 @@ impl Controller for Claims<'_> {
     fn primary(&self) -> &'static str {
         "/api/v1/persistentvolumeclaims"
     }
-    // Local successful PV writes are acknowledged before the next claim can choose.
+    // Claims reconcile in parallel; only choosing an unclaimed volume is
+    // serialized (`choosing`). One worker made every claim wait its turn, and
+    // each bind is a few writes: 25 provisioned claims took 0–2.6 s to bind,
+    // one after another (#147, turbomode on pvetest1).
     fn workers(&self) -> usize {
-        1
+        8
     }
     fn dependencies(&self) -> Vec<Dependency> {
         vec![
@@ -965,10 +1013,20 @@ impl Controller for Claims<'_> {
             .collect();
         let default = default_class_name(&classes);
         let class = claim_class(pvc, default.as_deref()).unwrap_or_default();
-        let mut pvs = deps.feed(0).select(&Index::StorageClass(class))?;
         let ns = pvc["metadata"]["namespace"].as_str().unwrap_or("default");
         let name = pvc["metadata"]["name"].as_str().unwrap_or("");
         let pods = deps.feed(2).select(&Index::Claim(ns.into(), name.into()))?;
+        let mut pvs = deps.feed(0).select(&Index::StorageClass(class.clone()))?;
+        if needs_choice(&pvs, pvc, ns, name, Some(class.as_str()).filter(|c| !c.is_empty())) {
+            // Read the volumes again under the lock: the previous chooser's
+            // bind is acknowledged (and in the feed) by the time it is free.
+            let _choosing = self.0.choosing.lock().await;
+            let mut pvs = deps.feed(0).select(&Index::StorageClass(class))?;
+            return self
+                .0
+                .sync_claim(ns, pvc, &mut pvs, &classes, default.as_deref(), &pods)
+                .await;
+        }
         self.0
             .sync_claim(ns, pvc, &mut pvs, &classes, default.as_deref(), &pods)
             .await
