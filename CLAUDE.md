@@ -121,13 +121,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### YAML bodies + built-in fieldValidation (#122, P2) — IN PROGRESS 2026-10-07
+### YAML bodies + built-in fieldValidation (#122, P2) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] protos re-vendored to release-1.36 (all additive, checked per field);
       `protobuf::unknown_fields`; `field_validation.rs` middleware (POST/PUT,
       Strict/Warn/Ignore, upstream wording); protobuf_mw: YAML→JSON, missing
       Content-Type = JSON, Strict YAML duplicates; units;
       `test/e2e/field-validation.sh` (rigs); README/conformance/CHANGELOG
-- [ ] Build; rig (stormcentral#512); golden; close. Not done: dropping
+- [x] Build VM 84a18836ef at a3bff57: 575 passed / 4 ignored;
+      golden-rustkube-96f8267cda52 (stormcos#366)
+- [ ] field-validation rig (stormcentral#512); close. Not done: dropping
       unknown fields under Warn/Ignore; PATCH; CRDs
 
 ### ServiceCIDR / IPAddress served (#134, P3) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
