@@ -348,6 +348,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### build-release.sh on the private volume (#156) — IN PROGRESS 2026-10-07
+- [x] OUT under $TMPDIR, cargo's target dir, no root/persistent-mount
+      header, sha256s; docs/releasing.md
+- [ ] `sc-build deploy/build-release.sh` as the build user (with images)
+
 ### NodePort allocation + type changes (#132, P2) — BUILT 2026-10-07
 - [x] `node_port.rs` (claim keys, `--service-node-port-range`, Plan
       commit/abort), create (admission) + update (put_object,

@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
 #
-# Build the release artifacts: static musl binaries and `FROM scratch` images.
+# Build and check the release artifacts: static musl binaries, their tarballs
+# and `FROM scratch` images.
 #
-# **Runs on dev (`root@dev.g8.lo`), not on a workstation.** The target is Linux
-# and half this codebase is behind `cfg(target_os = "linux")`; a build produced
-# anywhere else is not the thing that runs. See ../CLAUDE.md.
+# **Runs as a build job, not on a workstation and never as root** (#156):
 #
-# Everything lands in $OUT, which defaults to /build (the spinning 2 TB drive —
-# nothing that persists goes on the SSD root). Point OUT at a golden's NVMe
-# mount to have the artifacts written straight there:
+#   git push && sc-build deploy/build-release.sh
+#   sc-build 'NO_IMAGES=1 deploy/build-release.sh'      # binaries and tarballs only
+#   sc-build 'TARGETS=x86_64-unknown-linux-musl,aarch64-unknown-linux-musl deploy/build-release.sh'
 #
-#   OUT=/mnt/goldens/rustkube ./deploy/build-release.sh
+# The target is Linux and half this codebase is behind `cfg(target_os =
+# "linux")`; a build produced anywhere else is not the thing that runs.
 #
-# Usage:
-#   ./deploy/build-release.sh                  # native arch, all components
-#   TARGETS=x86_64-unknown-linux-musl,aarch64-unknown-linux-musl ./deploy/build-release.sh
-#   NO_IMAGES=1 ./deploy/build-release.sh      # binaries and tarballs only
+# sc-build gives the job a private volume — checkout, target dir, HOME and
+# TMPDIR — and deletes it when the job ends, pass or fail. So everything here
+# stays on that volume: cargo's own target dir (or the CARGO_TARGET_DIR the
+# job sets), and OUT under $TMPDIR. **Nothing this script writes outlives the
+# job.** It proves a commit builds into static binaries, tarballs and images,
+# and prints their sizes and sha256s. Delivery is the component golden,
+# `stormcentral component build rustkube` (docs/releasing.md); there is no
+# persistent output directory, and none must be made with root or a mount.
 #
-# A non-native target is built with `cross` (containerised toolchain), which is
-# the proven path here; dev has no aarch64 musl cross-compiler installed and
-# `ring` needs a C compiler for the target.
+# A non-native target is built with `cross` (containerised toolchain); the
+# build VMs have no aarch64 musl cross-compiler and `ring` needs a C compiler
+# for the target.
 
 set -euo pipefail
 
@@ -30,8 +34,10 @@ VERSION="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
 COMPONENTS=(kube-apiserver kube-controller-manager kube-scheduler)
 NATIVE="$(uname -m)-unknown-linux-musl"
 TARGETS="${TARGETS:-$NATIVE}"
-OUT="${OUT:-/build/rustkube-release/v$VERSION}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/build/cargo/rustkube}"
+# On the job's private volume (#156): TMPDIR there, the checkout's tmp/ when
+# run by hand. CARGO_TARGET_DIR is cargo's own default unless the job sets it.
+OUT="${OUT:-${TMPDIR:-$REPO_ROOT/tmp}/rustkube-release/v$VERSION}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 
 mkdir -p "$OUT"
 echo "rustkube v$VERSION -> $OUT"
@@ -58,7 +64,7 @@ for target in ${TARGETS//,/ }; do
         cross build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
     fi
 
-    bindir="$CARGO_TARGET_DIR/$target/release"
+    bindir="$TARGET_DIR/$target/release"
 
     for c in "${COMPONENTS[@]}"; do
         bin="$bindir/$c"
@@ -94,5 +100,8 @@ for target in ${TARGETS//,/ }; do
 done
 
 echo
-echo "=== $OUT ==="
+echo "=== $OUT (deleted with the job) ==="
 ls -lh "$OUT" | tail -n +2 | awk '{printf "  %-52s %s\n", $9, $5}'
+echo
+echo "=== sha256 ==="
+(cd "$OUT" && sha256sum -- *)

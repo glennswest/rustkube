@@ -37,31 +37,36 @@ that a node has installed the resulting release.
 Turbomode is on main (#163); its datastore dependency fastetcd#50 is fixed in
 fastetcd v1.6.1, and runtime acceptance remains #147/#149.
 
-## Retained standalone packaging tooling
+## Release build check (`deploy/build-release.sh`)
 
 `deploy/build-release.sh` builds static musl binaries for all three components,
 checks each with `file`, writes binary tarballs, and optionally builds and saves
 `FROM scratch` images using podman. `protoc` is needed for the protobuf
-schema descriptors. The script reads the version from `Cargo.toml`.
+schema descriptors. The script reads the version from `Cargo.toml`. Run it as
+a build job, never as root (#156):
 
-These are the **actual script defaults**, not recommended sc-build paths:
+```bash
+git push
+sc-build deploy/build-release.sh                 # native target, tarballs + images
+sc-build 'NO_IMAGES=1 deploy/build-release.sh'   # binaries and tarballs only
+```
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `TARGETS` | `$(uname -m)-unknown-linux-musl` | comma-separated targets; non-native uses `cross` |
-| `OUT` | `/build/rustkube-release/v<version>` | output directory |
-| `CARGO_TARGET_DIR` | `/build/cargo/rustkube` if unset | build output directory |
+| `OUT` | `$TMPDIR/rustkube-release/v<version>` (`tmp/…` in the checkout without `TMPDIR`) | output directory, on the job's private volume |
+| `CARGO_TARGET_DIR` | cargo's default, or what the job sets | build output directory |
 | `NO_IMAGES` | unset | any nonempty value skips image creation |
 
-The persistent `/build` assumptions and root instructions in the script's
-header are obsolete and tracked in #156. It must be adapted to the private
-build volume and supported artifact export before treating it as a current
-publication recipe. Do not use root, persistent dev mounts, or a HOME override
-to make the old recipe work. Conformance staging has the same class of issue
-in its separate script; the owner's answer there is goldens (#140), not yet
-implemented.
+Everything it writes lives on the job's private volume and is deleted with
+it: the script **checks** that a commit builds into static binaries, tarballs
+and images and prints their sizes and sha256s; it does not deliver them.
+Delivery is the component golden above. There is no persistent output
+directory, and none may be made with root, a persistent dev mount or a HOME
+override. Conformance staging had the same class of issue in its own script;
+the owner's answer there is goldens (#140), not yet implemented.
 
-Outputs, when the packaging script runs successfully:
+Outputs, on the job's volume, when the script runs successfully:
 
 - `rustkube-<component>-v<version>-<arch>-linux-musl.tar.gz`, containing
   `kube-<component>`;
