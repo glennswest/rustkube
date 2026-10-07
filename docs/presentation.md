@@ -13,7 +13,8 @@ style: |
 <!--
 Render: npx @marp-team/marp-cli docs/presentation.md          (HTML)
         npx @marp-team/marp-cli docs/presentation.md --pdf    (PDF)
-Checked 2026-09-29 against v0.18.0 plus unreleased turbomode and README.md.
+Checked 2026-10-07 against main (v0.18.0 plus unreleased work) and README.md;
+all slides rendered to PNG (marp-cli, headless Chrome) and inspected for fit (#160).
 Branch code is not a shipped golden or a conformance claim. The file named on each slide is
 where to check it.
 -->
@@ -90,7 +91,8 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 
 - **Groups:** core, apps, batch, autoscaling, policy, networking,
   discovery, events, coordination, rbac, authorization, certificates,
-  storage, apiextensions (CRDs), gateway, `route.openshift.io`,
+  storage, resource (DRA), flowcontrol, `metrics.k8s.io`, apiextensions
+  (CRDs), gateway, `route.openshift.io`,
   `project.openshift.io`, kubevirt subresources. Admission webhooks are
   called on every write (#82); APIServices with a service are proxied (#83).
 - **Wire:** JSON + protobuf, Table output, `PartialObjectMetadata`, watch with
@@ -123,10 +125,10 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 
 **Controller families** (`pkg/controller-manager/src/runner.rs`): Deployment,
 ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service (Endpoints +
-EndpointSlices), Namespace cascade, node lifecycle, PDB, garbage collector,
-PersistentVolume binding, attach/detach, the in-kubelet `stormblock`
-provisioner, root CA publisher, CSR, PodMigration, VirtualMachine, VMI launcher Pods, VMI migration, HPA\*,
-Gateway\*.
+EndpointSlices, mirroring), Namespace cascade, node lifecycle, PDB, garbage
+collector, PersistentVolume binding, attach/detach, the in-kubelet `stormblock`
+provisioner, root CA publisher, CSR, PodMigration, VirtualMachine, VMI
+launcher Pods, VMI migration, HPA\*, Gateway\*.
 
 **Scheduler** (`pkg/scheduler`): filters — readiness, taints, selectors,
 node and pod (anti-)affinity, topology spread, resource fit, volume binding
@@ -138,11 +140,11 @@ incl. `CSIStorageCapacity` and `ReadWriteOncePod`; scores summed; VMIs placed.
 
 ## Interfaces
 
-| | |
+| Surface | What it serves |
 |---|---|
-| API | HTTPS `--secure-port` 6443; `/healthz`, `/livez`, `/readyz`, `/version`, `/metrics` |
-| controller-manager | plain HTTP :10257 — `/metrics`, `/healthz` |
-| scheduler | plain HTTP :10259 — `/metrics`, `/healthz` |
+| API | HTTPS `--secure-port` 6443; `/healthz`, `/livez`, `/readyz`, `/version`; `/metrics` behind RBAC |
+| controller-manager | :10257 (HTTPS with `--tls-cert-file`) — `/healthz`; `/metrics` token-reviewed |
+| scheduler | :10259 (HTTPS with `--tls-cert-file`) — `/healthz`; `/metrics` token-reviewed |
 | datastore | `--etcd-servers` (required), optional mutual TLS |
 | config | flags + a few env vars (`ETCD_SERVERS`, `APISERVER_URL`, `APISERVER_TOKEN`, …), `RUST_LOG`; no config file, no `--kubeconfig` |
 | manifests | `--manifest-dir`: applied once at boot, in filename order |
@@ -154,7 +156,7 @@ Metric names follow upstream's: `docs/metrics.md`.
 
 ## How it ships and is operated
 
-- **Built from source** on dev.g8.lo (`sc-build`), never as root.
+- **Built from source** on a fresh build VM (`sc-build`), never as root.
   `stormcentral component build rustkube` makes the component golden
   `golden-rustkube-<digest>` (the three binaries) and files the stormcos
   release request.
@@ -172,10 +174,11 @@ Metric names follow upstream's: `docs/metrics.md`.
 
 ## How it is tested
 
-- **Unit tests:** 409 passed, 4 ignored at 0c455b8 through sc-build (five
-  core libraries); this is not a runtime or conformance pass.
-- **End to end on dev** (`test/e2e/`): a real apiserver and
-  controller-manager on a fresh fastetcd —
+- **Unit tests:** 589 passed, 4 ignored at ad439d8 through sc-build (whole
+  workspace); this is not a runtime or conformance pass.
+- **End to end** (`test/e2e/`, 54 rigs): a real apiserver and
+  controller-manager on a fresh fastetcd, run as the test image's `rigs` /
+  `rigs-night` suites on test machines (#173) — earlier, on dev:
   - `projects.sh` — `oc` 4.22 as two users and an admin (31 checks)
   - `status-rv.sh` — optimistic concurrency on every status handler (17)
   - `watch-deleted.sh` — DELETED events for CRs and built-ins (7)
@@ -195,7 +198,8 @@ Missing:
 - pod metrics on stormcos: cadvisor attributing stormpump cgroups (cadvisor#3)
 - generic ephemeral volumes (#94); expansion and snapshot API integration
   now have upstream-sidecar tests (#63/#64), not full node acceptance
-- Node authorizer
+- Node authorizer (#228); evaluating admission policies (CEL, #234);
+  API Priority and Fairness enforcement (#118 serves the objects only)
 - validation of turbomode informers at scale and under failover (#146/#149)
 
 ---
