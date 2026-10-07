@@ -2016,6 +2016,11 @@ fn resource_to_list_kind(resource: &str) -> String {
         "certificatesigningrequests" => "CertificateSigningRequest",
         "priorityclasses" => "PriorityClass",
         "poddisruptionbudgets" => "PodDisruptionBudget",
+        // resource.k8s.io/v1 — Dynamic Resource Allocation (#137)
+        "deviceclasses" => "DeviceClass",
+        "resourceclaims" => "ResourceClaim",
+        "resourceclaimtemplates" => "ResourceClaimTemplate",
+        "resourceslices" => "ResourceSlice",
         other => other,
     };
     format!("{singular}List")
@@ -2043,6 +2048,9 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "networkpolicies" | "ingresses" | "ingressclasses" => "networking.k8s.io/v1",
         "priorityclasses" => "scheduling.k8s.io/v1",
         "poddisruptionbudgets" => "policy/v1",
+        "deviceclasses" | "resourceclaims" | "resourceclaimtemplates" | "resourceslices" => {
+            "resource.k8s.io/v1"
+        }
         "mutatingwebhookconfigurations" | "validatingwebhookconfigurations" => {
             "admissionregistration.k8s.io/v1"
         }

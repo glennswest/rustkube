@@ -114,6 +114,7 @@ fn message_name(api_version: &str, kind: &str) -> Option<String> {
         ("policy", "v1") => "k8s.io.api.policy.v1",
         ("autoscaling", "v2") => "k8s.io.api.autoscaling.v2",
         ("scheduling.k8s.io", "v1") => "k8s.io.api.scheduling.v1",
+        ("resource.k8s.io", "v1") => "k8s.io.api.resource.v1",
         ("admissionregistration.k8s.io", "v1") => "k8s.io.api.admissionregistration.v1",
         ("certificates.k8s.io", "v1") => "k8s.io.api.certificates.v1",
         ("authentication.k8s.io", "v1") => "k8s.io.api.authentication.v1",
@@ -846,6 +847,32 @@ mod tests {
     fn supports_known_and_unknown_groups() {
         assert!(supports("coordination.k8s.io/v1", "Lease"));
         assert!(!supports("example.com/v1", "Widget"));
+    }
+
+    #[test]
+    fn dra_objects_round_trip_through_protobuf() {
+        // resource.k8s.io/v1 (#137): client-go's typed DRA clients speak
+        // protobuf. A DeviceClass with a CEL selector, and a ResourceClaim
+        // with an exact request and an allocation in its status.
+        let class = json!({
+            "apiVersion": "resource.k8s.io/v1", "kind": "DeviceClass",
+            "metadata": {"name": "gpu.example.com"},
+            "spec": {"selectors": [{"cel": {"expression": "device.driver == \"gpu.example.com\""}}]}
+        });
+        let back = decode_to_json(&encode_from_json(&class, "resource.k8s.io/v1", "DeviceClass").unwrap(), "", "").unwrap();
+        assert_eq!(back["kind"], "DeviceClass");
+        assert_eq!(back["spec"]["selectors"][0]["cel"]["expression"], "device.driver == \"gpu.example.com\"");
+
+        let claim = json!({
+            "apiVersion": "resource.k8s.io/v1", "kind": "ResourceClaim",
+            "metadata": {"name": "c1", "namespace": "default"},
+            "spec": {"devices": {"requests": [{"name": "gpu", "exactly": {"deviceClassName": "gpu.example.com", "count": 2}}]}},
+            "status": {"allocation": {"devices": {"results": [
+                {"request": "gpu", "driver": "gpu.example.com", "pool": "node-a", "device": "gpu-0"}]}}}
+        });
+        let back = decode_to_json(&encode_from_json(&claim, "resource.k8s.io/v1", "ResourceClaim").unwrap(), "", "").unwrap();
+        assert_eq!(back["spec"]["devices"]["requests"][0]["exactly"]["count"], 2);
+        assert_eq!(back["status"]["allocation"]["devices"]["results"][0]["device"], "gpu-0");
     }
 
     #[test]

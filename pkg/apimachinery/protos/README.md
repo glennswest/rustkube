@@ -17,6 +17,10 @@ This mirrors how `k8s.io/apimachinery` + `k8s.io/api` hold the codec used by bot
 `authentication/v1`, `authorization/v1` and `node/v1` were added from the
 same branch on 2026-09-27 (#67).
 
+`resource/v1` (Dynamic Resource Allocation, GA in 1.34) is from `release-1.34`
+(#137): it does not exist in 1.32. Its imports (core/v1 `NodeSelector`,
+`Quantity`, `RawExtension`) are all in the 1.32 files above.
+
 `google/protobuf/descriptor.proto` is not vendored; it ships with `protoc`.
 
 ## Updating

@@ -114,6 +114,11 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "storage.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "resource.k8s.io",
+            "versions": [{"groupVersion": "resource.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "resource.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "authorization.k8s.io",
             "versions": [{"groupVersion": "authorization.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "authorization.k8s.io/v1", "version": "v1"}
@@ -736,6 +741,12 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
             ("csistoragecapacities", "CSIStorageCapacity", true),
             ("volumeattributesclasses", "VolumeAttributesClass", false),
         ],
+        ("resource.k8s.io", "v1") => vec![
+            ("deviceclasses", "DeviceClass", false),
+            ("resourceslices", "ResourceSlice", false),
+            ("resourceclaims", "ResourceClaim", true),
+            ("resourceclaimtemplates", "ResourceClaimTemplate", true),
+        ],
         ("rbac.authorization.k8s.io", "v1") => vec![
             ("clusterroles", "ClusterRole", false),
             ("clusterrolebindings", "ClusterRoleBinding", false),
@@ -971,6 +982,35 @@ pub async fn api_storage_v1_resources() -> impl IntoResponse {
                 "verbs": verbs,
                 "shortNames": ["vac"]
             }
+        ]
+    }))
+}
+
+/// GET /apis/resource.k8s.io/v1 — Dynamic Resource Allocation (#137).
+///
+/// The objects are served and stored like any other: DeviceClasses and
+/// ResourceSlices (a driver publishes a node's devices) cluster-wide,
+/// ResourceClaims (with `/status`, where an allocation is written) and
+/// ResourceClaimTemplates per namespace. Nothing here allocates: no
+/// scheduler plugin, claim-template controller or kubelet plugin API exists
+/// yet, so a Pod naming a claim is scheduled as if it named none.
+pub async fn api_resource_v1_resources() -> impl IntoResponse {
+    let verbs = json!(["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]);
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "resource.k8s.io/v1",
+        "resources": [
+            {"name": "deviceclasses", "singularName": "deviceclass", "namespaced": false,
+             "kind": "DeviceClass", "verbs": verbs},
+            {"name": "resourceclaims", "singularName": "resourceclaim", "namespaced": true,
+             "kind": "ResourceClaim", "verbs": verbs},
+            {"name": "resourceclaims/status", "singularName": "", "namespaced": true,
+             "kind": "ResourceClaim", "verbs": ["get", "patch", "update"]},
+            {"name": "resourceclaimtemplates", "singularName": "resourceclaimtemplate", "namespaced": true,
+             "kind": "ResourceClaimTemplate", "verbs": verbs},
+            {"name": "resourceslices", "singularName": "resourceslice", "namespaced": false,
+             "kind": "ResourceSlice", "verbs": verbs}
         ]
     }))
 }
@@ -1409,6 +1449,7 @@ mod tests {
             "discovery.k8s.io",
             "events.k8s.io",
             "storage.k8s.io",
+            "resource.k8s.io",
             "apiextensions.k8s.io",
             "networking.k8s.io",
             "admissionregistration.k8s.io",

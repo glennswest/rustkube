@@ -107,6 +107,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### resource.k8s.io/v1 (DRA) served (#137, P2) — IN PROGRESS 2026-10-07
+Owner (#137): "Please make sure there added, … after our turbomode merge"
+(merged, #163). Conformance's 4 DRA specs are CRUD only.
+- [ ] Serve DeviceClass, ResourceSlice (cluster), ResourceClaim (+/status),
+      ResourceClaimTemplate (namespaced) through the generic handlers:
+      routes, discovery (+ manifest table), list kinds/apiVersions, protobuf
+      (`resource/v1/generated.proto` from release-1.34)
+- [ ] Units (discovery, kinds, protobuf round trip); e2e `test/e2e/dra-crud.sh`
+      (suite `rigs`); docs; golden — when a build host exists (stormcentral#521)
+- [ ] File the allocation half (scheduler plugin, claim-template controller,
+      kubelet plugin API) as its own issue: not in this CRUD scope
+
 ### #147: WFFC claims bind one at a time (PVC row) — IN PROGRESS 2026-10-07
 #147's scale/multi-node acceptance waits for hardware (owner on #162: "when
 we have hardware we will have it"). What the test machine measures today:

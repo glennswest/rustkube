@@ -235,6 +235,41 @@ fn build_router(
                 .delete(resource::delete_namespaced_resource)
                 .patch(resource::patch_namespaced_resource),
         )
+        // resource.k8s.io v1 — Dynamic Resource Allocation (#137): DeviceClass,
+        // ResourceSlice (cluster-scoped), ResourceClaim (+ /status) and
+        // ResourceClaimTemplate (namespaced). Stored and served; nothing
+        // allocates yet.
+        .route("/apis/resource.k8s.io/v1", get(discovery::api_resource_v1_resources))
+        .route(
+            "/apis/resource.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection).post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/resource.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
+        )
+        .route(
+            "/apis/resource.k8s.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection).post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/resource.k8s.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
+        )
+        .route(
+            "/apis/resource.k8s.io/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
         // policy/v1 — PodDisruptionBudget (#7) + the pod Eviction subresource.
         .route(
             "/apis/policy/v1",
