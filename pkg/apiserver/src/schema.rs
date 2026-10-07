@@ -230,27 +230,73 @@ pub fn json_duplicates(body: &[u8]) -> Result<Vec<String>, serde_json::Error> {
 /// The first key repeated within one mapping of a YAML `body`, in the words
 /// of upstream's YAML decoder: `line 9: key "foo" already set in map`.
 /// Line numbers are 1-based, counting the body's leading newline.
+///
+/// A scan of block mappings by indentation (a `- ` item starts a new one),
+/// enough for the manifests clients apply; flow mappings (`{a: 1}`) and
+/// multi-line block scalars are not looked into.
 pub fn yaml_duplicate(body: &[u8]) -> Option<String> {
-    let err = match serde_yaml::from_slice::<serde_yaml::Value>(body) {
-        Ok(_) => return None,
-        Err(e) => e,
-    };
-    let msg = err.to_string();
-    let key = msg.split("duplicate entry with key ").nth(1)?.split('"').nth(1)?.to_string();
-    // Find the second occurrence of `key:` at the indentation of the error.
     let text = String::from_utf8_lossy(body);
-    let lines: Vec<&str> = text.split('\n').collect();
-    let near = err.location().map(|l| l.line()).unwrap_or(0);
-    let is_key = |l: &str| {
-        let t = l.trim_start();
-        t.strip_prefix(key.as_str()).is_some_and(|r| r.trim_start().starts_with(':'))
-            || t.strip_prefix(&format!("\"{key}\"")).is_some_and(|r| r.trim_start().starts_with(':'))
-    };
-    let line = [near, near + 1, near.saturating_sub(1)]
-        .into_iter()
-        .find(|n| *n >= 1 && lines.get(n - 1).is_some_and(|l| is_key(l)))
-        .unwrap_or(near);
-    Some(format!("line {line}: key \"{key}\" already set in map"))
+    // (indentation, keys seen) for each open mapping, innermost last.
+    let mut stack: Vec<(usize, std::collections::HashSet<String>)> = Vec::new();
+    let mut scalar_indent: Option<usize> = None; // inside `key: |` / `key: >`
+    for (i, line) in text.split('\n').enumerate() {
+        let trimmed = line.trim_start();
+        let mut indent = line.len() - trimmed.len();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "---" {
+            continue;
+        }
+        if let Some(si) = scalar_indent {
+            if indent > si {
+                continue;
+            }
+            scalar_indent = None;
+        }
+        let mut rest = trimmed;
+        let mut new_item = false;
+        while let Some(r) = rest.strip_prefix("- ") {
+            indent += 2;
+            rest = r.trim_start();
+            new_item = true;
+        }
+        while stack.last().is_some_and(|(ind, _)| *ind > indent || (new_item && *ind == indent)) {
+            stack.pop();
+        }
+        let Some((raw_key, value)) = split_key(rest) else { continue };
+        let key = raw_key.trim_matches('"').trim_matches('\'').to_string();
+        if value.starts_with('|') || value.starts_with('>') {
+            scalar_indent = Some(indent);
+        }
+        match stack.last_mut() {
+            Some((ind, keys)) if *ind == indent => {
+                if !keys.insert(key.clone()) {
+                    return Some(format!("line {}: key \"{key}\" already set in map", i + 1));
+                }
+            }
+            _ => stack.push((indent, std::iter::once(key).collect())),
+        }
+    }
+    None
+}
+
+/// `key: value` → (key, value): the first `:` followed by a space or the end
+/// of the line, outside quotes.
+fn split_key(s: &str) -> Option<(&str, &str)> {
+    let mut quote: Option<char> = None;
+    for (i, c) in s.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') if i == 0 => quote = Some(c),
+            (None, ':') => {
+                let after = &s[i + 1..];
+                if after.is_empty() || after.starts_with(' ') {
+                    return Some((&s[..i], after.trim()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -336,5 +382,10 @@ mod tests {
         let yaml = b"\napiVersion: x.io/v1\nkind: X\nmetadata:\n  name: a\nspec:\n  unknown: uk1\n  foo: foo1\n  foo: foo2\n  cronSpec: x\n";
         assert_eq!(yaml_duplicate(yaml).as_deref(), Some("line 9: key \"foo\" already set in map"));
         assert_eq!(yaml_duplicate(b"a: 1\nb: 2\n"), None);
+        // The same key in sibling list items, or nested maps, is no repeat.
+        assert_eq!(yaml_duplicate(b"ports:\n- name: a\n  port: 1\n- name: b\n  port: 2\nx:\n  name: c\n"), None);
+        // A block scalar's lines are not keys.
+        assert_eq!(yaml_duplicate(b"data:\n  a: |\n    a: 1\n    a: 2\n  b: x\n"), None);
+        assert_eq!(yaml_duplicate(b"- a: 1\n  a: 2\n").as_deref(), Some("line 2: key \"a\" already set in map"));
     }
 }
