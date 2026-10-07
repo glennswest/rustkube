@@ -222,9 +222,9 @@ no reconnect warning, no LIST and no counted reconnect.
 `test/e2e/deadlines.sh` holds each semantic deadline to its moment (cron start,
 Job `activeDeadlineSeconds`, Event TTL, Lease grace, ReplicaSet recreation
 backoff; measured at +0.1–1.8 s) and requires an idle control plane to make no
-API requests for a minute, longer than one heartbeat. One exception is not
-counted: without KubeVirt installed, the VirtualMachine controller's feed
-retries the unserved API every 30 s and the rig excludes those 404s (#172).
+API requests for a minute, longer than one heartbeat, with no exception: the
+KubeVirt controllers start only once their CRDs are Established (#172), so
+without KubeVirt nothing retries its unserved API.
 
 ## Leadership, concurrency and failure
 

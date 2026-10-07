@@ -164,9 +164,10 @@ sleep 60   # longer than the 45 s watch heartbeat
 scrape >"$W/idle.after"
 idle_to=$(date -u +%H:%M:%S)
 # The first scrape itself completes inside the window and is counted once.
-# Retries of an API the rig does not serve (KubeVirt, 404, backing off to
-# 30 s) are error retries, listed but not counted.
-idle=$(awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) { print "  +" d, $1 > "/dev/stderr"; if ($1 !~ /code="404"/) n+=d } } END { printf "%d\n", n-1 }' \
+# Every other request counts, 404s included: with no KubeVirt CRDs the VM
+# controllers are not running at all (#172), so nothing retries an unserved
+# API.
+idle=$(awk 'NR==FNR { b[$1]=$2; next } { d=$2-b[$1]; if (d>0) { print "  +" d, $1 > "/dev/stderr"; n+=d } } END { printf "%d\n", n-1 }' \
   "$W/idle.before" "$W/idle.after")
 if [ "$idle" -le 0 ]; then pass "idle control plane: $idle API requests in 60 s"
 else
@@ -175,4 +176,9 @@ else
   sed 's/\x1b\[[0-9;]*m//g' "$W/cm.log" | awk -v a="$idle_from" -v b="$idle_to" 'substr($1,12,8) >= a && substr($1,12,8) <= b' |
     grep -v 'not synchronized' | head -40
 fi
+# #172: no KubeVirt CRDs, so no request for its resources, the whole run.
+kv=$(curl --max-time 5 -sk -H "Authorization: Bearer $ADMIN" "$API/metrics" | grep '^apiserver_request_total{' |
+  grep -E 'resource="virtualmachine(s|instances|instancemigrations)"' | awk '{ n += $2 } END { printf "%d\n", n }')
+[ "$kv" -eq 0 ] && pass "no KubeVirt CRDs: no request to its API (#172)" || fail "$kv requests to the unserved KubeVirt API"
+
 report

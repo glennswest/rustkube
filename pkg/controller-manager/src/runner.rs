@@ -695,16 +695,11 @@ impl ControllerManager {
             replicaset::ReplicaSetController::new(api).run().await;
         });
 
+        // The KubeVirt controllers run only while their CRDs are Established
+        // (#172): without KubeVirt their feeds would 404 and retry forever.
         let api = self.api.clone();
         tasks.spawn(async move {
-            virtualmachine::VirtualMachineController::new(api)
-                .run()
-                .await;
-        });
-
-        let api = self.api.clone();
-        tasks.spawn(async move {
-            vmilauncher::VmiLauncherController::new(api).run().await;
+            kubevirt_gate(api).await;
         });
 
         let api = self.api.clone();
@@ -732,10 +727,6 @@ impl ControllerManager {
             migration::MigrationController::new(api).run().await;
         });
 
-        let api = self.api.clone();
-        tasks.spawn(async move {
-            vmimigration::VmiMigrationController::new(api).run().await;
-        });
 
         let api = self.api.clone();
         tasks.spawn(async move {
@@ -944,5 +935,92 @@ mod create_expectation_tests {
         api.create(path, &body("next")).await.unwrap();
         assert_eq!(state.lock().unwrap().posts, 2);
         task.abort();
+    }
+}
+
+/// The CRDs each KubeVirt controller's feeds need (#172).
+pub(crate) const KUBEVIRT_CONTROLLERS: &[(&str, &[&str])] = &[
+    ("virtualmachine", &["virtualmachines.kubevirt.io", "virtualmachineinstances.kubevirt.io"]),
+    ("vmilauncher", &["virtualmachineinstances.kubevirt.io"]),
+    ("vmimigration", &["virtualmachineinstancemigrations.kubevirt.io", "virtualmachineinstances.kubevirt.io"]),
+];
+
+/// A CRD is Established, as upstream's clients wait for.
+pub(crate) fn established(crd: &serde_json::Value) -> bool {
+    crd["status"]["conditions"]
+        .as_array()
+        .is_some_and(|c| c.iter().any(|c| c["type"] == "Established" && c["status"] == "True"))
+}
+
+/// A task aborted when this is dropped — so a gate aborted on lost
+/// leadership takes the controllers it started with it.
+struct Running(tokio::task::AbortHandle);
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Run each KubeVirt controller while all its CRDs are Established, from the
+/// CRD feed the garbage collector already shares (#172). On a cluster without
+/// KubeVirt none starts, and nothing polls the unserved API; one starts when
+/// its CRDs are installed and stops when one is deleted. A feed that is not
+/// in sync leaves things as they are.
+async fn kubevirt_gate(api: Arc<ApiClient>) {
+    let changed = Arc::new(tokio::sync::Notify::new());
+    let notify = changed.clone();
+    let crds = api.informers.subscribe(
+        &api.client,
+        format!("{}/apis/apiextensions.k8s.io/v1/customresourcedefinitions", api.base_url),
+        move |_, _| notify.notify_one(),
+    );
+    let mut running: std::collections::HashMap<&'static str, Running> = Default::default();
+    loop {
+        if crds.feed.ensure_synced().is_ok() {
+            let ready = |name: &str| {
+                crds.feed
+                    .select(&apimachinery::informer::Index::Name("".into(), name.into()))
+                    .ok()
+                    .and_then(|v| v.into_iter().next())
+                    .is_some_and(|c| established(&c))
+            };
+            for (controller, needs) in KUBEVIRT_CONTROLLERS {
+                let want = needs.iter().all(|n| ready(n));
+                if want && !running.contains_key(controller) {
+                    info!(controller = *controller, "KubeVirt CRDs established: starting");
+                    let api = api.clone();
+                    let task = tokio::spawn(async move {
+                        match *controller {
+                            "virtualmachine" => {
+                                virtualmachine::VirtualMachineController::new(api).run().await;
+                            }
+                            "vmilauncher" => {
+                                vmilauncher::VmiLauncherController::new(api).run().await;
+                            }
+                            _ => {
+                                vmimigration::VmiMigrationController::new(api).run().await;
+                            }
+                        }
+                    });
+                    running.insert(*controller, Running(task.abort_handle()));
+                } else if !want && running.remove(controller).is_some() {
+                    info!(controller = *controller, "a KubeVirt CRD is gone: stopped");
+                }
+            }
+        }
+        changed.notified().await;
+    }
+}
+
+#[cfg(test)]
+mod kubevirt_gate_tests {
+    #[test]
+    fn only_an_established_crd_counts() {
+        use serde_json::json;
+        assert!(super::established(&json!({"status": {"conditions": [{"type": "Established", "status": "True"}]}})));
+        assert!(!super::established(&json!({"status": {"conditions": [{"type": "Established", "status": "False"}]}})));
+        assert!(!super::established(&json!({"status": {}})));
+        // Every gated controller needs the VMI CRD.
+        assert!(super::KUBEVIRT_CONTROLLERS.iter().all(|(_, n)| n.contains(&"virtualmachineinstances.kubevirt.io")));
     }
 }

@@ -121,6 +121,14 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
+### KubeVirt controllers gated on their CRDs (#172, P2) — WRITTEN 2026-10-07
+- [x] `runner.rs::kubevirt_gate`: VM / VMI launcher / VMI migration
+      controllers start when their CRDs are Established (shared CRD feed),
+      stop on delete, abort with the term. deadlines.sh: strict 0 idle +
+      no KubeVirt requests. README/design/CHANGELOG
+- [ ] Build; rigs (deadlines is rigs-night; vm-runstrategy, vmi-launcher,
+      vmi-migration in rigs) — stormcentral#512; golden; close #172
+
 ### ServiceAccount key rotation (#223, P2) — BUILT + VERIFIED (unit), golden blocked on stormcentral#541 2026-10-07
 - [x] `SigningKeys::from_pem`: signing key RSA or P-256; verify against
       every public key of every `--service-account-key-file` (repeatable,
