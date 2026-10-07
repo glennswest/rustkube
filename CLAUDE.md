@@ -111,6 +111,7 @@ semantics; `/status` writes already copied only status (+ #78's RV check).
       subresource; control (StatusField a no-op) fails 12, every isolation
       check
 - [x] README/test README/CHANGELOG
+- [x] golden-rustkube-2fad9faa182a (stormcos#333); #128 closed
 
 ### Client cert + client CA reload (#105, P1) — COMPLETE 2026-10-06
 controller-manager/scheduler built reqwest once with `Identity::from_pem`;
