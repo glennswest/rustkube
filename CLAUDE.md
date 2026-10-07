@@ -149,17 +149,17 @@ handlers with /status, discovery, protobuf, bootstrap `exempt`/`catch-all`.
 Held so as not to stack a fourth uncompiled change. Proposed after
 stormcentral#521.
 
-### CR schema defaulting/pruning/fieldValidation (#121, P2) — IN PROGRESS 2026-10-07
-Failing specs: SSA (YAML, fieldValidation=Strict) on cluster CRs expect
-`.unknownField: field not declared in schema`, `.metadata.unknownMeta` /
-`.spec.template.metadata.unknownSubMeta` (embedded resource), YAML dup
-`line 9: key "foo" already set in map`; defaulting on request and on read.
-- [ ] `schema.rs` walker (defaults, prune, unknown paths; preserve-unknown,
-      additionalProperties, embedded-resource, ObjectMeta pruning)
-- [ ] CrdDefinition.schema; Strategy::Custom carries schema + fieldValidation;
-      create/PUT/PATCH/apply prune+default, Strict 400 / Warn headers;
-      GET/LIST default on read; YAML/JSON duplicate detection under Strict
-- [ ] Units; e2e `cr-schema.sh` (rigs); build on a build VM (SC_BUILD_VM=1)
+### CR schema defaulting/pruning/fieldValidation (#121, P2) — BUILT, rig waits for test runs 2026-10-07
+- [x] 3ae6a5c `schema.rs` (defaults, prune, unknown paths; preserve-unknown,
+      additionalProperties, embedded-resource, ObjectMeta), CrdDefinition
+      .schema, Strategy::Custom{schema, validation}; create/PUT/PATCH/apply
+      prune+default, Strict 400 (both upstream spellings) / Warn headers;
+      GET/LIST default on read; Strict JSON + YAML duplicate keys.
+      534c63f (migrate caller), b9a59d0 (own YAML duplicate scan)
+- [x] Workspace on a build VM at b9a59d0: 541 passed / 4 ignored (apiserver
+      264). #226, #227 (my intermediate failures) closed
+- [x] `test/e2e/cr-schema.sh` (rigs, the conformance bodies); docs
+- [ ] rigs run — test images still build on dev (stormcentral#526); golden
 
 ### Service ports in strategic merge patch (#150, P2) — WRITTEN, not yet built 2026-10-07
 - [x] `ports` keyed by content: `containerPort` when entries carry it, else
