@@ -2593,6 +2593,9 @@ mod status_put_tests {
         assert_eq!(s.storage.get(&key).await.unwrap()["spec"]["size"], 6);
 
         // Server-side apply creating a missing object: its status is dropped.
+        // (Creating needs its namespace, as NamespaceLifecycle checks.)
+        s.storage.create(&ResourceStorage::cluster_key("namespaces", "default"),
+            json!({"metadata": {"name": "default"}, "status": {"phase": "Active"}})).await.unwrap();
         let key2 = ResourceStorage::namespaced_key("example.com/widgets", "default", "w2");
         let out = patch_stored_object(&s, &key2, "widgets", "w2", Some("default"), &hdr("application/apply-patch+yaml"),
             "fieldManager=t", b"apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w2}\nspec: {size: 1}\nstatus: {phase: Hacked}\n",
