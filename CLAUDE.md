@@ -107,6 +107,13 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Secret stringData folded into data (#101, P2) — IN PROGRESS 2026-10-07
+- [x] `builtin_admission::fold_string_data` on create, PUT, PATCH (before
+      the immutability check, again after webhooks), startup manifests; boot
+      backfill for stored Secrets; unit; README/CHANGELOG
+- [ ] Build+test on a build VM (`SC_BUILD_VM=1 sc-build`, works while
+      stormcentral#521 is open); a rig line; golden waits for #521
+
 ### HPA placeholder (#89, P2) — NEEDS OWNER 2026-10-07
 The issue leaves the choice to the owner. Asked, `wait-owner`: A inert with
 ScalingActive=False (recommended now), B remove the controller, C a real HPA

@@ -263,6 +263,11 @@ the namespace cascade takes everything in it.
   (write workloads, read secrets, exec/attach/port-forward, VM start/stop)
   or `view` (read all but secrets).
 
+**Secrets**: `stringData` is folded into `data` (base64, overwriting a
+same-named key) on create, PUT, PATCH and from startup manifests, and never
+stored or returned, as upstream; Secrets stored with it before are folded at
+boot (#101).
+
 **Admission**, on create: NamespaceLifecycle, namespace defaults (`Active`,
 the `kubernetes` finalizer), Service port defaults and ClusterIP allocation
 from `--service-cidr`, the pod's default ServiceAccount and its projected

@@ -87,6 +87,10 @@ pub async fn admit_create(
         data_keys(resource, obj)?;
     }
 
+    if resource == "secrets" {
+        fold_string_data(obj);
+    }
+
     if resource == "persistentvolumeclaims" {
         access_modes(obj)?;
     }
@@ -378,6 +382,34 @@ fn service_account_default(obj: &mut Value) {
 /// characters of `[-._a-zA-Z0-9]`, not `.` or `..`, and not in both `data`
 /// and `binaryData`. An empty key was stored (#67: the ConfigMap and Secret
 /// empty-key conformance specs).
+/// A Secret's `stringData` folded into `data`, as upstream's apiserver does
+/// on every write (#101): each entry base64-encoded into `data`, overwriting
+/// a same-named key, and `stringData` dropped — it is write-only and never
+/// stored or returned. Readers (`kubectl get -o jsonpath='{.data.x}'`,
+/// client-go's typed `Secret.Data`, the kubelet mounting it) only look at
+/// `data`. True when it changed the object.
+pub fn fold_string_data(obj: &mut Value) -> bool {
+    use base64::Engine;
+    let Some(string_data) = obj.as_object_mut().and_then(|o| o.remove("stringData")) else {
+        return false;
+    };
+    let Value::Object(entries) = string_data else {
+        return true; // a null or malformed stringData is dropped, as upstream
+    };
+    if !obj["data"].is_object() {
+        obj["data"] = serde_json::json!({});
+    }
+    for (k, v) in entries {
+        let text = match &v {
+            Value::String(s) => s.clone(),
+            Value::Null => String::new(),
+            other => other.to_string(),
+        };
+        obj["data"][k] = Value::String(base64::engine::general_purpose::STANDARD.encode(text));
+    }
+    true
+}
+
 fn data_keys(resource: &str, obj: &Value) -> Result<(), ApiError> {
     let fields: &[&str] = if resource == "configmaps" { &["data", "binaryData"] } else { &["data", "stringData"] };
     let valid = |k: &str| {
@@ -850,6 +882,23 @@ mod sa_token_tests {
 #[cfg(test)]
 mod validation_tests {
     use super::*;
+
+    #[test]
+    fn string_data_is_folded_into_data() {
+        use base64::Engine;
+        let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+        let mut s = serde_json::json!({"data": {"keep": b64("k"), "both": b64("old")},
+                                       "stringData": {"both": "new", "userdata": "#cloud-config\n"}});
+        assert!(fold_string_data(&mut s));
+        assert!(s.get("stringData").is_none(), "never stored");
+        assert_eq!(s["data"], serde_json::json!({"keep": b64("k"), "both": b64("new"), "userdata": b64("#cloud-config\n")}),
+                   "stringData wins over a same-named data key");
+        let mut only = serde_json::json!({"stringData": {"a": "x"}});
+        assert!(fold_string_data(&mut only));
+        assert_eq!(only["data"]["a"], b64("x"));
+        let mut none = serde_json::json!({"data": {"a": b64("x")}});
+        assert!(!fold_string_data(&mut none));
+    }
 
     #[test]
     fn data_keys_are_validated() {

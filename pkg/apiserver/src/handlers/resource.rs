@@ -567,6 +567,9 @@ pub(crate) async fn put_object(
     }
     keep_server_fields(&mut body, &existing, name, namespace);
     status.on_update(&mut body, &existing);
+    if key.starts_with("/registry/secrets/") {
+        crate::builtin_admission::fold_string_data(&mut body); // #101
+    }
     check_immutable(key, &existing, &body)?;
     if key.starts_with("/registry/persistentvolumeclaims/") {
         crate::builtin_admission::pvc_update(&state.storage, &existing, &body).await?;
@@ -574,6 +577,9 @@ pub(crate) async fn put_object(
     crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
     keep_server_fields(&mut body, &existing, name, namespace);
     status.on_update(&mut body, &existing);
+    if key.starts_with("/registry/secrets/") {
+        crate::builtin_admission::fold_string_data(&mut body); // a webhook may add it
+    }
     persist_or_finalize(state, key, body).await
 }
 
@@ -1440,6 +1446,9 @@ where
         let namespace = fresh["metadata"]["namespace"].as_str().map(str::to_owned);
         let before = fresh.clone();
         let mut obj = mutate(fresh)?;
+        if key.starts_with("/registry/secrets/") {
+            crate::builtin_admission::fold_string_data(&mut obj); // #101: a PATCH of stringData
+        }
         check_immutable(key, &before, &obj)?;
         if key.starts_with("/registry/persistentvolumeclaims/") {
             crate::builtin_admission::pvc_update(&state.storage, &before, &obj).await?;

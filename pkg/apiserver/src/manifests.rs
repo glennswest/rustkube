@@ -199,6 +199,11 @@ pub async fn apply_one(
             if obj["kind"].as_str() == Some("Namespace") {
                 crate::builtin_admission::namespace_defaults(&mut obj);
             }
+            // And a Secret's stringData is folded into data, as any write
+            // folds it (#101).
+            if obj["kind"].as_str() == Some("Secret") {
+                crate::builtin_admission::fold_string_data(&mut obj);
+            }
             match storage.create(&key, obj.clone()).await {
                 Ok(_) => {
                     if is_crd {

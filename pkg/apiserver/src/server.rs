@@ -822,6 +822,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     bootstrap_namespace(&storage, "kube-public").await;
     bootstrap_namespace(&storage, "kube-node-lease").await;
     backfill_namespace_defaults(&storage).await;
+    backfill_secret_string_data(&storage).await;
 
     // Bootstrap RBAC resources
     bootstrap_rbac(&storage, config.anonymous_auth, config.dev_anonymous_admin).await;
@@ -1263,6 +1264,46 @@ async fn backfill_namespace_defaults(storage: &ResourceStorage) {
     }
     if fixed > 0 {
         tracing::info!("namespace backfill: {fixed} namespace(s) given phase Active and the kubernetes finalizer");
+    }
+}
+
+/// Secrets stored before #101 kept `stringData` and had no `data` for it:
+/// fold them once at boot, as a write now would. Conditional on each
+/// Secret's revision, so a concurrent writer wins and is folded on its own
+/// write; idempotent, so every apiserver of a multi-master cluster may run it.
+async fn backfill_secret_string_data(storage: &ResourceStorage) {
+    let prefix = ResourceStorage::all_namespaces_prefix("secrets");
+    let mut token: Option<String> = None;
+    let mut fixed = 0usize;
+    loop {
+        let (items, next, _) = match storage.list(&prefix, 500, token.as_deref()).await {
+            Ok(page) => page,
+            Err(e) => {
+                tracing::warn!("secret stringData backfill: list failed: {}", e.message);
+                return;
+            }
+        };
+        for mut secret in items {
+            if !crate::builtin_admission::fold_string_data(&mut secret) {
+                continue;
+            }
+            let ns = secret["metadata"]["namespace"].as_str().unwrap_or_default().to_string();
+            let name = secret["metadata"]["name"].as_str().unwrap_or_default().to_string();
+            let rev = secret["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
+            let key = ResourceStorage::namespaced_key("secrets", &ns, &name);
+            match storage.update(&key, secret, rev).await {
+                Ok(_) => fixed += 1,
+                Err(e) if e.reason == "Conflict" => {}
+                Err(e) => tracing::warn!("secret stringData backfill: {ns}/{name}: {}", e.message),
+            }
+        }
+        match next {
+            Some(t) => token = Some(t),
+            None => break,
+        }
+    }
+    if fixed > 0 {
+        tracing::info!("secret stringData backfill: {fixed} Secret(s) folded into data (#101)");
     }
 }
 
