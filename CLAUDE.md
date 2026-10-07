@@ -121,6 +121,14 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
+### Scheduling gates (#87, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
+- [x] ddcc821 scheduler: gated Pod → PodScheduled=False/SchedulingGated (no
+      Event), placed when the last gate goes; apiserver PUT/PATCH adding a
+      gate → 422 (upstream's message). Units; `test/e2e/scheduling-gates.sh`
+      (rigs); README/inventory/research/presentation/test README/CHANGELOG
+- [ ] Build: `409 build VMs are off` (stormcentral#544). Then rigs
+      (stormcentral#512), golden, close #87
+
 ### HPA (#89, P2) — C WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
 Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
 serve `metrics.k8s.io` (pods/nodes, `kubectl top`); upstream's ratio,
