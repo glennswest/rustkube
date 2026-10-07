@@ -95,6 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### CR metadata.generation (#198, P2) — IN PROGRESS 2026-10-06
+Nothing sets or bumps `generation` on custom resources, so no controller can
+report `status.observedGeneration` (stormcluster#12).
+- [ ] #128's `StatusField` becomes `Strategy::{BuiltIn, Custom{status_subresource}}`:
+      CR create → `generation: 1`; main update → stored generation (1 if
+      none), +1 when `spec` changed (with the status subresource) or anything
+      outside `metadata` changed (without); `/status` and metadata-only
+      writes leave it; a client-sent value is ignored. Built-ins unchanged
+- [ ] Units; extend `test/e2e/cr-status.sh` with generation checks
+- [ ] README/CHANGELOG; sc-build; golden; close #198
+
 ### Stamp the requester on storage.storm.io CRs (#210, P1) — COMPLETE 2026-10-06
 stormdrive#45's controller SARs the creator of a `DriveOperation` before
 touching a drive; nothing unforgeable on the object said who that was.
