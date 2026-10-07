@@ -129,7 +129,7 @@ scale-down stabilisation; until then A (inert and honest).
       target's, AbleToScale=True / ScalingActive=False
       (FailedGetResourceMetric), missing target FailedGetScale; no Pod
       watch. Units; README/inventory/presentation/design/CHANGELOG
-- [ ] A: build on a build VM; golden
+- [ ] A: build on a build VM (cancelled while queued, stormcentral#535); golden
 - [ ] C: the standalone cadvisor (9096) cannot attribute stormpump pod
       cgroups (cadvisor#3 open: `/stormpump/w<tag>-<n>`, only `id`), and has
       no TLS/token on stormcos yet (stormcos#143). Per-pod CPU/memory exists
@@ -146,7 +146,7 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
-### API aggregation wired (#83, P2) — WRITTEN, build pending 2026-10-07
+### API aggregation wired (#83, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
 Done when a registered, Available APIService's group is in discovery and its
 requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 (#89's real HPA, `kubectl top`), stormblock's storage.storm.io (comment).
@@ -163,9 +163,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       re-read) + `system:auth-delegator`, reader Role
 - [x] Units (aggregation 5, contract 1); `test/e2e/aggregation.sh` (rigs);
       README/inventory/presentation/oc-compat/test README/CHANGELOG
-- [ ] Build: three build-VM jobs cancelled while queued, every project
-      (filed stormcentral#535). Retry; then rigs run (stormcentral#526);
-      file stormcos issue for proxy-client certs; golden
+- [ ] Build: four build-VM jobs (43369540cc, d8a29412f3, 677f1f06c2,
+      ea514b2b73) cancelled while queued, every project — stormcentral#535;
+      #83 proposed after it. Then: compile + units (also covers #89's A,
+      5415161), rigs run (stormcentral#526), stormcos issue for
+      proxy-client certs, golden
 
 ### Store compaction / continue-token expiry (#139, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
