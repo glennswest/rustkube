@@ -140,13 +140,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
 - [ ] rigs (stormcentral#512); golden (stormcentral#541); close #86
 
-### Scheduling gates (#87, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
+### Scheduling gates (#87, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] ddcc821 scheduler: gated Pod → PodScheduled=False/SchedulingGated (no
       Event), placed when the last gate goes; apiserver PUT/PATCH adding a
       gate → 422 (upstream's message). Units; `test/e2e/scheduling-gates.sh`
       (rigs); README/inventory/research/presentation/test README/CHANGELOG
 - [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
-- [ ] rigs (stormcentral#512); golden (stormcentral#541); close #87
+- [ ] rigs: 465e6c4490 (C2NR0Q2, 90208b0, has scheduling-gates) image never
+      listed by the registry (stormcentral#512); golden (stormcentral#541);
+      close #87
 
 ### HPA (#89, P2) — C BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
