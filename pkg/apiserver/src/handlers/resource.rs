@@ -575,6 +575,9 @@ pub(crate) async fn put_object(
     if key.starts_with("/registry/persistentvolumeclaims/") {
         crate::builtin_admission::pvc_update(&state.storage, &existing, &body).await?;
     }
+    if key.starts_with("/registry/pods/") {
+        crate::builtin_admission::pod_gates_update(&existing, &body)?; // #87
+    }
     crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
     keep_server_fields(&mut body, &existing, name, namespace);
     status.on_update(&mut body, &existing)?;
@@ -1510,6 +1513,9 @@ where
         check_immutable(key, &before, &obj)?;
         if key.starts_with("/registry/persistentvolumeclaims/") {
             crate::builtin_admission::pvc_update(&state.storage, &before, &obj).await?;
+        }
+        if key.starts_with("/registry/pods/") {
+            crate::builtin_admission::pod_gates_update(&before, &obj)?; // #87
         }
         if !obj["metadata"].is_object() {
             return Err(ApiError::invalid("metadata must be an object"));

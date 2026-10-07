@@ -852,7 +852,9 @@ when each piece landed.
 ### Findings from the docs pass (#80)
 - [x] Admission webhooks are never called (#82) — wired 2026-10-06
 - [ ] Aggregation proxies nothing (#83)
-- [ ] Scheduler never preempts (#84); ignores `schedulingGates` (#87)
+- [ ] Scheduler never preempts (#84)
+- [x] `schedulingGates` honoured (#87, 2026-10-07): SchedulingGated, add
+      refused; build blocked on stormcentral#544
 - [x] PriorityClass / TokenReview missing from `/apis` (#85) — fixed in
       6fd2722; discovery was exercised by the efbea2d conformance run.
 - [ ] No `/scale` subresource; `kubectl scale` fails (#86)

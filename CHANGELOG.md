@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **fix:** The scheduler honours `spec.schedulingGates` (#87), as upstream does. A Pod with a non-empty list is not placed: it reads `PodScheduled=False/SchedulingGated` ("Scheduling is blocked due to non-empty scheduling gates", written when it changes, no `FailedScheduling` Event). It is placed once the last gate is removed (the update queues it). The apiserver refuses an update, PUT or PATCH, that adds a gate: 422 `spec.schedulingGates: Forbidden: only deletion is allowed, but found new scheduling gate '…'`. Gated Pods are scheduled at once no more, which #8's multi-arch placement and Kueue rely on.
+- **test:** units for gate detection and the add-is-refused rule. New `test/e2e/scheduling-gates.sh` (suite `rigs`).
 - **feat:** `metrics.k8s.io/v1beta1` is served by the apiserver from each node's cadvisor (#89; owner's decision: the metrics come from cadvisor).
   - NodeMetrics and PodMetrics (list, get, label selectors; `kubectl top`) read `/api/v1.3/subcontainers/` at each node's InternalIP. New flags: `--cadvisor-scheme`, `--cadvisor-port` (default 9096), `--cadvisor-ca-file`, `--cadvisor-token-file`. Answers are cached 10 s per node.
   - A node's usage is its root cgroup's: CPU rate over the last two samples, memory working set.

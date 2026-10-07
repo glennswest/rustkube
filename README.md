@@ -569,7 +569,11 @@ exists.
   ns/pod to node". Both come from `default-scheduler` (#138).
 
 It **does not preempt**: `preemption.rs` computes victims but nothing calls it
-(#84). It **ignores `schedulingGates`** and binds gated pods (#87). There is
+(#84). A Pod with a non-empty `spec.schedulingGates` is not placed: it reads
+`PodScheduled=False/SchedulingGated` ("Scheduling is blocked due to
+non-empty scheduling gates", no Event) and is placed once the last gate is
+removed; the apiserver refuses an update that adds a gate (422, "only
+deletion is allowed", as upstream) (#87). There is
 no `nominatedNodeName` or upstream framework/profile parity. Pending keys
 are ordered by priority and creation time; failed API operations back off,
 and dependency events wake infeasible keys. `plugins.rs` defines plugin

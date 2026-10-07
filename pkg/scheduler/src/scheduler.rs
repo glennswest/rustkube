@@ -672,6 +672,14 @@ impl Scheduler {
                     if !pending_workload(key.0, &object) {
                         return Ok(None);
                     }
+                    // A gated Pod waits for its gates to go (#87); their
+                    // removal is an update, which queues it again.
+                    if !key.0 && gated(&object) {
+                        let ns = object["metadata"]["namespace"].as_str().unwrap_or("default");
+                        self.report_pod_scheduled_false(ns, &object, "SchedulingGated",
+                            "Scheduling is blocked due to non-empty scheduling gates", false).await;
+                        return Ok(None);
+                    }
                     let mut nodes = dependencies[0].feed.list()?;
                     let (mut state, assumed) = observed.lock().unwrap().snapshot(&key);
                     if let Some(node) = assumed {
@@ -1010,12 +1018,19 @@ impl Scheduler {
     /// pending Pod, and a write per retry would be a write per pending Pod
     /// per finished Pod. The bind replaces it with `PodScheduled=True`.
     async fn report_pod_unschedulable(&self, ns: &str, pod: &Value, why: &str) {
+        self.report_pod_scheduled_false(ns, pod, "Unschedulable", why, true).await;
+    }
+
+    /// `PodScheduled=False` with `reason`, written only when it changes;
+    /// with `event`, a `FailedScheduling` Event too (not for a gated Pod,
+    /// which upstream does not report as a failure).
+    async fn report_pod_scheduled_false(&self, ns: &str, pod: &Value, reason: &str, why: &str, event: bool) {
         let name = pod["metadata"]["name"].as_str().unwrap_or("");
         let current = pod["status"]["conditions"]
             .as_array()
             .and_then(|c| c.iter().find(|c| c["type"] == "PodScheduled"));
         if current.is_some_and(|c| {
-            c["status"] == "False" && c["reason"] == "Unschedulable" && c["message"] == why
+            c["status"] == "False" && c["reason"] == reason && c["message"] == why
         }) {
             return;
         }
@@ -1029,7 +1044,7 @@ impl Scheduler {
             "status": {"conditions": [{
                 "type": "PodScheduled",
                 "status": "False",
-                "reason": "Unschedulable",
+                "reason": reason,
                 "message": why,
                 "lastTransitionTime": since,
             }]},
@@ -1040,6 +1055,9 @@ impl Scheduler {
             .await
         {
             debug!("could not report that {ns}/{name} is unschedulable: {e}");
+        }
+        if !event {
+            return;
         }
         // `FailedScheduling` with the same message, written exactly when the
         // condition is — when the reason changes — so a Pod waiting for
@@ -1302,6 +1320,11 @@ fn uncharge(usage: &mut HashMap<String, NodeUsage>, vm: bool, node: String, pod:
     used.mem_bytes -= mem;
     used.pods -= u64::from(!vm);
 }
+/// A Pod held back by `spec.schedulingGates` (#87).
+fn gated(pod: &Value) -> bool {
+    pod["spec"]["schedulingGates"].as_array().is_some_and(|g| !g.is_empty())
+}
+
 fn pending_workload(vm: bool, object: &Value) -> bool {
     if !object["metadata"]["deletionTimestamp"].is_null() {
         return false;
@@ -1917,6 +1940,10 @@ mod reservation_tests {
     #[test]
     fn a_vmi_waiting_for_a_target_is_pending_and_one_with_a_target_is_not() {
         assert!(pending_workload(true, &migrating(None)));
+        // #87: a gate holds a pending Pod; an empty list is no gate.
+        assert!(gated(&json!({"spec": {"schedulingGates": [{"name": "example.com/arch"}]}})));
+        assert!(!gated(&json!({"spec": {"schedulingGates": []}})));
+        assert!(!gated(&json!({"spec": {}})));
         assert!(!pending_workload(true, &migrating(Some("c"))));
         let mut done = migrating(Some("c"));
         done["status"]["migrationState"]["completed"] = json!(true);

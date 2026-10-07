@@ -2,7 +2,7 @@
 
 > Historical upstream research, not a description of implemented RustKube
 > behavior. The implementation limits below and README govern current support;
-> image-manifest inspection is absent (#8), and scheduling gates are ignored
+> image-manifest inspection is absent (#8); scheduling gates are honoured
 > (#87). Architecture selectors/affinity supplied by callers are enforced.
 
 Adversarially-verified (3-0) against primary sources (kubernetes.io, OpenShift
@@ -62,8 +62,7 @@ be named `cluster`**. It deploys a pod-placement controller + webhook.
 (rustkube-node), (b) apiserver support for **PodSchedulingGates** + admission
 that injects the gate, (c) an operand/webhook that reads image manifest-lists,
 (d) the existing scheduler NodeAffinity plugin. No scheduler-core change —
-*except that this scheduler ignores `schedulingGates` today and binds a gated
-pod at once (#87); (d) exists (`filter.rs`), (b) and (c) do not (#8).*
+*(gates are honoured since #87); (d) exists (`filter.rs`), (b) and (c) do not (#8).*
 
 ### Implementation checkpoint — 2026-09-29
 

@@ -111,8 +111,8 @@ resource fit (pod-level requests, #73), volume binding (PV node affinity,
 `CSIStorageCapacity`, `ReadWriteOncePod`). ✅ scores: least requested, image
 locality, node affinity, pod affinity, topology spread. ✅ priority sort.
 
-🔴 preemption (`preemption.rs` is never called, #84); `schedulingGates` (gated
-pods are scheduled, #87); upstream activeQ/backoffQ/unschedulable framework
+✅ `schedulingGates` (`SchedulingGated`, add refused; #87).
+🔴 preemption (`preemption.rs` is never called, #84); upstream activeQ/backoffQ/unschedulable framework
 parity and `nominatedNodeName`; scheduling profiles; NodePorts and BalancedAllocation;
 upstream's score weights (scores are summed unweighted). With the turbomode implementation, a
 serialized priority-ordered Pod/VMI queue and API retries are implemented,
@@ -153,7 +153,7 @@ The built-in stormblock class has neither CSI snapshot sidecars nor a resizer.
 - Scheduler profiles (LowNodeUtilization/HighNodeUtilization/NoScoring) via `config.openshift.io/v1 Scheduler` — see `scheduler-research.md`.
 - Cluster `defaultNodeSelector` + namespace `openshift.io/node-selector` admission merge — #8 area.
 - Descheduler operator (`KubeDescheduler`) — rebalancing, separate from scheduler.
-- Multiarch Tuning Operator (`ClusterPodPlacementConfig`) — #8, needs #87.
+- Multiarch Tuning Operator (`ClusterPodPlacementConfig`) — #8 (gates exist, #87).
 - Projects are in scope and served (#97). SCC, Routes, OAuth, image streams — whether any is in scope is #70.
 
 ## Prioritized parity checklist
@@ -168,7 +168,7 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
 2. Node authorizer (nodes are `cluster-admin` today).
 3. `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
-5. Scheduler: preemption (#84), scheduling gates (#87).
+5. Scheduler: preemption (#84).
 6. Live turbomode acceptance at scale and under failover (#147/#149); datastore
    snapshot correctness (fastetcd#50) is fixed in fastetcd v1.6.1.
    The protobuf empty-UID GC defect (#99) was fixed in v0.15.3.

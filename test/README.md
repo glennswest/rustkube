@@ -221,6 +221,11 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/scheduling-gates.sh` (#87, suite `rigs`): a Pod with two gates stays
+unbound with `PodScheduled=False/SchedulingGated` and no FailedScheduling
+Event; adding a gate is 422; removing one leaves it waiting, removing the
+last binds it; an ungated Pod binds at once.
+
 `e2e/hpa-metrics.sh` (#89, suite `rigs`): a stub cadvisor answers
 `/api/v1.3/subcontainers/` with the root cgroup and labelled containers for
 the namespace's Pods (the rig marks Pods Running/Ready: no kubelet).

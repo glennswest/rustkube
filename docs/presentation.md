@@ -192,7 +192,7 @@ Built as modules but **not wired**:
 - scheduler preemption (`preemption.rs`, #84)
 
 Missing:
-- `/scale` subresource — `kubectl scale` fails (#86) · `schedulingGates` (#87)
+- `/scale` subresource — `kubectl scale` fails (#86)
 - pod metrics on stormcos: cadvisor attributing stormpump cgroups (cadvisor#3)
 - generic ephemeral volumes (#94); expansion and snapshot API integration
   now have upstream-sidecar tests (#63/#64), not full node acceptance

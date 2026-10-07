@@ -141,6 +141,26 @@ pub async fn pvc_update(storage: &ResourceStorage, old: &Value, new: &Value) -> 
     Ok(())
 }
 
+/// A Pod's scheduling gates can only be removed after create (#87), as
+/// upstream validates: a gate that holds a Pod back is a promise to whoever
+/// put it there, and adding one to a Pod already queued or bound would mean
+/// nothing to a scheduler that has moved on.
+pub fn pod_gates_update(old: &Value, new: &Value) -> Result<(), ApiError> {
+    let names = |p: &Value| -> Vec<String> {
+        p["spec"]["schedulingGates"]
+            .as_array()
+            .map(|g| g.iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    let before = names(old);
+    if let Some(added) = names(new).into_iter().find(|g| !before.contains(g)) {
+        return Err(ApiError::invalid(&format!(
+            "spec.schedulingGates: Forbidden: only deletion is allowed, but found new scheduling gate '{added}'"
+        )));
+    }
+    Ok(())
+}
+
 /// The validation half of [`pvc_update`]; `Ok(true)` when the storage
 /// request grew.
 fn pvc_update_valid(old: &Value, new: &Value) -> Result<bool, ApiError> {
@@ -995,5 +1015,22 @@ mod pvc_update_tests {
         let mut limits = claim("1Gi", "Bound");
         limits["spec"]["resources"]["limits"] = json!({"storage": "5Gi"});
         assert!(pvc_update_valid(&claim("1Gi", "Bound"), &limits).is_err());
+    }
+}
+
+#[cfg(test)]
+mod scheduling_gate_tests {
+    use serde_json::json;
+
+    #[test]
+    fn gates_may_only_be_removed() {
+        let pod = |gates: &[&str]| json!({"spec": {"schedulingGates": gates.iter().map(|g| json!({"name": g})).collect::<Vec<_>>()}});
+        assert!(super::pod_gates_update(&pod(&["a", "b"]), &pod(&["a"])).is_ok(), "removing one");
+        assert!(super::pod_gates_update(&pod(&["a"]), &json!({"spec": {}})).is_ok(), "removing all");
+        assert!(super::pod_gates_update(&pod(&["a"]), &pod(&["a"])).is_ok(), "unchanged");
+        let e = super::pod_gates_update(&pod(&["a"]), &pod(&["a", "b"])).unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(e.message.contains("only deletion is allowed, but found new scheduling gate 'b'"));
+        assert!(super::pod_gates_update(&json!({"spec": {}}), &pod(&["x"])).is_err(), "none to one");
     }
 }
