@@ -221,6 +221,14 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/cr-schema.sh` (#121, suite `rigs`) replays the conformance suite's
+FieldValidation and CRD-defaulting bodies over HTTP: Strict server-side apply
+refused for an undeclared field, unknown root/embedded metadata and a
+repeated YAML key, with upstream's messages; a valid CR created; without
+Strict the CR created, pruned and warned about; a Strict JSON create with a
+repeated key refused; a default filled on create, and a default added to the
+CRD later shown on GET and LIST.
+
 `e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too
