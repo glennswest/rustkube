@@ -21,7 +21,7 @@ set -u
 suite=${1:-${STORM_SUITE:-rigs}}
 
 # Day: functional rigs, each a minute or two.
-DAY="status-rv watch-deleted cache-reads metadata-watch wffc-latency dra-crud token-auth bound-token cr-status requester admission-webhook
+DAY="status-rv secret-stringdata watch-deleted cache-reads metadata-watch wffc-latency dra-crud token-auth bound-token cr-status requester admission-webhook
      projects oc-adm vm-runstrategy vmi-launcher vmi-migration pod-limit daemonset-nodes
      indexed-selectors indexed-safety volume-expansion snapshot-controller"
 # Night: idle and load windows, failover and reload ticks.
