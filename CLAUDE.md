@@ -348,6 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Presentation rendered and inspected (#160) — COMPLETE 2026-10-07
+- [x] marp-cli 4.5.1 + Chrome 155 headless on a build VM (no browser on the
+      VMs; Puppeteer fetched one into TMPDIR), PNGs decoded and read here.
+      d521501: 12/12 fit, no clipping; fixed slide 7 breaks, slide 8 empty
+      header, stale claims; 48cb177 re-rendered 12/12 fit. Command in the
+      deck's header comment
+
 ### WATCH honours timeoutSeconds (#165) — BUILT 2026-10-07
 - [x] `WatchParams::timeout` (400 on a non-integer), `WatchResponseOpts
       .timeout` on every watch path, deadline in the initial and live loops;
