@@ -182,8 +182,9 @@ cd deploy/terragrunt/masters
                                     # -replace only that VM (state=existing) → rejoin
 ```
 
-It targets the raft **leader** for member ops (fastetcd doesn't forward them —
-fastetcd#7), recreates only the one VM, and the node boots
+It sends member ops to the raft **leader** (any member would do: since
+fastetcd v0.8.3 a follower forwards them, `RaftPeer.ForwardMembership`,
+fastetcd#7; going to the leader skips the hop), recreates only the one VM, and the node boots
 `ETCD_INITIAL_CLUSTER_STATE=existing` (via the `RK_REPLACE_MASTER` env → the
 template's `cluster_state`) so it rejoins instead of bootstrapping anew.
 Requires `etcdctl` + `jq` on PATH and `PROXMOX_API_TOKEN` set.
@@ -234,9 +235,11 @@ clean rebuild.
    cloud-init but the booted node still runs the old config. (Re-init re-copies
    the unit into `.terragrunt-cache`; do **not** `rm -rf` the cache — see #1.)
 
-7. **`fastetcd-ctl` is a minimal etcd client.** It uses `--endpoint` (singular),
-   and only has `put/get/del/snapshot-save` — there is no `endpoint health` /
-   `member list`. Check liveness with `systemctl is-active fastetcd` + a
+7. **`fastetcd-ctl` is a small etcd client.** It uses `--endpoint` (singular)
+   and has `put`, `get`, `del`, `snapshot-save`, `status` (disk occupancy and
+   alarms), `defrag`, `compact`, `alarm [--disarm]` and `auth members|adopt`
+   (replicated auth state) — but no `endpoint health` or `member list`; use
+   `etcdctl` for membership. Check liveness with `systemctl is-active fastetcd` + a
    `fastetcd-ctl --endpoint http://127.0.0.1:2379 get --prefix /registry/…`
    (per-node key count proves raft replication).
 

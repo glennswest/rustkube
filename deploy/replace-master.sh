@@ -23,9 +23,10 @@ declare -A IP=( [master1]=192.168.8.51 [master2]=192.168.8.52 [master3]=192.168.
 TARGET_IP="${IP[$M]:?unknown master $M}"
 export ETCDCTL_API=3
 
-# Member ops (change_membership) must go to the raft LEADER — fastetcd does not
-# forward them (it errors "has to forward request to <leader>"). Find the leader
-# among the healthy non-target peers and target it directly.
+# Member ops go to the raft LEADER. Since fastetcd v0.8.3 a follower forwards
+# them (RaftPeer.ForwardMembership, fastetcd#7), so any member would do; this
+# still targets the leader directly, which skips the hop and needs no recent
+# fastetcd. Find it among the healthy non-target peers.
 LEADER=""
 for m in master1 master2 master3; do
   [ "$m" = "$M" ] && continue

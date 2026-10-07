@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **docs:** Cross-references brought up to the other components' code (#183, stormcos#65).
+  - fastetcd forwards member ops to the leader since v0.8.3 (fastetcd#7): docs/terragrunt-deploy.md and the comment in `deploy/replace-master.sh`. The script still targets the leader, which skips the hop.
+  - fastetcd-ctl's commands are `put`/`get`/`del`/`snapshot-save`/`status`/`defrag`/`compact`/`alarm`/`auth`, still without `member list`.
+  - rustkube-node serves `/metrics` and `/metrics/cadvisor` (rustkube-node#36, closed): docs/metrics.md.
 - **fix:** The KubeVirt controllers run only while their CRDs are Established (#172). The VirtualMachine, VMI launcher and VMI migration controllers started unconditionally, so on a cluster without KubeVirt their feeds got 404 and retried every 30 s forever: requests, log lines and `apiserver_request_total` 404s from an idle controller-manager. A gate follows the CRD feed the garbage collector already shares. It starts each controller once all its CRDs (`virtualmachines` / `virtualmachineinstances` / `virtualmachineinstancemigrations.kubevirt.io`) are Established, and stops it when one is deleted. It goes with the term on lost leadership.
 - **test:** `test/e2e/deadlines.sh` no longer excludes 404s from the idle check (exactly 0 requests), and checks that no request reached the KubeVirt resources. The KubeVirt rigs create their CRDs, so they check the controllers start. Unit for the Established check.
 - **docs:** #166 diagnosed: the rig's `peer server exited: transport error` (2026-09-29) was fastetcd failing to bind its peer port, already in use. In tonic 0.12.3 the only error that ends `Server::serve(addr)` is the bind in `TcpIncoming::new`: accept errors are logged and continued, and the router cannot fail. On loopback at an unprivileged port that means `EADDRINUSE`. ec59f74 already picks ports after compiling and outside the ephemeral range. fastetcd hiding the OS error is fastetcd#137.
