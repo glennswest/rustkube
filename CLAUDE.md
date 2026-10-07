@@ -129,7 +129,8 @@ scale-down stabilisation; until then A (inert and honest).
       target's, AbleToScale=True / ScalingActive=False
       (FailedGetResourceMetric), missing target FailedGetScale; no Pod
       watch. Units; README/inventory/presentation/design/CHANGELOG
-- [ ] A: build on a build VM (cancelled while queued, stormcentral#535); golden
+- [x] A: compiled + units at 566403b (controller-manager 89, 2 HPA units)
+- [ ] A: golden (stormcentral#527)
 - [ ] C: the standalone cadvisor (9096) cannot attribute stormpump pod
       cgroups (cadvisor#3 open: `/stormpump/w<tag>-<n>`, only `id`), and has
       no TLS/token on stormcos yet (stormcos#143). Per-pod CPU/memory exists
@@ -146,7 +147,7 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
-### Service create cost (#113, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
+### Service create cost (#113, P2) — BUILT, rig waits for test runs 2026-10-07
 Cause (from the code): `service_ip::allocate` walked the range from offset
 1, one store create-if-absent per address, so N Services = N+1 writes per
 create, and concurrent creates raced for the same lowest address.
@@ -154,20 +155,23 @@ create, and concurrent creates raced for the same lowest address.
       claim keys, upper band first (upstream's static band min(max(16,
       size/16), 256) last); lost race → next. Claim keys unchanged. Unit;
       `test/e2e/service-create.sh` (rigs); README/test README/CHANGELOG
-- [ ] Compile + units (stormcentral#535), rigs run (stormcentral#526) for
-      the timings, golden, close #113
+- [x] fd72fbc broke main (E0373, #230; #231 auto-filed); 566403b fixed it.
+      Workspace on a build VM at 566403b (job 3cc07c33b9): 553 passed / 4
+      ignored (apiserver 271, controller-manager 89), exit 0
+- [ ] rigs run (stormcentral#526) for the timings, golden, close #113
 
-### Gateway controller: own classes only (#91, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
+### Gateway controller: own classes only (#91, P2) — BUILT, golden waits for stormcentral#527 2026-10-07
 - [x] a4670a6 `gateway.rs`: acts only on GatewayClasses with controllerName
       `rustkube.io/gateway-controller`, their Gateways, and its own HTTPRoute
       `status.parents` entries (others kept; a route of foreign Gateways not
       written); no `status.addresses`; Gateway + listeners `Programmed=False`
       (Pending, no data plane). 3 units; README/inventory/presentation/CHANGELOG
-- [ ] Compile + units: build-VM job 7ed858f673 cancelled while queued
-      (stormcentral#535); then golden, close #91. Whether the controller
-      should exist stays #70
+- [x] Compiled + units at 566403b (3cc07c33b9): controller-manager 89,
+      workspace 553 passed / 4 ignored
+- [ ] Golden (component builds still go to dev: stormcentral#527), close
+      #91. Whether the controller should exist stays #70
 
-### API aggregation wired (#83, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
+### API aggregation wired (#83, P2) — BUILT, rig waits for test runs 2026-10-07
 Done when a registered, Available APIService's group is in discovery and its
 requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 (#89's real HPA, `kubectl top`), stormblock's storage.storm.io (comment).
@@ -184,11 +188,10 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       re-read) + `system:auth-delegator`, reader Role
 - [x] Units (aggregation 5, contract 1); `test/e2e/aggregation.sh` (rigs);
       README/inventory/presentation/oc-compat/test README/CHANGELOG
-- [ ] Build: four build-VM jobs (43369540cc, d8a29412f3, 677f1f06c2,
-      ea514b2b73) cancelled while queued, every project — stormcentral#535;
-      #83 proposed after it. Then: compile + units (also covers #89's A,
-      5415161), rigs run (stormcentral#526), stormcos issue for
-      proxy-client certs, golden
+- [x] Compiled + units at 566403b (3cc07c33b9; after four cancelled
+      jobs, stormcentral#535): apiserver 271, workspace 553 / 4 ignored
+- [ ] rigs run (stormcentral#526), stormcos issue for proxy-client certs,
+      golden
 
 ### Store compaction / continue-token expiry (#139, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
