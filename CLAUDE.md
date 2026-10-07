@@ -838,6 +838,9 @@ Continue live acceptance in #147/#149; do not claim those gates passed.
 - [x] Rechecked units, startup membership and full API-rig case matrix;
       investigated #154 POST path and twenty fresh short runs. #153/#154
       remain historical incidents with no proven individual root cause.
+- [x] #154 (one 30 s POST timeout in the short rig, 09-29) closed 2026-10-07
+      as not reproducible: 31+ clean reruns; fastetcd#71 (the plausible
+      cause) fixed in v1.9.0, rigs on v1.12.0; failures now dump diagnostics
 - [x] Earlier rig failures #151 (bootstrap UID) and #152 (port/binary setup)
       fixed and closed with successful sc-build evidence. #155 records the
       original snapshot failure; post-fix acceptance evidence is recorded above.
