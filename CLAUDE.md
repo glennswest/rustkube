@@ -147,6 +147,29 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
+### API aggregation wired (#83, P2) — IN PROGRESS 2026-10-07
+Done when a registered, Available APIService's group is in discovery and its
+requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
+(#89's real HPA, `kubectl top`), stormblock's storage.storm.io (comment).
+- [ ] `aggregation.rs` rewrite: follow APIServices via the watch cache (1 s),
+      proxy `/apis/{g}/{v}/…` after authn + RBAC (not for built-in groups):
+      Service ClusterIP, TLS for `<svc>.<ns>.svc` against caBundle (or
+      insecureSkipTLSVerify), `--proxy-client-cert/key-file` presented
+      (reloaded), X-Remote-User/Group set, client Authorization/Impersonate/
+      X-Remote stripped, streamed both ways (watch); unavailable → 503;
+      protobuf middleware bypassed for aggregated paths
+- [ ] Availability in the apiserver (10 s): Local / ServiceNotFound /
+      ServiceUnavailable (no ClusterIP) / FailedDiscoveryCheck / Passed,
+      written to `/status` only on change
+- [ ] Discovery: aggregated groups in `/apis` and `/apis/{g}`;
+      `/apis/{g}/{v}` proxied
+- [ ] `kube-system/extension-apiserver-authentication` ConfigMap
+      (`--requestheader-client-ca-file`, `--requestheader-allowed-names`,
+      client-ca) + upstream roles `extension-apiserver-authentication-reader`,
+      `system:auth-delegator`
+- [ ] Units; `test/e2e/aggregation.sh` (stub backend on 127.0.0.x);
+      README/CHANGELOG; build; file stormcos issue for proxy-client certs
+
 ### Store compaction / continue-token expiry (#139, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
       0`, revisions); space reclaim above 80% keeps 1000 revisions anyway;
