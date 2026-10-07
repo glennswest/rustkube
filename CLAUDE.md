@@ -121,6 +121,13 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
+### TokenRequest default back to 1 h (#206, P3) — SHIPPED 2026-10-07
+- [x] rustkube-node#122 (d25f05c, 0cdc142, e69287f) is in a318daf, the
+      rustkube-node of published stormcos 11.88 (and every later compose)
+- [x] 49ee0f0 `DEFAULT_TTL_SECS` 3600; unit; README/inventory/CHANGELOG;
+      build VM 9d8d14de2d 571 passed / 4 ignored; golden-rustkube-5e640df87001
+      (stormcos#366, release note posted there)
+
 ### KubeVirt controllers gated on their CRDs (#172, P2) — BUILT, golden 4f7661e44994; rig BLOCKED on stormcentral#512 2026-10-07
 - [x] `runner.rs::kubevirt_gate`: VM / VMI launcher / VMI migration
       controllers start when their CRDs are Established (shared CRD feed),
