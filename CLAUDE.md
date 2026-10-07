@@ -107,23 +107,27 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### e2e rigs as pods on the test machines (#173, P2) — IN PROGRESS 2026-10-07
+### e2e rigs as pods on the test machines (#173, P2) — IMPLEMENTED, awaiting a test-machine run 2026-10-07
 Owner (#162): "Persistent tests should be pods, and should live on forge."
 Every `test/e2e/*.sh` rig ran inside an sc-build slot (this session's #98,
 #105, #128, #209, #210, #198 runs too). The test standard already has the
 path: `test/Containerfile` (fedora-minimal + microdnf), `test/build.sh` on
 the build box, extra suites declared in `test/requires.toml` (#247).
-- [ ] `test/build.sh` stages the commit's release (musl) kube-* binaries,
-      fastetcd (pinned tag), `oc`, `kubectl`, the CSI/snapshot sidecars
-      (fetched from registry.k8s.io over the registry API, no podman) and
-      the snapshot CRDs/RBAC; rigs prefer them via `RK_TOOLS`
-- [ ] `/test rigs` (day, ≤ 30 min) and `/test rigs-night` (slow/timing
-      rigs) run `test/rigs.sh`: each rig in its own pod-local control plane,
-      one JSON line per rig, logs under /results; `test/requires.toml`
-      declares both with budgets
-- [ ] Verify: `stormcentral test run rustkube rigs` on a test machine.
-      From then on rigs run there, never in sc-build (docs + memory)
-- [ ] README/test README/CHANGELOG; close #173
+- [x] 68e3260/f3cea50: `test/build.sh` stages the commit's release (musl)
+      kube-* binaries, fastetcd (`test/e2e/versions.sh`, v1.12.0), `oc`,
+      `kubectl`, CSI hostpath/provisioner/resizer, snapshot-controller
+      (`test/fetch-image-file.py`, registry API, no podman) and snapshot
+      CRDs/RBAC; rigs prefer them via `RK_TOOLS`. sc-build `STAGE_ONLY=1`
+      at f3cea50: all staged (static, oc glibc), rustkube-test 9 units pass
+- [x] `/test rigs` (18 functional rigs, 1800 s) and `/test rigs-night`
+      (9 slow ones, 7200 s) exec `test/rigs.sh`: JSON line per rig, logs in
+      /results; `test/requires.toml` declares both
+- [x] Docs: test/README, CLAUDE.md Build & Test, CHANGELOG; memory
+- [ ] Runs 1591bc1258 (pvetest1) and dcb98cb338 (pvetest2) queued at
+      f3cea50 since 02:4x/03:2x UTC; both VMs' runs keep erroring "node did
+      not settle within 45 min", blades are off 00:00–11:00 UTC. Read the
+      result (`stormcentral test show <id>`); fix what fails; rebalance the
+      lists by the rigs' times; then run rigs-night at night; close #173
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
