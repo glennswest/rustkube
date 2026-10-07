@@ -902,6 +902,7 @@ fn build_router(
 
 /// Start the API server.
 pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
+    crate::node_port::set_range(&config.service_node_port_range)?; // #132
     // Connect to the external etcd/fastetcd datastore (kube architecture).
     if config.etcd_servers.is_empty() {
         anyhow::bail!(
@@ -1014,6 +1015,11 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let claimed = crate::service_ip::reconcile(&storage).await;
     if claimed > 0 {
         info!("service-ip: claimed {claimed} address(es) already in use");
+    }
+    // The same for node ports (#132).
+    let claimed = crate::node_port::reconcile(&storage).await;
+    if claimed > 0 {
+        info!("node-port: claimed {claimed} port(s) already in use");
     }
 
     // And then check, rather than assume.

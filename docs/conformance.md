@@ -148,7 +148,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 5 | RuntimeClass — #135 | not implemented |
 | 4 | aggregated discovery — #107 | not implemented |
 | 4 | custom resource defaulting/pruning/fieldValidation — #121 | implemented after this run (watch events are not defaulted) |
-| 4 | NodePort allocation, ClusterIP on type change — #132 | not implemented |
+| 4 | NodePort allocation, ClusterIP on type change — #132 | implemented 2026-10-07; not rerun (the functioning-NodePort spec also needs a node to reach it) |
 | 4 | `resource.k8s.io/v1` (DRA) — #137 | served (CRUD); allocation is #225 |
 | 3 | in-place pod resize — #136 | apiserver half since 2026-10-07 (`pods/resize`); the specs also need the kubelet's, rustkube-node#192 |
 | 3 | `/scale` subresource — #86 | served since 2026-10-07; not rerun |

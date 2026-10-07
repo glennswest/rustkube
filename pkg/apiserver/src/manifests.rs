@@ -193,6 +193,7 @@ pub async fn apply_one(
             // network.
             if obj["kind"].as_str() == Some("Service") {
                 crate::service_ip::claim_for(storage, &obj).await;
+                crate::node_port::claim_for(storage, &obj).await; // #132
             }
             // Same reason: a namespace from a manifest is Active and carries
             // the `kubernetes` finalizer like one created through the API (#75).

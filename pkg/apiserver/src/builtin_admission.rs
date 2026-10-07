@@ -66,7 +66,9 @@ pub async fn admit_create(
 
     if resource == "services" {
         default_service_ports(obj);
-        crate::service_ip::allocate(storage, service_cidr, obj).await?;
+        // ClusterIP and node ports (#132); a failed create gives them back
+        // (`node_port::release_all` in the create paths).
+        crate::node_port::plan(storage, service_cidr, None, obj).await?;
     }
 
     if resource == "pods" {

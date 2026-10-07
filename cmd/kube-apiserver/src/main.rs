@@ -161,6 +161,10 @@ struct Cli {
     #[arg(long, default_value = "10.96.0.0/12")]
     service_cidr: String,
 
+    /// Port range NodePort Services are allocated from, inclusive (#132)
+    #[arg(long, default_value = "30000-32767")]
+    service_node_port_range: String,
+
     /// Cluster domain
     #[arg(long, default_value = "cluster.local")]
     cluster_domain: String,
@@ -209,6 +213,7 @@ async fn main() -> anyhow::Result<()> {
         advertise_address: cli.advertise_address,
         data_dir: cli.data_dir,
         service_cidr: cli.service_cidr,
+        service_node_port_range: cli.service_node_port_range,
         cluster_domain: cli.cluster_domain,
         ..Default::default()
     };

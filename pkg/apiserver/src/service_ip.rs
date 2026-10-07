@@ -42,6 +42,11 @@ fn key(ip: &str) -> String {
     format!("{PREFIX}/{ip}")
 }
 
+/// The claim key of `ip`, for a caller that gives one back (#132).
+pub(crate) fn claim_key(ip: &str) -> String {
+    key(ip)
+}
+
 /// `10.96.0.0/12` into its base address and prefix length.
 pub fn parse_cidr(cidr: &str) -> Option<(std::net::Ipv4Addr, u32)> {
     let (addr, prefix) = cidr.split_once('/')?;

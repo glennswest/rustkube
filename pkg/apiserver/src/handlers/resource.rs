@@ -413,13 +413,21 @@ pub async fn create_namespaced_resource(
         &state.storage, &resource, Some(&namespace), &mut body, &state.service_cidr,
     )
         .await?;
-    // Admission webhooks (#82); a patch cannot move the object.
-    crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
-    ensure_metadata(&mut body, &name, Some(&namespace));
-
-    let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = state.storage.create(&key, body).await?;
-    Ok((StatusCode::CREATED, Json(obj)))
+    // A Service's ClusterIP and node ports are claimed now: given back if
+    // the create does not happen (#132).
+    let claims = (resource == "services").then(|| body.clone());
+    let created = async {
+        // Admission webhooks (#82); a patch cannot move the object.
+        crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
+        ensure_metadata(&mut body, &name, Some(&namespace));
+        let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
+        state.storage.create(&key, body).await
+    }
+    .await;
+    if let (Err(_), Some(svc)) = (&created, &claims) {
+        crate::node_port::release_all(&state.storage, svc).await;
+    }
+    Ok((StatusCode::CREATED, Json(created?)))
 }
 
 /// Persist an updated object — or remove it, when the update was the write
@@ -579,13 +587,26 @@ pub(crate) async fn put_object(
     if key.starts_with("/registry/pods/") {
         crate::builtin_admission::pod_gates_update(&existing, &body)?; // #87
     }
-    crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
-    keep_server_fields(&mut body, &existing, name, namespace);
-    status.on_update(&mut body, &existing)?;
-    if key.starts_with("/registry/secrets/") {
-        crate::builtin_admission::fold_string_data(&mut body); // a webhook may add it
+    // A Service's ClusterIP and node ports follow its type (#132).
+    let plan = if key.starts_with("/registry/services/") {
+        Some(crate::node_port::plan(&state.storage, &state.service_cidr, Some(&existing), &mut body).await?)
+    } else {
+        None
+    };
+    let written = async {
+        crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
+        keep_server_fields(&mut body, &existing, name, namespace);
+        status.on_update(&mut body, &existing)?;
+        if key.starts_with("/registry/secrets/") {
+            crate::builtin_admission::fold_string_data(&mut body); // a webhook may add it
+        }
+        persist_or_finalize(state, key, body).await
     }
-    persist_or_finalize(state, key, body).await
+    .await;
+    if let Some(plan) = plan {
+        if written.is_ok() { plan.commit(&state.storage).await } else { plan.abort(&state.storage).await }
+    }
+    written
 }
 
 /// What the server decides about an object written through its main resource
@@ -924,7 +945,7 @@ pub(crate) async fn perform_delete(
     // allocations nothing owns. Released before the delete, because after it
     // the address is no longer recoverable from the object.
     if kind == "services" {
-        crate::service_ip::release(&state.storage, &obj).await;
+        crate::node_port::release_all(&state.storage, &obj).await;
     }
     state.storage.delete(key, None).await?;
     Ok(delete_success(name, namespace, kind))
@@ -1521,17 +1542,31 @@ where
         if !obj["metadata"].is_object() {
             return Err(ApiError::invalid("metadata must be an object"));
         }
+        // A Service's ClusterIP and node ports follow its type (#132):
+        // claimed per attempt, given back when the attempt's write fails.
+        let plan = if key.starts_with("/registry/services/") {
+            Some(crate::node_port::plan(&state.storage, &state.service_cidr, Some(&before), &mut obj).await?)
+        } else {
+            None
+        };
         // A patch cannot rename the object or rewrite what the server owns —
         // the conformance suite's own ConfigMap patch sends
         // `creationTimestamp: null`, which used to delete it (#67).
         keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
         // Admission webhooks (#82) for a PATCH and every `/status` write;
         // again each attempt, as upstream admits inside GuaranteedUpdate.
-        crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut obj), Some(&before)).await?;
-        keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
-        // Swap against what was read, whatever the patch did to the field.
-        obj["metadata"]["resourceVersion"] = Value::String(read_rv);
-        match persist_or_finalize(state, key, obj).await {
+        let written = async {
+            crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut obj), Some(&before)).await?;
+            keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
+            // Swap against what was read, whatever the patch did to the field.
+            obj["metadata"]["resourceVersion"] = Value::String(read_rv);
+            persist_or_finalize(state, key, obj).await
+        }
+        .await;
+        if let Some(plan) = plan {
+            if written.is_ok() { plan.commit(&state.storage).await } else { plan.abort(&state.storage).await }
+        }
+        match written {
             Err(e) if e.reason == "Conflict" && started.elapsed() < PATCH_RETRY_BUDGET => {
                 attempt += 1;
                 tokio::time::sleep(patch_retry_pause(attempt)).await;
@@ -1613,10 +1648,18 @@ pub(crate) async fn patch_stored_object(
                     )
                         .await?;
                 }
-                crate::admission::admit(state, crate::admission::Operation::Create, Some(&mut obj), None).await?;
-                ensure_metadata(&mut obj, name, namespace);
-                status.on_create(&mut obj)?;
-                match state.storage.create(key, obj).await {
+                let claims = (resource == "services").then(|| obj.clone()); // #132
+                let created = async {
+                    crate::admission::admit(state, crate::admission::Operation::Create, Some(&mut obj), None).await?;
+                    ensure_metadata(&mut obj, name, namespace);
+                    status.on_create(&mut obj)?;
+                    state.storage.create(key, obj).await
+                }
+                .await;
+                if let (Err(_), Some(svc)) = (&created, &claims) {
+                    crate::node_port::release_all(&state.storage, svc).await;
+                }
+                match created {
                     // Somebody created it between the read and the create:
                     // apply to theirs, as the next attempt will.
                     Err(e) if e.reason == "AlreadyExists" && attempt < 3 => attempt += 1,

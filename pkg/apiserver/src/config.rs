@@ -46,6 +46,8 @@ pub struct ApiServerConfig {
     pub data_dir: PathBuf,
     /// Cluster CIDR for service IPs.
     pub service_cidr: String,
+    /// `--service-node-port-range` (#132), inclusive, `FROM-TO`.
+    pub service_node_port_range: String,
     /// Cluster DNS domain.
     pub cluster_domain: String,
     /// A directory of manifests applied once at startup.
@@ -116,6 +118,7 @@ impl Default for ApiServerConfig {
             etcd_compaction_interval: std::time::Duration::from_secs(300),
             data_dir: PathBuf::from("/var/lib/kubernetes"),
             service_cidr: "10.96.0.0/12".into(),
+            service_node_port_range: crate::node_port::DEFAULT_RANGE.into(),
             cluster_domain: "cluster.local".into(),
             service_account_key: Vec::new(),
             service_account_signing_key: None,

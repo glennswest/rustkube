@@ -233,6 +233,12 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/service-nodeport.sh` (#132, suite `rigs`): node ports for NodePort
+and LoadBalancer, named/taken/out-of-range/ClusterIP-named ports, TCP+UDP on
+one number, PUT keeping allocated values, immutable ClusterIP, the type
+changes (to ClusterIP frees ports, to ExternalName drops the ClusterIP, from
+ExternalName allocates), delete frees.
+
 `e2e/watch-timeout.sh` (#165, suite `rigs`): built-in, WatchList and
 custom-resource watches end cleanly at `timeoutSeconds`, an event before the
 deadline arrives first, no `timeoutSeconds` stays open, a non-integer is 400.

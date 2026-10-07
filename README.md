@@ -364,7 +364,18 @@ from `--service-cidr` (each address an atomic claim key; a dynamic one is a
 random free address from the watch cache's view of the claims, above the
 bottom band upstream keeps for fixed addresses — `min(max(16, size/16),
 256)` — until that is full, so a create is one claim whatever the number of
-Services, #113), the pod's default ServiceAccount and its projected
+Services, #113) and NodePort allocation from `--service-node-port-range` (#132:
+a port per Service port for `NodePort`, and `LoadBalancer` unless
+`allocateLoadBalancerNodePorts: false`; a named port kept, or 422 when taken
+or out of range; one number may serve TCP and UDP; each port an atomic claim
+key like the addresses; a `ClusterIP`/`ExternalName` Service naming one is
+422). **On a Service update** the allocations follow the type, as upstream:
+a ClusterIP or node port the body leaves empty keeps the stored one, a set
+ClusterIP never changes (422), a change to `ClusterIP` drops and frees the
+node ports, to `ExternalName` the ClusterIP too, and from `ExternalName` a
+ClusterIP (and node ports) are allocated; new claims are given back if the
+write fails, freed ones released once it lands. Delete frees both. Then the
+pod's default ServiceAccount and its projected
 `kube-api-access-*` token volume (unless the pod or ServiceAccount sets
 `automountServiceAccountToken: false`), the not-ready /
 unreachable tolerations, priority from its PriorityClass, a subset of
@@ -674,6 +685,7 @@ override environment values.
 | `--service-account-extend-token-expiration` | | `true` | a pod-bound 3607 s TokenRequest gets a year with `warnafter` at 3607 s |
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
+| `--service-node-port-range` | | `30000-32767` | NodePort range, inclusive (#132) |
 | `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order; created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |
 | `--data-dir` | | `/var/lib/kubernetes` | accepted and **unused** (#88) |
 | `--cluster-domain` | | `cluster.local` | accepted and **unused** (#88) |

@@ -59,7 +59,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | AuthZ: RBAC | core | 🟡 | escalation prevention since #98; no `aggregationRule` controller |
 | AuthZ: Node authorizer, webhook authorizer | core | 🔴 | `system:nodes` is bound to `cluster-admin` instead |
 | Admission: webhooks | core | 🟡 | wired (#82): rules, selectors, failurePolicy, reinvocation, JSONPatch, warnings; CEL `matchConditions` not evaluated |
-| Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS; LimitRanger (#131, create only). 🔴 ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
+| Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service ClusterIP + NodePort allocation (type changes on update, #132), CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS; LimitRanger (#131, create only). 🔴 ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
 | Aggregation layer | core | 🔴 | not wired (#83) |
 | API Priority & Fairness, audit logging | optional | 🔴 | |
 | Discovery, `/openapi/v2`, `/openapi/v3` | core | 🟡 | served with GVK paths but **empty schemas**, so `kubectl explain` has nothing to show |
