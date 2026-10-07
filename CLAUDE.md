@@ -35,8 +35,9 @@ sc-build 'cargo test -p apiserver'    # any command
 
 While dev.g8.lo is retired (stormcentral#521, 2026-10-07) plain `sc-build`
 fails before it starts; `SC_BUILD_VM=1 sc-build '…'` runs the same job on a
-fresh build VM and works. Test-run image builds and goldens still go to dev
-until #521 is fixed.
+fresh build VM and works. #521 closed, but test-run image builds and goldens
+still went to dev afterwards (stormcentral#526): #101, #137, #138, #147, #149,
+#150, #171, #173 and #180 wait there for their test-machine runs.
 
 **The e2e rigs (`test/e2e/*.sh`) never run in a build slot** (#173; the
 build rules: "Test workloads never hold a build slot"). They are suites of
