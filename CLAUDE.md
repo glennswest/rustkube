@@ -107,6 +107,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Rejected bearer token → 401, not anonymous (#115, P2) — NOT STARTED, waits for a build host
+`auth_middleware`: a presented Bearer token that fails `validate_token` must
+be 401 (Status, reason Unauthorized) whatever `--anonymous-auth` says;
+anonymous only for no Authorization header and no client cert. Unit test with
+a garbage token. Proposed after stormcentral#521.
+
 ### Store compaction / continue-token expiry (#139, P2) — investigated, code waits for a build host
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
       0`, revisions); space reclaim above 80% keeps 1000 revisions anyway;
