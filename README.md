@@ -127,7 +127,13 @@ CRD version enables `subresources.status`, status belongs to `/status`, as
 upstream: a create through the main resource drops the body's status, and
 PUT, PATCH and server-side apply through it keep the stored status (#128).
 Without the subresource, status is an ordinary field there. Built-in objects'
-main writes still store the status they are sent. There is **no `/scale`** subresource, though
+main writes still store the status they are sent. A custom resource's
+`metadata.generation` is kept as upstream keeps it (#198): `1` on create, then
++1 on each main-resource write that changes `spec` (with the status
+subresource) or anything outside `metadata` (without); `/status` and
+metadata-only writes leave it, and a value the client sends is ignored, so a
+controller can report `status.observedGeneration`. Built-in objects get no
+generation yet. There is **no `/scale`** subresource, though
 discovery advertises `deployments/scale`, so `kubectl scale` fails (#86).
 
 **Proxied to the kubelet** (`https://<node>:10250`, authenticated with a token

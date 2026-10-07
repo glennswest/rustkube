@@ -146,7 +146,10 @@ over HTTP checks that, with the subresource, main POST drops status and main
 PUT, merge PATCH, JSON PATCH and server-side apply change spec but keep the
 stored status, apply-create drops it, `/status` PUT and PATCH change status
 and keep spec, and a stale `/status` PUT is a 409; without it, POST, PUT and
-PATCH store status as an ordinary field.
+PATCH store status as an ordinary field. It also follows
+`metadata.generation` (#198): 1 on create, +1 per spec write (or, without the
+subresource, per write outside metadata), untouched by `/status`, by
+metadata-only writes and by a client-sent value.
 
 `e2e/requester.sh` (#210) creates `storage.storm.io` CRDs (cluster and
 namespaced) and checks that a create by alice, with forged
