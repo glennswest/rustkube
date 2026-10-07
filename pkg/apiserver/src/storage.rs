@@ -194,14 +194,14 @@ impl ResourceStorage {
         };
         match self.watch_cache.read_one(cache_prefix, key, min).await {
             Ok(Some((Some((bytes, mod_rev)), _))) => {
-                apimachinery::metrics::record_cache_read("get", Self::resource_of(key));
+                apimachinery::metrics::record_cache_read("get", &Self::resource_of(key));
                 let mut obj: Value =
                     serde_json::from_slice(&bytes).map_err(|e| ApiError::internal(&e.to_string()))?;
                 inject_resource_version(&mut obj, mod_rev);
                 Ok(obj)
             }
             Ok(Some((None, _))) => {
-                apimachinery::metrics::record_cache_read("get", Self::resource_of(key));
+                apimachinery::metrics::record_cache_read("get", &Self::resource_of(key));
                 Err(ApiError::not_found("resource", key))
             }
             // Not caught up, or no cache: the store, which is never older.
@@ -238,7 +238,7 @@ impl ResourceStorage {
             (None, Read::NotOlderThan(min)) => {
                 match self.watch_cache.read_page(cache_prefix, prefix, limit, None, min).await {
                     Ok(Some(page)) => {
-                        apimachinery::metrics::record_cache_read("list", Self::resource_of(prefix));
+                        apimachinery::metrics::record_cache_read("list", &Self::resource_of(prefix));
                         let mut items = Vec::with_capacity(page.items.len());
                         for (bytes, mod_rev) in &page.items {
                             let mut obj: Value = serde_json::from_slice(bytes)
