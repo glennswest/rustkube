@@ -221,6 +221,13 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/bad-token.sh` (#115, suite `rigs`) runs the apiserver with
+`--anonymous-auth true`: no credentials and an empty `Bearer ` token are
+anonymous (discovery 200, namespaces 403); a garbage token, a JWT not signed
+by the cluster and a lower-case `bearer` garbage token are 401 with a
+`Status`, reason `Unauthorized`; the admin token is 200. `RK_ANONYMOUS_AUTH`
+in lib.sh sets the flag (default false).
+
 `e2e/compaction.sh` (#139, #127, suite `rigs`) runs the apiserver with
 `--etcd-compaction-interval=3s`: a continue token works, then is a 410
 `Expired` with an inconsistent token in `metadata.continue`, which lists the

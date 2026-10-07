@@ -20,6 +20,7 @@
 #   RK_FASTETCD  path to a fastetcd server binary
 #   RK_RELEASE=1 build both release (as shipped) rather than debug, for timing
 #   RK_APISERVER_ARGS  extra kube-apiserver flags (word-split; no spaces in values)
+#   RK_ANONYMOUS_AUTH  the apiserver's --anonymous-auth (default false)
 #   RK_ETCD_MEMBERS  datastore members (default 1); 3 starts a Raft cluster on
 #                loopback, member i on ports ETCD+3i (client), +1 (peer),
 #                +2 (metrics); `start_member i` restarts one (#149)
@@ -178,7 +179,7 @@ start_apiserver() { # <n>
   [ "$n" = 0 ] || log=$W/apiserver$n.log
   "$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $((PORT + n)) \
     --tls-cert-file "$W/apiserver.crt" --tls-private-key-file "$W/apiserver.key" \
-    --etcd-servers "$ETCD_SERVERS" --anonymous-auth false \
+    --etcd-servers "$ETCD_SERVERS" --anonymous-auth "${RK_ANONYMOUS_AUTH:-false}" \
     --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
     ${RK_APISERVER_ARGS:-} >>"$log" 2>&1 &
   API_PIDS[$n]=$!

@@ -165,8 +165,7 @@ transparent connection upgrade, so SPDY and WebSocket both pass through. The
 kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
 (rustkube-node#56), so those three answer with the kubelet's 404 today.
 
-**Authentication**, first match wins (a rejected bearer token can still fall
-back to anonymous when enabled, #115):
+**Authentication**, first match wins:
 1. an x509 client certificate verified against `--client-ca-file` — CN is
    the user, each O a group;
 2. a bearer token: first a static token from `--token-auth-file`
@@ -179,7 +178,11 @@ back to anonymous when enabled, #115):
    otherwise an ephemeral HS256 key). A ServiceAccount's groups come from its
    name. What an offline-minted token must carry is in
    [docs/certificates.md](docs/certificates.md);
-3. otherwise `system:anonymous`, if `--anonymous-auth` is true; else 401.
+   A bearer token that neither accepts is 401 (a `Status`, reason
+   `Unauthorized`), whatever `--anonymous-auth` says, as upstream (#115);
+4. a request with no credentials (no client certificate, no `Authorization`,
+   an empty `Bearer ` token, or another scheme) is `system:anonymous` if
+   `--anonymous-auth` is true; else 401.
 
 **Impersonation** (`Impersonate-User`, `-Group`, `-Uid`; `kubectl --as`): the
 caller needs the `impersonate` verb on the `users` (or `serviceaccounts`),
@@ -530,7 +533,7 @@ override environment values.
 | `--tls` | | off | serve a self-signed cert generated at start, held in memory only; DNS SANs `kubernetes…` and `localhost`, no IP SANs |
 | `--insecure` | | `false` | allow plain HTTP when no TLS is configured; without it the server refuses to start |
 | `--client-ca-file` | | — | enables x509 client-certificate authentication; **reloaded when the file changes**, for new connections (#105) |
-| `--anonymous-auth` | | `true` | `false` answers 401 to unauthenticated requests |
+| `--anonymous-auth` | | `true` | `false` answers 401 to requests without credentials; a rejected token is 401 either way (#115) |
 | `--dev-anonymous-admin` | | `false` | **dev only**: anonymous is `cluster-admin` (needs `--anonymous-auth true`) |
 | `--service-account-signing-key-file` | | — | RSA private key (PEM) that signs tokens |
 | `--service-account-key-file` | | — | its public key (SPKI PEM). RSA requires both files; if either is absent, the code falls back to an ephemeral HS256 key that dies with the process |

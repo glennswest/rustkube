@@ -483,8 +483,7 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
             .headers()
             .get("authorization")
             .and_then(|h| h.to_str().ok())
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .map(str::to_string)
+            .and_then(bearer_token)
         {
             // 2. Bearer token: a static token from --token-auth-file, else a
             //    JWT for this apiserver's audiences, its binding still held.
@@ -500,12 +499,20 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
                 }
                 (None, None) => None,
             };
-            identity.map(|(username, groups)| UserInfo { username, groups: with_authenticated(groups) })
+            match identity {
+                Some((username, groups)) => Some(UserInfo { username, groups: with_authenticated(groups) }),
+                // A token was presented and nothing accepted it: 401, whatever
+                // --anonymous-auth says (#115). Anonymous is for requests that
+                // carry no credentials; falling back would answer a wrong,
+                // expired or revoked token with anonymous's 403, which a
+                // client cannot tell from a valid token without permission.
+                None => return Ok(unauthorized()),
+            }
         } else {
             None
         };
 
-    // 3. No valid credentials: fall back to system:anonymous only if anonymous
+    // 3. No credentials: fall back to system:anonymous only if anonymous
     //    auth is enabled; otherwise reject (401), matching upstream.
     let user_info = match authenticated {
         Some(u) => u,
@@ -518,13 +525,29 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
             if anon_allowed {
                 anonymous_user()
             } else {
-                return Err(StatusCode::UNAUTHORIZED);
+                return Ok(unauthorized());
             }
         }
     };
 
     request.extensions_mut().insert(user_info);
     Ok(next.run(request).await)
+}
+
+/// The token of an `Authorization: Bearer <token>` header, as upstream's
+/// bearer authenticator reads it: the scheme in any case, and an empty token
+/// is no token (the request is anonymous, not refused).
+fn bearer_token(header: &str) -> Option<String> {
+    let mut parts = header.splitn(3, ' ');
+    let scheme = parts.next()?;
+    let token = parts.next()?;
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then(|| token.to_string())
+}
+
+/// Upstream's 401: a `Status`, reason `Unauthorized`.
+fn unauthorized() -> Response {
+    use axum::response::IntoResponse;
+    crate::error::ApiError::unauthorized("Unauthorized").into_response()
 }
 
 /// Whether unauthenticated requests fall back to `system:anonymous`. Injected by
@@ -683,6 +706,12 @@ pub(crate) mod tests {
     /// Run one request through `auth_middleware` with the given bearer token
     /// and anonymous auth off; the identity it settled on, or the status.
     async fn whoami(token: &str) -> Result<UserInfo, StatusCode> {
+        whoami_as(Some(&format!("Bearer {token}")), false).await.map_err(|(s, _)| s)
+    }
+
+    /// The same with any Authorization header (or none) and anonymous auth
+    /// as given; on refusal, the status and the body.
+    async fn whoami_as(authorization: Option<&str>, anonymous: bool) -> Result<UserInfo, (StatusCode, String)> {
         use tower::ServiceExt;
         let app = axum::Router::new()
             .route(
@@ -696,19 +725,20 @@ pub(crate) mod tests {
                 req.extensions_mut().insert(crate::token_file::StaticTokens::from_text(
                     "0123456789abcdef0123456789abcdef0123456789abcdef,system:admin,system:admin,\"system:masters\"\n",
                 ));
-                req.extensions_mut().insert(AnonymousAuth(false));
+                req.extensions_mut().insert(AnonymousAuth(anonymous));
                 auth_middleware(req, next).await
             }));
-        let req = axum::http::Request::get("/")
-            .header("authorization", format!("Bearer {token}"))
-            .body(axum::body::Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        if resp.status() != StatusCode::OK {
-            return Err(resp.status());
+        let mut req = axum::http::Request::get("/");
+        if let Some(h) = authorization {
+            req = req.header("authorization", h);
         }
+        let resp = app.oneshot(req.body(axum::body::Body::empty()).unwrap()).await.unwrap();
+        let status = resp.status();
         let body = axum::body::to_bytes(resp.into_body(), 1 << 16).await.unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
+        if status != StatusCode::OK {
+            return Err((status, text));
+        }
         let (username, groups) = text.split_once('|').unwrap();
         Ok(UserInfo {
             username: username.into(),
@@ -737,6 +767,29 @@ pub(crate) mod tests {
         }));
         let u = whoami(&jwt).await.unwrap();
         assert_eq!(u.username, "system:node:node-a");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_token_is_401_even_with_anonymous_auth_on() {
+        // #115: a presented token nothing accepts is refused, not anonymous.
+        for header in ["Bearer garbage", "bearer garbage", "Bearer 0123456789abcdef0123456789abcdef0123456789abcdee"] {
+            let (status, body) = whoami_as(Some(header), true).await.unwrap_err();
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{header}");
+            let status: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!((status["kind"].as_str(), status["reason"].as_str(), status["code"].as_u64()),
+                       (Some("Status"), Some("Unauthorized"), Some(401)), "{header}");
+        }
+        // No credentials (no header, an empty token, another scheme) stay
+        // anonymous when it is on…
+        for header in [None, Some("Bearer "), Some("Basic dXNlcjpwYXNz")] {
+            let u = whoami_as(header, true).await.unwrap();
+            assert_eq!(u.username, "system:anonymous", "{header:?}");
+        }
+        // …and are 401 when it is off.
+        assert_eq!(whoami_as(None, false).await.unwrap_err().0, StatusCode::UNAUTHORIZED);
+        // A good token, either scheme spelling, still authenticates.
+        let u = whoami_as(Some("bearer 0123456789abcdef0123456789abcdef0123456789abcdef"), true).await.unwrap();
+        assert_eq!(u.username, "system:admin");
     }
 
     #[test]
