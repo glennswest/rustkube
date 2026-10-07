@@ -147,7 +147,7 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
-### Metrics (#90, P2) — BUILT, rigs running 2026-10-07
+### Metrics (#90, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] Reconcile metrics recorded per object pass (`owned::run`)
 - [x] Buckets (upstream's for apiserver/etcd request durations and scheduler
       e2e; DefBuckets else); `render()` types process_cpu_seconds_total counter
@@ -164,8 +164,9 @@ scale-down stabilisation; until then A (inert and honest).
       probe scheme) — must land with the golden carrying this
 - [x] Compiled + units on a build VM at f7bdbe7 (job 19f5cef027): workspace
       557 passed / 4 ignored (apimachinery 117, apiserver 272), exit 0
-- [ ] `rigs` run on C2NR0Q2 at f7bdbe7 (metrics-auth + the day rigs);
-      golden
+- [ ] `rigs` run on C2NR0Q2 at f7bdbe7: 2dcef65d8a interrupted
+      (stormcentral restarted), ccc3315c35 image built + pushed, then "the
+      registry did not list it" (stormcentral#512). Then golden
 
 ### Service create cost (#113, P2) — BUILT, rig waits for test runs 2026-10-07
 Cause (from the code): `service_ip::allocate` walked the range from offset
