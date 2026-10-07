@@ -107,6 +107,7 @@ touching a drive; nothing unforgeable on the object said who that was.
       `test/e2e/requester.sh` 20/20 at c01668c (fastetcd v1.12.0); control
       (stamp disabled) fails 15, every stamp check
 - [x] README/test README/CHANGELOG
+- [x] golden-rustkube-4b49fa1fdefc (stormcos#333); #210 closed
 
 ### VM reads Starting while the kubelet retries a failed start (#209, P1) — COMPLETE 2026-10-06
 rustkube-node#76: under Always/RerunOnFailure/running the kubelet retries a
