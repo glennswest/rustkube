@@ -490,8 +490,9 @@ never counted Pods, and a pod with no requests skipped resource fit entirely.
       scheduler-failover 19/19, schedule-latency pass (fastetcd v1.12.0).
       golden-rustkube-71422ae4df20 (stormcos#164); #194 closed. Auto-filed
       #195 was the rig's own expectation, closed
-- [ ] After the release: stormcos_qa turbomode on pvetest1 holds 110 per node
-      (the run also needs the rustkube-node pod-IP fix filed with #194)
+- [x] Verified on a release (#197, closed 2026-10-07): turbomode 7277704177 on
+      pvetest1 — 100 Pods, peak 87 running beside the node's own, the rest
+      bound as the first finished (~t+60 s); 4bbb76be8f had 1,000 bound
 
 ### Scheduler create→bind latency (#190, P1) — SHIPPED 2026-10-03
 pvetest1: kubelet's `scheduled` 156→393 ms, growing pod by pod. That number is
