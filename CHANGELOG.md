@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-07
+- **test:** The e2e rigs run as pods on the test machines, not in build slots (#173; owner on #162: "Persistent tests should be pods, and should live on forge"). The test image (`test/Containerfile`, now `fedora-minimal` with bash, python3, curl and openssl) carries two new suites declared in `test/requires.toml`: `rigs` (the functional rigs, 30 min budget) and `rigs-night` (idle windows, latency, failover and reload ticks; 2 h, night only). `/test rigs|rigs-night` runs `test/rigs.sh`, which starts each rig's own fastetcd and control plane inside the pod and prints one JSON line per rig, with logs in `/results`. `test/build.sh` stages the commit's static release binaries, fastetcd and every upstream tool the rigs use (oc, kubectl, CSI hostpath and sidecars, snapshot-controller with its CRDs and RBAC). The tools are copied from their registry.k8s.io images by the new `test/fetch-image-file.py`; the rigs no longer use podman. Versions live in `test/e2e/versions.sh`, shared by the rigs. The rigs' default fastetcd is now v1.12.0, which every recent run used.
+
 ### 2026-10-06
 - **feat:** Custom resources get `metadata.generation`, as upstream (#198). It is `1` on create; on a write to the main resource (PUT, PATCH, server-side apply) it is the stored value plus one when `spec` changed (CRD version with the status subresource) or anything outside `metadata` changed (without). `/status` writes and metadata-only writes leave it. A client-sent value is ignored, and an object stored without one counts from 1. Controllers can now report `status.observedGeneration` (stormcluster#12). Built-in resources are unchanged. Internally, #128's `StatusField` became `Strategy::{BuiltIn, Custom}`.
 - **test:** apiserver unit test for generation. `test/e2e/cr-status.sh` checks generation through create, `/status`, metadata-only and spec writes, with and without the subresource.

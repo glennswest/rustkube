@@ -33,6 +33,18 @@ sc-build                              # cargo build && cargo test at the pushed 
 sc-build 'cargo test -p apiserver'    # any command
 ```
 
+**The e2e rigs (`test/e2e/*.sh`) never run in a build slot** (#173; the
+build rules: "Test workloads never hold a build slot"). They are suites of
+the test image, run on a test machine:
+
+```bash
+stormcentral test run rustkube rigs --tag <machine> --commit <sha>          # day, ≤ 30 min
+stormcentral test run rustkube rigs-night --tag <pve VM> --commit <sha>     # night only
+```
+
+Which rig is in which suite: `test/rigs.sh`. A new rig goes in one of its
+lists. Blades are off 19:00–06:00 Chicago; pve VMs take day runs too.
+
 `sc-build` supplies a private build volume, including HOME and TMPDIR, and
 deletes it after the job. Do not override those paths or retain a checkout.
 `protoc` is required (`pkg/apimachinery/build.rs`).

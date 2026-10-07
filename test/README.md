@@ -85,6 +85,45 @@ apiserver's resident memory (its `/metrics`) growing by half after wave 2.
 Pod waves at the machine's capacity are system stress and belong to
 stormcos_qa.
 
+## The e2e rigs: `rigs` and `rigs-night` (#173)
+
+The regression rigs in `test/e2e/` start their own fastetcd and control plane
+and drive them; they used to run inside build slots (`sc-build 'bash
+test/e2e/…'`), which the build rules forbid ("Test workloads never hold a
+build slot") and the owner answered on #162: "Persistent tests should be
+pods, and should live on forge." They are now two suites of this image, run
+like the others:
+
+```bash
+stormcentral test run rustkube rigs --tag <machine>        # day: ≤ 30 min
+stormcentral test run rustkube rigs-night --tag <pve VM>   # night window, ≤ 2 h
+```
+
+- `test/build.sh` also stages the commit's release (static musl)
+  `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`, fastetcd
+  at `RK_FASTETCD_REF`, and the upstream tools some rigs drive: `oc`,
+  `kubectl`, the CSI hostpath driver, external-provisioner, external-resizer,
+  snapshot-controller (copied out of their registry.k8s.io images by
+  `test/fetch-image-file.py`, no podman) and the snapshot CRDs/RBAC. The
+  versions are `test/e2e/versions.sh`, which the rigs read too. So the pod
+  needs neither cargo, podman nor the internet.
+- `/test rigs|rigs-night` execs `test/rigs.sh` (`/rigs/run.sh` in the image):
+  each rig, in turn, in a scratch copy under `$TMPDIR`, with `RK_BIN`,
+  `RK_FASTETCD` and `RK_TOOLS` pointing at the staged files. One JSON line
+  per rig, `rig:<name>`, pass/fail with its time and its first `FAIL` lines;
+  the whole output in `/results/<name>.log`. A rig that cannot start (exit
+  100) is a fail with "could not start"; if none could, the suite exits 2.
+  Rigs not started before the budget runs out are skips.
+- Which rig is in which suite is in `test/rigs.sh`: `rigs` the functional
+  ones (a minute or two each), `rigs-night` the idle windows, latency under
+  load, failover and cert-reload ticks. `test-container.sh` is in neither: it
+  is this image's own short/medium against a rig, and runs by hand.
+- `test/requires.toml` declares both with `budget_secs` (#247). No privilege,
+  host path or cluster read: the rigs listen on the pod's loopback.
+
+`sc-build` keeps `cargo build && cargo test`. A rig may still be run by hand
+on a workstation-like box, but not in a build slot.
+
 ## Requirements
 
 Nothing about the machine: no devices, sizes or node names. It needs the
@@ -93,10 +132,8 @@ four medium checks and long's pods) a kubelet. `requires: []`.
 
 ## By hand
 
-```bash
-sc-build test/e2e/test-container.sh             # short, against a control plane on fastetcd on dev
-sc-build 'test/e2e/test-container.sh short medium'
-```
+`test/e2e/test-container.sh [suites]` runs this image's short/medium against
+a rig. Like every rig it is a test workload: not for a build slot (#173).
 
 `test/e2e/test-container.sh` plays stormcentral's runner (namespace,
 `storm-test` + namespaced Role, its token via `STORM_SA_DIR`) against two
@@ -124,8 +161,8 @@ added to the suite.
 
 `e2e/indexed-selectors.sh` exercises Service/PDB Pod relabelling, namespace
 isolation, negative selectors, idle writes and UID replacement against the
-API/store rig. Run through `sc-build`; it does not need a kubelet. The shared
-rig respects the build volume target and scratch paths.
+API/store rig (suite `rigs`); it does not need a kubelet. The shared rig
+keeps its store and scratch under `$TMPDIR`.
 
 `e2e/indexed-safety.sh` checks GC propagation, Event expiry, namespace
 finalization and scheduler burst/reservation accounting on the same disposable
@@ -247,11 +284,11 @@ and resourceVersion agree with acknowledged writes, including pinned continuatio
 pages and exact WATCH replay after distinct early, middle and late snapshots. It runs without
 controllers, isolating the datastore/API contract required by informer caches.
 
-The disposable rig builds fastetcd **v1.6.1** by default, which fixes the
-Range snapshot/revision race (fastetcd#50), and prints its source commit.
-`RK_FASTETCD_REF` selects another tag/branch for comparison; `RK_FASTETCD`
-still accepts a prebuilt binary. All builds remain inside sc-build's private
-volume. The pin is a test dependency, not a deployed datastore upgrade.
+Without a prebuilt `RK_FASTETCD` (the test image has one), the rig builds
+fastetcd at `RK_FASTETCD_REF`, default in `test/e2e/versions.sh` (v1.12.0;
+anything from v1.6.1 has the Range snapshot fix, fastetcd#50), and prints its
+source commit. The pin is a test dependency, not a deployed datastore
+upgrade.
 
 The DaemonSet heartbeat regression first waits for both Pod placement and
 status accounting to converge. It then checks that heartbeat-only updates
