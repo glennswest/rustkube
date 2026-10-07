@@ -121,10 +121,11 @@ bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
 - [x] `test/e2e/wffc-latency.sh` (suite `rigs`); control branch
       `control/147-binder-1-worker` (ceaae45: 1 worker, rigs = wffc only)
 - [x] Docs (storage.md, test/README, CHANGELOG) at 98f3624
-- [ ] Test-machine runs: pvetest1's registry seals nothing since its 11.88
-      reinstall (stormcentral#512; 3d489069f3/47395693e4 "registry did not
-      list it"); queued on a blade from 11:00 UTC (tmp/blade147.sh). Then
-      golden; comment on #147 (stays open for the hardware profiles)
+- [ ] Test-machine runs — BLOCKED on stormcentral#521 (dev.g8.lo retired;
+      the runner's build step: "No route to host", 8e8fbe4a61). Earlier:
+      pvetest1 seals nothing (stormcentral#512), server3 flow-over (2 runs).
+      Then: `rigs` at main + control e80e04fefd-style rerun at ceaae45,
+      distributions on #147, golden. #147 proposed after stormcentral#521
 
 ### Metadata-only CRD watch decode error (#180, P2) — IN PROGRESS 2026-10-07
 server1 (0.15.1) cilium agent: "unable to decode an event from the watch
