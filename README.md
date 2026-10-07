@@ -474,7 +474,10 @@ exists.
   migration, `True` once one is found.
 - A Pod no node will take gets `PodScheduled=False`, reason `Unschedulable`,
   message as upstream's (`0/1 nodes are available: 1 Too many pods.`),
-  written only when it changes. No `FailedScheduling`/`Scheduled` Events (#138).
+  written only when it changes, with a `FailedScheduling` Warning Event of
+  the same message at the same moments (so one per distinct reason, not per
+  retry). A bind records a `Scheduled` Event, "Successfully assigned
+  ns/pod to node". Both come from `default-scheduler` (#138).
 
 It **does not preempt**: `preemption.rs` computes victims but nothing calls it
 (#84). It **ignores `schedulingGates`** and binds gated pods (#87). There is

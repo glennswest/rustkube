@@ -116,8 +116,10 @@ pods are scheduled, #87); upstream activeQ/backoffQ/unschedulable framework
 parity and `nominatedNodeName`; scheduling profiles; NodePorts and BalancedAllocation;
 upstream's score weights (scores are summed unweighted). With the turbomode implementation, a
 serialized priority-ordered Pod/VMI queue and API retries are implemented,
-with incremental accounting and retained bind/volume reservations. Scheduling
-Events and PodScheduled=False are absent (#138).
+with incremental accounting and retained bind/volume reservations. An unplaceable
+Pod gets PodScheduled=False/Unschedulable (#194); `Scheduled` and
+`FailedScheduling` Events are recorded (#138), the latter once per distinct
+reason rather than upstream's aggregated count.
 
 ## 5. Node components
 
@@ -166,7 +168,7 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
 2. Node authorizer (nodes are `cluster-admin` today).
 3. `/scale` (#86).
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
-5. Scheduler: preemption (#84), scheduling gates (#87), Events/status (#138).
+5. Scheduler: preemption (#84), scheduling gates (#87).
 6. Live turbomode acceptance at scale and under failover (#147/#149); datastore
    snapshot correctness (fastetcd#50) is fixed in fastetcd v1.6.1.
    The protobuf empty-UID GC defect (#99) was fixed in v0.15.3.

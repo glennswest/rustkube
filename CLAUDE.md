@@ -107,6 +107,14 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Scheduler Events (#138, P2) — WRITTEN, not yet built 2026-10-07
+PodScheduled=False/Unschedulable landed with #194; the Events were missing.
+- [x] `scheduler::events`: `Scheduled` on an acknowledged bind (spawned off
+      the loop), `FailedScheduling` inside `report_pod_unschedulable` after
+      its message-change check; unit for the shape; pod-limit.sh checks
+- [ ] NOT YET COMPILED (stormcentral#521: no build host). Then workspace
+      build+test, `rigs` run (pod-limit), golden, close #138
+
 ### resource.k8s.io/v1 (DRA) served (#137, P2) — IN PROGRESS 2026-10-07
 Owner (#137): "Please make sure there added, … after our turbomode merge"
 (merged, #163). Conformance's 4 DRA specs are CRUD only.

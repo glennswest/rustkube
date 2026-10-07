@@ -12,7 +12,7 @@ but no kubeconfig or scheduler configuration/profile loading. The scheduling
 loop uses fixed filter/score calls; plugin traits are unused. With the turbomode implementation,
 indexed dependency events drive a serialized priority-ordered Pod/VMI queue,
 with API retry deadlines and shared bind/volume reservations (#145/#146).
-Preemption (#84), scheduling gates (#87), Pod scheduling Events/status (#138),
+Preemption (#84), scheduling gates (#87), Pod scheduling Events/status (#138, done 2026-10-07),
 upstream framework queue parity and nomination remain open. The datastore
 snapshot fix it depends on is in fastetcd v1.6.1 (fastetcd#50); see
 event-driven-design.md.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# The scheduler holds a node to its allocatable.pods (#194): pvetest1 had
+# The scheduler holds a node to its allocatable.pods (#194), and records
+# `Scheduled` and `FailedScheduling` Events as upstream's does (#138): pvetest1 had
 # 1,000 BestEffort Pods bound to a node that allows 110. A real apiserver and
 # scheduler, stand-in Nodes, no kubelet and no controller-manager.
 #
@@ -9,6 +10,9 @@
 #     many pods.", and is still unbound after the scheduler has had time to
 #     try again
 #   - one bound Pod goes Succeeded: the third binds, PodScheduled=True
+#   - Events (#138): one `Scheduled` per bound Pod from default-scheduler,
+#     and one `FailedScheduling` for the refused Pod with its condition's
+#     message, however often it was retried
 #   - a burst of 30 onto a 5-pod node (binds in flight, reservations): exactly
 #     5 bound, the rest Unschedulable with both nodes' reasons counted;
 #     deleting one bound Pod lets exactly one more bind
@@ -101,6 +105,22 @@ p = until(lambda: (lambda p: p if p["spec"].get("nodeName") else None)(pods("lim
 check(bool(p) and p["spec"]["nodeName"] == "small", f"{third} binds once {done} Succeeded")
 check(bool(p) and scheduled(p).get("status") == "True", f"{third} PodScheduled=True ({scheduled(p) if p else None})")
 check(len(bound("limit")) == 2, f"2 non-terminal bound ({bound('limit')})")
+
+# --- Events (#138): Scheduled per bind, FailedScheduling per distinct reason ----
+def events(ns):
+    return req("GET", f"/api/v1/namespaces/{ns}/events")["items"]
+def of(ns, reason):
+    return [e for e in events(ns) if e.get("reason") == reason]
+until(lambda: len(of("limit", "Scheduled")) >= 3)
+sched = of("limit", "Scheduled")
+check(len(sched) == 3 and all(e["source"]["component"] == "default-scheduler" and e["type"] == "Normal"
+                              and e["message"] == f"Successfully assigned limit/{e['involvedObject']['name']} to small"
+                              for e in sched),
+      f"one Scheduled per bound Pod, 'Successfully assigned limit/<pod> to small' ({[e['message'] for e in sched]})")
+fs = [e for e in of("limit", "FailedScheduling") if e["involvedObject"]["name"] == third]
+check(len(fs) == 1 and fs[0]["type"] == "Warning" and fs[0]["message"] == want
+      and fs[0]["involvedObject"].get("uid") == pods("limit")[third]["metadata"]["uid"],
+      f"one FailedScheduling for {third} with the condition's message, despite its retries ({[(e['message'], e.get('count')) for e in fs]})")
 
 # --- burst of 30 onto a 5-pod node -----------------------------------------------
 node("five", 5)

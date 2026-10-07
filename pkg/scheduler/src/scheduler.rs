@@ -557,6 +557,21 @@ impl Scheduler {
                             "workload bound"
                         );
                         crate::metrics_server::record_attempt("scheduled");
+                        // `Scheduled`, as upstream's default-scheduler
+                        // records it (#138) — off the loop: the bind is done.
+                        if !key.0 {
+                            let pod = json!({"metadata": {"namespace": key.1.namespace,
+                                "name": key.1.name, "uid": key.1.uid}});
+                            let api = self.api.clone();
+                            tokio::spawn(async move {
+                                let ev = crate::events::scheduled(&pod, &node);
+                                let path = format!("/api/v1/namespaces/{}/events",
+                                    pod["metadata"]["namespace"].as_str().unwrap_or("default"));
+                                if let Err(e) = api.create(&path, &ev).await {
+                                    debug!("could not record Scheduled for {}: {e}", pod["metadata"]["name"]);
+                                }
+                            });
+                        }
                     } else {
                         crate::metrics_server::record_attempt("error");
                         let n = failures.entry(key.clone()).or_default();
@@ -1002,6 +1017,13 @@ impl Scheduler {
             .await
         {
             debug!("could not report that {ns}/{name} is unschedulable: {e}");
+        }
+        // `FailedScheduling` with the same message, written exactly when the
+        // condition is — when the reason changes — so a Pod waiting for
+        // capacity is one Event per distinct reason, not one per retry (#138).
+        let ev = crate::events::failed_scheduling(pod, why);
+        if let Err(e) = self.api.create(&format!("/api/v1/namespaces/{ns}/events"), &ev).await {
+            debug!("could not record FailedScheduling for {ns}/{name}: {e}");
         }
     }
 

@@ -7,6 +7,7 @@
 //! (#87).
 
 pub mod affinity;
+pub mod events;
 pub mod filter;
 pub mod leaderelection;
 pub mod metrics_server;
