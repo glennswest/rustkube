@@ -95,6 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Stamp the requester on storage.storm.io CRs (#210, P1) — IN PROGRESS 2026-10-06
+stormdrive#45's controller SARs the creator of a `DriveOperation` before
+touching a drive; nothing unforgeable on the object says who that was.
+- [ ] `admission::admit`, after mutating webhooks (beside #98's check): on
+      create of a `storage.storm.io` object, annotations
+      `storage.storm.io/requester` = username and `…/requester-groups` =
+      groups joined by `,`, whatever the client sent; on every update (PUT,
+      PATCH, apply, `/status`) the stored values are kept
+- [ ] Units; e2e `test/e2e/requester.sh` (forged values on create, update,
+      patch, apply, /status; other groups untouched)
+- [ ] README/CHANGELOG; sc-build; golden; close #210
+
 ### VM reads Starting while the kubelet retries a failed start (#209, P1) — COMPLETE 2026-10-06
 rustkube-node#76: under Always/RerunOnFailure/running the kubelet retries a
 failed start itself; the VMI stays `Pending`, `reason: FailedStart`. #104's
