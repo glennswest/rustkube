@@ -1266,16 +1266,19 @@ mod subresource_tests {
     }
 
     #[test]
-    fn a_websocket_exec_is_a_get_on_the_same_subresource() {
+    fn a_shell_is_create_whichever_method_opens_it() {
         // Newer clients open exec with GET (WebSocket) rather than POST
-        // (SPDY); both must land on pods/exec.
-        let ws = parse_authorization_request(
-            "/api/v1/namespaces/default/pods/p1/exec",
-            &axum::http::Method::GET,
-        )
-        .unwrap();
-        assert_eq!(ws.subresource.as_deref(), Some("exec"));
-        assert_eq!(ws.verb, "get");
+        // (SPDY); both land on pods/exec, and both are `create`, as upstream
+        // authorizes them since 1.31 — with `get`, a reader of `*` could open
+        // a shell (#176). Logs stay a read.
+        for sub in ["exec", "attach", "portforward"] {
+            for method in [axum::http::Method::GET, axum::http::Method::POST] {
+                let r = parse_authorization_request(&format!("/api/v1/namespaces/default/pods/p1/{sub}"), &method).unwrap();
+                assert_eq!((r.subresource.as_deref(), r.verb.as_str()), (Some(sub), "create"), "{method} {sub}");
+            }
+        }
+        let log = parse_authorization_request("/api/v1/namespaces/default/pods/p1/log", &axum::http::Method::GET).unwrap();
+        assert_eq!(log.verb, "get");
     }
 }
 
