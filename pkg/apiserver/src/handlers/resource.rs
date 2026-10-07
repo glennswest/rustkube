@@ -18,9 +18,11 @@ use serde_json::{json, Value};
 pub async fn get_cluster_resource(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = state.storage.get(&key).await?;
+    let read = WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
+    let obj = state.storage.get_read(&ResourceStorage::cluster_prefix(&resource), &key, read).await?;
     Ok(Json(obj))
 }
 
@@ -28,9 +30,15 @@ pub async fn get_cluster_resource(
 pub async fn get_namespaced_resource(
     State(state): State<AppState>,
     Path((namespace, resource, name)): Path<(String, String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = state.storage.get(&key).await?;
+    // `resourceVersion=0`/`N` is served from the resource's watch cache (#171).
+    let read = WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
+    let obj = state
+        .storage
+        .get_read(&ResourceStorage::all_namespaces_prefix(&resource), &key, read)
+        .await?;
     Ok(Json(obj))
 }
 
@@ -121,9 +129,16 @@ pub async fn list_cluster_resources(
     }
 
     let limit = params.limit.unwrap_or(500);
+    // `resourceVersion=0`/`N` is served from the resource's watch cache (#171).
     let page = state
         .storage
-        .list_page(&prefix, limit, params.continue_token.as_deref())
+        .list_page_read(
+            &ResourceStorage::all_namespaces_prefix(&resource),
+            &prefix,
+            limit,
+            params.continue_token.as_deref(),
+            params.read()?,
+        )
         .await?;
     let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
     // Upstream leaves it out when a selector filtered the page.
@@ -193,9 +208,16 @@ pub async fn list_namespaced_resources(
     }
 
     let limit = params.limit.unwrap_or(500);
+    // `resourceVersion=0`/`N` is served from the resource's watch cache (#171).
     let page = state
         .storage
-        .list_page(&prefix, limit, params.continue_token.as_deref())
+        .list_page_read(
+            &ResourceStorage::all_namespaces_prefix(&resource),
+            &prefix,
+            limit,
+            params.continue_token.as_deref(),
+            params.read()?,
+        )
         .await?;
     let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
     // Upstream leaves it out when a selector filtered the page.
@@ -265,9 +287,16 @@ pub async fn list_all_namespaces_resources(
     }
 
     let limit = params.limit.unwrap_or(500);
+    // `resourceVersion=0`/`N` is served from the resource's watch cache (#171).
     let page = state
         .storage
-        .list_page(&prefix, limit, params.continue_token.as_deref())
+        .list_page_read(
+            &ResourceStorage::all_namespaces_prefix(&resource),
+            &prefix,
+            limit,
+            params.continue_token.as_deref(),
+            params.read()?,
+        )
         .await?;
     let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
     // Upstream leaves it out when a selector filtered the page.

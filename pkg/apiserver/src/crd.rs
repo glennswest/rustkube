@@ -635,9 +635,16 @@ pub async fn crd_list_ns(
     }
 
     let limit = params.limit.unwrap_or(500);
+    // `resourceVersion=0`/`N` is served from the watch cache (#171).
     let page = state
         .storage
-        .list_page(&prefix, limit, params.continue_token.as_deref())
+        .list_page_read(
+            &ResourceStorage::cluster_prefix(&storage_resource(&group, &resource)),
+            &prefix,
+            limit,
+            params.continue_token.as_deref(),
+            params.read()?,
+        )
         .await?;
     let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
     // Upstream leaves it out when a selector filtered the page.
@@ -689,10 +696,14 @@ pub async fn crd_create_ns(
 pub async fn crd_get_ns(
     State(state): State<AppState>,
     Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
-    let obj = state.storage.get(&key).await?;
+    // `resourceVersion=0`/`N` is served from the watch cache (#171).
+    let read = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
+    let cache_prefix = ResourceStorage::cluster_prefix(&storage_resource(&group, &resource));
+    let obj = state.storage.get_read(&cache_prefix, &key, read).await?;
     Ok(Json(obj))
 }
 
@@ -901,9 +912,16 @@ pub async fn crd_list_cluster(
     }
 
     let limit = params.limit.unwrap_or(500);
+    // `resourceVersion=0`/`N` is served from the watch cache (#171).
     let page = state
         .storage
-        .list_page(&prefix, limit, params.continue_token.as_deref())
+        .list_page_read(
+            &ResourceStorage::cluster_prefix(&storage_resource(&group, &resource)),
+            &prefix,
+            limit,
+            params.continue_token.as_deref(),
+            params.read()?,
+        )
         .await?;
     let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
     // Upstream leaves it out when a selector filtered the page.
@@ -1025,10 +1043,14 @@ pub async fn crd_create_cluster(
 pub async fn crd_get_cluster(
     State(state): State<AppState>,
     Path((group, version, resource, name)): Path<(String, String, String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
-    let obj = state.storage.get(&key).await?;
+    // `resourceVersion=0`/`N` is served from the watch cache (#171).
+    let read = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
+    let cache_prefix = ResourceStorage::cluster_prefix(&storage_resource(&group, &resource));
+    let obj = state.storage.get_read(&cache_prefix, &key, read).await?;
     Ok(Json(obj))
 }
 

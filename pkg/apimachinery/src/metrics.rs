@@ -178,6 +178,18 @@ pub fn record_store_request(operation: &'static str, resource: &str, seconds: f6
     .record(seconds);
 }
 
+/// Count a read the apiserver answered from its watch cache instead of the
+/// datastore (#171), labelled like `etcd_request_duration_seconds`: beside
+/// that histogram's count it says how much of the read load the cache took.
+pub fn record_cache_read(operation: &'static str, resource: &str) {
+    metrics::counter!(
+        "apiserver_watch_cache_reads_total",
+        "operation" => operation,
+        "type" => resource.to_string(),
+    )
+    .increment(1);
+}
+
 /// A convenience for timing a store call.
 pub struct StoreTimer {
     operation: &'static str,

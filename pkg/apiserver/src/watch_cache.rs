@@ -497,6 +497,75 @@ impl WatchCache {
         })
     }
 
+    /// A page of the keys under `sub_prefix` from the snapshot of
+    /// `cache_prefix` (which contains it — a namespace's keys inside the
+    /// resource's cache, so a namespaced read opens no pump of its own), once
+    /// the snapshot reflects `min_rev`. `None` when it has not within
+    /// `MIN_REV_WAIT`: the caller reads the store instead (#171).
+    ///
+    /// The page resumes strictly after `after_key`; `continue_key` is the
+    /// last key returned when more follow, and `revision` the snapshot's —
+    /// the store at that revision holds exactly this snapshot, so a later
+    /// page can be read from the store pinned to it.
+    pub async fn read_page(
+        &self,
+        cache_prefix: &str,
+        sub_prefix: &str,
+        limit: usize,
+        after_key: Option<&str>,
+        min_rev: u64,
+    ) -> Result<Option<CachePage>> {
+        let cache = self.ensure(cache_prefix).await?;
+        if !wait_for_revision(&cache, min_rev, MIN_REV_WAIT).await {
+            return Ok(None);
+        }
+        let snap = cache.snapshot.lock().unwrap();
+        let rev = cache.snapshot_rev.load(Ordering::SeqCst);
+        let lower = match after_key {
+            Some(k) => Bound::Excluded(k.to_string()),
+            None => Bound::Included(sub_prefix.to_string()),
+        };
+        let mut range = snap
+            .range((lower, Bound::Unbounded))
+            .take_while(|(k, _)| k.starts_with(sub_prefix));
+        let mut items = Vec::new();
+        let mut last_key = None;
+        for (key, value) in range.by_ref() {
+            items.push(value.clone());
+            last_key = Some(key.clone());
+            if limit != 0 && items.len() == limit {
+                break;
+            }
+        }
+        let left = range.count() as u64;
+        Ok(Some(CachePage {
+            items,
+            continue_key: if left > 0 { last_key } else { None },
+            revision: rev,
+            remaining: (left > 0).then_some(left),
+        }))
+    }
+
+    /// One key from the snapshot of `cache_prefix`, once it reflects
+    /// `min_rev`: `Some((object, snapshot revision))`, the object being its
+    /// bytes and mod revision, or `None` if absent. `None` outright when the
+    /// snapshot has not reached `min_rev` in time (#171).
+    #[allow(clippy::type_complexity)]
+    pub async fn read_one(
+        &self,
+        cache_prefix: &str,
+        key: &str,
+        min_rev: u64,
+    ) -> Result<Option<(Option<(Vec<u8>, u64)>, u64)>> {
+        let cache = self.ensure(cache_prefix).await?;
+        if !wait_for_revision(&cache, min_rev, MIN_REV_WAIT).await {
+            return Ok(None);
+        }
+        let snap = cache.snapshot.lock().unwrap();
+        let rev = cache.snapshot_rev.load(Ordering::SeqCst);
+        Ok(Some((snap.get(key).cloned(), rev)))
+    }
+
     /// Watch `prefix` for events after `start_rev`, served from the shared cache
     /// when the revision is recent, else from a dedicated store watch.
     pub async fn watch(&self, prefix: &str, start_rev: u64) -> Result<WatchStream> {
@@ -749,6 +818,43 @@ mod revision_tests {
             terminated: AtomicBool::new(false),
             last_progress: Mutex::new(Instant::now()),
         })
+    }
+
+    /// A namespace's page from the resource-wide cache (#171): only its
+    /// keys, in order, paged with the snapshot's revision; one key; and no
+    /// answer for a revision the cache has not reached.
+    #[tokio::test(start_paused = true)]
+    async fn a_namespace_is_read_from_the_resource_cache() {
+        let store = ScriptedStore::at(
+            7,
+            &["/registry/pods/a/p1", "/registry/pods/a/p2", "/registry/pods/a/p3",
+              "/registry/pods/ab/x", "/registry/pods/b/q"],
+        );
+        let wc = Arc::new(WatchCache::new(store.clone()));
+        let page = wc.read_page("/registry/pods/", "/registry/pods/a/", 2, None, 0).await.unwrap().unwrap();
+        assert_eq!(keys(&page), ["/registry/pods/a/p1", "/registry/pods/a/p2"]);
+        assert_eq!((page.continue_key.as_deref(), page.revision, page.remaining),
+                   (Some("/registry/pods/a/p2"), 7, Some(1)));
+        let rest = wc.read_page("/registry/pods/", "/registry/pods/a/", 2, page.continue_key.as_deref(), 0)
+            .await.unwrap().unwrap();
+        assert_eq!(keys(&rest), ["/registry/pods/a/p3"]);
+        assert_eq!((rest.continue_key, rest.remaining), (None, None));
+        // The whole resource, as an all-namespaces LIST reads it.
+        let all = wc.read_page("/registry/pods/", "/registry/pods/", 0, None, 7).await.unwrap().unwrap();
+        assert_eq!(all.items.len(), 5);
+        // One key, and an absent one.
+        let (hit, rev) = wc.read_one("/registry/pods/", "/registry/pods/b/q", 7).await.unwrap().unwrap();
+        assert_eq!((hit.map(|(_, r)| r), rev), (Some(7), 7));
+        assert!(wc.read_one("/registry/pods/", "/registry/pods/b/none", 0).await.unwrap().unwrap().0.is_none());
+        // Not there yet: no answer, so the caller reads the store.
+        assert!(wc.read_page("/registry/pods/", "/registry/pods/a/", 0, None, 9).await.unwrap().is_none());
+        assert!(wc.read_one("/registry/pods/", "/registry/pods/a/p1", 9).await.unwrap().is_none());
+        // The pump applies revision 9: now it answers, with the new object.
+        store.set(9, "/registry/pods/a/p4");
+        store.emit("/registry/pods/a/p4", 9).await;
+        let page = wc.read_page("/registry/pods/", "/registry/pods/a/", 0, None, 9).await.unwrap().unwrap();
+        assert_eq!(page.items.len(), 4);
+        assert_eq!(page.revision, 9);
     }
 
     #[tokio::test]

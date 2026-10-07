@@ -404,6 +404,10 @@ fn inject_resource_version(obj: &mut serde_json::Value, revision: u64) {
 pub struct WatchParams {
     pub watch: bool,
     pub resource_version: Option<u64>,
+    /// `resourceVersion` as sent, and `resourceVersionMatch`: what a LIST or
+    /// GET may be served from ([`Self::read`], #171).
+    pub resource_version_raw: Option<String>,
+    pub resource_version_match: Option<String>,
     pub limit: Option<usize>,
     pub continue_token: Option<String>,
     pub label_selector: Option<String>,
@@ -429,10 +433,20 @@ impl WatchParams {
         self.send_initial_events || matches!(self.resource_version, None | Some(0))
     }
 
+    /// Where a LIST or GET with these parameters may be read from (#171).
+    pub fn read(&self) -> Result<crate::storage::Read, crate::error::ApiError> {
+        crate::storage::Read::from_params(
+            self.resource_version_raw.as_deref(),
+            self.resource_version_match.as_deref(),
+        )
+    }
+
     pub fn from_query(query: &str) -> Self {
         let mut params = Self {
             watch: false,
             resource_version: None,
+            resource_version_raw: None,
+            resource_version_match: None,
             limit: None,
             continue_token: None,
             label_selector: None,
@@ -451,7 +465,11 @@ impl WatchParams {
                 "watch" => params.watch = val == "true" || val == "1",
                 "allowWatchBookmarks" => params.allow_watch_bookmarks = val == "true" || val == "1",
                 "sendInitialEvents" => params.send_initial_events = val == "true" || val == "1",
-                "resourceVersion" => params.resource_version = val.parse().ok(),
+                "resourceVersion" => {
+                    params.resource_version = val.parse().ok();
+                    params.resource_version_raw = Some(val.into_owned());
+                }
+                "resourceVersionMatch" => params.resource_version_match = Some(val.into_owned()),
                 "limit" => params.limit = val.parse().ok(),
                 "continue" => {
                     if !val.is_empty() {
