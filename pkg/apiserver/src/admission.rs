@@ -196,7 +196,7 @@ impl Operation {
 pub async fn admit(
     state: &AppState,
     op: Operation,
-    object: Option<&mut Value>,
+    mut object: Option<&mut Value>,
     old: Option<&Value>,
 ) -> Result<(), ApiError> {
     let Ok(request) = REQUEST.try_with(Arc::clone) else {
@@ -229,8 +229,8 @@ pub async fn admit(
     let mutating = state.admission.hooks(&state.storage, MUTATING).await;
     let validating = state.admission.hooks(&state.storage, VALIDATING).await;
     if mutating.is_empty() && validating.is_empty() {
-        if let Some(object) = object.as_deref() {
-            escalation(&request, object, old).await?;
+        if let Some(object) = object.as_deref_mut() {
+            after_mutating(&request, op, object, old).await?;
         }
         return Ok(());
     }
@@ -268,7 +268,7 @@ pub async fn admit(
         }
     }
     if object.is_some() {
-        escalation(&request, &current, old).await?;
+        after_mutating(&request, op, &mut current, old).await?;
     }
     if let Some(object) = object {
         // A patch cannot move the object: its key was chosen by its name.
@@ -309,6 +309,26 @@ pub async fn admit(
         }
     }
     Ok(())
+}
+
+/// What the apiserver itself decides about an object once the mutating
+/// webhooks are done with it, before the validating ones: the
+/// `storage.storm.io` requester stamp (#210), then RBAC escalation
+/// prevention (#98).
+async fn after_mutating(
+    request: &RequestAttrs,
+    op: Operation,
+    object: &mut Value,
+    old: Option<&Value>,
+) -> Result<(), ApiError> {
+    if request.group == crate::requester::GROUP {
+        match (op, old) {
+            (Operation::Create, _) => crate::requester::on_create(object, &request.user),
+            (Operation::Update, Some(stored)) => crate::requester::on_update(object, stored),
+            _ => {}
+        }
+    }
+    escalation(request, object, old).await
 }
 
 /// RBAC escalation prevention (#98) on a Role, ClusterRole or binding about
