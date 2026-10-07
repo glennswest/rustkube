@@ -84,7 +84,10 @@ wall clocks. Three-master failure testing remains required before rollout (#149)
 
 **API groups served** (and advertised in `/api`, `/apis`):
 `v1`, `apps/v1`, `batch/v1`, `autoscaling/v2`, `policy/v1`,
-`networking.k8s.io/v1`, `discovery.k8s.io/v1`, `events.k8s.io/v1` (translated
+`networking.k8s.io/v1` (NetworkPolicy, Ingress, IngressClass, and ServiceCIDR
+with `/status` and IPAddress, #134: a `kubernetes` ServiceCIDR holding
+`--service-cidr` is bootstrapped Ready; the ClusterIP allocator does not yet
+write IPAddress objects or read other ServiceCIDRs), `discovery.k8s.io/v1`, `events.k8s.io/v1` (translated
 to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 `rbac.authorization.k8s.io/v1`, `authorization.k8s.io/v1`,
 `certificates.k8s.io/v1`, `storage.k8s.io/v1`, `admissionregistration.k8s.io/v1`,

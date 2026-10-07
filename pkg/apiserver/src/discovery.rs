@@ -774,6 +774,13 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
         // two-lists-that-disagree failure this function's own comment
         // warns about, found when 85-routes.yaml silently did not apply
         // and the router booted with an empty table.
+        ("networking.k8s.io", "v1") => vec![
+            ("networkpolicies", "NetworkPolicy", true),
+            ("ingresses", "Ingress", true),
+            ("ingressclasses", "IngressClass", false),
+            ("servicecidrs", "ServiceCIDR", false),
+            ("ipaddresses", "IPAddress", false),
+        ],
         ("gateway.networking.k8s.io", "v1") => vec![
             ("gatewayclasses", "GatewayClass", false),
             ("gateways", "Gateway", true),
@@ -1235,6 +1242,28 @@ pub async fn api_networking_v1_resources() -> impl IntoResponse {
                 "namespaced": false,
                 "kind": "IngressClass",
                 "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "servicecidrs",
+                "singularName": "servicecidr",
+                "namespaced": false,
+                "kind": "ServiceCIDR",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "servicecidrs/status",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "ServiceCIDR",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "ipaddresses",
+                "singularName": "ipaddress",
+                "namespaced": false,
+                "kind": "IPAddress",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["ip"]
             }
         ]
     }))

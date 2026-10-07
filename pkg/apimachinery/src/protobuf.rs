@@ -876,6 +876,31 @@ mod tests {
     }
 
     #[test]
+    fn servicecidr_and_ipaddress_round_trip_through_protobuf() {
+        // networking.k8s.io/v1 (#134), re-vendored from release-1.36: the
+        // conformance spec's IPAddress create failed for want of a schema.
+        let cidr = json!({
+            "apiVersion": "networking.k8s.io/v1", "kind": "ServiceCIDR",
+            "metadata": {"name": "kubernetes"},
+            "spec": {"cidrs": ["10.96.0.0/12"]},
+            "status": {"conditions": [{"type": "Ready", "status": "True", "reason": "", "message": "ready",
+                                       "lastTransitionTime": "2026-10-07T00:00:00Z"}]}
+        });
+        let back = decode_to_json(&encode_from_json(&cidr, "networking.k8s.io/v1", "ServiceCIDR").unwrap(), "", "").unwrap();
+        assert_eq!(back["kind"], "ServiceCIDR");
+        assert_eq!(back["spec"]["cidrs"][0], "10.96.0.0/12");
+        assert_eq!(back["status"]["conditions"][0]["type"], "Ready");
+        let ip = json!({
+            "apiVersion": "networking.k8s.io/v1", "kind": "IPAddress",
+            "metadata": {"name": "10.96.0.10"},
+            "spec": {"parentRef": {"group": "", "resource": "services", "namespace": "kube-system", "name": "dns"}}
+        });
+        let back = decode_to_json(&encode_from_json(&ip, "networking.k8s.io/v1", "IPAddress").unwrap(), "", "").unwrap();
+        assert_eq!(back["spec"]["parentRef"]["name"], "dns");
+        assert_eq!(back["metadata"]["name"], "10.96.0.10");
+    }
+
+    #[test]
     fn lease_json_round_trips_through_protobuf() {
         // The real client-go path: object → protobuf → object must preserve
         // scalars, the MicroTime special type, and TypeMeta from the envelope.

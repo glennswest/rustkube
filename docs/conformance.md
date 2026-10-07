@@ -154,7 +154,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 3 | `/scale` subresource — #86 | served since 2026-10-07; not rerun |
 | 2 | API Priority and Fairness — #118 | not implemented |
 | 2 | YAML bodies, fieldValidation for built-ins — #122 | not implemented |
-| 2 | ServiceCIDR/IPAddress — #134 | not implemented |
+| 2 | ServiceCIDR/IPAddress — #134 | served since 2026-10-07 (CRUD, bootstrap ServiceCIDR); not rerun |
 | 2 | scheduler records no Scheduled/FailedScheduling events — #138 | implemented after this run |
 | 1 each | autoscaling/v1 #123; Table 406 #126; LimitRanger #131; EndpointSliceMirroring #133; store compaction / continue-token expiry #139 | not implemented |
 | 6 | CSR `/approval` PATCH, Event `source` selector, all invalid sysctls in one error, Pod/PVC/PV `Pending` phase (#102), Ingress `/status` | wrong — fixed in 6d0ed10, after this run |

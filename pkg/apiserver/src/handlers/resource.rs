@@ -2115,6 +2115,8 @@ fn resource_to_list_kind(resource: &str) -> String {
         "networkpolicies" => "NetworkPolicy",
         "ingresses" => "Ingress",
         "ingressclasses" => "IngressClass",
+        "servicecidrs" => "ServiceCIDR",
+        "ipaddresses" => "IPAddress",
         "mutatingwebhookconfigurations" => "MutatingWebhookConfiguration",
         "validatingwebhookconfigurations" => "ValidatingWebhookConfiguration",
         "gatewayclasses" => "GatewayClass",
@@ -2162,7 +2164,9 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "certificatesigningrequests" => "certificates.k8s.io/v1",
         "customresourcedefinitions" => "apiextensions.k8s.io/v1",
         "horizontalpodautoscalers" => "autoscaling/v2",
-        "networkpolicies" | "ingresses" | "ingressclasses" => "networking.k8s.io/v1",
+        "networkpolicies" | "ingresses" | "ingressclasses" | "servicecidrs" | "ipaddresses" => {
+            "networking.k8s.io/v1"
+        }
         "priorityclasses" => "scheduling.k8s.io/v1",
         "poddisruptionbudgets" => "policy/v1",
         "deviceclasses" | "resourceclaims" | "resourceclaimtemplates" | "resourceslices" => {

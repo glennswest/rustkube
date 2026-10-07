@@ -227,6 +227,11 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/service-cidr.sh` (#134, suite `rigs`): discovery lists servicecidrs
+(+/status) and ipaddresses, cluster-scoped; the bootstrapped `kubernetes`
+ServiceCIDR holds `--service-cidr`, Ready; ServiceCIDR create/list/patch/
+`/status`/delete; IPAddress create, a protobuf GET, list, patch, delete.
+
 `e2e/vmi-migration.sh` also covers `addedNodeSelector` (#208): it forces
 the second-choice node, one no node meets is `TargetScheduled=False`, and a
 non-string value is 422.

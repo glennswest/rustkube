@@ -667,6 +667,13 @@ fn build_router(
                 .delete(resource::delete_cluster_resource)
                 .patch(resource::patch_cluster_resource),
         )
+        // ServiceCIDR's /status (#134)
+        .route(
+            "/apis/networking.k8s.io/v1/{resource}/{name}/status",
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .merge(patch(resource::patch_cluster_status)),
+        )
         // admissionregistration.k8s.io/v1
         .route(
             "/apis/admissionregistration.k8s.io/v1",
@@ -862,6 +869,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     bootstrap_namespace(&storage, "kube-node-lease").await;
     backfill_namespace_defaults(&storage).await;
     backfill_secret_string_data(&storage).await;
+    bootstrap_service_cidr(&storage, &config.service_cidr).await;
 
     // Bootstrap RBAC resources
     bootstrap_rbac(&storage, config.anonymous_auth, config.dev_anonymous_admin).await;
@@ -1329,6 +1337,23 @@ async fn create_bootstrap(
             e.message
         ),
     }
+}
+
+/// The `kubernetes` ServiceCIDR (#134): the range ClusterIPs come from, as
+/// upstream bootstraps it from `--service-cluster-ip-range`, Ready. Created
+/// once; a stored one is left as it is (its `spec.cidrs` is immutable
+/// upstream).
+async fn bootstrap_service_cidr(storage: &ResourceStorage, cidr: &str) {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let mut obj = json!({
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "ServiceCIDR",
+        "spec": {"cidrs": [cidr]},
+        "status": {"conditions": [{"type": "Ready", "status": "True", "reason": "",
+                                   "message": "Kubernetes Service CIDR is ready", "lastTransitionTime": now}]},
+    });
+    crate::handlers::resource::ensure_metadata_pub(&mut obj, "kubernetes", None);
+    create_bootstrap(storage, &ResourceStorage::cluster_key("servicecidrs", "kubernetes"), obj, "servicecidrs kubernetes").await;
 }
 
 async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
