@@ -21,6 +21,7 @@ pub mod error;
 pub mod escalation;
 pub mod events;
 pub mod eviction;
+pub mod field_validation;
 pub mod handlers;
 pub mod manifests;
 pub mod protobuf_mw;

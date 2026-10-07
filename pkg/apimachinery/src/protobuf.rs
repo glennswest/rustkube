@@ -529,6 +529,85 @@ fn pb_scalar_or_msg_to_json(v: &PbValue) -> Value {
     }
 }
 
+// --- unknown fields (server-side field validation, #122) ----------------------
+
+/// The fields of a built-in object's JSON that its type does not have, as
+/// paths (`spec.unknownField`, `spec.template.spec.containers[0].foo`,
+/// `metadata.unknownMeta`) — what `fieldValidation=Strict` refuses and `Warn`
+/// reports. The type comes from the vendored descriptors, matched exactly as
+/// [`encode_from_json`] matches keys (Kubernetes' JSON names, inline embeds),
+/// and the opaque types (times, quantities, IntOrString, RawExtension,
+/// `managedFields`' FieldsV1, raw JSON) are not looked into. `None` when the
+/// kind has no descriptor, and for CustomResourceDefinitions, whose schema
+/// keys are not checked here.
+pub fn unknown_fields(json: &Value, api_version: &str, kind: &str) -> Option<Vec<String>> {
+    let name = message_name(api_version, kind)?;
+    if name.starts_with(AEXT) {
+        return None;
+    }
+    let desc = POOL.get_message_by_name(&name)?;
+    let mut out = Vec::new();
+    if let Value::Object(top) = json {
+        // apiVersion/kind are the envelope's TypeMeta, not the message's.
+        let body: Map<String, Value> =
+            top.iter().filter(|(k, _)| *k != "apiVersion" && *k != "kind").map(|(k, v)| (k.clone(), v.clone())).collect();
+        unknown_in(&Value::Object(body), &desc, "", &mut out);
+    }
+    Some(out)
+}
+
+const FIELDS_V1: &str = "k8s.io.apimachinery.pkg.apis.meta.v1.FieldsV1";
+
+fn unknown_in(json: &Value, desc: &MessageDescriptor, path: &str, out: &mut Vec<String>) {
+    let opaque = [TIME, MICRO_TIME, QUANTITY, INT_OR_STRING, RAW_EXTENSION, AEXT_JSON, FIELDS_V1];
+    if opaque.contains(&desc.full_name()) || desc.full_name().starts_with(AEXT) {
+        return;
+    }
+    let Value::Object(obj) = json else { return };
+    let join = |k: &str| if path.is_empty() { k.to_string() } else { format!("{path}.{k}") };
+    let mut rest = Map::new();
+    for (key, val) in obj {
+        let field = desc
+            .get_field_by_json_name(key)
+            .or_else(|| desc.get_field_by_name(key))
+            .or_else(|| proto_field_for_k8s_key(desc.full_name(), key).and_then(|f| desc.get_field_by_name(f)));
+        let Some(field) = field else {
+            rest.insert(key.clone(), val.clone());
+            continue;
+        };
+        let prost_reflect::Kind::Message(inner) = field.kind() else { continue };
+        if field.is_map() {
+            if let (Some(vf), Value::Object(m)) = (map_value_field(&field), val) {
+                if let prost_reflect::Kind::Message(vm) = vf.kind() {
+                    for (k, v) in m {
+                        unknown_in(v, &vm, &format!("{}[{k}]", join(key)), out);
+                    }
+                }
+            }
+        } else if field.is_list() {
+            if let Value::Array(items) = val {
+                for (i, it) in items.iter().enumerate() {
+                    unknown_in(it, &inner, &format!("{}[{i}]", join(key)), out);
+                }
+            }
+        } else {
+            unknown_in(val, &inner, &join(key), out);
+        }
+    }
+    // What no field here has may be an inline embed's; what it does not have
+    // either is unknown.
+    let inline: Vec<_> = desc.fields().filter(|f| is_inline(desc.full_name(), f.name())).collect();
+    if inline.is_empty() {
+        out.extend(rest.keys().map(|k| join(k)));
+        return;
+    }
+    for field in inline {
+        if let prost_reflect::Kind::Message(inner) = field.kind() {
+            unknown_in(&Value::Object(rest.clone()), &inner, path, out);
+        }
+    }
+}
+
 // --- generic JSON → DynamicMessage -------------------------------------------
 
 fn json_to_message(json: &Value, desc: &MessageDescriptor) -> Result<DynamicMessage, String> {
@@ -873,6 +952,40 @@ mod tests {
         let back = decode_to_json(&encode_from_json(&claim, "resource.k8s.io/v1", "ResourceClaim").unwrap(), "", "").unwrap();
         assert_eq!(back["spec"]["devices"]["requests"][0]["exactly"]["count"], 2);
         assert_eq!(back["status"]["allocation"]["devices"]["results"][0]["device"], "gpu-0");
+    }
+
+    #[test]
+    fn unknown_fields_of_a_typed_object_are_found_by_path() {
+        // The conformance FieldValidation body (#122).
+        let d = json!({"apiVersion": "apps/v1", "kind": "Deployment",
+            "metadata": {"name": "my-dep", "unknownMeta": "foo", "labels": {"app": "nginx"},
+                         "managedFields": [{"manager": "m", "fieldsV1": {"f:spec": {"f:replicas": {}}}}]},
+            "spec": {"unknownField": "foo", "replicas": 2, "selector": {"matchLabels": {"app": "nginx"}},
+                "template": {"metadata": {"labels": {"app": "nginx"}},
+                    "spec": {"containers": [{"name": "nginx", "image": "nginx", "bogus": 1,
+                        "resources": {"requests": {"cpu": "100m"}}, "ports": [{"containerPort": 80}]}]}},
+                "strategy": {"rollingUpdate": {"maxSurge": "25%"}}},
+            "status": {}});
+        let u = unknown_fields(&d, "apps/v1", "Deployment").unwrap();
+        assert_eq!(u, vec!["metadata.unknownMeta", "spec.template.spec.containers[0].bogus", "spec.unknownField"]);
+        // A clean object, every opaque type in it, has none.
+        let mut clean = d.clone();
+        clean["metadata"].as_object_mut().unwrap().remove("unknownMeta");
+        clean["spec"].as_object_mut().unwrap().remove("unknownField");
+        clean["spec"]["template"]["spec"]["containers"][0].as_object_mut().unwrap().remove("bogus");
+        assert_eq!(unknown_fields(&clean, "apps/v1", "Deployment").unwrap(), Vec::<String>::new());
+        // An inline embed's keys are known (ValidatingWebhook rules).
+        let vwc = json!({"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingWebhookConfiguration",
+            "metadata": {"name": "w"}, "webhooks": [{"name": "a.b.c", "rules": [{"operations": ["CREATE"],
+            "apiGroups": [""], "apiVersions": ["v1"], "resources": ["pods"], "scope": "*"}], "nope": true}]});
+        assert_eq!(unknown_fields(&vwc, "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration").unwrap(),
+                   vec!["webhooks[0].nope"]);
+        // A 1.33+ field is known (the descriptors are release-1.36).
+        let pod = json!({"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p"},
+            "spec": {"resources": {"limits": {"cpu": "1"}}, "containers": [{"name": "c", "image": "i"}]}});
+        assert_eq!(unknown_fields(&pod, "v1", "Pod").unwrap(), Vec::<String>::new());
+        assert!(unknown_fields(&json!({}), "apiextensions.k8s.io/v1", "CustomResourceDefinition").is_none());
+        assert!(unknown_fields(&json!({}), "example.com/v1", "Thing").is_none());
     }
 
     #[test]

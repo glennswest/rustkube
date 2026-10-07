@@ -802,6 +802,9 @@ fn build_router(
         )
         // Dynamic CRD discovery
         .route("/apis/{group}/{version}", get(crd::crd_api_resources))
+        // Server-side field validation of built-in creates and updates
+        // (#122), once the request is authorized.
+        .layer(middleware::from_fn(crate::field_validation::check))
         // Inside authentication and RBAC: an aggregated API's requests go to
         // its backend once this apiserver has authorized them (#83).
         .layer(middleware::from_fn_with_state(state.clone(), crate::aggregation::proxy))

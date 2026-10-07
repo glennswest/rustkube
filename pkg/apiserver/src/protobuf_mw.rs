@@ -36,7 +36,7 @@ fn header_str<'a>(headers: &'a header::HeaderMap, name: header::HeaderName) -> &
 ///
 ///   /api/v1/.../{resource}[/{name}[/{sub}]]            -> ("v1", Kind(resource))
 ///   /apis/{group}/{version}/.../{resource}[/{name}...] -> ("group/version", Kind)
-fn path_gvk(path: &str) -> (String, String) {
+pub(crate) fn path_gvk(path: &str) -> (String, String) {
     // The scale subresource's body is an autoscaling/v1 Scale whatever its
     // parent (#86).
     if path.trim_end_matches('/').ends_with("/scale") {
@@ -62,11 +62,40 @@ fn path_gvk(path: &str) -> (String, String) {
 }
 
 pub async fn transcode(req: Request, next: Next) -> Response {
-    let (mut parts, body) = req.into_parts();
+    let (mut parts, mut body) = req.into_parts();
 
     // GET/HEAD carry no body; every other verb may carry a protobuf body — a
     // resource for POST/PUT/PATCH, a meta/v1 DeleteOptions for DELETE.
     let has_body = !matches!(parts.method, http::Method::GET | http::Method::HEAD);
+
+    // #122: a write without a Content-Type is JSON, as upstream negotiates
+    // it; a YAML body becomes JSON here, so every handler sees JSON. (An
+    // apply patch's `application/apply-patch+yaml` is the handler's.)
+    if has_body {
+        let ct = header_str(&parts.headers, header::CONTENT_TYPE).split(';').next().unwrap_or("").trim().to_string();
+        if ct.is_empty() {
+            parts.headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("application/json"));
+        } else if ct == "application/yaml" || ct == "application/x-yaml" || ct == "text/yaml" {
+            let bytes = match axum::body::to_bytes(body, MAX_BODY).await {
+                Ok(b) => b,
+                Err(_) => return status_response(StatusCode::BAD_REQUEST, "failed to read request body"),
+            };
+            let strict = crate::schema::FieldValidation::from_query(parts.uri.query().unwrap_or(""))
+                == crate::schema::FieldValidation::Strict;
+            if strict {
+                if let Some(dup) = crate::schema::yaml_duplicate(&bytes) {
+                    return status_response(StatusCode::BAD_REQUEST, &format!("strict decoding error: {dup}"));
+                }
+            }
+            let value: Value = match serde_yaml::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(e) => return status_response(StatusCode::BAD_REQUEST, &format!("invalid YAML body: {e}")),
+            };
+            parts.headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("application/json"));
+            parts.headers.remove(header::CONTENT_LENGTH);
+            body = Body::from(serde_json::to_vec(&value).unwrap_or_default());
+        }
+    }
     let req_is_pb =
         has_body && protobuf::wants_protobuf(header_str(&parts.headers, header::CONTENT_TYPE));
     let accept_pb = header_str(&parts.headers, header::ACCEPT).contains(protobuf::CONTENT_TYPE);

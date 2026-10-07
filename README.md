@@ -137,6 +137,19 @@ tokens (every page reports the first page's `resourceVersion`, with
 `remainingItemCount`; items carry their own `resourceVersion`); label and
 field selectors; `/openapi/v2` and `/openapi/v3`.
 
+**Bodies and field validation** (#122). A write's body may be JSON,
+protobuf or YAML (`application/yaml`, converted to JSON before any handler);
+one without a `Content-Type` is JSON, as upstream negotiates. For a built-in
+kind, a create (POST) or replacement (PUT, `/status` too) is checked against
+its type — the vendored release-1.36 protobuf descriptors' fields — and
+`?fieldValidation=Strict` refuses an unknown field or a repeated key with
+upstream's `strict decoding error: unknown field "spec.foo", duplicate field
+"spec.replicas"` (a repeated YAML key: `line N: key "x" already set in map`),
+`Warn` (the default) names them in `Warning` headers, `Ignore` says nothing.
+Unlike upstream, a field accepted under `Warn`/`Ignore` is stored as sent,
+not dropped. PATCH bodies are not checked here, nor CustomResourceDefinitions;
+custom resources follow their schema (#121).
+
 **Writes.** Create (a body's empty `metadata.namespace` is the URL's; a
 different one is a 400), update, delete (with `DeleteOptions`: preconditions,
 `dryRun`, grace period, `propagationPolicy`), `deletecollection` with label

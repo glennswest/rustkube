@@ -157,7 +157,7 @@ pub async fn in_request(
 }
 
 /// `299 - "<text>"`, the text quoted and kept to printable ASCII.
-fn warning_header(text: &str) -> String {
+pub(crate) fn warning_header(text: &str) -> String {
     let clean: String = text
         .chars()
         .map(|c| if c.is_ascii() && !c.is_ascii_control() { c } else { ' ' })
