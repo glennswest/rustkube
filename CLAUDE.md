@@ -115,13 +115,16 @@ request→scheduled p50 1.42 / p95 2.54 / max 2.58 s — over the < 1 s target,
 node time excluded (plain Pods: 0.17 s p50). Cause: the PV binder's claim
 controller runs `workers() = 1` (so two claims cannot choose one PV); each
 bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
-- [ ] Binder: 8 workers; only choosing an unclaimed PV takes a lock (PV list
-      read inside it); a PV pre-bound to the claim (provisioned) binds in
-      parallel
-- [ ] Units; `test/e2e/wffc-latency.sh` (suite `rigs`): 25 Pods with fresh
-      `stormblock` WFFC claims → bound p99 < 1 s; control = 1 worker
-- [ ] Docs/CHANGELOG; test machine run; golden; comment on #147 (stays open
-      for the hardware profiles)
+- [x] 3d3b099 binder: 8 workers; `needs_choice` → `choosing` lock with the
+      PV list read inside it; pre-bound (provisioned) PVs bind in parallel.
+      Unit; workspace at 3d3b099 534 passed / 4 ignored
+- [x] `test/e2e/wffc-latency.sh` (suite `rigs`); control branch
+      `control/147-binder-1-worker` (ceaae45: 1 worker, rigs = wffc only)
+- [x] Docs (storage.md, test/README, CHANGELOG) at 98f3624
+- [ ] Test-machine runs: pvetest1's registry seals nothing since its 11.88
+      reinstall (stormcentral#512; 3d489069f3/47395693e4 "registry did not
+      list it"); queued on a blade from 11:00 UTC (tmp/blade147.sh). Then
+      golden; comment on #147 (stays open for the hardware profiles)
 
 ### Metadata-only CRD watch decode error (#180, P2) — IN PROGRESS 2026-10-07
 server1 (0.15.1) cilium agent: "unable to decode an event from the watch
