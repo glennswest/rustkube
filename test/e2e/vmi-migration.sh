@@ -19,6 +19,9 @@
 # - deleting a migration before it sends aborts it on the VMI
 # - no node for the target: TargetScheduled=False on the migration; a node
 #   freed later takes it
+# - addedNodeSelector (#208): carried onto the migration, it forces the
+#   second-choice node; one no node meets is TargetScheduled=False; a
+#   non-string value is 422
 # - a migration of a VMI that does not exist fails
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -78,9 +81,9 @@ for plural, kind in [("virtualmachines", "VirtualMachine"),
 until(lambda: call("GET", "/apis/kubevirt.io/v1/namespaces/default/virtualmachineinstancemigrations")[0] == 200)
 
 later = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
-def node(name, memory):
+def node(name, memory, labels={}):
     n = req("POST", "/api/v1/nodes", {"apiVersion": "v1", "kind": "Node",
-        "metadata": {"name": name, "labels": {"kubernetes.io/hostname": name}}})
+        "metadata": {"name": name, "labels": dict({"kubernetes.io/hostname": name}, **labels)}})
     res = {"cpu": "16", "memory": memory, "pods": "110"}
     n["status"] = {"capacity": res, "allocatable": res,
                    "conditions": [{"type": "Ready", "status": "True"}]}
@@ -100,8 +103,8 @@ def phase(name): return migration(name)[1].get("status", {}).get("phase")
 def kubelet(fields, name="vm"):  # the node's write, as rustkube-node#40 will make it
     code, out = merge(f"{NS}/virtualmachineinstances/{name}/status", {"status": {"migrationState": fields}})
     if code != 200: print(f"kubelet write {fields}: {code} {out}")
-def migrate(path):
-    code, out = call("PUT", f"{SUB}/{path}/migrate", {})
+def migrate(path, opts={}):
+    code, out = call("PUT", f"{SUB}/{path}/migrate", opts)
     name = out.get("message", "").split(" ")[1] if code == 200 else None
     return code, name, out
 def now(): return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -199,6 +202,26 @@ check(until(lambda: state().get("targetNode") == "d"), "uncordoned: target place
 check(until(lambda: cond(m4).get("status") == "True"), "TargetScheduled=True")
 call("DELETE", f"{NS}/virtualmachineinstancemigrations/{m4}")
 until(lambda: migration(m4)[0] == 404)
+
+# --- addedNodeSelector (#208) -------------------------------------------------------
+# d (8Gi) is the roomier target; e (4Gi, zone=x) is the second choice, which
+# the selector forces.
+node("e", "4Gi", {"zone": "x"})
+code, m5, out = migrate("virtualmachineinstances/vm", {"addedNodeSelector": {"zone": "x"}})
+check(code == 200 and migration(m5)[1]["spec"].get("addedNodeSelector") == {"zone": "x"},
+      f"migrate with addedNodeSelector: {code}, carried on the migration ({out.get('message')})")
+check(until(lambda: state().get("targetNode") == "e"), f"the selector picks e over the roomier d ({state().get('targetNode')})")
+call("DELETE", f"{NS}/virtualmachineinstancemigrations/{m5}")
+until(lambda: migration(m5)[0] == 404)
+code, m6, _ = migrate("virtualmachineinstances/vm", {"addedNodeSelector": {"zone": "nowhere"}})
+c = until(lambda: cond(m6).get("status") == "False" and cond(m6))
+check(c and c.get("reason") == "Unschedulable", f"a selector no node meets: TargetScheduled=False ({c and c.get('message')})")
+check(not state().get("targetNode") or state().get("migrationUid") != migration(m6)[1]["metadata"]["uid"],
+      "and no target is set")
+call("DELETE", f"{NS}/virtualmachineinstancemigrations/{m6}")
+until(lambda: migration(m6)[0] == 404)
+code, _, out = migrate("virtualmachineinstances/vm", {"addedNodeSelector": {"zone": 7}})
+check(code == 422, f"a selector value that is not a string: 422 ({code})")
 
 # --- a VMI that does not exist ---------------------------------------------------
 gone = req("POST", f"{NS}/virtualmachineinstancemigrations", {"apiVersion": "kubevirt.io/v1",

@@ -272,11 +272,16 @@ async fn migrate(state: AppState, namespace: String, name: String, body: axum::b
             Err(e) => return ApiError::bad_request(&format!("MigrateOptions: {e}")).into_response(),
         }
     };
-    if opts["addedNodeSelector"].as_object().is_some_and(|m| !m.is_empty()) {
-        // The scheduler does not read it; taking it and ignoring it would
-        // place the machine somewhere the caller excluded.
-        return ApiError::invalid("addedNodeSelector is not supported").into_response();
-    }
+    // addedNodeSelector constrains the target (#208): carried onto the
+    // migration's spec, which the scheduler reads. Labels are strings.
+    let added = match &opts["addedNodeSelector"] {
+        Value::Null => None,
+        Value::Object(m) if m.values().all(Value::is_string) => (!m.is_empty()).then(|| Value::Object(m.clone())),
+        _ => {
+            return ApiError::invalid("addedNodeSelector: Invalid value: must be a map of label keys to string values")
+                .into_response()
+        }
+    };
     let vmi = match state
         .storage
         .get(&ResourceStorage::namespaced_key(
@@ -304,6 +309,10 @@ async fn migrate(state: AppState, namespace: String, name: String, body: axum::b
         "metadata": {"generateName": format!("kubevirt-migrate-{}-", what.to_lowercase()), "namespace": namespace},
         "spec": {"vmiName": name},
     });
+    let mut migration = migration;
+    if let Some(sel) = added {
+        migration["spec"]["addedNodeSelector"] = sel;
+    }
     let dry_run = opts["dryRun"]
         .as_array()
         .is_some_and(|d| d.iter().any(|v| v == "All"));
@@ -500,11 +509,21 @@ mod tests {
             let (code, out) = call(&st, "").await;
             assert_eq!(code, StatusCode::CONFLICT);
             assert!(out["message"].as_str().unwrap().contains("already migrating"));
-            // A selector the scheduler would not honour.
+            // #208: a selector rides on the migration; a malformed one is 422.
             let st = state(true).await;
             put_vmi(&st, json!({"phase": "Running", "nodeName": "a"})).await;
-            let (code, _) = call(&st, r#"{"addedNodeSelector": {"zone": "b"}}"#).await;
+            let (code, _) = call(&st, r#"{"addedNodeSelector": {"zone": 7}}"#).await;
             assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+            let (code, out) = call(&st, r#"{"addedNodeSelector": {"zone": "b"}}"#).await;
+            assert_eq!(code, StatusCode::OK, "{out}");
+            // "migration <name> of ns/vm created"
+            let created = out["message"].as_str().unwrap().split(' ').nth(1).unwrap().to_string();
+            let m = st.storage.get(&ResourceStorage::namespaced_key(
+                &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachineinstancemigrations"), "ns", &created))
+                .await.unwrap();
+            assert_eq!(m["spec"]["addedNodeSelector"], json!({"zone": "b"}));
+            let st = state(true).await;
+            put_vmi(&st, json!({"phase": "Running", "nodeName": "a"})).await;
             // Dry run: answered, nothing created.
             let (code, out) = call(&st, r#"{"dryRun": ["All"]}"#).await;
             assert_eq!(code, StatusCode::OK);

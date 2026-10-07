@@ -895,7 +895,11 @@ impl Scheduler {
         let ns = vmi["metadata"]["namespace"].as_str().unwrap_or("default");
         let source = virtualmachine::node_of(vmi).unwrap_or("");
         let uid = vmi["status"]["migrationState"]["migrationUid"].as_str().unwrap_or("").to_string();
-        let shim = virtualmachine::scheduling_shim(vmi);
+        let mut shim = virtualmachine::scheduling_shim(vmi);
+        // The migration's addedNodeSelector narrows the target (#208).
+        if let Some(added) = self.migration(ns, &uid).await.map(|m| m["spec"]["addedNodeSelector"].clone()) {
+            add_node_selector(&mut shim, &added);
+        }
         let (chosen, refused) = choose_migration_target(&shim, source, nodes, state);
         let Some(chosen) = chosen else {
             let why = if refused.is_empty() {
@@ -928,6 +932,25 @@ impl Scheduler {
         }
     }
 
+    /// The VirtualMachineInstanceMigration with this uid, if it can be read.
+    async fn migration(&self, ns: &str, uid: &str) -> Option<Value> {
+        if uid.is_empty() {
+            return None;
+        }
+        let list = match self
+            .api
+            .list(&format!("/apis/kubevirt.io/v1/namespaces/{ns}/virtualmachineinstancemigrations"))
+            .await
+        {
+            Ok(l) => l,
+            Err(e) => {
+                debug!("could not find the migration {uid}: {e}");
+                return None;
+            }
+        };
+        list["items"].as_array()?.iter().find(|m| m["metadata"]["uid"].as_str() == Some(uid)).cloned()
+    }
+
     /// Say on the VirtualMachineInstanceMigration whether its target could be
     /// placed: condition `TargetScheduled`. Written when the message changes;
     /// a scheduled one only if an unschedulable one was written before.
@@ -947,23 +970,11 @@ impl Scheduler {
                 reports.insert(migration_uid.to_string(), message.to_string());
             }
         }
-        let list = match self
-            .api
-            .list(&format!("/apis/kubevirt.io/v1/namespaces/{ns}/virtualmachineinstancemigrations"))
+        let Some(name) = self
+            .migration(ns, migration_uid)
             .await
-        {
-            Ok(l) => l,
-            Err(e) => {
-                debug!("could not find the migration {migration_uid}: {e}");
-                return;
-            }
-        };
-        let Some(name) = list["items"].as_array().and_then(|items| {
-            items
-                .iter()
-                .find(|m| m["metadata"]["uid"].as_str() == Some(migration_uid))
-                .and_then(|m| m["metadata"]["name"].as_str().map(str::to_string))
-        }) else {
+            .and_then(|m| m["metadata"]["name"].as_str().map(str::to_string))
+        else {
             return;
         };
         let body = json!({"status": {"conditions": [{
@@ -1252,6 +1263,20 @@ fn unschedulable_message(nodes: usize, refused: &[String]) -> String {
 
 /// The best node for a migrating VMI's target other than `source`, and why
 /// each other node was refused.
+/// Add a migration's `addedNodeSelector` to the scheduling shim's node
+/// selector (#208). A key the VMI already selects on keeps the VMI's value:
+/// the migration narrows where the machine may go, never widens it.
+fn add_node_selector(shim: &mut Value, added: &Value) {
+    let Some(added) = added.as_object() else { return };
+    if !shim["spec"]["nodeSelector"].is_object() {
+        shim["spec"]["nodeSelector"] = json!({});
+    }
+    let sel = shim["spec"]["nodeSelector"].as_object_mut().unwrap();
+    for (k, v) in added {
+        sel.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+}
+
 fn choose_migration_target(
     shim: &Value,
     source: &str,
@@ -1940,6 +1965,15 @@ mod reservation_tests {
     #[test]
     fn a_vmi_waiting_for_a_target_is_pending_and_one_with_a_target_is_not() {
         assert!(pending_workload(true, &migrating(None)));
+        // #208: added selector keys join the VMI's; the VMI's own value stays.
+        let mut shim = json!({"spec": {"nodeSelector": {"disk": "ssd"}}});
+        add_node_selector(&mut shim, &json!({"zone": "b", "disk": "hdd"}));
+        assert_eq!(shim["spec"]["nodeSelector"], json!({"disk": "ssd", "zone": "b"}));
+        let mut bare = json!({"spec": {}});
+        add_node_selector(&mut bare, &json!({"zone": "b"}));
+        assert_eq!(bare["spec"]["nodeSelector"], json!({"zone": "b"}));
+        add_node_selector(&mut bare, &Value::Null);
+        assert_eq!(bare["spec"]["nodeSelector"], json!({"zone": "b"}));
         // #87: a gate holds a pending Pod; an empty list is no gate.
         assert!(gated(&json!({"spec": {"schedulingGates": [{"name": "example.com/arch"}]}})));
         assert!(!gated(&json!({"spec": {"schedulingGates": []}})));
