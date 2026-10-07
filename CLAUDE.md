@@ -147,6 +147,24 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
+### Metrics (#90, P2) — IN PROGRESS 2026-10-07
+- [ ] Reconcile metrics: `owned::run` records `controller_reconcile_duration_seconds`
+      / `controller_reconcile_errors_total` per object pass
+- [ ] Histogram buckets (upstream's per metric; Prometheus defaults else) —
+      `_bucket` series instead of summaries
+- [ ] apiserver `/metrics` under authn + RBAC (nonResourceURL get);
+      bootstrap `system:monitoring` (upstream)
+- [ ] CM/scheduler :10257/:10259: `--tls-cert-file`/`--tls-private-key-file`
+      (HTTPS, reloaded; plain HTTP without), `/metrics` behind delegated
+      TokenReview + SubjectAccessReview, health paths open
+      (`--authorization-always-allow-paths`); roles gain tokenreviews /
+      subjectaccessreviews create. stormcos issue: ironprom token + https,
+      certs, probe scheme
+- [ ] Smaller: `process_cpu_seconds_total` TYPE counter; standby leader gauge
+      0 from the start; `apiserver_storage_objects` from resource-wide
+      prefixes only
+- [ ] Units, docs/metrics.md, README, CHANGELOG, build
+
 ### Service create cost (#113, P2) — BUILT, rig waits for test runs 2026-10-07
 Cause (from the code): `service_ip::allocate` walked the range from offset
 1, one store create-if-absent per address, so N Services = N+1 writes per
