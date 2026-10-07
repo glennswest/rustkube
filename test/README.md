@@ -227,6 +227,12 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/hpa-v1.sh` (#123, suite `rigs`): autoscaling v2 (preferred) and v1
+in discovery; a v1 create stored as v2's cpu metric; a v2 object with a
+memory metric and behavior read as v1 with upstream's annotations; a v1
+PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
+was; v1 list and watch carrying v1 objects; delete through v1.
+
 `e2e/admission-policy-api.sh` (#119, suite `rigs`): the four
 admission policy resources in discovery, cluster-scoped; each created (with
 the not-enforced Warning), read, listed, patched, read over protobuf and

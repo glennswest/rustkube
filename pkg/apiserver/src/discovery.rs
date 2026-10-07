@@ -177,7 +177,8 @@ fn builtin_groups() -> Vec<Value> {
         }),
         json!({
             "name": "autoscaling",
-            "versions": [{"groupVersion": "autoscaling/v2", "version": "v2"}],
+            "versions": [{"groupVersion": "autoscaling/v2", "version": "v2"},
+                         {"groupVersion": "autoscaling/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "autoscaling/v2", "version": "v2"}
         }),
         json!({
@@ -782,6 +783,7 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
             ("mutatingadmissionpolicies", "MutatingAdmissionPolicy", false),
             ("mutatingadmissionpolicybindings", "MutatingAdmissionPolicyBinding", false),
         ],
+        ("autoscaling", "v1") | ("autoscaling", "v2") => vec![("horizontalpodautoscalers", "HorizontalPodAutoscaler", true)],
         ("networking.k8s.io", "v1") => vec![
             ("networkpolicies", "NetworkPolicy", true),
             ("ingresses", "Ingress", true),
@@ -1190,6 +1192,32 @@ pub async fn api_apiextensions_v1_resources() -> impl IntoResponse {
 }
 
 /// GET /apis/autoscaling/v2 — autoscaling resources.
+/// GET /apis/autoscaling/v1 — HorizontalPodAutoscaler v1, a view of v2 (#123).
+pub async fn api_autoscaling_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "autoscaling/v1",
+        "resources": [
+            {
+                "name": "horizontalpodautoscalers",
+                "singularName": "horizontalpodautoscaler",
+                "namespaced": true,
+                "kind": "HorizontalPodAutoscaler",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
+                "shortNames": ["hpa"],
+                "categories": ["all"]
+            },
+            {
+                "name": "horizontalpodautoscalers/status",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "HorizontalPodAutoscaler",
+                "verbs": ["get", "patch", "update"]
+            }
+        ]
+    }))
+}
+
 pub async fn api_autoscaling_v2_resources() -> impl IntoResponse {
     Json(json!({
         "kind": "APIResourceList",

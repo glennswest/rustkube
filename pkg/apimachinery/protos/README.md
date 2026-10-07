@@ -26,6 +26,9 @@ the vendored files would be refused as unknown. The update from 1.32 only
 added messages and fields (none removed or renumbered); `resource/v1` was
 from `release-1.34` (#137), `networking/v1` from `release-1.36` (#134).
 
+`autoscaling/v1` (HorizontalPodAutoscaler v1, and the `Scale` of every
+`/scale` subresource) was added from `release-1.36` (#123).
+
 `google/protobuf/descriptor.proto` is not vendored; it ships with `protoc`.
 
 ## Updating

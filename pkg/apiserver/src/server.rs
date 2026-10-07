@@ -554,6 +554,32 @@ fn build_router(
                 .put(resource::update_namespaced_status)
                 .merge(patch(resource::patch_namespaced_status)),
         )
+        // autoscaling/v1: HorizontalPodAutoscaler as a view of the stored v2
+        // object (#123)
+        .route("/apis/autoscaling/v1", get(discovery::api_autoscaling_v1_resources))
+        .route(
+            "/apis/autoscaling/v1/horizontalpodautoscalers",
+            get(crate::handlers::hpa_v1::list_all),
+        )
+        .route(
+            "/apis/autoscaling/v1/namespaces/{namespace}/horizontalpodautoscalers",
+            get(crate::handlers::hpa_v1::list)
+                .post(crate::handlers::hpa_v1::create)
+                .delete(crate::handlers::hpa_v1::delete_collection),
+        )
+        .route(
+            "/apis/autoscaling/v1/namespaces/{namespace}/horizontalpodautoscalers/{name}",
+            get(crate::handlers::hpa_v1::get)
+                .put(crate::handlers::hpa_v1::update)
+                .delete(crate::handlers::hpa_v1::delete)
+                .patch(crate::handlers::hpa_v1::patch),
+        )
+        .route(
+            "/apis/autoscaling/v1/namespaces/{namespace}/horizontalpodautoscalers/{name}/status",
+            get(crate::handlers::hpa_v1::get_status)
+                .put(crate::handlers::hpa_v1::update_status)
+                .merge(patch(crate::handlers::hpa_v1::patch_status)),
+        )
         // autoscaling/v2
         .route(
             "/apis/autoscaling/v2",

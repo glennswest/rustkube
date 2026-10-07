@@ -112,6 +112,7 @@ fn message_name(api_version: &str, kind: &str) -> Option<String> {
         ("rbac.authorization.k8s.io", "v1") => "k8s.io.api.rbac.v1",
         ("networking.k8s.io", "v1") => "k8s.io.api.networking.v1",
         ("policy", "v1") => "k8s.io.api.policy.v1",
+        ("autoscaling", "v1") => "k8s.io.api.autoscaling.v1",
         ("autoscaling", "v2") => "k8s.io.api.autoscaling.v2",
         ("scheduling.k8s.io", "v1") => "k8s.io.api.scheduling.v1",
         ("resource.k8s.io", "v1") => "k8s.io.api.resource.v1",

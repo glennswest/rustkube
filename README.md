@@ -83,7 +83,11 @@ state. Lease expiration uses local elapsed time rather than comparing master
 wall clocks. Three-master failure testing remains required before rollout (#149).
 
 **API groups served** (and advertised in `/api`, `/apis`):
-`v1`, `apps/v1`, `batch/v1`, `autoscaling/v2`, `policy/v1`,
+`v1`, `apps/v1`, `batch/v1`, `autoscaling/v2`, `autoscaling/v1`
+(HorizontalPodAutoscaler as a view of the stored v2 object, converted as
+upstream does — `targetCPUUtilizationPercentage` ⇄ the cpu Utilization
+metric, the rest in the `autoscaling.alpha.kubernetes.io/*` annotations; a
+PATCH applies to the v1 view; list and watch converted; #123), `policy/v1`,
 `networking.k8s.io/v1` (NetworkPolicy, Ingress, IngressClass, and ServiceCIDR
 with `/status` and IPAddress, #134: a `kubernetes` ServiceCIDR holding
 `--service-cidr` is bootstrapped Ready; the ClusterIP allocator does not yet

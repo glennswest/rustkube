@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** `autoscaling/v1` is served (#123): HorizontalPodAutoscaler as a view of the stored `autoscaling/v2` object, converted as upstream converts it.
+  - **Conversion:** `targetCPUUtilizationPercentage` ⇄ the cpu Utilization metric, `currentCPUUtilizationPercentage` ⇄ its current metric. Other metrics, behavior, current metrics and conditions travel in `autoscaling.alpha.kubernetes.io/{metrics,behavior,current-metrics,conditions}`, so a v1 client's read-and-write-back loses nothing.
+  - **Operations:** get, list and watch (converted line by line), create, update, PATCH (applied to the v1 view), delete, deletecollection, and `/status`.
+  - **Discovery:** `/apis` lists autoscaling v2 (preferred) and v1, as the conformance Discovery spec checks.
+  - **Protobuf:** `autoscaling/v1/generated.proto` (release-1.36) is vendored, which also gives #86's `Scale` its protobuf schema. The apply table gains autoscaling v1/v2.
+- **test:** conversion units (round trip with every annotation, a plain v1 object, list/Status). New `test/e2e/hpa-v1.sh` (suite `rigs`).
 - **feat:** `admissionregistration.k8s.io/v1` ValidatingAdmissionPolicy (with `/status`), ValidatingAdmissionPolicyBinding, MutatingAdmissionPolicy and MutatingAdmissionPolicyBinding are served (#119): generic cluster-scoped handlers, discovery, the apply table and protobuf (descriptors in the release-1.36 protos). That is what the four "API operations" conformance specs need. **They are not evaluated**; a create says so in a `Warning` header. CEL evaluation, which the three specs that hang to the suite timeout need, is #234.
 - **test:** New `test/e2e/admission-policy-api.sh` (suite `rigs`).
 - **feat:** YAML request bodies and server-side field validation for built-in objects (#122).
