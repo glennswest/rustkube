@@ -133,7 +133,7 @@ be 401 (Status, reason Unauthorized) whatever `--anonymous-auth` says;
 anonymous only for no Authorization header and no client cert. Unit test with
 a garbage token. Proposed after stormcentral#521.
 
-### Store compaction / continue-token expiry (#139, P2) — IN PROGRESS 2026-10-07
+### Store compaction / continue-token expiry (#139, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
       0`, revisions); space reclaim above 80% keeps 1000 revisions anyway;
       stormcos passes none of these flags — no routine compaction today, and
@@ -146,7 +146,9 @@ a garbage token. Proposed after stormcentral#521.
       410 `Expired` + `metadata.continue` (bare key = current snapshot);
       `ApiError::gone` reason `Expired`. Units; `test/e2e/compaction.sh`
       (rigs, with #127's watch check); README/test README/CHANGELOG
-- [ ] Build on a build VM; rigs run waits for stormcentral#526; golden
+- [x] 73589ce on a build VM (sc-build-dc10dbc8b3): workspace 547 passed /
+      4 ignored (apiserver 270), exit 0
+- [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
 ### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — NOT STARTED, waits for a build host
 Small (like #137): FlowSchema + PriorityLevelConfiguration via the generic
