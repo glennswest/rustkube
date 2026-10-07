@@ -982,7 +982,7 @@ impl Controller for Claims<'_> {
     // each bind is a few writes: 25 provisioned claims took 0–2.6 s to bind,
     // one after another (#147, turbomode on pvetest1).
     fn workers(&self) -> usize {
-        8
+        1 // CONTROL for #147: the pre-fix binder
     }
     fn dependencies(&self) -> Vec<Dependency> {
         vec![
