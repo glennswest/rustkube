@@ -15,6 +15,12 @@ Render: npx @marp-team/marp-cli docs/presentation.md          (HTML)
         npx @marp-team/marp-cli docs/presentation.md --pdf    (PDF)
 Checked 2026-10-07 against main (v0.18.0 plus unreleased work) and README.md;
 all slides rendered to PNG (marp-cli, headless Chrome) and inspected for fit (#160).
+Render on a build VM (no browser there; Puppeteer fetches one into the job's TMPDIR):
+  SC_BUILD_VM=1 sc-build 'cd $TMPDIR && npx -y @puppeteer/browsers install
+    chrome-headless-shell@stable --path b && cp $OLDPWD/docs/presentation.md . &&
+    CHROME_PATH=$(find b -name chrome-headless-shell -type f) npx -y
+    @marp-team/marp-cli presentation.md --images png && tar czf - *.png | base64 -w0'
+and decode the printed archive locally to look at the slides.
 Branch code is not a shipped golden or a conformance claim. The file named on each slide is
 where to check it.
 -->
