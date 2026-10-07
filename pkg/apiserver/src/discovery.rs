@@ -192,6 +192,13 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "admissionregistration.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            // API Priority and Fairness objects (#118): served and stored,
+            // not enforced — every request is admitted as before.
+            "name": "flowcontrol.apiserver.k8s.io",
+            "versions": [{"groupVersion": "flowcontrol.apiserver.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "flowcontrol.apiserver.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             // OpenShift's Route, under its upstream group name so `oc get
             // route` and manifests written for OpenShift work unchanged.
             "name": "route.openshift.io",
@@ -782,6 +789,10 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
             ("validatingadmissionpolicybindings", "ValidatingAdmissionPolicyBinding", false),
             ("mutatingadmissionpolicies", "MutatingAdmissionPolicy", false),
             ("mutatingadmissionpolicybindings", "MutatingAdmissionPolicyBinding", false),
+        ],
+        ("flowcontrol.apiserver.k8s.io", "v1") => vec![
+            ("flowschemas", "FlowSchema", false),
+            ("prioritylevelconfigurations", "PriorityLevelConfiguration", false),
         ],
         ("autoscaling", "v1") | ("autoscaling", "v2") => vec![("horizontalpodautoscalers", "HorizontalPodAutoscaler", true)],
         ("networking.k8s.io", "v1") => vec![
@@ -1457,6 +1468,30 @@ pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/flowcontrol.apiserver.k8s.io/v1 — API Priority and Fairness
+/// objects (#118). Stored and served; nothing enforces them.
+pub async fn api_flowcontrol_v1_resources() -> impl IntoResponse {
+    let mut resources = Vec::new();
+    for (name, singular, kind) in [
+        ("flowschemas", "flowschema", "FlowSchema"),
+        ("prioritylevelconfigurations", "prioritylevelconfiguration", "PriorityLevelConfiguration"),
+    ] {
+        resources.push(json!({
+            "name": name, "singularName": singular, "namespaced": false, "kind": kind,
+            "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+        }));
+        resources.push(json!({
+            "name": format!("{name}/status"), "singularName": "", "namespaced": false, "kind": kind,
+            "verbs": ["get", "patch", "update"]
+        }));
+    }
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "flowcontrol.apiserver.k8s.io/v1",
+        "resources": resources
+    }))
+}
+
 /// GET /apis/gateway.networking.k8s.io/v1 — Gateway API resources.
 pub async fn api_gateway_v1_resources() -> impl IntoResponse {
     Json(json!({
@@ -1599,6 +1634,7 @@ mod tests {
             "apiextensions.k8s.io",
             "networking.k8s.io",
             "admissionregistration.k8s.io",
+            "flowcontrol.apiserver.k8s.io",
             "gateway.networking.k8s.io",
             "route.openshift.io",
             "project.openshift.io",

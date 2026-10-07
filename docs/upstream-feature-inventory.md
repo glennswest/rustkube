@@ -35,7 +35,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `node.k8s.io/v1` — RuntimeClass | optional | 🔴 | #135 |
 | `certificates.k8s.io/v1` — CSR | core | ✅ | with `/approval` and `/status`; `csr.rs` approves and signs |
 | `events.k8s.io/v1` — Event | optional | ✅ | translated to/from stored core/v1 (v0.7.34, #48) |
-| `flowcontrol.apiserver.k8s.io/v1` (APF) | optional | 🔴 | |
+| `flowcontrol.apiserver.k8s.io/v1` (APF) | optional | 🟡 | FlowSchema/PriorityLevelConfiguration served with `/status`, mandatory `exempt`/`catch-all` bootstrapped (#118); nothing classifies or queues requests, no `X-Kubernetes-PF-*` headers |
 | `authentication.k8s.io/v1` — TokenReview; SelfSubjectReview | core | 🟡 | TokenReview served and in `/apis` (#85); no SelfSubjectReview (`kubectl auth whoami`) |
 | `authorization.k8s.io/v1` — SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview, LocalSubjectAccessReview | core | ✅ | v0.9.0 (#59), v0.12.0 (#69) |
 | `metrics.k8s.io` | optional | 🟡 | served by the apiserver from each node's cadvisor (#89); pod metrics need cadvisor#3 on stormcos |

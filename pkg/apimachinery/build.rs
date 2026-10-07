@@ -28,6 +28,7 @@ const PROTOS: &[&str] = &[
     "k8s.io/api/scheduling/v1/generated.proto",
     "k8s.io/api/resource/v1/generated.proto",
     "k8s.io/api/admissionregistration/v1/generated.proto",
+    "k8s.io/api/flowcontrol/v1/generated.proto",
     "k8s.io/api/certificates/v1/generated.proto",
     "k8s.io/api/authentication/v1/generated.proto",
     "k8s.io/api/authorization/v1/generated.proto",

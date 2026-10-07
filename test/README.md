@@ -233,6 +233,11 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/flowcontrol.sh` (#118, suite `rigs`): flowcontrol.apiserver.k8s.io/v1
+in `/apis` and discovery, the mandatory exempt/catch-all objects, and per
+resource create, get, list, watch, merge patch, PUT, `/status` patch/get,
+protobuf GET, delete and deletecollection.
+
 `e2e/table-review.sh` (#126, suite `rigs`): a Table-only Accept on
 SelfSubjectAccessReview, SubjectAccessReview and TokenReview is 406
 NotAcceptable; with kubectl's JSON fallback they answer; a pods LIST still

@@ -117,6 +117,7 @@ fn message_name(api_version: &str, kind: &str) -> Option<String> {
         ("scheduling.k8s.io", "v1") => "k8s.io.api.scheduling.v1",
         ("resource.k8s.io", "v1") => "k8s.io.api.resource.v1",
         ("admissionregistration.k8s.io", "v1") => "k8s.io.api.admissionregistration.v1",
+        ("flowcontrol.apiserver.k8s.io", "v1") => "k8s.io.api.flowcontrol.v1",
         ("certificates.k8s.io", "v1") => "k8s.io.api.certificates.v1",
         ("authentication.k8s.io", "v1") => "k8s.io.api.authentication.v1",
         ("authorization.k8s.io", "v1") => "k8s.io.api.authorization.v1",
@@ -987,6 +988,31 @@ mod tests {
         assert_eq!(unknown_fields(&pod, "v1", "Pod").unwrap(), Vec::<String>::new());
         assert!(unknown_fields(&json!({}), "apiextensions.k8s.io/v1", "CustomResourceDefinition").is_none());
         assert!(unknown_fields(&json!({}), "example.com/v1", "Thing").is_none());
+    }
+
+    #[test]
+    fn flowcontrol_objects_round_trip_through_protobuf() {
+        let fs = json!({
+            "apiVersion": "flowcontrol.apiserver.k8s.io/v1", "kind": "FlowSchema",
+            "metadata": {"name": "catch-all"},
+            "spec": {"matchingPrecedence": 10000, "priorityLevelConfiguration": {"name": "catch-all"},
+                     "distinguisherMethod": {"type": "ByUser"},
+                     "rules": [{"subjects": [{"kind": "Group", "group": {"name": "system:authenticated"}}],
+                                "resourceRules": [{"verbs": ["*"], "apiGroups": ["*"], "resources": ["*"],
+                                                   "clusterScope": true, "namespaces": ["*"]}],
+                                "nonResourceRules": [{"verbs": ["*"], "nonResourceURLs": ["*"]}]}]}
+        });
+        let back = decode_to_json(&encode_from_json(&fs, "flowcontrol.apiserver.k8s.io/v1", "FlowSchema").unwrap(), "", "").unwrap();
+        assert_eq!(back["kind"], "FlowSchema");
+        assert_eq!(back["spec"], fs["spec"]);
+        let pl = json!({
+            "apiVersion": "flowcontrol.apiserver.k8s.io/v1", "kind": "PriorityLevelConfiguration",
+            "metadata": {"name": "p"},
+            "spec": {"type": "Limited", "limited": {"nominalConcurrencyShares": 5, "lendablePercent": 10,
+                     "limitResponse": {"type": "Queue", "queuing": {"queues": 64, "handSize": 6, "queueLengthLimit": 50}}}}
+        });
+        let back = decode_to_json(&encode_from_json(&pl, "flowcontrol.apiserver.k8s.io/v1", "PriorityLevelConfiguration").unwrap(), "", "").unwrap();
+        assert_eq!(back["spec"], pl["spec"]);
     }
 
     #[test]

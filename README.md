@@ -98,6 +98,10 @@ to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 configurations, called on writes, below; Validating/MutatingAdmissionPolicy
 and their bindings stored and served with `/status`, but **not evaluated** —
 a create says so in a `Warning`; #119, #234),
+`flowcontrol.apiserver.k8s.io/v1` (FlowSchema and PriorityLevelConfiguration
+with `/status`, upstream's mandatory `exempt`/`catch-all` objects created at
+boot; stored and served, **not enforced** — no request is queued or
+classified, #118),
 `resource.k8s.io/v1` (DRA's DeviceClass, ResourceSlice, ResourceClaim with
 `/status`, ResourceClaimTemplate — stored and served, nothing allocates:
 #137, #225),

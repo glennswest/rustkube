@@ -730,6 +730,30 @@ fn build_router(
                 .put(resource::update_cluster_status)
                 .merge(patch(resource::patch_cluster_status)),
         )
+        // flowcontrol.apiserver.k8s.io/v1 (#118)
+        .route(
+            "/apis/flowcontrol.apiserver.k8s.io/v1",
+            get(discovery::api_flowcontrol_v1_resources),
+        )
+        .route(
+            "/apis/flowcontrol.apiserver.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/flowcontrol.apiserver.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
+        )
+        .route(
+            "/apis/flowcontrol.apiserver.k8s.io/v1/{resource}/{name}/status",
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .merge(patch(resource::patch_cluster_status)),
+        )
         // gateway.networking.k8s.io/v1
         .route(
             "/apis/gateway.networking.k8s.io/v1",
@@ -911,6 +935,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     backfill_namespace_defaults(&storage).await;
     backfill_secret_string_data(&storage).await;
     bootstrap_service_cidr(&storage, &config.service_cidr).await;
+    bootstrap_flowcontrol(&storage).await;
 
     // Bootstrap RBAC resources
     bootstrap_rbac(&storage, config.anonymous_auth, config.dev_anonymous_admin).await;
@@ -1395,6 +1420,43 @@ async fn bootstrap_service_cidr(storage: &ResourceStorage, cidr: &str) {
     });
     crate::handlers::resource::ensure_metadata_pub(&mut obj, "kubernetes", None);
     create_bootstrap(storage, &ResourceStorage::cluster_key("servicecidrs", "kubernetes"), obj, "servicecidrs kubernetes").await;
+}
+
+/// Upstream's mandatory API Priority and Fairness objects (#118): the
+/// `exempt` and `catch-all` PriorityLevelConfigurations and FlowSchemas, as
+/// `apiserver/pkg/apis/flowcontrol/bootstrap` defines them. Created when
+/// absent at boot; nothing enforces them.
+async fn bootstrap_flowcontrol(storage: &ResourceStorage) {
+    let everything = json!({
+        "resourceRules": [{"verbs": ["*"], "apiGroups": ["*"], "resources": ["*"], "clusterScope": true, "namespaces": ["*"]}],
+        "nonResourceRules": [{"verbs": ["*"], "nonResourceURLs": ["*"]}],
+    });
+    let group = |g: &str| json!({"kind": "Group", "group": {"name": g}});
+    let rule = |subjects: Vec<serde_json::Value>| {
+        let mut r = everything.clone();
+        r["subjects"] = json!(subjects);
+        r
+    };
+    let objects = [
+        ("prioritylevelconfigurations", "PriorityLevelConfiguration", "exempt",
+         json!({"type": "Exempt", "exempt": {"nominalConcurrencyShares": 0, "lendablePercent": 0}})),
+        ("prioritylevelconfigurations", "PriorityLevelConfiguration", "catch-all",
+         json!({"type": "Limited", "limited": {"nominalConcurrencyShares": 5, "lendablePercent": 0,
+                                               "limitResponse": {"type": "Reject"}}})),
+        ("flowschemas", "FlowSchema", "exempt",
+         json!({"matchingPrecedence": 1, "priorityLevelConfiguration": {"name": "exempt"},
+                "rules": [rule(vec![group("system:masters")])]})),
+        ("flowschemas", "FlowSchema", "catch-all",
+         json!({"matchingPrecedence": 10000, "priorityLevelConfiguration": {"name": "catch-all"},
+                "distinguisherMethod": {"type": "ByUser"},
+                "rules": [rule(vec![group("system:unauthenticated"), group("system:authenticated")])]})),
+    ];
+    for (resource, kind, name, spec) in objects {
+        let mut obj = json!({"apiVersion": "flowcontrol.apiserver.k8s.io/v1", "kind": kind, "spec": spec, "status": {}});
+        crate::handlers::resource::ensure_metadata_pub(&mut obj, name, None);
+        obj["metadata"]["annotations"] = json!({"apf.kubernetes.io/autoupdate-spec": "true"});
+        create_bootstrap(storage, &ResourceStorage::cluster_key(resource, name), obj, &format!("{resource} {name}")).await;
+    }
 }
 
 async fn bootstrap_namespace(storage: &ResourceStorage, name: &str) {
