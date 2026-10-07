@@ -148,7 +148,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
 - [ ] rigs (stormcentral#512); golden (stormcentral#541); close #87
 
-### HPA (#89, P2) — C WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
+### HPA (#89, P2) — C BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
 serve `metrics.k8s.io` (pods/nodes, `kubectl top`); upstream's ratio,
 tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
@@ -165,8 +165,9 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
 - [x] cadvisor#3 told the labels rustkube reads
 - [x] Built + units at 90208b0 (job 50292519d5): controller-manager 94
       (HPA calculator/behavior units), apiserver 280 (cadvisor summary)
-- [ ] rigs run (stormcentral#512), golden (stormcentral#541). On stormcos
-      pod metrics wait for cadvisor#3
+- [ ] rigs run: 465e6c4490 (C2NR0Q2, 90208b0) image pushed, "registry did
+      not list it" (stormcentral#512; 275 MB image, small ones pass); golden
+      (stormcentral#541). On stormcos pod metrics wait for cadvisor#3
 
 ### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401
