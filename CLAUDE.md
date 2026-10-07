@@ -121,7 +121,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### HPA (#89, P2) — C IN PROGRESS 2026-10-07
+### HPA (#89, P2) — C WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
 Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
 serve `metrics.k8s.io` (pods/nodes, `kubectl top`); upstream's ratio,
 tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
@@ -135,8 +135,10 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
       conditions, currentMetrics, 15 s resync, Pod feed; no metrics → no change
 - [x] Units; `test/e2e/hpa-metrics.sh` (rigs, stub cadvisor); README,
       inventory, oc-compat, presentation, design, test README, CHANGELOG
-- [ ] Build; rigs run (stormcentral#512); comment cadvisor#3 with the labels
-      consumed; golden. On stormcos pod metrics wait for cadvisor#3
+- [x] cadvisor#3 told the labels rustkube reads
+- [ ] Build: refused, `409 build VMs are off` (stormcentral#544), plain
+      sc-build too. Then rigs run (stormcentral#512), golden. On stormcos
+      pod metrics wait for cadvisor#3
 
 ### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401
