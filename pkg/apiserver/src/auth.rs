@@ -720,7 +720,7 @@ pub(crate) mod tests {
                     format!("{}|{}", u.username, u.groups.join(","))
                 }),
             )
-            .layer(axum::middleware::from_fn(|mut req: Request, next: Next| async move {
+            .layer(axum::middleware::from_fn(move |mut req: Request, next: Next| async move {
                 req.extensions_mut().insert(test_keys());
                 req.extensions_mut().insert(crate::token_file::StaticTokens::from_text(
                     "0123456789abcdef0123456789abcdef0123456789abcdef,system:admin,system:admin,\"system:masters\"\n",
