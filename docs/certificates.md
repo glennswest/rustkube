@@ -139,7 +139,9 @@ in anger.
 
 With both `--service-account-signing-key-file` and
 `--service-account-key-file` set, the apiserver verifies a bearer token by its
-RS256 signature against the public key, its times, issuer and audience — and,
+signature (RS256 or ES256) against any of the public keys listed — the flag
+repeats and a file may hold several, so a key rotation has an overlap
+(#223, below) — its times, issuer and audience — and,
 only for a token carrying the `kubernetes.io` claim (TokenRequest's, #182),
 that its ServiceAccount and bound object still exist. A token without that
 claim is not looked up. (With either missing, it falls back to an ephemeral
@@ -217,3 +219,23 @@ rotating the signing key (below).
   would overlap stormcert; #20's scope must be reconciled first.
 - **cert-manager CRD compatibility** (#20 phase 3) — `Issuer`/`ClusterIssuer`/
   `Certificate` for workload and Ingress certificates.
+
+## Rotating the ServiceAccount key (#223)
+
+`--service-account-key-file` takes several public keys (the flag repeated,
+comma-separated, or several PEM blocks in one file); a token verifies against
+any of them, and only `--service-account-signing-key-file` signs. A rotation
+therefore never invalidates outstanding tokens at once:
+
+1. add the new public key to every apiserver's `--service-account-key-file`,
+   beside the old one, and restart them;
+2. switch `--service-account-signing-key-file` to the new private key;
+3. wait for tokens signed with the old key to turn over (pod-bound tokens
+   are refreshed by the kubelet within their 1 h; offline-minted ones must be
+   re-minted);
+4. drop the old public key.
+
+Swapping a single key file instead fails every outstanding token the moment
+it is read. The files are read at start (stormcos#176 owns doing this on a
+cluster).
+

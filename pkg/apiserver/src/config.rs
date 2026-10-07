@@ -55,7 +55,8 @@ pub struct ApiServerConfig {
     /// [`crate::manifests`].
     pub manifest_dir: Option<PathBuf>,
     /// Public key (SPKI PEM) used to *verify* ServiceAccount tokens.
-    pub service_account_key: Option<PathBuf>,
+    /// Every public key tokens may be signed with (#223).
+    pub service_account_key: Vec<PathBuf>,
     /// Private key (PKCS#1/PKCS#8 PEM) used to *sign* ServiceAccount tokens.
     /// Must be the counterpart of `service_account_key`, and identical on every
     /// replica so tokens validate cluster-wide (#11).
@@ -116,7 +117,7 @@ impl Default for ApiServerConfig {
             data_dir: PathBuf::from("/var/lib/kubernetes"),
             service_cidr: "10.96.0.0/12".into(),
             cluster_domain: "cluster.local".into(),
-            service_account_key: None,
+            service_account_key: Vec::new(),
             service_account_signing_key: None,
             token_auth_file: None,
             service_account_issuer: crate::auth::DEFAULT_ISSUER.into(),

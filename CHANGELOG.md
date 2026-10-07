@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** `--service-account-key-file` takes several public keys (#223, for stormcos#176's key rotation), as upstream's does: the flag repeated or comma-separated, and several PEM blocks in one file. A ServiceAccount token verifies against any of them; only `--service-account-signing-key-file` signs. So the signing key can be rotated with an overlap: add the new public key, switch the signing key, drop the old key once tokens have turned over. Keys may be RSA (RS256) or ECDSA P-256 (ES256), for signing and for verifying. docs/certificates.md has the rotation steps.
+- **test:** auth unit: a token signed by the old RSA key verifies after the signing key becomes a new ECDSA one (two files, or one file holding both), the new key's tokens verify, and dropping the old key ends its tokens.
 - **feat:** The `scale` subresource, `autoscaling/v1` Scale (#86). It is served (GET, PUT, PATCH) for Deployments, ReplicaSets and StatefulSets, and for custom resources whose CRD version declares `subresources.scale` (by its paths). Discovery advertised `deployments/scale` with no route, so `kubectl scale` and `oc scale` failed.
   - A write changes only the replicas: conditional on the Scale's `resourceVersion` when given (409 when stale), 422 for a negative count, admitted as an update of the object.
   - Discovery now also lists `replicasets/scale`, `statefulsets/scale`, and a CRD's `…/scale` and `…/status`.

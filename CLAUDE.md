@@ -121,6 +121,14 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
+### ServiceAccount key rotation (#223, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
+- [x] `SigningKeys::from_pem`: signing key RSA or P-256; verify against
+      every public key of every `--service-account-key-file` (repeatable,
+      comma-separated, multi-PEM); unit (old key verifies after rotation);
+      README/certificates.md (rotation steps)/CHANGELOG
+- [ ] Build (stormcentral#544); token-auth / bound-token rigs (#512);
+      golden; close #223
+
 ### Scale subresource (#86, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
 - [x] `handlers/scale.rs`: autoscaling/v1 Scale GET/PUT/PATCH for
       deployments/replicasets/statefulsets and CRDs with

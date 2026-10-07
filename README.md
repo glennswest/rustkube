@@ -615,8 +615,8 @@ override environment values.
 | `--requestheader-allowed-names` | | — | front-proxy certificate common names, comma-separated, published with it; empty: any |
 | `--anonymous-auth` | | `true` | `false` answers 401 to requests without credentials; a rejected token is 401 either way (#115) |
 | `--dev-anonymous-admin` | | `false` | **dev only**: anonymous is `cluster-admin` (needs `--anonymous-auth true`) |
-| `--service-account-signing-key-file` | | — | RSA private key (PEM) that signs tokens |
-| `--service-account-key-file` | | — | its public key (SPKI PEM). RSA requires both files; if either is absent, the code falls back to an ephemeral HS256 key that dies with the process |
+| `--service-account-signing-key-file` | | — | private key (PEM; RSA → RS256, ECDSA P-256 → ES256) that signs tokens |
+| `--service-account-key-file` | | — | public key file(s) tokens are verified against (SPKI PEM, RSA or P-256): repeatable or comma-separated, a file may hold several keys, a token signed by any of them verifies — rotate by adding the new public key, switching the signing key, then dropping the old one (#223). Both flags are needed; with either absent the code falls back to an ephemeral HS256 key that dies with the process |
 | `--token-auth-file` | | — | static bearer tokens, `token,user,uid[,"groups"]` per line; followed for changes, a missing file is no tokens (#188) |
 | `--service-account-issuer` | | `https://kubernetes.default.svc` | `iss` of minted tokens; a token naming another issuer is refused (#182) |
 | `--api-audiences` | | the issuer | audiences a token must be for to authenticate here, comma-separated; TokenRequest's default `aud` |

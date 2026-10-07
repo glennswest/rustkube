@@ -959,19 +959,25 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // an ephemeral per-process HMAC key, which only works single-replica.
     let signing_keys = match (
         &config.service_account_signing_key,
-        &config.service_account_key,
+        config.service_account_key.is_empty(),
     ) {
-        (Some(priv_path), Some(pub_path)) => {
+        (Some(priv_path), false) => {
             let priv_pem = std::fs::read(priv_path).map_err(|e| {
                 anyhow::anyhow!("reading --service-account-signing-key-file {priv_path:?}: {e}")
             })?;
-            let pub_pem = std::fs::read(pub_path).map_err(|e| {
-                anyhow::anyhow!("reading --service-account-key-file {pub_path:?}: {e}")
-            })?;
-            let keys = SigningKeys::from_rsa_pem(&priv_pem, &pub_pem)
-                .map_err(|e| anyhow::anyhow!("loading ServiceAccount RSA keypair: {e}"))?;
+            let mut pub_pems = Vec::new();
+            for pub_path in &config.service_account_key {
+                pub_pems.push(std::fs::read(pub_path).map_err(|e| {
+                    anyhow::anyhow!("reading --service-account-key-file {pub_path:?}: {e}")
+                })?);
+            }
+            let refs: Vec<&[u8]> = pub_pems.iter().map(Vec::as_slice).collect();
+            let keys = SigningKeys::from_pem(&priv_pem, &refs)
+                .map_err(|e| anyhow::anyhow!("loading ServiceAccount keys: {e}"))?;
             tracing::info!(
-                "ServiceAccount tokens: RS256 using {priv_path:?} (verify: {pub_path:?})"
+                "ServiceAccount tokens: signed with {priv_path:?}, verified against {} key(s) in {:?}",
+                keys.verifying_keys(),
+                config.service_account_key
             );
             keys
         }

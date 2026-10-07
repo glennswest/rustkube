@@ -194,6 +194,29 @@ fn serviceaccount_namespace(username: &str) -> Option<&str> {
 /// OpenShift's, the Service name every pod reaches the apiserver by.
 pub const DEFAULT_ISSUER: &str = "https://kubernetes.default.svc";
 
+/// Each `-----BEGIN …-----` … `-----END …-----` block of a PEM file, so a
+/// file of several public keys gives each one.
+fn pem_blocks(pem: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(pem);
+    let mut blocks = Vec::new();
+    let mut cur: Option<String> = None;
+    for line in text.lines() {
+        if line.starts_with("-----BEGIN ") {
+            cur = Some(String::new());
+        }
+        if let Some(b) = cur.as_mut() {
+            b.push_str(line);
+            b.push('\n');
+        }
+        if line.starts_with("-----END ") {
+            if let Some(b) = cur.take() {
+                blocks.push(b);
+            }
+        }
+    }
+    blocks
+}
+
 /// A deleted object's tokens stay good this long past its
 /// `deletionTimestamp`, as upstream allows, so a terminating pod can finish.
 const DELETED_GRACE_SECS: i64 = 60;
@@ -203,9 +226,14 @@ const DELETED_GRACE_SECS: i64 = 60;
 #[derive(Clone)]
 pub struct SigningKeys {
     pub encoding: EncodingKey,
-    pub decoding: DecodingKey,
-    /// Algorithm the keys were built for — RS256 for a real ServiceAccount
-    /// keypair, HS256 for the ephemeral dev key.
+    /// What tokens are verified against, each with its algorithm: every
+    /// public key of every `--service-account-key-file` (#223). A token
+    /// verifies against any of them, so a cluster rotates by adding the new
+    /// public key everywhere, switching the signing key, waiting for tokens
+    /// to turn over and then dropping the old key, as upstream does.
+    decoding: Arc<[(DecodingKey, Algorithm)]>,
+    /// The signing key's algorithm — RS256 or ES256 for a real
+    /// ServiceAccount key, HS256 for the ephemeral dev key.
     algorithm: Algorithm,
     issuer: Arc<str>,
     /// `--api-audiences`: what a token must be for to authenticate here.
@@ -218,10 +246,10 @@ pub struct SigningKeys {
 }
 
 impl SigningKeys {
-    fn with_keys(encoding: EncodingKey, decoding: DecodingKey, algorithm: Algorithm) -> Self {
+    fn with_keys(encoding: EncodingKey, decoding: Vec<(DecodingKey, Algorithm)>, algorithm: Algorithm) -> Self {
         Self {
             encoding,
-            decoding,
+            decoding: decoding.into(),
             algorithm,
             issuer: DEFAULT_ISSUER.into(),
             audiences: vec![DEFAULT_ISSUER.to_string()].into(),
@@ -238,7 +266,7 @@ impl SigningKeys {
         let secret = uuid::Uuid::new_v4().to_string();
         Self::with_keys(
             EncodingKey::from_secret(secret.as_bytes()),
-            DecodingKey::from_secret(secret.as_bytes()),
+            vec![(DecodingKey::from_secret(secret.as_bytes()), Algorithm::HS256)],
             Algorithm::HS256,
         )
     }
@@ -253,11 +281,35 @@ impl SigningKeys {
         private_pem: &[u8],
         public_pem: &[u8],
     ) -> Result<Self, jsonwebtoken::errors::Error> {
-        Ok(Self::with_keys(
-            EncodingKey::from_rsa_pem(private_pem)?,
-            DecodingKey::from_rsa_pem(public_pem)?,
-            Algorithm::RS256,
-        ))
+        Self::from_pem(private_pem, &[public_pem])
+    }
+
+    /// The signing key (RSA, or ECDSA P-256) and every public key in the
+    /// verification files — each file may hold several PEM public keys, as
+    /// upstream's `--service-account-key-file` may (#223).
+    pub fn from_pem(private_pem: &[u8], public_pems: &[&[u8]]) -> Result<Self, jsonwebtoken::errors::Error> {
+        let (encoding, algorithm) = match EncodingKey::from_rsa_pem(private_pem) {
+            Ok(k) => (k, Algorithm::RS256),
+            Err(_) => (EncodingKey::from_ec_pem(private_pem)?, Algorithm::ES256),
+        };
+        let mut decoding = Vec::new();
+        for pem in public_pems {
+            for block in pem_blocks(pem) {
+                decoding.push(match DecodingKey::from_rsa_pem(block.as_bytes()) {
+                    Ok(k) => (k, Algorithm::RS256),
+                    Err(_) => (DecodingKey::from_ec_pem(block.as_bytes())?, Algorithm::ES256),
+                });
+            }
+        }
+        if decoding.is_empty() {
+            return Err(jsonwebtoken::errors::ErrorKind::InvalidKeyFormat.into());
+        }
+        Ok(Self::with_keys(encoding, decoding, algorithm))
+    }
+
+    /// How many keys tokens are verified against.
+    pub fn verifying_keys(&self) -> usize {
+        self.decoding.len()
     }
 
     /// Issuer and API audiences (`--service-account-issuer`,
@@ -322,13 +374,16 @@ impl SigningKeys {
     /// Signature, `exp`/`nbf` and `iss` (when present, it must be ours).
     /// Audiences and bindings are not checked here.
     fn verify(&self, token: &str) -> Option<TokenData<Claims>> {
-        let mut validation = Validation::new(self.algorithm);
-        validation.validate_exp = true;
-        validation.validate_nbf = true;
-        // Checked by `audiences_for`: a token with no `aud` (stormcert's,
-        // gen-node-token.sh's) is for this apiserver.
-        validation.validate_aud = false;
-        let data = decode::<Claims>(token, &self.decoding, &validation).ok()?;
+        // Any verification key will do (#223): the one its signer used.
+        let data = self.decoding.iter().find_map(|(key, algorithm)| {
+            let mut validation = Validation::new(*algorithm);
+            validation.validate_exp = true;
+            validation.validate_nbf = true;
+            // Checked by `audiences_for`: a token with no `aud` (stormcert's,
+            // gen-node-token.sh's) is for this apiserver.
+            validation.validate_aud = false;
+            decode::<Claims>(token, key, &validation).ok()
+        })?;
         match &data.claims.iss {
             Some(iss) if **iss != *self.issuer => None,
             _ => Some(data),
@@ -790,6 +845,27 @@ pub(crate) mod tests {
         // A good token, either scheme spelling, still authenticates.
         let u = whoami_as(Some("bearer 0123456789abcdef0123456789abcdef0123456789abcdef"), true).await.unwrap();
         assert_eq!(u.username, "system:admin");
+    }
+
+    #[test]
+    fn a_token_from_the_old_key_verifies_after_the_signing_key_rotates() {
+        // #223: the old RSA key and a new ECDSA one are both listed for
+        // verification; the new one signs.
+        let new = rcgen::KeyPair::generate().unwrap();
+        let (new_priv, new_pub) = (new.serialize_pem(), new.public_key_pem());
+        let old_token = sign(serde_json::json!({"sub": "system:serviceaccount:a:b", "exp": in_ten_years()}));
+        let both_in_one_file = format!("{TEST_SA_PUB}\n{new_pub}");
+        for verifying in [vec![TEST_SA_PUB.as_bytes(), new_pub.as_bytes()], vec![both_in_one_file.as_bytes()]] {
+            let keys = SigningKeys::from_pem(new_priv.as_bytes(), &verifying).unwrap();
+            assert_eq!(keys.verifying_keys(), 2);
+            assert!(keys.validate_token(&old_token).is_some(), "the old key's token still verifies");
+            let new_token = keys.sign(&keys.validate_token(&old_token).unwrap().claims).unwrap();
+            assert!(keys.validate_token(&new_token).is_some(), "the new key signs, and its tokens verify");
+        }
+        // The old key dropped: its tokens stop verifying.
+        let only_new = SigningKeys::from_pem(new_priv.as_bytes(), &[new_pub.as_bytes()]).unwrap();
+        assert!(only_new.validate_token(&old_token).is_none());
+        assert!(SigningKeys::from_pem(new_priv.as_bytes(), &[b"not a key"]).is_err());
     }
 
     #[test]

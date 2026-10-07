@@ -106,10 +106,13 @@ struct Cli {
     #[arg(long = "insecure", default_value_t = false, action = clap::ArgAction::Set)]
     insecure: bool,
 
-    /// Public key (PEM) used to VERIFY ServiceAccount tokens. Pair with
-    /// --service-account-signing-key-file; must be identical on every replica.
-    #[arg(long = "service-account-key-file")]
-    service_account_key: Option<PathBuf>,
+    /// Public key file(s) (PEM; a file may hold several keys) tokens are
+    /// VERIFIED against — repeat it or separate with commas. A token signed
+    /// by any of them verifies, so the signing key can be rotated with an
+    /// overlap. Pair with --service-account-signing-key-file; identical on
+    /// every replica.
+    #[arg(long = "service-account-key-file", value_delimiter = ',')]
+    service_account_key: Vec<PathBuf>,
 
     /// Directory of manifests to apply once at startup (YAML or JSON, applied
     /// in filename order). Objects are created if absent; an object annotated
