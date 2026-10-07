@@ -67,6 +67,9 @@ pub struct WatchResponseOpts {
     /// for `sendInitialEvents=true`; a plain watch with no resourceVersion
     /// gets the ADDED events alone, as upstream sends them.
     pub initial_end_bookmark: bool,
+    /// `timeoutSeconds` ([`WatchParams::timeout`]): end the stream this long
+    /// after it opened. Everything already sent reaches the client first.
+    pub timeout: Option<Duration>,
 }
 
 /// Convert a watch stream into an HTTP response of chunked JSON watch events,
@@ -82,7 +85,9 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         transform,
         initial,
         initial_end_bookmark,
+        timeout,
     } = opts;
+    let deadline = timeout.map(|t| tokio::time::Instant::now() + t);
 
     // Under `as=PartialObjectMetadata`, every event object (and the type on
     // bookmarks/tombstones) is a meta.k8s.io/v1 PartialObjectMetadata.
@@ -100,8 +105,12 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         let mut last_rev = 0u64;
 
         // --- initial events (WatchList / sendInitialEvents=true) --------------
+        let expired = || deadline.is_some_and(|d| tokio::time::Instant::now() >= d);
         if let Some((items, list_rev)) = initial {
             for obj in &items {
+                if expired() {
+                    return;
+                }
                 if let Some(line) = render_initial_added(
                     obj,
                     &label_selector,
@@ -134,9 +143,15 @@ pub fn watch_response(mut rx: mpsc::Receiver<WatchEvent>, opts: WatchResponseOpt
         let mut idle = interval(Duration::from_secs(BOOKMARK_INTERVAL_SECS));
         idle.set_missed_tick_behavior(MissedTickBehavior::Delay);
         idle.tick().await; // consume the immediate first tick
+        // The deadline: a sleep that never ends without one.
+        let until = tokio::time::sleep_until(deadline.unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(u32::MAX as u64)));
+        tokio::pin!(until);
         loop {
             tokio::select! {
                 _ = tx.closed() => return,
+                // timeoutSeconds passed: end the stream; returning drops the
+                // sender after every line already queued (#165).
+                _ = &mut until => return,
                 maybe = rx.recv() => match maybe {
                     Some(event) => {
                         last_rev = event.revision();
@@ -417,9 +432,30 @@ pub struct WatchParams {
     /// `sendInitialEvents=true` — WatchList: replay current state then emit the
     /// `initial-events-end` bookmark before live events.
     pub send_initial_events: bool,
+    /// `timeoutSeconds` as sent; [`Self::timeout`] reads it (#165).
+    pub timeout_seconds: Option<String>,
 }
 
 impl WatchParams {
+    /// How long a watch may stay open: `timeoutSeconds`, after which the
+    /// server ends the stream cleanly, as upstream does (#165). It was
+    /// ignored, so a watch outlived it until the client's own timeout cut it
+    /// — an error to client-go and to rustkube's reflector, every 330 s.
+    /// Absent or 0: no deadline (upstream then uses `--min-request-timeout`,
+    /// which rustkube does not have). Negative: already expired, as upstream.
+    /// Not an integer: 400.
+    pub fn timeout(&self) -> Result<Option<Duration>, crate::error::ApiError> {
+        let Some(raw) = self.timeout_seconds.as_deref() else { return Ok(None) };
+        let secs: i64 = raw.trim().parse().map_err(|_| {
+            crate::error::ApiError::bad_request(&format!("timeoutSeconds: Invalid value: \"{raw}\": must be an integer"))
+        })?;
+        Ok(match secs {
+            0 => None,
+            s if s < 0 => Some(Duration::ZERO),
+            s => Some(Duration::from_secs(s as u64)),
+        })
+    }
+
     /// Does this watch start with the current state, as ADDED events?
     ///
     /// For `sendInitialEvents=true`, and — as upstream — for a watch with no
@@ -453,6 +489,7 @@ impl WatchParams {
             field_selector: None,
             allow_watch_bookmarks: false,
             send_initial_events: false,
+            timeout_seconds: None,
         };
         // Percent-decode keys and values. Clients (kubectl, client-go) URL-encode
         // query values — notably the `continue` token, which is a raw store key
@@ -470,6 +507,11 @@ impl WatchParams {
                     params.resource_version_raw = Some(val.into_owned());
                 }
                 "resourceVersionMatch" => params.resource_version_match = Some(val.into_owned()),
+                "timeoutSeconds" => {
+                    if !val.is_empty() {
+                        params.timeout_seconds = Some(val.into_owned());
+                    }
+                }
                 "limit" => params.limit = val.parse().ok(),
                 "continue" => {
                     if !val.is_empty() {
@@ -496,6 +538,55 @@ impl WatchParams {
 #[cfg(test)]
 mod tests {
     use super::WatchParams;
+
+    #[test]
+    fn timeout_seconds_is_parsed_and_checked() {
+        use std::time::Duration;
+        let t = |q: &str| WatchParams::from_query(q).timeout();
+        assert_eq!(t("watch=true").unwrap(), None);
+        assert_eq!(t("watch=true&timeoutSeconds=300").unwrap(), Some(Duration::from_secs(300)));
+        assert_eq!(t("watch=true&timeoutSeconds=0").unwrap(), None);
+        assert_eq!(t("watch=true&timeoutSeconds=-1").unwrap(), Some(Duration::ZERO));
+        assert_eq!(t("watch=true&timeoutSeconds=abc").unwrap_err().status, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    fn opts(timeout: Option<std::time::Duration>) -> super::WatchResponseOpts {
+        super::WatchResponseOpts {
+            label_selector: None, field_selector: None, api_version: "v1".into(), kind: "ConfigMap".into(),
+            allow_bookmarks: false, metadata_only: false, transform: None, initial: None,
+            initial_end_bookmark: false, timeout,
+        }
+    }
+
+    /// An idle watch ends at its deadline, cleanly; events sent before it
+    /// reach the client (#165).
+    #[tokio::test]
+    async fn a_watch_ends_at_timeout_seconds_after_delivering_its_events() {
+        use std::time::{Duration, Instant};
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let cm = serde_json::json!({"apiVersion": "v1", "kind": "ConfigMap",
+                                    "metadata": {"name": "a", "namespace": "d", "resourceVersion": "7"}});
+        tx.send(apimachinery::watch::WatchEvent::Added {
+            key: "/registry/configmaps/d/a".into(), value: serde_json::to_vec(&cm).unwrap(), revision: 7,
+        }).await.unwrap();
+        let started = Instant::now();
+        let resp = super::watch_response(rx, opts(Some(Duration::from_millis(300))));
+        let body = tokio::time::timeout(Duration::from_secs(5), axum::body::to_bytes(resp.into_body(), usize::MAX))
+            .await
+            .expect("the stream must end at its deadline, not hang")
+            .expect("a clean end, not an error");
+        let took = started.elapsed();
+        assert!(took >= Duration::from_millis(300) && took < Duration::from_secs(2), "ended after {took:?}");
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.contains("\"ADDED\"") && text.contains("\"name\":\"a\""), "{text}");
+        drop(tx); // the upstream watch was still open: the deadline ended it
+
+        // Without a deadline the stream stays open.
+        let (_tx, rx) = tokio::sync::mpsc::channel::<apimachinery::watch::WatchEvent>(1);
+        let resp = super::watch_response(rx, opts(None));
+        assert!(tokio::time::timeout(Duration::from_millis(500), axum::body::to_bytes(resp.into_body(), usize::MAX)).await.is_err());
+    }
 
     /// No resourceVersion, or "0", starts with the current state (#67).
     #[test]

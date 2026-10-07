@@ -17,8 +17,8 @@ controller/scheduler matrix and 418 workspace tests. Twenty fresh short runs
 pass; the original #153/#154 incidents remain open without a proven cause.
 The original inventory and resume order below are historical; rustkube steps
 2–3 are complete within the owner's dev acceptance boundary. Live scale and
-multi-master acceptance remain #147/#149. WATCH timeoutSeconds is separately
-tracked in #165; the snapshot probe uses a strict client observation deadline.
+multi-master acceptance remain #147/#149. WATCH timeoutSeconds is honoured since
+#165 (2026-10-07); the snapshot probe kept its strict client observation deadline.
 Owner instruction #163 supersedes the branch-only restriction: integrate into
 main after whole-workspace checks on turbomode and main, then continue open
 turbomode issues on main. Do not request a golden for this integration.

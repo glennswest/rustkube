@@ -76,6 +76,7 @@ pub(crate) async fn watch_prefix(
             transform: None,
             initial,
             initial_end_bookmark: params.send_initial_events,
+            timeout: params.timeout()?,
         },
     ))
 }

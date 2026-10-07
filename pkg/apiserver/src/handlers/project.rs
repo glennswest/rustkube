@@ -452,6 +452,7 @@ pub async fn list_projects(
                 transform: Some(namespace_to_project),
                 initial,
                 initial_end_bookmark: params.send_initial_events,
+                timeout: params.timeout()?,
             },
         ));
     }

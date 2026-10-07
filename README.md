@@ -138,7 +138,10 @@ stored CRDs are registered (#185).
 in both directions; Table output for `kubectl get` (the create-only reviews —
 TokenReview, the access reviews, SelfSubjectRulesReview — have none: an
 Accept offering only a Table is 406 `NotAcceptable`, #126); `PartialObjectMetadata`;
-watch with bookmarks and `sendInitialEvents` (a watch with no
+watch with bookmarks, `sendInitialEvents` and `timeoutSeconds` (the stream
+ends cleanly at that deadline, after what was already sent; absent or 0 is no
+deadline — upstream's `--min-request-timeout` default is not implemented;
+not an integer is 400; #165) (a watch with no
 `resourceVersion`, or `0`, starts with the current objects as ADDED events;
 a DELETED event carries the
 object's last state from the watch cache, and selectors apply to it; a watch

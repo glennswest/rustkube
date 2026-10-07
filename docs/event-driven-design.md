@@ -211,7 +211,8 @@ counted as a reset, requeueing every object whenever a watch timed out. A
 feed now delivers nothing for a heartbeat or revision-only echo, and resets
 only on a new snapshot or on reconnecting after an outage.
 A third (#207): the reflector bounds each WATCH itself at 330 s (it asks for
-`timeoutSeconds=300`, which the apiserver ignores, #165), and that deadline
+`timeoutSeconds=300`, which the apiserver ignored until #165 — it now ends
+the stream at 300 s, a clean close the reflector resumes from), and that deadline
 was handled as a transport failure — a warning, every feed unsynchronized
 (the GC failing closed), a counted reconnect with backoff, and a recovery
 reset on resume, per watch every ~5.5 min. Reaching its own deadline on an

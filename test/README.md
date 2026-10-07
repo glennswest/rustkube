@@ -233,6 +233,10 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/watch-timeout.sh` (#165, suite `rigs`): built-in, WatchList and
+custom-resource watches end cleanly at `timeoutSeconds`, an event before the
+deadline arrives first, no `timeoutSeconds` stays open, a non-integer is 400.
+
 `e2e/endpointslice-mirroring.sh` (#133, suite `rigs`): the conformance
 spec's create/update/delete of a custom Endpoints mirrored into a slice
 (owner, labels, same slice on update), an IPv6 address in its own slice,

@@ -181,6 +181,7 @@ async fn list_or_watch(state: &AppState, prefix: &str, query: &str) -> Result<Re
                 transform: Some(core_to_events),
                 initial,
                 initial_end_bookmark: params.send_initial_events,
+                timeout: params.timeout()?,
             },
         ));
     }
