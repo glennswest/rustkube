@@ -476,7 +476,7 @@ pub async fn update_cluster_resource(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = put_object(&state, &key, &name, None, body).await?;
+    let obj = put_object(&state, &key, &name, None, body, StatusField::Writable).await?;
     Ok(Json(obj))
 }
 
@@ -500,6 +500,7 @@ pub(crate) async fn put_object(
     name: &str,
     namespace: Option<&str>,
     mut body: Value,
+    status: StatusField,
 ) -> Result<Value, ApiError> {
     let existing = state.storage.get(key).await?;
     if !body.is_object() {
@@ -536,13 +537,56 @@ pub(crate) async fn put_object(
         }
     }
     keep_server_fields(&mut body, &existing, name, namespace);
+    status.on_update(&mut body, &existing);
     check_immutable(key, &existing, &body)?;
     if key.starts_with("/registry/persistentvolumeclaims/") {
         crate::builtin_admission::pvc_update(&state.storage, &existing, &body).await?;
     }
     crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
     keep_server_fields(&mut body, &existing, name, namespace);
+    status.on_update(&mut body, &existing);
     persist_or_finalize(state, key, body).await
+}
+
+/// What a write through the main resource may do to `status` (#128).
+///
+/// A custom resource whose CRD enables the `status` subresource keeps status
+/// for `/status`: upstream's strategy drops the status a create submits and
+/// carries the stored status over an update, so a spec writer (a user's
+/// `kubectl apply`, a GitOps sync) cannot replace what the controller
+/// reported. Every other object is `Writable`, as it was.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StatusField {
+    Writable,
+    Kept,
+}
+
+impl StatusField {
+    /// A create through the main resource.
+    pub fn on_create(self, obj: &mut Value) {
+        if self == StatusField::Kept {
+            if let Some(o) = obj.as_object_mut() {
+                o.remove("status");
+            }
+        }
+    }
+
+    /// An update through the main resource: `stored` is what is there now.
+    pub fn on_update(self, obj: &mut Value, stored: &Value) {
+        if self != StatusField::Kept {
+            return;
+        }
+        if let Some(o) = obj.as_object_mut() {
+            match stored.get("status") {
+                Some(s) => {
+                    o.insert("status".into(), s.clone());
+                }
+                None => {
+                    o.remove("status");
+                }
+            }
+        }
+    }
 }
 
 /// Carry the fields the server owns from the stored object into its
@@ -571,7 +615,7 @@ pub async fn update_namespaced_resource(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = put_object(&state, &key, &name, Some(&namespace), body).await?;
+    let obj = put_object(&state, &key, &name, Some(&namespace), body, StatusField::Writable).await?;
     Ok(Json(obj))
 }
 
@@ -1376,6 +1420,7 @@ pub(crate) async fn patch_stored_object(
     headers: &axum::http::HeaderMap,
     query: &str,
     body: &[u8],
+    status: StatusField,
 ) -> Result<Value, ApiError> {
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -1389,23 +1434,27 @@ pub(crate) async fn patch_stored_object(
     let mut attempt = 0;
     loop {
         let patched = guaranteed_patch(state, key, content_type, body, |existing| {
-            if !is_apply {
+            let stored = existing.clone();
+            let mut out = if !is_apply {
                 let mut existing = existing;
                 apply_patch_body(&mut existing, content_type, body)?;
-                return Ok(existing);
-            }
-            // Server-side apply: merge the intent, track field ownership in
-            // managedFields, and reject a foreign-owned change unless forced.
-            let applied: Value = serde_yaml::from_slice(body)
-                .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
-            crate::apply::server_side_apply(existing, &applied, &field_manager, &now, force)
-                .map_err(|c| {
-                    ApiError::conflict(&format!(
-                        "Apply failed with 1 conflict: field \"{}\" is managed by \"{}\" \
-                         (set fieldManager force to override)",
-                        c.field, c.manager
-                    ))
-                })
+                existing
+            } else {
+                // Server-side apply: merge the intent, track field ownership in
+                // managedFields, and reject a foreign-owned change unless forced.
+                let applied: Value = serde_yaml::from_slice(body)
+                    .map_err(|e| ApiError::invalid(&format!("invalid apply patch: {e}")))?;
+                crate::apply::server_side_apply(existing, &applied, &field_manager, &now, force)
+                    .map_err(|c| {
+                        ApiError::conflict(&format!(
+                            "Apply failed with 1 conflict: field \"{}\" is managed by \"{}\" \
+                             (set fieldManager force to override)",
+                            c.field, c.manager
+                        ))
+                    })?
+            };
+            status.on_update(&mut out, &stored);
+            Ok(out)
         })
         .await;
         match patched {
@@ -1427,6 +1476,7 @@ pub(crate) async fn patch_stored_object(
                 }
                 crate::admission::admit(state, crate::admission::Operation::Create, Some(&mut obj), None).await?;
                 ensure_metadata(&mut obj, name, namespace);
+                status.on_create(&mut obj);
                 match state.storage.create(key, obj).await {
                     // Somebody created it between the read and the create:
                     // apply to theirs, as the next attempt will.
@@ -1466,7 +1516,7 @@ pub async fn patch_cluster_resource(
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
     let q = query.as_deref().unwrap_or("");
-    let obj = patch_stored_object(&state, &key, &resource, &name, None, &headers, q, &body).await?;
+    let obj = patch_stored_object(&state, &key, &resource, &name, None, &headers, q, &body, StatusField::Writable).await?;
     Ok(Json(obj))
 }
 
@@ -1481,7 +1531,7 @@ pub async fn patch_namespaced_resource(
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
     let q = query.as_deref().unwrap_or("");
     let obj =
-        patch_stored_object(&state, &key, &resource, &name, Some(&namespace), &headers, q, &body)
+        patch_stored_object(&state, &key, &resource, &name, Some(&namespace), &headers, q, &body, StatusField::Writable)
             .await?;
     Ok(Json(obj))
 }
@@ -2485,23 +2535,89 @@ mod status_put_tests {
         // Zero-valued server fields, as a protobuf body decodes: kept.
         let body = json!({"metadata": {"name": "c1", "uid": "", "creationTimestamp": null,
                                        "resourceVersion": rv}, "data": {"a": "2"}});
-        let out = put_object(&s, &key, "c1", Some("default"), body).await.unwrap();
+        let out = put_object(&s, &key, "c1", Some("default"), body, StatusField::Writable).await.unwrap();
         assert_eq!(out["metadata"]["uid"], "u1");
         assert_eq!(out["metadata"]["creationTimestamp"], "2026-01-01T00:00:00Z");
         assert_eq!(out["data"]["a"], "2");
 
         let rename = json!({"metadata": {"name": "other"}, "data": {}});
-        let err = put_object(&s, &key, "c1", Some("default"), rename).await.unwrap_err();
+        let err = put_object(&s, &key, "c1", Some("default"), rename, StatusField::Writable).await.unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
 
         let other_uid = json!({"metadata": {"name": "c1", "uid": "u2"}, "data": {}});
-        let err = put_object(&s, &key, "c1", Some("default"), other_uid).await.unwrap_err();
+        let err = put_object(&s, &key, "c1", Some("default"), other_uid, StatusField::Writable).await.unwrap_err();
         assert_eq!(err.status, StatusCode::CONFLICT);
 
         let missing = ResourceStorage::namespaced_key("configmaps", "default", "nope");
-        let err = put_object(&s, &missing, "nope", Some("default"), json!({"metadata": {"name": "nope"}}))
+        let err = put_object(&s, &missing, "nope", Some("default"), json!({"metadata": {"name": "nope"}}), StatusField::Writable)
             .await.unwrap_err();
         assert_eq!(err.status, StatusCode::NOT_FOUND);
+    }
+
+    /// A custom resource whose CRD enables `/status` (#128): PUT, merge
+    /// patch, JSON patch and server-side apply through the main resource
+    /// change spec and leave the stored status; `Writable` objects keep
+    /// whole-object semantics.
+    #[tokio::test]
+    async fn main_writes_keep_status_when_it_is_a_subresource() {
+        let s = state();
+        let key = ResourceStorage::namespaced_key("example.com/widgets", "default", "w1");
+        s.storage.create(&key, json!({
+            "apiVersion": "example.com/v1", "kind": "Widget",
+            "metadata": {"name": "w1", "namespace": "default", "uid": "u1"},
+            "spec": {"size": 1}, "status": {"phase": "Ready"}})).await.unwrap();
+        let hdr = |ct: &str| {
+            let mut h = axum::http::HeaderMap::new();
+            h.insert(axum::http::header::CONTENT_TYPE, ct.parse().unwrap());
+            h
+        };
+
+        let out = put_object(&s, &key, "w1", Some("default"), json!({
+            "metadata": {"name": "w1"}, "spec": {"size": 2}, "status": {"phase": "Hacked"}}),
+            StatusField::Kept).await.unwrap();
+        assert_eq!((out["spec"]["size"].clone(), out["status"].clone()), (json!(2), json!({"phase": "Ready"})));
+        // A PUT without status does not delete it either.
+        let out = put_object(&s, &key, "w1", Some("default"), json!({"metadata": {"name": "w1"}, "spec": {"size": 3}}),
+            StatusField::Kept).await.unwrap();
+        assert_eq!(out["status"], json!({"phase": "Ready"}));
+
+        for (ct, body) in [
+            ("application/merge-patch+json", r#"{"spec":{"size":4},"status":{"phase":"Hacked"}}"#),
+            ("application/json-patch+json", r#"[{"op":"replace","path":"/spec/size","value":5},{"op":"replace","path":"/status","value":{"phase":"Hacked"}}]"#),
+            ("application/apply-patch+yaml", "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w1}\nspec: {size: 6}\nstatus: {phase: Hacked}\n"),
+        ] {
+            let out = patch_stored_object(&s, &key, "widgets", "w1", Some("default"), &hdr(ct),
+                "fieldManager=t&force=true", body.as_bytes(), StatusField::Kept).await.unwrap();
+            assert_eq!(out["status"], json!({"phase": "Ready"}), "{ct}");
+        }
+        assert_eq!(s.storage.get(&key).await.unwrap()["spec"]["size"], 6);
+
+        // Server-side apply creating a missing object: its status is dropped.
+        let key2 = ResourceStorage::namespaced_key("example.com/widgets", "default", "w2");
+        let out = patch_stored_object(&s, &key2, "widgets", "w2", Some("default"), &hdr("application/apply-patch+yaml"),
+            "fieldManager=t", b"apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w2}\nspec: {size: 1}\nstatus: {phase: Hacked}\n",
+            StatusField::Kept).await.unwrap();
+        assert!(out.get("status").is_none(), "{out}");
+
+        // Writable: status is an ordinary field.
+        let out = patch_stored_object(&s, &key, "widgets", "w1", Some("default"), &hdr("application/merge-patch+json"),
+            "", br#"{"status":{"phase":"Set"}}"#, StatusField::Writable).await.unwrap();
+        assert_eq!(out["status"], json!({"phase": "Set"}));
+        let out = put_object(&s, &key, "w1", Some("default"), json!({"metadata": {"name": "w1"}, "spec": {}}),
+            StatusField::Writable).await.unwrap();
+        assert!(out.get("status").is_none());
+    }
+
+    #[test]
+    fn status_field_on_create_and_update() {
+        let mut o = json!({"spec": {}, "status": {"a": 1}});
+        StatusField::Writable.on_create(&mut o);
+        assert!(o.get("status").is_some());
+        StatusField::Kept.on_create(&mut o);
+        assert!(o.get("status").is_none());
+        let mut o = json!({"spec": {}, "status": {"a": 2}});
+        StatusField::Kept.on_update(&mut o, &json!({"spec": {}}));
+        assert!(o.get("status").is_none(), "nothing stored, nothing kept");
     }
 
     /// A patch that nulls creationTimestamp — the conformance suite's own

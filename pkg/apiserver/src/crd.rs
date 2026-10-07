@@ -3,6 +3,7 @@
 //! Dynamic resource registration: when a CRD is created, its custom resources
 //! become available as API endpoints.
 
+use crate::handlers::resource::StatusField;
 use crate::error::ApiError;
 use crate::handlers::AppState;
 use crate::storage::ResourceStorage;
@@ -38,6 +39,12 @@ pub struct CrdDefinition {
     /// AGE. The columns are the CRD author's, so honouring them covers every
     /// custom resource at once rather than one hand-written printer per kind.
     pub printer_columns: Vec<Value>,
+    /// The version enables the `status` subresource (#128). Then status
+    /// belongs to `/status`: a create through the main resource drops the
+    /// body's status, and an update through it keeps the stored one, as
+    /// upstream's custom-resource strategy does. Without it, status is an
+    /// ordinary field of the object.
+    pub status_subresource: bool,
 }
 
 /// Registry of all active CRDs, keyed by group → version → plural.
@@ -105,7 +112,10 @@ impl CrdRegistry {
         //
         // `served: false` is a version that exists in storage and is not
         // offered over the API, so it is skipped rather than registered.
-        let mut versions: Vec<(String, Vec<Value>)> = crd["spec"]["versions"]
+        // `subresources` is per version in apiextensions v1; v1beta1 put it
+        // on the spec for every version.
+        let all_status = crd["spec"]["subresources"]["status"].is_object();
+        let mut versions: Vec<(String, Vec<Value>, bool)> = crd["spec"]["versions"]
             .as_array()
             .map(|vs| {
                 vs.iter()
@@ -116,17 +126,18 @@ impl CrdRegistry {
                             .as_array()
                             .cloned()
                             .unwrap_or_default();
-                        Some((name, cols))
+                        let status = all_status || v["subresources"]["status"].is_object();
+                        Some((name, cols, status))
                     })
                     .collect()
             })
             .unwrap_or_default();
         if versions.is_empty() {
-            versions.push(("v1".to_string(), Vec::new()));
+            versions.push(("v1".to_string(), Vec::new(), all_status));
         }
 
         let mut crds = self.crds.write().await;
-        for (version, printer_columns) in versions {
+        for (version, printer_columns, status_subresource) in versions {
             let def = CrdDefinition {
                 group: group.clone(),
                 version: version.clone(),
@@ -136,6 +147,7 @@ impl CrdRegistry {
                 short_names: short_names.clone(),
                 scope,
                 printer_columns,
+                status_subresource,
             };
             crds.entry(group.clone())
                 .or_default()
@@ -203,6 +215,14 @@ impl CrdRegistry {
             .filter(|d| seen.insert((d.group.clone(), d.plural.clone())))
             .cloned()
             .collect()
+    }
+
+    /// What the main resource of this version may do to `status` (#128).
+    pub async fn status_field(&self, group: &str, version: &str, resource: &str) -> StatusField {
+        match self.lookup(group, version, resource).await {
+            Some(d) if d.status_subresource => StatusField::Kept,
+            _ => StatusField::Writable,
+        }
     }
 
     /// Look up a CRD definition by group, version, and resource plural.
@@ -657,6 +677,7 @@ pub async fn crd_create_ns(
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
+    state.crd_registry.status_field(&group, &version, &resource).await.on_create(&mut body);
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
@@ -681,7 +702,8 @@ pub async fn crd_update_ns(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
-    let obj = crate::handlers::resource::put_object(&state, &key, &name, Some(&namespace), body).await?;
+    let status = state.crd_registry.status_field(&group, &version, &resource).await;
+    let obj = crate::handlers::resource::put_object(&state, &key, &name, Some(&namespace), body, status).await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }
@@ -697,9 +719,10 @@ pub async fn crd_patch_ns(
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
     // Shared path so server-side apply upserts a missing CR + tracks managedFields (#45).
+    let status = state.crd_registry.status_field(&group, &version, &resource).await;
     let obj = crate::handlers::resource::patch_stored_object(
         &state, &key, &resource, &name, Some(&namespace), &headers,
-        query.as_deref().unwrap_or(""), &body,
+        query.as_deref().unwrap_or(""), &body, status,
     )
     .await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
@@ -804,8 +827,9 @@ pub async fn crd_patch_cluster(
     check_crd_write(&resource, Some(&name), None)?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
     // Shared path so server-side apply upserts a missing CR + tracks managedFields (#45).
+    let status = state.crd_registry.status_field(&group, &version, &resource).await;
     let obj = crate::handlers::resource::patch_stored_object(
-        &state, &key, &resource, &name, None, &headers, query.as_deref().unwrap_or(""), &body,
+        &state, &key, &resource, &name, None, &headers, query.as_deref().unwrap_or(""), &body, status,
     )
     .await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
@@ -990,6 +1014,7 @@ pub async fn crd_create_cluster(
         return Ok((StatusCode::CREATED, Json(obj)));
     }
 
+    state.crd_registry.status_field(&group, &version, &resource).await.on_create(&mut body);
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
 }
@@ -1014,7 +1039,8 @@ pub async fn crd_update_cluster(
     validate_crd(&state, &group, &version, &resource).await?;
     check_crd_write(&resource, Some(&name), Some(&body))?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
-    let obj = crate::handlers::resource::put_object(&state, &key, &name, None, body).await?;
+    let status = state.crd_registry.status_field(&group, &version, &resource).await;
+    let obj = crate::handlers::resource::put_object(&state, &key, &name, None, body, status).await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
 }
@@ -1174,6 +1200,24 @@ async fn validate_crd(
 
 #[cfg(test)]
 mod establish_tests {
+
+    /// `subresources.status` per version (v1), or for all on the spec
+    /// (v1beta1), decides what the main resource may do to status (#128).
+    #[tokio::test]
+    async fn status_subresource_is_read_per_version() {
+        let reg = CrdRegistry::new();
+        reg.register(&json!({"spec": {"group": "example.com", "scope": "Namespaced",
+            "names": {"plural": "widgets", "kind": "Widget"},
+            "versions": [{"name": "v1", "served": true, "subresources": {"status": {}}},
+                         {"name": "v2", "served": true}]}})).await;
+        reg.register(&json!({"spec": {"group": "old.example.com", "scope": "Cluster",
+            "names": {"plural": "gadgets", "kind": "Gadget"}, "subresources": {"status": {}},
+            "versions": [{"name": "v1beta1", "served": true}]}})).await;
+        assert_eq!(reg.status_field("example.com", "v1", "widgets").await, StatusField::Kept);
+        assert_eq!(reg.status_field("example.com", "v2", "widgets").await, StatusField::Writable);
+        assert_eq!(reg.status_field("old.example.com", "v1beta1", "gadgets").await, StatusField::Kept);
+        assert_eq!(reg.status_field("example.com", "v1", "nothing").await, StatusField::Writable);
+    }
     use super::*;
 
     #[test]
