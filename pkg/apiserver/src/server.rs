@@ -52,6 +52,14 @@ fn build_router(
         .route("/openapi/v3/{*path}", get(discovery::openapi_v3_group))
         .route("/apis", get(discovery::api_groups_dynamic))
         .route("/apis/", get(discovery::api_groups_dynamic))
+        // metrics.k8s.io from each node's cadvisor (#89), before the CRD
+        // catch-alls.
+        .route("/apis/metrics.k8s.io/v1beta1", get(crate::resource_metrics::resources))
+        .route("/apis/metrics.k8s.io/v1beta1/nodes", get(crate::resource_metrics::list_nodes))
+        .route("/apis/metrics.k8s.io/v1beta1/nodes/{name}", get(crate::resource_metrics::get_node))
+        .route("/apis/metrics.k8s.io/v1beta1/pods", get(crate::resource_metrics::list_pods_all))
+        .route("/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods", get(crate::resource_metrics::list_pods))
+        .route("/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods/{name}", get(crate::resource_metrics::get_pod))
         .route("/apis/{group}", get(discovery::api_group))
         .route("/apis/{group}/", get(discovery::api_group))
         .route("/api/v1", get(discovery::api_v1_resources))
@@ -1010,6 +1018,12 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         service_cidr: config.service_cidr.clone(),
         admission: Default::default(),
         aggregator: aggregator.clone(),
+        resource_metrics: Arc::new(crate::resource_metrics::ResourceMetrics::new(
+            &config.cadvisor_scheme,
+            config.cadvisor_port,
+            config.cadvisor_ca.as_deref(),
+            config.cadvisor_token_file.clone(),
+        )?),
     };
     // Prometheus recorder + /metrics, shared with the other components
     // (apimachinery::metrics) so the `process_*` family and the build-info

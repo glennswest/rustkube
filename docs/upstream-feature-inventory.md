@@ -38,7 +38,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `flowcontrol.apiserver.k8s.io/v1` (APF) | optional | 🔴 | |
 | `authentication.k8s.io/v1` — TokenReview; SelfSubjectReview | core | 🟡 | TokenReview served and in `/apis` (#85); no SelfSubjectReview (`kubectl auth whoami`) |
 | `authorization.k8s.io/v1` — SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview, LocalSubjectAccessReview | core | ✅ | v0.9.0 (#59), v0.12.0 (#69) |
-| `metrics.k8s.io` | optional | 🔴 | aggregation exists (#83); no metrics server or built-in source yet (#89) |
+| `metrics.k8s.io` | optional | 🟡 | served by the apiserver from each node's cadvisor (#89); pod metrics need cadvisor#3 on stormcos |
 | `project.openshift.io/v1` — Project, ProjectRequest | OpenShift | ✅ | Projects over Namespaces, owned by their requester, listed only to members (v0.15.0, #97) |
 
 ## 2. apiserver features
@@ -74,7 +74,7 @@ approve + sign, PodMigration, VirtualMachine, VirtualMachineInstanceMigration
 (control-plane half; the transfer is rustkube-node#40, #184), VMI launcher
 Pods (#203). Leader election ✅.
 
-🟡 placeholders: HPA (inert: no metrics source, scales nothing, #89); Gateway API (status
+🟡 placeholders: HPA (Resource metrics only; on stormcos pod metrics wait for cadvisor#3, #89); Gateway API (status
 only, own classes only, `Programmed=False`, no address; #70, #91).
 
 ✅ the `kube-root-ca.crt` publisher (#67).
@@ -174,7 +174,7 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
    The protobuf empty-UID GC defect (#99) was fixed in v0.15.3.
 
 **Then:**
-7. Aggregation (#83) → metrics API → a real HPA (#89).
+7. Pod metrics from cadvisor on stormcos (cadvisor#3) → HPA scales there (#89).
 8. OpenAPI schemas (`kubectl explain`), CRD schema validation, conversion webhooks.
 9. Validate the indexed informer implementation at scale and under failover (#66/#147/#149).
 10. API Priority & Fairness, audit, ValidatingAdmissionPolicy.

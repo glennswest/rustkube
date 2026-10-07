@@ -29,4 +29,6 @@ pub struct AppState {
     pub admission: Arc<crate::admission::Webhooks>,
     /// The APIServices this apiserver proxies to (#83).
     pub aggregator: Arc<crate::aggregation::Aggregator>,
+    /// Where each node's cadvisor is, for `metrics.k8s.io` (#89).
+    pub resource_metrics: Arc<crate::resource_metrics::ResourceMetrics>,
 }

@@ -324,6 +324,7 @@ mod tests {
             service_cidr: "10.96.0.0/12".into(),
             admission: Default::default(),
             aggregator: Arc::new(crate::aggregation::Aggregator::new(None)),
+            resource_metrics: Arc::new(crate::resource_metrics::ResourceMetrics::new("http", 9096, None, None).unwrap()),
         };
         (state, test_keys().with_bound_objects(storage))
     }

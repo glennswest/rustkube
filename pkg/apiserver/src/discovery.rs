@@ -161,6 +161,11 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "subresources.kubevirt.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "metrics.k8s.io",
+            "versions": [{"groupVersion": "metrics.k8s.io/v1beta1", "version": "v1beta1"}],
+            "preferredVersion": {"groupVersion": "metrics.k8s.io/v1beta1", "version": "v1beta1"}
+        }),
+        json!({
             "name": "policy",
             "versions": [{"groupVersion": "policy/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "policy/v1", "version": "v1"}

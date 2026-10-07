@@ -3,6 +3,16 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** `metrics.k8s.io/v1beta1` is served by the apiserver from each node's cadvisor (#89; owner's decision: the metrics come from cadvisor).
+  - NodeMetrics and PodMetrics (list, get, label selectors; `kubectl top`) read `/api/v1.3/subcontainers/` at each node's InternalIP. New flags: `--cadvisor-scheme`, `--cadvisor-port` (default 9096), `--cadvisor-ca-file`, `--cadvisor-token-file`. Answers are cached 10 s per node.
+  - A node's usage is its root cgroup's: CPU rate over the last two samples, memory working set.
+  - A pod's usage is the sum of its containers, found by upstream's `io.kubernetes.pod.namespace` / `io.kubernetes.pod.name` / `io.kubernetes.container.name` cgroup labels. stormpump's containers carry none until cadvisor#3, so on stormcos `top node` works and pods have no metrics yet.
+  - The group is built in. `view` (and so `edit`/`admin`) reads pod metrics.
+- **feat:** The HorizontalPodAutoscaler scales (#89), replacing this morning's inert controller. It runs upstream's replica calculator on `Resource` metrics (cpu/memory, `Utilization` or `AverageValue`; cpu 80 % when none are listed), within the 0.1 tolerance. Missing pods count against the direction of change and unready pods count as 0 for a cpu scale-up. The highest metric wins.
+  - `spec.behavior` is honoured, or upstream's default: up by max(100 %, 4 pods) per 15 s; down by 100 % per 15 s after 300 s of stabilisation. Then min/max, and the target's `spec.replicas` is written.
+  - Status: `currentMetrics`, `AbleToScale`, `ScalingActive`, `ScalingLimited`. With no pod metrics nothing is changed (`ScalingActive=False/FailedGetResourceMetric`).
+  - It re-evaluates every 15 s and reads Pods from its own feed. `Pods`/`Object`/`External`/`ContainerResource` metrics are not evaluated.
+- **test:** units for the cadvisor summary (node, pods, sandbox, unlabelled cgroups, one-sample), node address, the replica calculator (ratio, tolerance, missing and unready pods, AverageValue, errors), stabilisation, rate limits, min/max, behavior overrides and quantities. New `test/e2e/hpa-metrics.sh` (suite `rigs`) with a stub cadvisor.
 - **fix:** Metrics (#90).
   - Every histogram has `_bucket` series: upstream's buckets for `apiserver_request_duration_seconds` and `etcd_request_duration_seconds` (0.005 s … 60 s), upstream's exponential ones for `scheduler_e2e_scheduling_duration_seconds`, and client_golang's defaults for the rest. They were all rendered as summaries, so `histogram_quantile(…_bucket)` returned nothing.
   - `controller_reconcile_duration_seconds` and `controller_reconcile_errors_total` are recorded for every object reconcile (`owned::run`); nothing called them.

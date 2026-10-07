@@ -132,7 +132,7 @@ Gateway\*.
 node and pod (anti-)affinity, topology spread, resource fit, volume binding
 incl. `CSIStorageCapacity` and `ReadWriteOncePod`; scores summed; VMIs placed.
 
-\* HPA is inert until there is a metrics source — no scaling, `ScalingActive=False` (#89); Gateway writes status only, for its own classes, `Programmed=False` (#70, #91).
+\* HPA on cpu/memory from cadvisor via `metrics.k8s.io`; pod metrics on stormcos wait for cadvisor#3 (#89); Gateway writes status only, for its own classes, `Programmed=False` (#70, #91).
 
 ---
 
@@ -193,7 +193,7 @@ Built as modules but **not wired**:
 
 Missing:
 - `/scale` subresource — `kubectl scale` fails (#86) · `schedulingGates` (#87)
-- a real HPA with a metrics API (#89)
+- pod metrics on stormcos: cadvisor attributing stormpump cgroups (cadvisor#3)
 - generic ephemeral volumes (#94); expansion and snapshot API integration
   now have upstream-sidecar tests (#63/#64), not full node acceptance
 - Node authorizer

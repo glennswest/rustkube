@@ -221,6 +221,15 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/hpa-metrics.sh` (#89, suite `rigs`): a stub cadvisor answers
+`/api/v1.3/subcontainers/` with the root cgroup and labelled containers for
+the namespace's Pods (the rig marks Pods Running/Ready: no kubelet).
+NodeMetrics and PodMetrics come from it (sandbox left out); an HPA at 50 %
+of a 100m request with Pods at 200 % scales the Deployment to maxReplicas 5
+(`currentMetrics` 200, `ValidMetricFound`, `ScalingLimited`), back to 1 at
+0 usage, and with cadvisor gone reads `FailedGetResourceMetric` and leaves
+the count.
+
 `e2e/metrics-auth.sh` (#90, suite `rigs`): the apiserver's `/metrics` is
 401 without a token, 403 without a grant, 200 for `system:monitoring`, with
 `_bucket` series and no summaries and `process_cpu_seconds_total` a counter;

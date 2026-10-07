@@ -37,6 +37,22 @@ struct Cli {
     #[arg(long = "etcd-compaction-interval", default_value = "5m0s", value_parser = apiserver::compactor::parse_interval)]
     etcd_compaction_interval: std::time::Duration,
 
+    /// Scheme of each node's cadvisor, read for metrics.k8s.io (http, https)
+    #[arg(long = "cadvisor-scheme", default_value = "http")]
+    cadvisor_scheme: String,
+
+    /// Port of each node's cadvisor (stormcos: 9096)
+    #[arg(long = "cadvisor-port", default_value_t = 9096)]
+    cadvisor_port: u16,
+
+    /// CA bundle (PEM) to verify cadvisor over https
+    #[arg(long = "cadvisor-ca-file")]
+    cadvisor_ca: Option<PathBuf>,
+
+    /// Bearer token file sent to cadvisor (its --bearer-token-file)
+    #[arg(long = "cadvisor-token-file")]
+    cadvisor_token_file: Option<PathBuf>,
+
     /// Client certificate (PEM) presented to aggregated API servers, as
     /// upstream's front proxy; renewed in place without a restart
     #[arg(long = "proxy-client-cert-file")]
@@ -165,6 +181,10 @@ async fn main() -> anyhow::Result<()> {
         etcd_cert: cli.etcd_cert,
         etcd_key: cli.etcd_key,
         etcd_compaction_interval: cli.etcd_compaction_interval,
+        cadvisor_scheme: cli.cadvisor_scheme,
+        cadvisor_port: cli.cadvisor_port,
+        cadvisor_ca: cli.cadvisor_ca,
+        cadvisor_token_file: cli.cadvisor_token_file,
         proxy_client_cert: cli.proxy_client_cert,
         proxy_client_key: cli.proxy_client_key,
         requestheader_client_ca: cli.requestheader_client_ca,

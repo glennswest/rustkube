@@ -542,6 +542,8 @@ fn view_rules() -> Vec<Value> {
         .map(|(g, rs)| rule(&[*g], rs, READ))
         .collect();
     rules.push(rule(&["project.openshift.io"], &["projects"], &["get"]));
+    // `kubectl top pod` in the project, as upstream's view aggregates (#89).
+    rules.push(rule(&["metrics.k8s.io"], &["pods"], &["get", "list"]));
     rules
 }
 

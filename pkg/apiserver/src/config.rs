@@ -34,6 +34,12 @@ pub struct ApiServerConfig {
     pub requestheader_client_ca: Option<PathBuf>,
     /// Common names a front-proxy certificate may have; empty: any.
     pub requestheader_allowed_names: Vec<String>,
+    /// Each node's cadvisor, for `metrics.k8s.io` (#89): scheme, port,
+    /// a CA for https, a bearer token file.
+    pub cadvisor_scheme: String,
+    pub cadvisor_port: u16,
+    pub cadvisor_ca: Option<PathBuf>,
+    pub cadvisor_token_file: Option<PathBuf>,
     /// How often the datastore is compacted (#139); zero turns it off.
     pub etcd_compaction_interval: std::time::Duration,
     /// Data directory (TLS material, misc runtime state).
@@ -98,6 +104,10 @@ impl Default for ApiServerConfig {
             etcd_cacert: None,
             etcd_cert: None,
             etcd_key: None,
+            cadvisor_scheme: "http".into(),
+            cadvisor_port: 9096,
+            cadvisor_ca: None,
+            cadvisor_token_file: None,
             proxy_client_cert: None,
             proxy_client_key: None,
             requestheader_client_ca: None,

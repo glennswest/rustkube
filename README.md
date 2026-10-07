@@ -485,12 +485,33 @@ sending, the controller marks the VMI's migration failed with
 `abortRequested` and waits up to 5 min for the source to answer. Progress
 and timeouts of a running transfer are the source's.
 
-**HPA is inert** until it has a metrics source (#89): it changes no
-replica counts, and reports the target's count as current and desired with
-`AbleToScale=True` and `ScalingActive=False` (`FailedGetResourceMetric`, "no
-metrics source"), as upstream does when the resource metrics API answers
-nothing; a target it cannot read is `AbleToScale=False` (`FailedGetScale`).
-It used to scale every target to `maxReplicas` on Ready Pods. **Gateway API**
+**HPA** (#89) is upstream's algorithm on `metrics.k8s.io`, which the
+apiserver serves from each node's cadvisor (below). Every 15 s and on a
+target change it computes each `Resource` metric's count (`cpu`/`memory`,
+`Utilization` of requests or `AverageValue`; none listed: cpu 80 %), with
+upstream's 0.1 tolerance, missing Pods counted as 100 % on the way down and
+0 on the way up, unready Pods as 0 for a cpu scale-up; takes the highest;
+applies `spec.behavior` or upstream's default (up by max(100 %, 4 Pods) per
+15 s; down 100 % per 15 s after 300 s of stabilisation) and min/max; and
+writes the Deployment's, ReplicaSet's or StatefulSet's `spec.replicas`.
+Status: `currentMetrics`, `AbleToScale`, `ScalingActive`, `ScalingLimited`.
+Without pod metrics it changes nothing (`ScalingActive=False`,
+`FailedGetResourceMetric`, the message naming why). `Pods`, `Object`,
+`External` and `ContainerResource` metrics are not evaluated.
+
+**`metrics.k8s.io/v1beta1`** (NodeMetrics, PodMetrics; `kubectl top`) is
+served by the apiserver itself from each node's cadvisor
+(`/api/v1.3/subcontainers/` at the node's InternalIP,
+`--cadvisor-scheme`/`--cadvisor-port` 9096/`--cadvisor-ca-file`/
+`--cadvisor-token-file`), cached 10 s per node: a node's usage is its root
+cgroup's (CPU rate over the last two samples, memory working set), a Pod's
+the sum of the containers carrying upstream's `io.kubernetes.pod.namespace`
+/ `io.kubernetes.pod.name` / `io.kubernetes.container.name` labels.
+containerd and CRI-O containers carry them; stormpump's do not until
+cadvisor attributes them (cadvisor#3), so on stormcos today `kubectl top
+node` works and a Pod has no metrics (404). The group is built in: an
+APIService cannot take it over. `view` (and so `edit`/`admin`) may read pod
+metrics. **Gateway API**
 is status only, with no data plane (#70). It acts only on GatewayClasses
 whose `controllerName` is `rustkube.io/gateway-controller`, their Gateways,
 and its own entries in HTTPRoutes' `status.parents`; other controllers'
@@ -574,6 +595,8 @@ override environment values.
 | `--tls` | | off | serve a self-signed cert generated at start, held in memory only; DNS SANs `kubernetes…` and `localhost`, no IP SANs |
 | `--insecure` | | `false` | allow plain HTTP when no TLS is configured; without it the server refuses to start |
 | `--client-ca-file` | | — | enables x509 client-certificate authentication; **reloaded when the file changes**, for new connections (#105) |
+| `--cadvisor-scheme`, `--cadvisor-port` | | `http`, `9096` | where each node's cadvisor answers, for `metrics.k8s.io` (#89) |
+| `--cadvisor-ca-file`, `--cadvisor-token-file` | | — | CA for an https cadvisor, and the bearer token sent to it |
 | `--proxy-client-cert-file`, `--proxy-client-key-file` | | — | the client certificate presented to aggregated API servers (#83); followed on disk |
 | `--requestheader-client-ca-file` | | — | the CA of `--proxy-client-cert-file`, published in `kube-system/extension-apiserver-authentication` (#83) |
 | `--requestheader-allowed-names` | | — | front-proxy certificate common names, comma-separated, published with it; empty: any |

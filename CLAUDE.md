@@ -126,22 +126,17 @@ Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
 serve `metrics.k8s.io` (pods/nodes, `kubectl top`); upstream's ratio,
 tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
 - [x] A: `hpa.rs` inert (5415161), compiled + units at 566403b
-- [ ] apiserver `resource_metrics.rs`: `metrics.k8s.io/v1beta1` NodeMetrics
-      and PodMetrics served natively from each node's cadvisor
-      (`/api/v1.3/subcontainers/`, InternalIP:`--cadvisor-port` 9096,
-      optional token/CA/https): node = root cgroup, pods by the
-      `io.kubernetes.pod.{namespace,name}` / `io.kubernetes.container.name`
-      labels (upstream's contract — stormpump pods carry none until
-      cadvisor#3); CPU rate from the last two samples, memory working set;
-      10 s cache per node; discovery; view/edit/admin get pod metrics
-- [ ] HPA controller: upstream replica calculator (Utilization/AverageValue,
-      tolerance 0.1, missing/unready pods), max over metrics, behavior
-      (default scale-up 100%/4 pods per 15 s, scale-down stabilisation 300 s,
-      100% per 15 s; spec.behavior honoured), min/max, conditions
-      (AbleToScale, ScalingActive, ScalingLimited), currentMetrics; 15 s resync;
-      no pod metrics → ScalingActive=False as now
-- [ ] Units; rig `hpa-metrics.sh` (stub cadvisor); docs; build; comment
-      cadvisor#3 with the labels consumed
+- [x] apiserver `resource_metrics.rs`: `metrics.k8s.io/v1beta1` NodeMetrics
+      / PodMetrics from each node's cadvisor (`/api/v1.3/subcontainers/`,
+      InternalIP, `--cadvisor-scheme/-port/-ca-file/-token-file`), root cgroup
+      for nodes, `io.kubernetes.*` labels for pods, 10 s cache; discovery
+      (built-in group); view reads pod metrics
+- [x] HPA: upstream calculator, behavior/stabilisation/rate limits, min/max,
+      conditions, currentMetrics, 15 s resync, Pod feed; no metrics → no change
+- [x] Units; `test/e2e/hpa-metrics.sh` (rigs, stub cadvisor); README,
+      inventory, oc-compat, presentation, design, test README, CHANGELOG
+- [ ] Build; rigs run (stormcentral#512); comment cadvisor#3 with the labels
+      consumed; golden. On stormcos pod metrics wait for cadvisor#3
 
 ### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401
