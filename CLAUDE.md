@@ -95,6 +95,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### VM reads Starting while the kubelet retries a failed start (#209, P1) — IN PROGRESS 2026-10-06
+rustkube-node#76: under Always/RerunOnFailure/running the kubelet retries a
+failed start itself; the VMI stays `Pending`, `reason: FailedStart`. #104's
+VM status reacts only to phase `Failed`, so the VM reads Starting forever.
+- [ ] `virtualmachine.rs`: a VMI with `reason: FailedStart` (not finished,
+      not Running) → `CrashLoopBackOff` + `Failure` condition with the VMI's
+      reason/message; `startFailure`/recreate untouched (kubelet's retry)
+- [ ] Units; `test/e2e/vm-runstrategy.sh`: kubelet-written FailedStart →
+      CrashLoopBackOff, message, VMI not replaced, Running clears it
+- [ ] README/CHANGELOG; sc-build; golden; close #209
+
 ### CR main writes overwrite status (#128, P1) — COMPLETE 2026-10-06
 A CRD version with `subresources.status`: upstream's main POST drops the
 body's status, main PUT/PATCH/apply keep the stored status; rustkube stored
