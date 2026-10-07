@@ -146,6 +146,16 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
+### Gateway controller: own classes only (#91, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
+- [x] a4670a6 `gateway.rs`: acts only on GatewayClasses with controllerName
+      `rustkube.io/gateway-controller`, their Gateways, and its own HTTPRoute
+      `status.parents` entries (others kept; a route of foreign Gateways not
+      written); no `status.addresses`; Gateway + listeners `Programmed=False`
+      (Pending, no data plane). 3 units; README/inventory/presentation/CHANGELOG
+- [ ] Compile + units: build-VM job 7ed858f673 cancelled while queued
+      (stormcentral#535); then golden, close #91. Whether the controller
+      should exist stays #70
+
 ### API aggregation wired (#83, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
 Done when a registered, Available APIService's group is in discovery and its
 requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
