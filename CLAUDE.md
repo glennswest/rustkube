@@ -107,6 +107,11 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### HPA placeholder (#89, P2) — NEEDS OWNER 2026-10-07
+The issue leaves the choice to the owner. Asked, `wait-owner`: A inert with
+ScalingActive=False (recommended now), B remove the controller, C a real HPA
+from kubelets' /metrics/resource (own issue after A).
+
 ### Rejected bearer token → 401, not anonymous (#115, P2) — NOT STARTED, waits for a build host
 `auth_middleware`: a presented Bearer token that fails `validate_token` must
 be 401 (Status, reason Unauthorized) whatever `--anonymous-auth` says;
