@@ -221,6 +221,12 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/service-create.sh` (#113, suite `rigs`) times Service creates: 100
+sequential (each under 1 s, the last 20 no slower than twice the first 20)
+and 25 concurrent (all 201 within 10 s), checks 125 distinct ClusterIPs
+none in the bottom 256 of the /12, a fixed address there granted, and a taken
+one refused (422).
+
 `e2e/aggregation.sh` (#83, suite `rigs`): a Python stub aggregated API
 server behind Service `agg/stub` (ClusterIP 127.0.0.9, caBundle the rig's
 CA, front-proxy client certificate required). The APIService goes

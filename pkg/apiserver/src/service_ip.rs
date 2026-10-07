@@ -13,6 +13,18 @@
 //! which is what makes a repair loop possible later — a scan over Services can
 //! tell you what *should* be allocated but never what leaked.
 //!
+//! **The address is picked from what is known to be free (#113).** Claiming
+//! used to walk the range from the bottom, one create-if-absent per address,
+//! until one succeeded: a create cost one store write per Service already
+//! there, and concurrent creates all raced for the same lowest free address,
+//! so they were answered one after another (1.5 s each, 5.4 s at 75
+//! Services). Now the candidate comes from the watch cache's view of the
+//! claims, at a random free offset as upstream's allocator does — upper band
+//! first, the lower one (where fixed addresses like the DNS Service's live)
+//! only once that is full. A create is one claim, and two creates almost
+//! never want the same address; when they do, or when the view trails
+//! another apiserver's claim, the loser takes the next free one.
+//!
 //! Upstream keeps this in the Service registry rather than in admission, and
 //! for the same reason it is its own module here: allocation is a side effect
 //! with its own lifetime, not a validation.
@@ -157,6 +169,44 @@ pub async fn reconcile(storage: &ResourceStorage) -> usize {
     claimed
 }
 
+/// The addresses claimed, as the watch cache sees the claim keys. Empty
+/// when the cache cannot answer: every candidate is then tried against the
+/// store, which is slower but still correct.
+async fn claimed(storage: &ResourceStorage) -> std::collections::HashSet<u32> {
+    let prefix = format!("{PREFIX}/");
+    match storage.watch_cache().snapshot(&prefix).await {
+        Ok((_, items)) => items
+            .iter()
+            .filter_map(|(k, _)| k.strip_prefix(&prefix)?.parse::<std::net::Ipv4Addr>().ok())
+            .map(u32::from)
+            .collect(),
+        Err(_) => Default::default(),
+    }
+}
+
+/// The size of the band at the bottom of a range of `count` addresses that
+/// dynamic allocation leaves for fixed ones until the rest is full —
+/// upstream's `min(max(16, count/16), 256)` (KEP-3070).
+fn static_band(count: u64) -> u64 {
+    (count / 16).clamp(16, 256).min(count)
+}
+
+/// Offsets to try for a range of `count` addresses: the upper band from a
+/// random point, wrapping, then the lower band the same way. The network
+/// (0) and broadcast (`count - 1`) offsets are never offered.
+fn candidates(count: u64, start: u64) -> impl Iterator<Item = u64> {
+    let usable = |o: u64| o >= 1 && o + 1 < count;
+    let band = static_band(count);
+    let upper = band..count;
+    let lower = 0..band;
+    let spin = move |r: std::ops::Range<u64>| {
+        let len = r.end.saturating_sub(r.start);
+        let first = if len == 0 { 0 } else { start % len };
+        (0..len).map(move |i| r.start + (first + i) % len)
+    };
+    spin(upper).chain(spin(lower)).filter(move |o| usable(*o))
+}
+
 /// Give a Service a ClusterIP, unless it should not have one.
 pub async fn allocate(
     storage: &ResourceStorage,
@@ -196,12 +246,16 @@ pub async fn allocate(
     let Some((base, prefix)) = parse_cidr(cidr) else {
         return Ok(());
     };
-    let count = 1u32 << (32 - prefix.min(32));
-    // From 1: the network address is never handed out.
-    for offset in 1..count.saturating_sub(1) {
-        let Some(v) = u32::from(base).checked_add(offset) else {
-            break;
+    let count = 1u64 << (32 - prefix.min(32));
+    let mut taken = claimed(storage).await;
+    let start = uuid::Uuid::new_v4().as_u128() as u64;
+    for offset in candidates(count, start) {
+        let Some(v) = u32::from(base).checked_add(offset as u32) else {
+            continue;
         };
+        if taken.contains(&v) {
+            continue;
+        }
         let candidate = std::net::Ipv4Addr::from(v).to_string();
         if claim(storage, &candidate, &namespace, &name).await? {
             obj["spec"]["clusterIP"] = json!(candidate);
@@ -211,6 +265,8 @@ pub async fn allocate(
             }
             return Ok(());
         }
+        // Lost it: claimed by a create the view had not seen yet.
+        taken.insert(v);
     }
     // Refused rather than created without an address: a Service that exists
     // and resolves to nothing is worse than one that failed.
@@ -261,6 +317,27 @@ mod tests {
         assert_eq!(prefix, 12);
         assert!(parse_cidr("10.96.0.0").is_none());
         assert!(parse_cidr("nonsense/12").is_none());
+    }
+
+    #[test]
+    fn candidates_cover_the_range_upper_band_first_and_never_the_ends() {
+        // A /24: 256 addresses, a band of 16 at the bottom.
+        let all: Vec<u64> = candidates(256, 12345).collect();
+        assert_eq!(all.len(), 254, "every address but network and broadcast, once");
+        let mut sorted = all.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 254);
+        assert!(!all.contains(&0) && !all.contains(&255));
+        let first_low = all.iter().position(|o| *o < 16).unwrap();
+        assert!(all[..first_low].iter().all(|o| *o >= 16), "the upper band is offered first");
+        assert_eq!(first_low, 255 - 16, "…all of it");
+        // A different start begins elsewhere: two creates rarely collide.
+        assert_ne!(candidates(256, 1).next(), candidates(256, 200).next());
+        // /12's band is 256, a /28's is the whole range (16), then nothing above.
+        assert_eq!(static_band(1 << 20), 256);
+        assert_eq!(static_band(16), 16);
+        assert_eq!(candidates(16, 3).count(), 14);
     }
 
     /// The claim key is derived from the address alone, so two Services

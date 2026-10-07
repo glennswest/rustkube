@@ -146,6 +146,17 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
+### Service create cost (#113, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
+Cause (from the code): `service_ip::allocate` walked the range from offset
+1, one store create-if-absent per address, so N Services = N+1 writes per
+create, and concurrent creates raced for the same lowest address.
+- [x] Candidate = random free address from the watch cache's view of the
+      claim keys, upper band first (upstream's static band min(max(16,
+      size/16), 256) last); lost race → next. Claim keys unchanged. Unit;
+      `test/e2e/service-create.sh` (rigs); README/test README/CHANGELOG
+- [ ] Compile + units (stormcentral#535), rigs run (stormcentral#526) for
+      the timings, golden, close #113
+
 ### Gateway controller: own classes only (#91, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
 - [x] a4670a6 `gateway.rs`: acts only on GatewayClasses with controllerName
       `rustkube.io/gateway-controller`, their Gateways, and its own HTTPRoute

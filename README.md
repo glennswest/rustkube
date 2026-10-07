@@ -311,7 +311,11 @@ boot (#101).
 
 **Admission**, on create: NamespaceLifecycle, namespace defaults (`Active`,
 the `kubernetes` finalizer), Service port defaults and ClusterIP allocation
-from `--service-cidr`, the pod's default ServiceAccount and its projected
+from `--service-cidr` (each address an atomic claim key; a dynamic one is a
+random free address from the watch cache's view of the claims, above the
+bottom band upstream keeps for fixed addresses — `min(max(16, size/16),
+256)` — until that is full, so a create is one claim whatever the number of
+Services, #113), the pod's default ServiceAccount and its projected
 `kube-api-access-*` token volume (unless the pod or ServiceAccount sets
 `automountServiceAccountToken: false`), the not-ready /
 unreachable tolerations, priority from its PriorityClass, a subset of
