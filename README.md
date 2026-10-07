@@ -349,7 +349,9 @@ class, the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approv
 (`start`/`stop`/`restart`; a failed VMI is recreated with backoff under
 `Always`/`RerunOnFailure`/`running: true` and left under `Once`/`Manual`,
 the VM reading `CrashLoopBackOff` or `Failed` with the VMI's message on a
-`Failure` condition, #104), VMI launcher Pods (#203, below), and
+`Failure` condition, #104; a start the kubelet is retrying itself — VMI
+`Pending` with `reason: FailedStart` — reads `CrashLoopBackOff` with that
+attempt's message, and the VMI is left to the kubelet, #209), VMI launcher Pods (#203, below), and
 VirtualMachineInstanceMigration (#184, below).
 Events are emitted for creates, deletes and scaling, and expired ones are
 deleted.
