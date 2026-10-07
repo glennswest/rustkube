@@ -484,6 +484,15 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
                 "shortNames": ["rs"]
             },
             {
+                "name": "replicasets/scale",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Scale",
+                "group": "autoscaling",
+                "version": "v1",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
                 "name": "statefulsets",
                 "categories": ["all"],
                 "singularName": "statefulset",
@@ -497,6 +506,15 @@ pub async fn api_apps_v1_resources() -> impl IntoResponse {
                 "singularName": "",
                 "namespaced": true,
                 "kind": "StatefulSet",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "statefulsets/scale",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Scale",
+                "group": "autoscaling",
+                "version": "v1",
                 "verbs": ["get", "patch", "update"]
             },
             {

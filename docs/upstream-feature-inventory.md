@@ -19,7 +19,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `core/v1` — PodTemplate, ReplicationController, LimitRange, ResourceQuota | core | 🟡 | objects are served/discovered; no ReplicationController controller (#125), LimitRanger (#131), or quota enforcement (#124) |
 | `core/v1` — `pods/binding` | core | 🔴 | scheduler binds with a conditional PUT of `spec.nodeName` |
 | `apps/v1` — Deployment, ReplicaSet, StatefulSet, DaemonSet | core | ✅ | apiserver + controllers |
-| `apps/v1` — ControllerRevision; the `/scale` subresource | core | 🔴 | ControllerRevision is not in discovery and nothing writes one; `deployments/scale` is advertised with no route (#86) |
+| `apps/v1` — ControllerRevision; the `/scale` subresource | core | 🔴 | ControllerRevision is not in discovery and nothing writes one; `/scale` served for deployments, replicasets, statefulsets and CRDs with `subresources.scale` (#86) |
 | `batch/v1` — Job, CronJob | core | ✅ | |
 | `coordination.k8s.io/v1` — Lease | core | ✅ | leader election, node heartbeats |
 | `rbac.authorization.k8s.io/v1` | core | 🟡 | `rbac_engine.rs`; no ClusterRole `aggregationRule`; escalation prevention (`bind`/`escalate` or held rules, `escalation.rs`, #98) |
@@ -166,7 +166,7 @@ paths, `/status` optimistic concurrency (#78), Projects (#97).
 **Open, conformance-blocking:**
 1. LimitRanger, ResourceQuota (admission webhooks are wired, #82).
 2. Node authorizer (nodes are `cluster-admin` today).
-3. `/scale` (#86).
+3. ~~`/scale` (#86)~~ served.
 4. Kubelet exec/attach/port-forward (rustkube-node#56).
 5. Scheduler: preemption (#84).
 6. Live turbomode acceptance at scale and under failover (#147/#149); datastore

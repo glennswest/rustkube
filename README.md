@@ -154,8 +154,17 @@ main writes still store the status they are sent. A custom resource's
 subresource) or anything outside `metadata` (without); `/status` and
 metadata-only writes leave it, and a value the client sends is ignored, so a
 controller can report `status.observedGeneration`. Built-in objects get no
-generation yet. There is **no `/scale`** subresource, though
-discovery advertises `deployments/scale`, so `kubectl scale` fails (#86).
+generation yet.
+
+**`/scale`** (#86), `autoscaling/v1` Scale, GET/PUT/PATCH, for
+Deployments, ReplicaSets and StatefulSets (`spec.replicas`,
+`status.replicas`, `spec.selector` as a string), and for custom resources
+whose CRD version declares `subresources.scale` (its
+`specReplicasPath`/`statusReplicasPath`/`labelSelectorPath`). A write
+changes only the replicas, conditional on the Scale's `resourceVersion`
+when it carries one (409 when stale), negative replicas 422; it is admitted
+as an update of the object. Discovery lists each `…/scale` (and a CRD's
+`…/status`); `kubectl scale` and `oc scale` work.
 
 **Proxied to the kubelet** (`https://<node>:10250`, authenticated with a token
 the apiserver mints for itself as `system:kube-apiserver`): `pods/log`

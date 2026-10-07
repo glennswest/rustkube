@@ -11,6 +11,7 @@ pub mod kubevirt;
 pub mod logs;
 pub mod project;
 pub mod resource;
+pub mod scale;
 pub mod streaming;
 pub mod token;
 

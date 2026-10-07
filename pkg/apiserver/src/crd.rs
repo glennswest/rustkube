@@ -49,6 +49,8 @@ pub struct CrdDefinition {
     /// `validation.openAPIV3Schema`), for defaulting, pruning and
     /// fieldValidation (#121). `None`: stored as sent.
     pub schema: Option<std::sync::Arc<Value>>,
+    /// The version's `subresources.scale` paths (#86); None: no `/scale`.
+    pub scale: Option<crate::handlers::scale::ScalePaths>,
 }
 
 /// Registry of all active CRDs, keyed by group → version → plural.
@@ -119,9 +121,10 @@ impl CrdRegistry {
         // `subresources` is per version in apiextensions v1; v1beta1 put it
         // on the spec for every version.
         let all_status = crd["spec"]["subresources"]["status"].is_object();
+        let all_scale = crate::handlers::scale::ScalePaths::from_crd(&crd["spec"]["subresources"]["scale"]);
         let all_schema = crd["spec"]["validation"]["openAPIV3Schema"].clone();
         #[allow(clippy::type_complexity)]
-        let mut versions: Vec<(String, Vec<Value>, bool, Value)> = crd["spec"]["versions"]
+        let mut versions: Vec<(String, Vec<Value>, bool, Value, Option<crate::handlers::scale::ScalePaths>)> = crd["spec"]["versions"]
             .as_array()
             .map(|vs| {
                 vs.iter()
@@ -137,17 +140,19 @@ impl CrdRegistry {
                             Value::Object(_) => v["schema"]["openAPIV3Schema"].clone(),
                             _ => all_schema.clone(),
                         };
-                        Some((name, cols, status, schema))
+                        let scale = crate::handlers::scale::ScalePaths::from_crd(&v["subresources"]["scale"])
+                            .or_else(|| all_scale.clone());
+                        Some((name, cols, status, schema, scale))
                     })
                     .collect()
             })
             .unwrap_or_default();
         if versions.is_empty() {
-            versions.push(("v1".to_string(), Vec::new(), all_status, all_schema.clone()));
+            versions.push(("v1".to_string(), Vec::new(), all_status, all_schema.clone(), all_scale.clone()));
         }
 
         let mut crds = self.crds.write().await;
-        for (version, printer_columns, status_subresource, schema) in versions {
+        for (version, printer_columns, status_subresource, schema, scale) in versions {
             let def = CrdDefinition {
                 group: group.clone(),
                 version: version.clone(),
@@ -159,6 +164,7 @@ impl CrdRegistry {
                 printer_columns,
                 status_subresource,
                 schema: schema.is_object().then(|| std::sync::Arc::new(schema)),
+                scale,
             };
             crds.entry(group.clone())
                 .or_default()
@@ -294,7 +300,7 @@ impl CrdRegistry {
         };
         resources
             .values()
-            .map(|def| {
+            .flat_map(|def| {
                 let mut res = json!({
                     "name": def.plural,
                     "singularName": def.singular,
@@ -305,7 +311,18 @@ impl CrdRegistry {
                 if !def.short_names.is_empty() {
                     res["shortNames"] = json!(def.short_names);
                 }
-                res
+                let mut out = vec![res];
+                let namespaced = def.scope == CrdScope::Namespaced;
+                if def.status_subresource {
+                    out.push(json!({"name": format!("{}/status", def.plural), "singularName": "", "namespaced": namespaced,
+                                    "kind": def.kind, "verbs": ["get", "patch", "update"]}));
+                }
+                // #86: `kubectl scale` finds the subresource here.
+                if def.scale.is_some() {
+                    out.push(json!({"name": format!("{}/scale", def.plural), "singularName": "", "namespaced": namespaced,
+                                    "group": "autoscaling", "version": "v1", "kind": "Scale", "verbs": ["get", "patch", "update"]}));
+                }
+                out
             })
             .collect()
     }

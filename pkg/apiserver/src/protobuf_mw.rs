@@ -37,6 +37,11 @@ fn header_str<'a>(headers: &'a header::HeaderMap, name: header::HeaderName) -> &
 ///   /api/v1/.../{resource}[/{name}[/{sub}]]            -> ("v1", Kind(resource))
 ///   /apis/{group}/{version}/.../{resource}[/{name}...] -> ("group/version", Kind)
 fn path_gvk(path: &str) -> (String, String) {
+    // The scale subresource's body is an autoscaling/v1 Scale whatever its
+    // parent (#86).
+    if path.trim_end_matches('/').ends_with("/scale") {
+        return ("autoscaling/v1".into(), "Scale".into());
+    }
     let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
     let (api_version, rest): (String, &[&str]) = match segs.as_slice() {
         ["api", ver, tail @ ..] => (ver.to_string(), tail),
@@ -176,6 +181,7 @@ mod tests {
 
     #[test]
     fn path_gvk_derivation() {
+        assert_eq!(path_gvk("/apis/apps/v1/namespaces/d/deployments/web/scale"), ("autoscaling/v1".into(), "Scale".into()));
         // Core, namespaced, subresource, and grouped/CRD paths.
         assert_eq!(path_gvk("/api/v1/namespaces/default/configmaps"), ("v1".into(), "ConfigMap".into()));
         assert_eq!(

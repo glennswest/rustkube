@@ -121,6 +121,14 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
+### Scale subresource (#86, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
+- [x] `handlers/scale.rs`: autoscaling/v1 Scale GET/PUT/PATCH for
+      deployments/replicasets/statefulsets and CRDs with
+      `subresources.scale` (`CrdDefinition.scale`); discovery entries (apps +
+      CR `/scale`, `/status`); protobuf path → Scale. Units;
+      `test/e2e/scale.sh` (rigs, real kubectl); docs/CHANGELOG
+- [ ] Build (stormcentral#544); rigs (stormcentral#512); golden; close #86
+
 ### Scheduling gates (#87, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
 - [x] ddcc821 scheduler: gated Pod → PodScheduled=False/SchedulingGated (no
       Event), placed when the last gate goes; apiserver PUT/PATCH adding a
@@ -865,7 +873,8 @@ when each piece landed.
       refused; build blocked on stormcentral#544
 - [x] PriorityClass / TokenReview missing from `/apis` (#85) — fixed in
       6fd2722; discovery was exercised by the efbea2d conformance run.
-- [ ] No `/scale` subresource; `kubectl scale` fails (#86)
+- [x] `/scale` subresource (#86, 2026-10-07): apps + CRDs; build blocked on
+      stormcentral#544
 - [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88)
 - [ ] HPA placeholder: no metrics, never scales down (#89)
 - [ ] Metrics: reconcile metrics never emitted, no histogram buckets,
@@ -1256,7 +1265,7 @@ Known state on 2026-09-24:
       (#69). Open from it: OpenShift authorization reviews for `who-can` and
       `adm new-project` (#106), aggregated discovery for `inspect` (#107),
       `nodes/proxy` for `node-logs` (#108); `top` needs #83
-- [ ] `oc scale` — no `/scale` (#86).
+- [x] `oc scale` — `/scale` served (#86), rig `test/e2e/scale.sh`.
 - [x] Projects (#97): `project.openshift.io/v1` Project + ProjectRequest over
       Namespaces, owned by their requester (`admin` RoleBinding), listed only
       to members; `admin`/`edit`/`view`/`basic-user`/`self-provisioner`

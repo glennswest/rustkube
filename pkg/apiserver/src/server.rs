@@ -533,6 +533,13 @@ fn build_router(
                 .put(resource::update_namespaced_status)
                 .merge(patch(resource::patch_namespaced_status)),
         )
+        // Scale subresource, autoscaling/v1 Scale (#86)
+        .route(
+            "/apis/apps/v1/namespaces/{namespace}/{resource}/{name}/scale",
+            get(crate::handlers::scale::get_apps)
+                .put(crate::handlers::scale::put_apps)
+                .merge(patch(crate::handlers::scale::patch_apps)),
+        )
         // Status subresource routes — apps/v1
         .route(
             "/apis/apps/v1/namespaces/{namespace}/{resource}/{name}/status",
@@ -767,6 +774,18 @@ fn build_router(
                 .put(crd::crd_update_ns)
                 .delete(crd::crd_delete_ns)
                 .patch(crd::crd_patch_ns),
+        )
+        .route(
+            "/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}/scale",
+            get(crate::handlers::scale::get_cr_ns)
+                .put(crate::handlers::scale::put_cr_ns)
+                .merge(patch(crate::handlers::scale::patch_cr_ns)),
+        )
+        .route(
+            "/apis/{group}/{version}/{resource}/{name}/scale",
+            get(crate::handlers::scale::get_cr_cluster)
+                .put(crate::handlers::scale::put_cr_cluster)
+                .merge(patch(crate::handlers::scale::patch_cr_cluster)),
         )
         .route(
             "/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}/status",

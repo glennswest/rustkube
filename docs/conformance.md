@@ -151,7 +151,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 4 | NodePort allocation, ClusterIP on type change — #132 | not implemented |
 | 4 | `resource.k8s.io/v1` (DRA) — #137 | served (CRUD); allocation is #225 |
 | 3 | in-place pod resize — #136 | not implemented |
-| 3 | `/scale` subresource — #86 | not implemented |
+| 3 | `/scale` subresource — #86 | served since 2026-10-07; not rerun |
 | 2 | API Priority and Fairness — #118 | not implemented |
 | 2 | YAML bodies, fieldValidation for built-ins — #122 | not implemented |
 | 2 | ServiceCIDR/IPAddress — #134 | not implemented |

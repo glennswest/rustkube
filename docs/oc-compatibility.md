@@ -21,7 +21,7 @@ State on 2026-09-26, from the code and from running oc against it
 - proxied by the apiserver but not answered by the kubelet: `oc exec`,
   `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` (#42 here,
   rustkube-node#56 there).
-- not served: `oc scale` (no `/scale`, #86); `oc adm top pod` (pod metrics need cadvisor#3 on stormcos; `top node`
+- not served: `oc adm top pod` (pod metrics need cadvisor#3 on stormcos; `top node`
   works from cadvisor, #89); `oc adm node-logs` (no `nodes/{name}/proxy`, #108);
   `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
   `user.openshift.io` or SelfSubjectReview); `clusterversion`, `dc`, `scc` (their groups are not served).
@@ -31,7 +31,7 @@ State on 2026-09-26, from the code and from running oc against it
 
 This is the upstream command surface, not a list of implemented features.
 The checklist below records tested API obligations. As of 2026-09-29,
-`/scale` (#86), aggregated discovery (#107), node proxy (#108), OpenShift
+aggregated discovery (#107), node proxy (#108), OpenShift
 reviews (#106), and kubelet streaming (rustkube-node#56) remain gaps. CSR
 approval PATCH exists (6d0ed10); actual signing requires controller-manager
 cluster-signing files. README and conformance.md describe current behavior.

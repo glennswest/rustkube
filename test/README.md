@@ -221,6 +221,11 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/scale.sh` (#86, suite `rigs`): `kubectl scale` on a Deployment,
+ReplicaSet, StatefulSet and a CR with `subresources.scale`;
+`--current-replicas` mismatch refused; the Scale's shape; stale PUT 409,
+negative 422, merge PATCH; a CRD without scale 404; discovery entries.
+
 `e2e/scheduling-gates.sh` (#87, suite `rigs`): a Pod with two gates stays
 unbound with `PodScheduled=False/SchedulingGated` and no FailedScheduling
 Event; adding a gate is 422; removing one leaves it waiting, removing the

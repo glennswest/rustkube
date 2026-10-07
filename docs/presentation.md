@@ -192,7 +192,6 @@ Built as modules but **not wired**:
 - scheduler preemption (`preemption.rs`, #84)
 
 Missing:
-- `/scale` subresource — `kubectl scale` fails (#86)
 - pod metrics on stormcos: cadvisor attributing stormpump cgroups (cadvisor#3)
 - generic ephemeral volumes (#94); expansion and snapshot API integration
   now have upstream-sidecar tests (#63/#64), not full node acceptance
@@ -211,7 +210,6 @@ Missing:
   Build configuration is not proof of deployment.
 - **rustkube-node#56** — the kubelet serves no exec/attach/port-forward, so
   `oc rsh`/`cp`/`port-forward` stop at the node.
-- **#86** — `kubectl scale`: what a typical operator install trips over
-  first, now that webhooks are called (#82).
+- **#86** — `kubectl scale` (served since 2026-10-07; rig run pending).
 
 Every open issue: `gh issue list -R glennswest/rustkube`.
