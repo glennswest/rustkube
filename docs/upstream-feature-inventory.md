@@ -26,7 +26,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `apiextensions.k8s.io/v1` — CRD | core | 🟡 | served dynamically, keyed by group (#76), `/status` subresource; **no structural-schema validation, no conversion webhooks** |
 | `autoscaling/v2` — HorizontalPodAutoscaler | core | 🟡 | object served; the controller is inert — no metrics source, `ScalingActive=False`, no scaling (#89) |
 | `apiregistration.k8s.io/v1` — APIService | core | 🔴 | 🟢 aggregated APIs proxied after authn/RBAC, availability checked, groups in discovery, front-proxy contract published; no upgrades, no aggregated discovery (#83, #107) |
-| `admissionregistration.k8s.io/v1` — webhook configurations | core | 🟡 | mutating + validating webhooks called on every write (#82); no CEL `matchConditions`, AdmissionReview v1 only. ValidatingAdmissionPolicy absent (#119) |
+| `admissionregistration.k8s.io/v1` — webhook configurations | core | 🟡 | mutating + validating webhooks called on every write (#82); no CEL `matchConditions`, AdmissionReview v1 only. Validating/MutatingAdmissionPolicy (+ bindings) served, not evaluated (#119, #234) |
 | `networking.k8s.io/v1` — NetworkPolicy, Ingress, IngressClass, ServiceCIDR, IPAddress | core | 🟡 | API served; no Ingress controller. NetworkPolicy is enforced by Cilium. ServiceCIDR/IPAddress served with a bootstrapped `kubernetes` ServiceCIDR; allocation still uses `--service-cidr` and its own claim keys (#134) |
 | `discovery.k8s.io/v1` — EndpointSlice | core | ✅ | served; the Service controller writes them (v0.7.5, #22) |
 | `policy/v1` — PodDisruptionBudget, Eviction | core | ✅ | `eviction.rs` (429 when blocked), `pdb.rs` (v0.7.18, #7). Not: 500 on multiple matching PDBs, `unhealthyPodEvictionPolicy`, `disruptedPods` |

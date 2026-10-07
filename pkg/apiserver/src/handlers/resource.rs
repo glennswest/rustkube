@@ -2118,6 +2118,10 @@ fn resource_to_list_kind(resource: &str) -> String {
         "servicecidrs" => "ServiceCIDR",
         "ipaddresses" => "IPAddress",
         "mutatingwebhookconfigurations" => "MutatingWebhookConfiguration",
+        "validatingadmissionpolicies" => "ValidatingAdmissionPolicy",
+        "validatingadmissionpolicybindings" => "ValidatingAdmissionPolicyBinding",
+        "mutatingadmissionpolicies" => "MutatingAdmissionPolicy",
+        "mutatingadmissionpolicybindings" => "MutatingAdmissionPolicyBinding",
         "validatingwebhookconfigurations" => "ValidatingWebhookConfiguration",
         "gatewayclasses" => "GatewayClass",
         "gateways" => "Gateway",
@@ -2172,7 +2176,8 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "deviceclasses" | "resourceclaims" | "resourceclaimtemplates" | "resourceslices" => {
             "resource.k8s.io/v1"
         }
-        "mutatingwebhookconfigurations" | "validatingwebhookconfigurations" => {
+        "mutatingwebhookconfigurations" | "validatingwebhookconfigurations" | "validatingadmissionpolicies"
+        | "validatingadmissionpolicybindings" | "mutatingadmissionpolicies" | "mutatingadmissionpolicybindings" => {
             "admissionregistration.k8s.io/v1"
         }
         "gatewayclasses" | "gateways" | "httproutes" => "gateway.networking.k8s.io/v1",

@@ -121,6 +121,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
+### Admission policies served (#119, P3) — IN PROGRESS 2026-10-07
+Split: (1) serve the four resources here; (2) CEL evaluation is #234 (the
+`cel` crate 0.15 handles struct literals via registered StructTypes; needs
+Cargo.lock via a build job; shares the engine with #217).
+- [x] routes (+ cluster /status), discovery, apply table, kinds; Warning on
+      create that policies are not enforced; `test/e2e/admission-policy-api.sh`
+      (rigs); README/inventory/conformance/CHANGELOG; #234 filed
+- [ ] Build; rig (stormcentral#512); golden; close #119 (the four API specs)
+
 ### YAML bodies + built-in fieldValidation (#122, P2) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] protos re-vendored to release-1.36 (all additive, checked per field);
       `protobuf::unknown_fields`; `field_validation.rs` middleware (POST/PUT,

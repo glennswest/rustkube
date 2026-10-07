@@ -774,6 +774,14 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
         // two-lists-that-disagree failure this function's own comment
         // warns about, found when 85-routes.yaml silently did not apply
         // and the router booted with an empty table.
+        ("admissionregistration.k8s.io", "v1") => vec![
+            ("mutatingwebhookconfigurations", "MutatingWebhookConfiguration", false),
+            ("validatingwebhookconfigurations", "ValidatingWebhookConfiguration", false),
+            ("validatingadmissionpolicies", "ValidatingAdmissionPolicy", false),
+            ("validatingadmissionpolicybindings", "ValidatingAdmissionPolicyBinding", false),
+            ("mutatingadmissionpolicies", "MutatingAdmissionPolicy", false),
+            ("mutatingadmissionpolicybindings", "MutatingAdmissionPolicyBinding", false),
+        ],
         ("networking.k8s.io", "v1") => vec![
             ("networkpolicies", "NetworkPolicy", true),
             ("ingresses", "Ingress", true),
@@ -1380,6 +1388,41 @@ pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
                 "singularName": "validatingwebhookconfiguration",
                 "namespaced": false,
                 "kind": "ValidatingWebhookConfiguration",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "validatingadmissionpolicies",
+                "singularName": "validatingadmissionpolicy",
+                "namespaced": false,
+                "kind": "ValidatingAdmissionPolicy",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "validatingadmissionpolicies/status",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "ValidatingAdmissionPolicy",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
+                "name": "validatingadmissionpolicybindings",
+                "singularName": "validatingadmissionpolicybinding",
+                "namespaced": false,
+                "kind": "ValidatingAdmissionPolicyBinding",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "mutatingadmissionpolicies",
+                "singularName": "mutatingadmissionpolicy",
+                "namespaced": false,
+                "kind": "MutatingAdmissionPolicy",
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            },
+            {
+                "name": "mutatingadmissionpolicybindings",
+                "singularName": "mutatingadmissionpolicybinding",
+                "namespaced": false,
+                "kind": "MutatingAdmissionPolicyBinding",
                 "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
             }
         ]

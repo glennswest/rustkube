@@ -90,7 +90,10 @@ with `/status` and IPAddress, #134: a `kubernetes` ServiceCIDR holding
 write IPAddress objects or read other ServiceCIDRs), `discovery.k8s.io/v1`, `events.k8s.io/v1` (translated
 to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 `rbac.authorization.k8s.io/v1`, `authorization.k8s.io/v1`,
-`certificates.k8s.io/v1`, `storage.k8s.io/v1`, `admissionregistration.k8s.io/v1`,
+`certificates.k8s.io/v1`, `storage.k8s.io/v1`, `admissionregistration.k8s.io/v1` (webhook
+configurations, called on writes, below; Validating/MutatingAdmissionPolicy
+and their bindings stored and served with `/status`, but **not evaluated** —
+a create says so in a `Warning`; #119, #234),
 `resource.k8s.io/v1` (DRA's DeviceClass, ResourceSlice, ResourceClaim with
 `/status`, ResourceClaimTemplate — stored and served, nothing allocates:
 #137, #225),

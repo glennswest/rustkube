@@ -692,6 +692,13 @@ fn build_router(
                 .delete(resource::delete_cluster_resource)
                 .patch(resource::patch_cluster_resource),
         )
+        // ValidatingAdmissionPolicy's /status (#119)
+        .route(
+            "/apis/admissionregistration.k8s.io/v1/{resource}/{name}/status",
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .merge(patch(resource::patch_cluster_status)),
+        )
         // gateway.networking.k8s.io/v1
         .route(
             "/apis/gateway.networking.k8s.io/v1",

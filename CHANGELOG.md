@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** `admissionregistration.k8s.io/v1` ValidatingAdmissionPolicy (with `/status`), ValidatingAdmissionPolicyBinding, MutatingAdmissionPolicy and MutatingAdmissionPolicyBinding are served (#119): generic cluster-scoped handlers, discovery, the apply table and protobuf (descriptors in the release-1.36 protos). That is what the four "API operations" conformance specs need. **They are not evaluated**; a create says so in a `Warning` header. CEL evaluation, which the three specs that hang to the suite timeout need, is #234.
+- **test:** New `test/e2e/admission-policy-api.sh` (suite `rigs`).
 - **feat:** YAML request bodies and server-side field validation for built-in objects (#122).
   - **Bodies:** `application/yaml` is converted to JSON in the transcoding middleware, so every handler takes it. A write without a `Content-Type` is read as JSON, as upstream negotiates; the conformance FieldValidation specs send none and got axum's "Expected request with Content-Type: application/json".
   - **Validation:** a built-in create (POST) or replacement (PUT, `/status`) is checked after authorization against its type, from the protobuf descriptors.

@@ -144,7 +144,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 11 | ResourceQuota: no controller or admission — #124 | not implemented |
 | 11 | ReplicationController: no controller — #125 | not implemented |
 | 9 | CRD schemas not in `/openapi` — #120 | not implemented |
-| 8 | Validating/MutatingAdmissionPolicy — #119 (three hang to the suite timeout) | not implemented |
+| 8 | Validating/MutatingAdmissionPolicy — #119 (three hang to the suite timeout) | the four API-operations specs: served since 2026-10-07 (not rerun); the evaluation specs (which hang) are #234 |
 | 5 | RuntimeClass — #135 | not implemented |
 | 4 | aggregated discovery — #107 | not implemented |
 | 4 | custom resource defaulting/pruning/fieldValidation — #121 | implemented after this run (watch events are not defaulted) |

@@ -227,6 +227,12 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/admission-policy-api.sh` (#119, suite `rigs`): the four
+admission policy resources in discovery, cluster-scoped; each created (with
+the not-enforced Warning), read, listed, patched, read over protobuf and
+deleted by collection; ValidatingAdmissionPolicy's `/status` patched with
+its spec kept.
+
 `e2e/field-validation.sh` (#122, suite `rigs`): the conformance
 FieldValidation bodies — Strict refuses an unknown + duplicate field and
 unknown metadata with upstream's message; Warn creates and warns; Ignore

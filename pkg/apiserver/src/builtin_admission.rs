@@ -54,6 +54,16 @@ pub async fn admit_create(
         namespace_defaults(obj);
     }
 
+    // Served (#119) but not evaluated yet (#234): say so, rather than let
+    // the policy's author believe it protects anything.
+    if matches!(resource, "validatingadmissionpolicies" | "mutatingadmissionpolicies"
+        | "validatingadmissionpolicybindings" | "mutatingadmissionpolicybindings")
+    {
+        crate::admission::warn(format!(
+            "{resource} are stored but not evaluated by this apiserver yet (rustkube#234): this policy is not enforced"
+        ));
+    }
+
     if resource == "services" {
         default_service_ports(obj);
         crate::service_ip::allocate(storage, service_cidr, obj).await?;
