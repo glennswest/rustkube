@@ -53,7 +53,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | Strategic-merge / JSON / merge patch | core | ✅ | strategic merge uses a fixed table of `patchMergeKey`s, not per-type schema; Service ports are wrong (#150) |
 | protobuf wire codec | core | ✅ | both directions (v0.7.14) |
 | TLS listener, serving-cert hot reload | core | 🟡 | mismatched pair refused (#93); client identity/trust do not reload (#105) |
-| AuthN: x509 client cert, ServiceAccount/bearer JWT | core | 🟡 | rejected bearer can fall back to anonymous (#115); TokenRequest honours audiences, lifetime (unset: 24 h, not 1 h) and Pod/Secret/Node binding (#182) |
+| AuthN: x509 client cert, ServiceAccount/bearer JWT | core | 🟡 | rejected bearer can fall back to anonymous (#115); TokenRequest honours audiences, lifetime (unset: 1 h, as upstream, #206) and Pod/Secret/Node binding (#182) |
 | AuthN: OIDC, webhook, bootstrap tokens | core | 🔴 | |
 | AuthZ: RBAC | core | 🟡 | escalation prevention since #98; no `aggregationRule` controller |
 | AuthZ: Node authorizer, webhook authorizer | core | 🔴 | `system:nodes` is bound to `cluster-admin` instead |

@@ -8,8 +8,9 @@
 //!   `--api-audiences`); the apiserver itself accepts only a token for one of
 //!   its own audiences.
 //! - `spec.expirationSeconds` is honoured: at least 600 s, at most 2^32. Left
-//!   out, the token lasts 24 h — upstream defaults to an hour, but today's
-//!   rustkube-node asks without one and never refreshes (rustkube-node#122).
+//!   out, the token lasts an hour, as upstream's (#206). It was 24 h while the
+//!   kubelet asked without one and never refreshed; since rustkube-node#122
+//!   (in every release from stormcos 11.88) it asks for 3607 s and refreshes.
 //! - `spec.boundObjectRef` — a Pod, Secret or Node — binds the token to that
 //!   object: it must exist (with the given uid, if one is given), a Pod must
 //!   run as this ServiceAccount, and the token stops authenticating once the
@@ -32,7 +33,7 @@ use axum::{Extension, Json};
 use serde_json::{json, Value};
 
 /// Lifetime of a token whose request names none.
-const DEFAULT_TTL_SECS: i64 = 86_400;
+const DEFAULT_TTL_SECS: i64 = 3_600;
 /// Shortest lifetime a request may ask for, as upstream.
 const MIN_TTL_SECS: i64 = 600;
 /// Longest, as upstream's validation.
@@ -435,8 +436,8 @@ mod tests {
             let c = claims(v["status"]["token"].as_str().unwrap());
             c["exp"].as_i64().unwrap() - c["iat"].as_i64().unwrap()
         };
-        // Unset: 24 h, until the kubelet refreshes (rustkube-node#122).
-        assert_eq!(ttl(&request(&state, &keys, json!({})).await.unwrap()), 86_400);
+        // Unset: upstream's hour (#206).
+        assert_eq!(ttl(&request(&state, &keys, json!({})).await.unwrap()), 3_600);
         assert_eq!(ttl(&request(&state, &keys, json!({"expirationSeconds": 600})).await.unwrap()), 600);
         let e = request(&state, &keys, json!({"expirationSeconds": 599})).await.unwrap_err();
         assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);

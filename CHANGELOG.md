@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **change:** A TokenRequest without `spec.expirationSeconds` gets upstream's one hour, not 24 h (#206). The 24 h existed so a kubelet that asked without it and never refreshed would not cut pods off. rustkube-node#122 (a318daf, in every stormcos release since 11.88) always asks for 3607 s with `boundObjectRef` and refreshes at 80 %. A client that asks without a lifetime and keeps the token over an hour must now refresh, as against upstream.
 - **test:** A failed rig's output ends with what failed (#181). `test/e2e/lib.sh` tees the rig's stdout to `$W/rig.out`. After the log tails, `report()` prints `---- failed checks (N):` and every `FAIL  …` line, from bash and from the rigs' Python alike. The FAIL lines used to come before about 200 lines of log dumps, so build-failure issues (#178, #179) quoted openraft INFO and never named the check. `cleanup()` restores stdout first, so `tee` exits and the trap's `wait` does not hang.
 - **docs:** Cross-references brought up to the other components' code (#183, stormcos#65).
   - fastetcd forwards member ops to the leader since v0.8.3 (fastetcd#7): docs/terragrunt-deploy.md and the comment in `deploy/replace-master.sh`. The script still targets the leader, which skips the hop.

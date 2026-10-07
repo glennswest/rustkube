@@ -232,9 +232,9 @@ TokenRequest (`serviceaccounts/{name}/token`) mints upstream's token shape
 the `kubernetes.io` claim naming the ServiceAccount and, with
 `spec.boundObjectRef`, the Pod, Secret or Node it is bound to (uid checked;
 a Pod must run as that ServiceAccount, and its node is named too).
-`expirationSeconds` is honoured from 600 s to 2^32 s; **left out, a token
-lasts 24 h**, not upstream's hour, because rustkube-node asks without it and
-never refreshes (rustkube-node#122). A pod-bound request for 3607 s for the
+`expirationSeconds` is honoured from 600 s to 2^32 s; left out, a token
+lasts an hour, as upstream's (#206; it was 24 h until every release's
+kubelet asked for its own and refreshed, rustkube-node#122, stormcos 11.88). A pod-bound request for 3607 s for the
 API audiences — a projected token volume's — gets a year with `warnafter`
 at 3607 s, as upstream (`--service-account-extend-token-expiration`).
 A JWT authenticates to the apiserver only if its `aud` (when it has one)
