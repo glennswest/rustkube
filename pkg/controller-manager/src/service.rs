@@ -3,11 +3,18 @@
 //! Indexed Service workers observe Pod membership and owned endpoint changes.
 //! For each Service with a selector, finds matching pods and creates/updates
 //! the corresponding Endpoints resource with the pod IPs and ports, and the
-//! matching `discovery.k8s.io/v1` EndpointSlice.
+//! matching `discovery.k8s.io/v1` EndpointSlice. The Endpoints it writes are
+//! labelled `endpointslice.kubernetes.io/skip-mirror: "true"`, as upstream's
+//! endpoints controller labels its own.
+//!
+//! A Service with no selector gets EndpointSlices mirrored from the
+//! Endpoints written for it by hand (#133, `endpointslicemirroring.rs`).
 
+use crate::endpointslicemirroring as mirroring;
 use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
-use apimachinery::informer::{Index, Key};
+use apimachinery::informer::{Delta, Index, Key};
+use apimachinery::informers::Feed;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -35,11 +42,11 @@ impl ServiceController {
             .ok_or_else(|| anyhow::anyhow!("service missing name"))?;
         let svc_uid = svc["metadata"]["uid"].as_str().unwrap_or("");
 
-        // Get the selector
-        let selector = &svc["spec"]["selector"];
-        if selector.is_null() || !selector.is_object() {
-            return Ok(()); // No selector = no endpoints (e.g., ExternalName)
+        // No selector: the Endpoints are someone else's, mirrored (#133).
+        if !mirroring::has_selector(svc) {
+            return Ok(());
         }
+        let selector = &svc["spec"]["selector"];
 
         let selector_map = selector.as_object().unwrap();
 
@@ -111,6 +118,7 @@ impl ServiceController {
             "metadata": {
                 "name": svc_name,
                 "namespace": namespace,
+                "labels": {"endpointslice.kubernetes.io/skip-mirror": "true"},
                 "ownerReferences": [{
                     "apiVersion": "v1",
                     "kind": "Service",
@@ -125,7 +133,7 @@ impl ServiceController {
 
         // Create or update the Endpoints object
         let ep_path = format!("/api/v1/namespaces/{namespace}/endpoints/{svc_name}");
-        self.upsert(&ep_path, endpoints, &["subsets"]).await?;
+        self.upsert(&ep_path, endpoints, &["subsets"], false).await?;
 
         // Mirror the same backends into an EndpointSlice (discovery.k8s.io/v1) —
         // Cilium / kube-proxy-replacement use slices as the modern default (#22).
@@ -169,12 +177,41 @@ impl ServiceController {
         });
         let slice_path =
             format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices/{svc_name}");
-        self.upsert(&slice_path, slice, &["addressType", "endpoints", "ports"])
+        self.upsert(&slice_path, slice, &["addressType", "endpoints", "ports"], false)
             .await?;
 
         Ok(())
     }
-    async fn upsert(&self, path: &str, mut desired: Value, fields: &[&str]) -> anyhow::Result<()> {
+
+    /// The mirroring controller's half (#133): the slices `svc`'s Endpoints
+    /// should have, written; the rest of its mirrored slices deleted.
+    async fn mirror(&self, svc: &Value, deps: &Deps) -> anyhow::Result<()> {
+        let ns = svc["metadata"]["namespace"].as_str().unwrap_or("default");
+        let name = svc["metadata"]["name"].as_str().unwrap_or("");
+        let current = mirrored_slices(deps.feed(1), ns, name)?;
+        let endpoints = deps.feed(2).select(&Index::Name(ns.into(), name.into()))?;
+        let want = match endpoints.first() {
+            Some(ep) if !mirroring::has_selector(svc) && mirroring::mirrors(ep) => mirroring::desired(ep),
+            _ => Vec::new(),
+        };
+        let owner = endpoints.first().map(|e| e["metadata"]["uid"].clone()).unwrap_or(Value::Null);
+        let wanted: Vec<&Value> = want.iter().map(|s| &s["metadata"]["name"]).collect();
+        for slice in &current {
+            // Not wanted, or written for an Endpoints since replaced.
+            if !wanted.contains(&&slice["metadata"]["name"]) || slice["metadata"]["ownerReferences"][0]["uid"] != owner {
+                let n = slice["metadata"]["name"].as_str().unwrap_or("");
+                self.api.delete_observed(&format!("/apis/discovery.k8s.io/v1/namespaces/{ns}/endpointslices/{n}"), slice).await?;
+            }
+        }
+        for slice in want {
+            let n = slice["metadata"]["name"].as_str().unwrap_or("").to_string();
+            self.upsert(&format!("/apis/discovery.k8s.io/v1/namespaces/{ns}/endpointslices/{n}"), slice,
+                        &["addressType", "endpoints", "ports"], true).await?;
+        }
+        Ok(())
+    }
+
+    async fn upsert(&self, path: &str, mut desired: Value, fields: &[&str], annotations: bool) -> anyhow::Result<()> {
         let response = self.api.get(path).await?;
         if response.status().as_u16() == 404 {
             self.api
@@ -196,6 +233,7 @@ impl ServiceController {
             .iter()
             .all(|field| current[*field] == desired[*field])
             && current["metadata"]["labels"] == desired["metadata"]["labels"]
+            && (!annotations || current["metadata"]["annotations"] == desired["metadata"]["annotations"])
         {
             return Ok(());
         }
@@ -224,12 +262,32 @@ impl Controller for ServiceController {
             },
             Dependency {
                 path: "/apis/discovery.k8s.io/v1/endpointslices".into(),
-                route: Arc::new(owned::owner_keys),
+                route: Arc::new(slice_services),
+            },
+            // A selectorless Service's Endpoints, by name (#133): written by
+            // hand, so no owner reference leads back to the Service.
+            Dependency {
+                path: "/api/v1/endpoints".into(),
+                route: Arc::new(|delta: &Delta, primary: &Feed| {
+                    let mut keys = Vec::new();
+                    for ep in delta.old.iter().chain(delta.new.iter()) {
+                        let ns = ep["metadata"]["namespace"].as_str().unwrap_or("");
+                        let name = ep["metadata"]["name"].as_str().unwrap_or("");
+                        keys.extend(owned::keys_at(primary, Index::Name(ns.into(), name.into())));
+                    }
+                    keys
+                }),
             },
         ]
     }
     async fn reconcile(&self, svc: &Value, _children: &[Value], deps: &Deps) -> anyhow::Result<()> {
         if !svc["metadata"]["deletionTimestamp"].is_null() {
+            return Ok(());
+        }
+        // Mirrored slices exist only for a selectorless Service; this also
+        // removes them when a selector is added.
+        self.mirror(svc, deps).await?;
+        if !mirroring::has_selector(svc) {
             return Ok(());
         }
         let mut pods = owned::selected_pods(svc, deps.feed(0))?;
@@ -256,6 +314,16 @@ impl Controller for ServiceController {
                 current["metadata"]["uid"].as_str() != Some(&key.uid),
                 "Service still exists"
             );
+        }
+        // Mirrored slices name the Endpoints as owner, not the Service.
+        for slice in mirrored_slices(deps.feed(1), &key.namespace, &key.name)? {
+            let name = slice["metadata"]["name"].as_str().unwrap_or("");
+            self.api
+                .delete_observed(
+                    &format!("/apis/discovery.k8s.io/v1/namespaces/{}/endpointslices/{name}", key.namespace),
+                    &slice,
+                )
+                .await?;
         }
         let slices = deps.feed(1).select(&Index::Owner(key.uid.clone()))?;
         for (plural, items) in [
@@ -291,4 +359,30 @@ impl Controller for ServiceController {
         }
         Ok(())
     }
+}
+
+/// The mirroring controller's slices for Service `name` in `namespace`.
+fn mirrored_slices(slices: &Feed, namespace: &str, name: &str) -> anyhow::Result<Vec<Value>> {
+    Ok(slices
+        .select(&Index::Label("kubernetes.io/service-name".into(), name.into()))?
+        .into_iter()
+        .filter(|s| mirroring::is_mirrored(s, namespace, name))
+        .collect())
+}
+
+/// A slice change wakes its owning Service and, for a mirrored slice, the
+/// Service it is labelled with.
+fn slice_services(delta: &Delta, primary: &Feed) -> Vec<Key> {
+    let mut keys = owned::owner_keys(delta, primary);
+    for slice in delta.old.iter().chain(delta.new.iter()) {
+        let labels = &slice["metadata"]["labels"];
+        if labels["endpointslice.kubernetes.io/managed-by"].as_str() != Some(mirroring::MANAGED_BY) {
+            continue;
+        }
+        let ns = slice["metadata"]["namespace"].as_str().unwrap_or("");
+        if let Some(svc) = labels["kubernetes.io/service-name"].as_str() {
+            keys.extend(owned::keys_at(primary, Index::Name(ns.into(), svc.into())));
+        }
+    }
+    keys
 }

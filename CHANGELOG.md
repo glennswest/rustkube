@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** EndpointSliceMirroring (#133). A Service with no selector gets EndpointSlices mirrored from the Endpoints written for it by hand, as upstream's endpointslicemirroring controller makes them. The Service controller does it, waking on the Service, its same-named Endpoints and the slices labelled with its name.
+  - **Shape:** one slice per address type and port set (≤ 1000 endpoints each). Labels: the Endpoints' own plus `kubernetes.io/service-name` and `endpointslice.kubernetes.io/managed-by: endpointslicemirroring-controller.k8s.io`. Annotations: the Endpoints' own, but for the trigger-time and last-applied ones. Owner: the Endpoints, as controller. `ready` true for `addresses`, false for `notReadyAddresses`.
+  - **Removal:** the slices go when the Endpoints goes or is labelled `endpointslice.kubernetes.io/skip-mirror: "true"`, when the Service gains a selector, and when the Service is deleted.
+  - **Names** are stable: the Endpoints name plus a hash of address type and ports, so an update rewrites the same slice.
+- **change:** The Endpoints the Service controller writes for a selector Service are labelled `endpointslice.kubernetes.io/skip-mirror: "true"`, as upstream's endpoints controller labels its own. Each existing one is rewritten once.
+- **test:** mirroring units (the conformance shape, splitting by address type and ports, what is mirrored). New `test/e2e/endpointslice-mirroring.sh` (suite `rigs`).
 - **feat:** In-place pod resize, the apiserver half (#136): `GET/PUT/PATCH /api/v1/namespaces/{ns}/pods/{name}/resize`, in discovery as `pods/resize`. A write takes only each container's (and sidecar init container's) `resources` and `resizePolicy` from the body or patched Pod, as upstream's resize strategy does, and goes through the Pod's guaranteed update and admission.
   - **Validation (upstream's `ValidatePodResize`, 422):** the QoS class may not change; requests and limits may not be removed; only cpu and memory may change; a non-sidecar init container's resources are fixed; a request may not exceed its limit; static and Windows Pods are not resized.
   - **Version-skew guard:** a Pod with a running container whose status reports no `resources` is refused ("Pod running on node without support for resize"). Until the kubelet resizes and reports them (rustkube-node#192, filed), only Pods with no running container can be resized, and a resize is never accepted and then silently ignored.

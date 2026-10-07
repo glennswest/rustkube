@@ -474,7 +474,12 @@ does not upgrade any deployed datastore. Historical intermittent failures
 #153/#154 remain under investigation.
 
 Deployment (rolling updates), ReplicaSet, StatefulSet, DaemonSet (every
-eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices), Namespace (default
+eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices; for a Service with no
+selector, EndpointSlices mirrored from its hand-written Endpoints, as
+upstream's EndpointSliceMirroring does — one per address type and port set,
+owned by the Endpoints, `managed-by: endpointslicemirroring-controller.k8s.io`,
+skipped for `endpointslice.kubernetes.io/skip-mirror: "true"`, which the
+controller's own Endpoints carry, #133), Namespace (default
 ServiceAccount, deletion cascade), node lifecycle (Lease heartbeats →
 NotReady → eviction), PodDisruptionBudget status, garbage collection
 (background, foreground and orphan, driven by discovery), PersistentVolume
@@ -571,7 +576,7 @@ classes, Gateways and route entries are left alone (#91). Its Gateways are
 `Accepted` and `Programmed=False` (`Pending`) with no `status.addresses`,
 since nothing listens.
 
-It has no ResourceQuota, ReplicationController, EndpointSliceMirroring,
+It has no ResourceQuota, ReplicationController,
 ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or
 node-IPAM controller. Serving a resource object does not implement its controller.
 

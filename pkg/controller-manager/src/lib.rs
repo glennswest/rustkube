@@ -28,6 +28,7 @@ pub mod rollout;
 pub mod owned;
 pub mod rootca;
 pub mod runner;
+pub mod endpointslicemirroring;
 pub mod service;
 pub mod stormblock;
 pub mod virtualmachine;
