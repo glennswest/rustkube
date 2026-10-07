@@ -147,23 +147,21 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
-### Metrics (#90, P2) — IN PROGRESS 2026-10-07
-- [ ] Reconcile metrics: `owned::run` records `controller_reconcile_duration_seconds`
-      / `controller_reconcile_errors_total` per object pass
-- [ ] Histogram buckets (upstream's per metric; Prometheus defaults else) —
-      `_bucket` series instead of summaries
-- [ ] apiserver `/metrics` under authn + RBAC (nonResourceURL get);
-      bootstrap `system:monitoring` (upstream)
-- [ ] CM/scheduler :10257/:10259: `--tls-cert-file`/`--tls-private-key-file`
-      (HTTPS, reloaded; plain HTTP without), `/metrics` behind delegated
-      TokenReview + SubjectAccessReview, health paths open
-      (`--authorization-always-allow-paths`); roles gain tokenreviews /
-      subjectaccessreviews create. stormcos issue: ironprom token + https,
-      certs, probe scheme
-- [ ] Smaller: `process_cpu_seconds_total` TYPE counter; standby leader gauge
-      0 from the start; `apiserver_storage_objects` from resource-wide
-      prefixes only
-- [ ] Units, docs/metrics.md, README, CHANGELOG, build
+### Metrics (#90, P2) — WRITTEN, build next 2026-10-07
+- [x] Reconcile metrics recorded per object pass (`owned::run`)
+- [x] Buckets (upstream's for apiserver/etcd request durations and scheduler
+      e2e; DefBuckets else); `render()` types process_cpu_seconds_total counter
+- [x] apiserver `/metrics` inside authn + RBAC (non-resource get);
+      `system:monitoring` role + binding bootstrapped
+- [x] CM/scheduler: `--tls-cert-file`/`--tls-private-key-file` (HTTPS,
+      reloaded), delegated TokenReview + SAR on `/metrics` (10 s cache),
+      `--authorization-always-allow-paths`; roles gain the two reviews
+- [x] Standby leader gauge 0 from the start; `apiserver_storage_objects`
+      from resource-wide prefixes only
+- [x] Units; `test/e2e/metrics-auth.sh` (rigs); rigs scrape with the admin
+      token; docs/metrics.md, README, test README, CHANGELOG (BREAKING)
+- [ ] Build on a build VM; stormcos issue (ironprom token/https for
+      10257/10259, certs, probe scheme); rigs run (stormcentral#526); golden
 
 ### Service create cost (#113, P2) — BUILT, rig waits for test runs 2026-10-07
 Cause (from the code): `service_ip::allocate` walked the range from offset

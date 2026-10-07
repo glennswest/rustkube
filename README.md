@@ -621,11 +621,14 @@ at once (#58).
 | binary | port | protocol | paths |
 |---|---|---|---|
 | kube-apiserver | `--secure-port` (6443) | HTTPS; HTTP only with `--insecure true` and no TLS pair/`--tls` | the API; `/healthz`, `/livez`, `/readyz`, `/version`, `/metrics` |
-| kube-controller-manager | 10257, fixed | plain HTTP on `0.0.0.0` | `/metrics`, `/healthz` |
-| kube-scheduler | 10259, fixed | plain HTTP on `0.0.0.0` | `/metrics`, `/healthz` |
+| kube-controller-manager | 10257, fixed | HTTPS with `--tls-cert-file`, else plain HTTP, on `0.0.0.0` | `/metrics` (delegated authn/authz), `/healthz`, `/readyz`, `/livez` |
+| kube-scheduler | 10259, fixed | the same | the same |
 
-The apiserver's `/metrics` is served **without authentication** (#90), and
-the other two are plain HTTP with no authentication at all. Metric names
+Every `/metrics` needs a principal allowed `get` on it (#90): the
+apiserver's through its own authentication and RBAC (`system:monitoring`),
+the controller manager's and scheduler's through the apiserver's
+TokenReview and SubjectAccessReview. Without `--tls-cert-file` those two
+still speak plain HTTP, so a scraper's token crosses the wire in clear. Metric names
 follow upstream's; the list, and where they differ from upstream, is in
 [docs/metrics.md](docs/metrics.md).
 

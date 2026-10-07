@@ -221,6 +221,15 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/metrics-auth.sh` (#90, suite `rigs`): the apiserver's `/metrics` is
+401 without a token, 403 without a grant, 200 for `system:monitoring`, with
+`_bucket` series and no summaries and `process_cpu_seconds_total` a counter;
+the controller manager and scheduler (`--tls-cert-file`, via `RK_CM_ARGS` /
+`RK_SCHED_ARGS`) refuse plain HTTP, serve health to anyone, and answer
+`/metrics` 401/401/403/200 for no token, an unknown token, no grant and
+`system:monitoring`; reconcile histograms exist and the leader gauge is 1.
+Rigs that scrape `/metrics` send the admin token.
+
 `e2e/service-create.sh` (#113, suite `rigs`) times Service creates: 100
 sequential (each under 1 s, the last 20 no slower than twice the first 20)
 and 25 concurrent (all 201 within 10 s), checks 125 distinct ClusterIPs

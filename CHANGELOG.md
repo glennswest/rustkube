@@ -3,6 +3,18 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **fix:** Metrics (#90).
+  - Every histogram has `_bucket` series: upstream's buckets for `apiserver_request_duration_seconds` and `etcd_request_duration_seconds` (0.005 s … 60 s), upstream's exponential ones for `scheduler_e2e_scheduling_duration_seconds`, and client_golang's defaults for the rest. They were all rendered as summaries, so `histogram_quantile(…_bucket)` returned nothing.
+  - `controller_reconcile_duration_seconds` and `controller_reconcile_errors_total` are recorded for every object reconcile (`owned::run`); nothing called them.
+  - `process_cpu_seconds_total` is typed `counter`.
+  - The controller manager's `leader_election_master_status` is 0 on a standby from the start.
+  - `apiserver_storage_objects` comes only from resource-wide caches, so a namespace's cache no longer overwrites the total.
+- **BREAKING:** `/metrics` needs authorization (#90).
+  - The apiserver's `/metrics` is now inside authentication and RBAC: `get` on the non-resource URL `/metrics`. Bootstrap adds upstream's `system:monitoring` ClusterRole and binding (group `system:monitoring`); cluster-admin and `system:masters` are allowed as before.
+  - kube-controller-manager and kube-scheduler answer `/metrics` on 10257/10259 only for a bearer token the apiserver's TokenReview accepts and SubjectAccessReview allows, as upstream delegates. `/healthz`, `/readyz` and `/livez` stay open (`--authorization-always-allow-paths`). Their roles gain `create` on tokenreviews and subjectaccessreviews.
+  - New `--tls-cert-file`/`--tls-private-key-file` make that port HTTPS-only, renewal followed; without them it stays plain HTTP.
+  - A scraper without a token (stormcos's ironprom jobs for 10257/10259) gets 401 until it sends one.
+- **test:** apimachinery units: bucket rendering (no summaries), always-allowed paths, delegated auth 401/403/200 against a stand-in apiserver. Units for resource-wide prefixes and the roles' reviews. New `test/e2e/metrics-auth.sh` (suite `rigs`). Rigs that scrape `/metrics` send the admin token; `lib.sh` gains `RK_CM_ARGS`/`RK_SCHED_ARGS`.
 - **fix:** main compiles again (#230): the ClusterIP candidate filter (#113, fd72fbc) borrowed `count` in a returned closure (E0373); it moves it (566403b).
 - **perf:** A Service create is one ClusterIP claim, whatever the number of Services (#113). The allocator walked the range from the bottom, one store create-if-absent per address, until one was free. So a create cost one write per existing Service (1.5 s, growing to 5.4 s at 75), and concurrent creates all raced for the same lowest address and were answered one after another (25 at once: up to 23.7 s). The candidate is now a random free address from the watch cache's view of the claim keys, as upstream's allocator picks. The upper part of the range comes first; the bottom band (`min(max(16, size/16), 256)`, the first 256 of a /12), where fixed addresses like the DNS Service's go, is used only once the rest is full. A lost race or a view trailing another apiserver's claim moves to the next free address. The claim keys stay the durable record; nothing to migrate.
 - **test:** allocator unit (every address offered once, upper band first, never network or broadcast, band sizes). New `test/e2e/service-create.sh` (suite `rigs`): 100 sequential and 25 concurrent creates timed, distinct addresses, fixed addresses.
