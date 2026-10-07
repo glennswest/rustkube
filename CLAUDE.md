@@ -178,7 +178,7 @@ paged snapshots (list-snapshot-race).
 - [ ] Run it (rigs-night, a pve VM at night): no build host until
       stormcentral#521. Then fix what it finds; real hardware stays #162's
 
-### Least-privilege bootstrap RBAC (#176, P2) — IN PROGRESS 2026-10-07
+### Least-privilege bootstrap RBAC (#176, P2) — BUILT, rigs wait for test runs 2026-10-07
 Owner (2026-10-07): A now — one controller-manager role written from real
 calls; C — the Node authorizer — as its own issue. Scheduler: upstream's
 role + KubeVirt status writes.
@@ -192,8 +192,10 @@ role + KubeVirt status writes.
       `get *` would be a shell in any pod
 - [x] lib.sh runs CM/scheduler as their own identities — every rig checks the
       roles; units; docs; C filed as #228
-- [ ] Build on a build VM; the rigs (every one exercises the roles) need a
-      test run — stormcentral#526; golden
+- [x] 4088060 on a build VM (job sc-build-c644eb2f68): workspace 543 passed
+      / 4 ignored (apiserver 266), exit 0
+- [ ] The rigs (every one exercises the roles) need a test run —
+      stormcentral#526; then golden, close #176
 
 ### Scheduler Events (#138, P2) — WRITTEN, not yet built 2026-10-07
 PodScheduled=False/Unschedulable landed with #194; the Events were missing.
