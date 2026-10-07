@@ -830,7 +830,7 @@ already on main from #146; this closed the renewal and fault-test gaps.
       10/10, VM 10/10 and short 5/5 at ec59f74 (exit 0, 206 s).
 - [x] Corrected DaemonSet test status-convergence barrier (#164, closed).
       Hardened listener selection after compilation, outside ephemeral ports;
-      original peer transport error #166 remains undiagnosed and open.
+      original peer transport error #166: diagnosed 2026-10-07 as the peer-port bind failing (EADDRINUSE; tonic 0.12.3 serve exits only there), closed; fastetcd#137 to print the OS error.
 - [x] Investigated #153 startup membership and #154 POST timeout. Fresh
       checks pass; original causes remain unproven. Preserve both open issues.
       #165 tracks ignored WATCH timeoutSeconds; probe uses client deadlines.
