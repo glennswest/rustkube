@@ -121,23 +121,24 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### KubeVirt controllers gated on their CRDs (#172, P2) — WRITTEN 2026-10-07
+### KubeVirt controllers gated on their CRDs (#172, P2) — BUILT, golden 4f7661e44994; rig BLOCKED on stormcentral#512 2026-10-07
 - [x] `runner.rs::kubevirt_gate`: VM / VMI launcher / VMI migration
       controllers start when their CRDs are Established (shared CRD feed),
       stop on delete, abort with the term. deadlines.sh: strict 0 idle +
       no KubeVirt requests. README/design/CHANGELOG
-- [ ] Build; rigs (deadlines is rigs-night; vm-runstrategy, vmi-launcher,
-      vmi-migration in rigs) — stormcentral#512; golden; close #172
+- [x] Built + units on a build VM at 6235778 (job 9ffe19b531): 571 passed /
+      4 ignored; golden-rustkube-4f7661e44994 (stormcos#366)
+- [ ] Rigs (deadlines in rigs-night: strict 0 idle; the KubeVirt rigs in
+      rigs) — stormcentral#512; then close #172
 
-### ServiceAccount key rotation (#223, P2) — BUILT + VERIFIED (unit), golden blocked on stormcentral#541 2026-10-07
+### ServiceAccount key rotation (#223, P2) — SHIPPED (golden-rustkube-4f7661e44994) 2026-10-07
 - [x] `SigningKeys::from_pem`: signing key RSA or P-256; verify against
       every public key of every `--service-account-key-file` (repeatable,
       comma-separated, multi-PEM); unit (old key verifies after rotation);
       README/certificates.md (rotation steps)/CHANGELOG
 - [x] Built + units on a build VM at 90208b0 (job 50292519d5): workspace
       570 passed / 4 ignored (apiserver 280, incl. the rotation unit), exit 0
-- [ ] Golden: `component build rustkube` 9dd5d09f110a, 7017a6c1f962 cancelled
-      while waiting for a build VM (stormcentral#541); then shipped/close
+- [x] golden-rustkube-4f7661e44994 (stormcos#366); marked shipped
 
 ### Scale subresource (#86, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] `handlers/scale.rs`: autoscaling/v1 Scale GET/PUT/PATCH for
@@ -225,7 +226,7 @@ create, and concurrent creates raced for the same lowest address.
       ignored (apiserver 271, controller-manager 89), exit 0
 - [ ] rigs run (stormcentral#526) for the timings, golden, close #113
 
-### Gateway controller: own classes only (#91, P2) — BUILT, golden waits for stormcentral#527 2026-10-07
+### Gateway controller: own classes only (#91, P2) — SHIPPED (golden-rustkube-4f7661e44994) 2026-10-07
 - [x] a4670a6 `gateway.rs`: acts only on GatewayClasses with controllerName
       `rustkube.io/gateway-controller`, their Gateways, and its own HTTPRoute
       `status.parents` entries (others kept; a route of foreign Gateways not
@@ -233,8 +234,8 @@ create, and concurrent creates raced for the same lowest address.
       (Pending, no data plane). 3 units; README/inventory/presentation/CHANGELOG
 - [x] Compiled + units at 566403b (3cc07c33b9): controller-manager 89,
       workspace 553 passed / 4 ignored
-- [ ] Golden (component builds still go to dev: stormcentral#527), close
-      #91. Whether the controller should exist stays #70
+- [x] golden-rustkube-4f7661e44994 (stormcos#366); marked shipped. Whether
+      the controller should exist stays #70
 
 ### API aggregation wired (#83, P2) — BUILT, rig waits for test runs 2026-10-07
 Done when a registered, Available APIService's group is in discovery and its
