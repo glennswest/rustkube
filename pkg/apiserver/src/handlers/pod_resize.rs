@@ -32,7 +32,7 @@ use crate::storage::ResourceStorage;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 const LISTS: [&str; 2] = ["containers", "initContainers"];
 
@@ -212,6 +212,7 @@ pub async fn patch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn pod(cpu_req: &str, cpu_lim: &str, mem: &str) -> Value {
         json!({
