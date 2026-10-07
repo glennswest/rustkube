@@ -95,17 +95,18 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Stamp the requester on storage.storm.io CRs (#210, P1) — IN PROGRESS 2026-10-06
+### Stamp the requester on storage.storm.io CRs (#210, P1) — COMPLETE 2026-10-06
 stormdrive#45's controller SARs the creator of a `DriveOperation` before
-touching a drive; nothing unforgeable on the object says who that was.
-- [ ] `admission::admit`, after mutating webhooks (beside #98's check): on
-      create of a `storage.storm.io` object, annotations
-      `storage.storm.io/requester` = username and `…/requester-groups` =
-      groups joined by `,`, whatever the client sent; on every update (PUT,
-      PATCH, apply, `/status`) the stored values are kept
-- [ ] Units; e2e `test/e2e/requester.sh` (forged values on create, update,
-      patch, apply, /status; other groups untouched)
-- [ ] README/CHANGELOG; sc-build; golden; close #210
+touching a drive; nothing unforgeable on the object said who that was.
+- [x] 212c4d6 `requester.rs` + `admission::after_mutating` (with #98's
+      check): create of a `storage.storm.io` object → annotations
+      `storage.storm.io/requester` (username) and `…/requester-groups`
+      (groups, `,`) over the client's; every update (PUT, PATCH, apply,
+      `/status`) keeps the stored values; unstamped objects stay unstamped
+- [x] Units (apiserver 250); workspace at c01668c 524 passed / 4 ignored.
+      `test/e2e/requester.sh` 20/20 at c01668c (fastetcd v1.12.0); control
+      (stamp disabled) fails 15, every stamp check
+- [x] README/test README/CHANGELOG
 
 ### VM reads Starting while the kubelet retries a failed start (#209, P1) — COMPLETE 2026-10-06
 rustkube-node#76: under Always/RerunOnFailure/running the kubelet retries a
