@@ -121,7 +121,13 @@ server-side apply with `managedFields` ownership and conflicts. The `/status`
 subresource; pod `eviction` gated by PodDisruptionBudgets; namespace
 `/finalize`; CSR `/approval`. A PUT to `/status` (and `/approval`) is
 conditional on the body's `resourceVersion`: stale is a 409 and nothing is
-written; none is an unconditional update (#78). There is **no `/scale`** subresource, though
+written; none is an unconditional update (#78). A `/status` write changes
+only status (and labels/annotations), never spec. For a custom resource whose
+CRD version enables `subresources.status`, status belongs to `/status`, as
+upstream: a create through the main resource drops the body's status, and
+PUT, PATCH and server-side apply through it keep the stored status (#128).
+Without the subresource, status is an ordinary field there. Built-in objects'
+main writes still store the status they are sent. There is **no `/scale`** subresource, though
 discovery advertises `deployments/scale`, so `kubectl scale` fails (#86).
 
 **Proxied to the kubelet** (`https://<node>:10250`, authenticated with a token

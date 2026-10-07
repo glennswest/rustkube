@@ -140,6 +140,14 @@ POST, scheduler, bind write → seen) is printed. End-to-end p99 is bounded only
 with `RK_SCHED_P99_MS`, because on the shared build box the bind write's
 datastore time stalls under other jobs' I/O. Run with `RK_RELEASE=1` (#190).
 
+`e2e/cr-status.sh` (#128, the flowsdn audit's C12) creates four CRDs —
+namespaced and cluster-scoped, with and without `subresources.status` — and
+over HTTP checks that, with the subresource, main POST drops status and main
+PUT, merge PATCH, JSON PATCH and server-side apply change spec but keep the
+stored status, apply-create drops it, `/status` PUT and PATCH change status
+and keep spec, and a stale `/status` PUT is a 409; without it, POST, PUT and
+PATCH store status as an ordinary field.
+
 `e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too
