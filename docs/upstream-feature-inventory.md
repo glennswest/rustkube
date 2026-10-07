@@ -25,7 +25,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `rbac.authorization.k8s.io/v1` | core | 🟡 | `rbac_engine.rs`; no ClusterRole `aggregationRule`; escalation prevention (`bind`/`escalate` or held rules, `escalation.rs`, #98) |
 | `apiextensions.k8s.io/v1` — CRD | core | 🟡 | served dynamically, keyed by group (#76), `/status` subresource; **no structural-schema validation, no conversion webhooks** |
 | `autoscaling/v2` — HorizontalPodAutoscaler | core | 🟡 | object served; the controller is inert — no metrics source, `ScalingActive=False`, no scaling (#89) |
-| `apiregistration.k8s.io/v1` — APIService | core | 🔴 | objects stored; `aggregation.rs` is not wired in, nothing is proxied (#83) |
+| `apiregistration.k8s.io/v1` — APIService | core | 🔴 | 🟢 aggregated APIs proxied after authn/RBAC, availability checked, groups in discovery, front-proxy contract published; no upgrades, no aggregated discovery (#83, #107) |
 | `admissionregistration.k8s.io/v1` — webhook configurations | core | 🟡 | mutating + validating webhooks called on every write (#82); no CEL `matchConditions`, AdmissionReview v1 only. ValidatingAdmissionPolicy absent (#119) |
 | `networking.k8s.io/v1` — NetworkPolicy, Ingress, IngressClass | core | 🟡 | API served; no Ingress controller. NetworkPolicy is enforced by Cilium |
 | `discovery.k8s.io/v1` — EndpointSlice | core | ✅ | served; the Service controller writes them (v0.7.5, #22) |
@@ -38,7 +38,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `flowcontrol.apiserver.k8s.io/v1` (APF) | optional | 🔴 | |
 | `authentication.k8s.io/v1` — TokenReview; SelfSubjectReview | core | 🟡 | TokenReview served and in `/apis` (#85); no SelfSubjectReview (`kubectl auth whoami`) |
 | `authorization.k8s.io/v1` — SelfSubjectAccessReview, SelfSubjectRulesReview, SubjectAccessReview, LocalSubjectAccessReview | core | ✅ | v0.9.0 (#59), v0.12.0 (#69) |
-| `metrics.k8s.io` | optional | 🔴 | needs aggregation (#83) and a metrics server |
+| `metrics.k8s.io` | optional | 🔴 | aggregation exists (#83); no metrics server or built-in source yet (#89) |
 | `project.openshift.io/v1` — Project, ProjectRequest | OpenShift | ✅ | Projects over Namespaces, owned by their requester, listed only to members (v0.15.0, #97) |
 
 ## 2. apiserver features

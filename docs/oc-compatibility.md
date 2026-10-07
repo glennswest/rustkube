@@ -22,7 +22,7 @@ State on 2026-09-26, from the code and from running oc against it
   `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` (#42 here,
   rustkube-node#56 there).
 - not served: `oc scale` (no `/scale`, #86); `oc adm top` (no
-  `metrics.k8s.io`, #83); `oc adm node-logs` (no `nodes/{name}/proxy`, #108);
+  `metrics.k8s.io` backend; aggregation exists, #83/#89); `oc adm node-logs` (no `nodes/{name}/proxy`, #108);
   `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
   `user.openshift.io` or SelfSubjectReview); `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
@@ -190,7 +190,7 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `policy who-can` | 🔴 | `authorization.openshift.io` LocalResourceAccessReview (#106) |
 | `policy scc-review`, `scc-subject-review` | 🔴 | `security.openshift.io` (#70) |
 | `node-logs` | 🔴 | `nodes/{name}/proxy` (#108), then the kubelet's `/logs/` |
-| `top node`, `top pod` | 🔴 | `metrics.k8s.io`: aggregation (#83) and a metrics server |
+| `top node`, `top pod` | 🔴 | `metrics.k8s.io`: aggregation exists (#83); needs a metrics backend (#89) |
 | `copy-to-node`, `restart-kubelet` | 🔴 | a debug pod on the node, so kubelet exec (rustkube-node#56) — not in the script |
 | `must-gather` | 🔴 | the `openshift` imagestreams, then a running pod with exec |
 | `groups new/add-users/remove-users/sync/prune` | 🔴 | `user.openshift.io` Groups (#70) — RBAC `Group` subjects work without them |

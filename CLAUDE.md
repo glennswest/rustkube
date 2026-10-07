@@ -74,7 +74,6 @@ pkg/
 Objects are `serde_json::Value` throughout; no k8s-openapi types are used.
 
 **Built but not wired** — modules whose docs used to read as features:
-`apiserver::aggregation` (#83),
 `scheduler::preemption` (#84), `scheduler::plugins` (unused traits),
 `apimachinery::{rbac, meta}` (unused types/helpers).
 
@@ -147,28 +146,26 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
-### API aggregation wired (#83, P2) — IN PROGRESS 2026-10-07
+### API aggregation wired (#83, P2) — WRITTEN, build pending 2026-10-07
 Done when a registered, Available APIService's group is in discovery and its
 requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 (#89's real HPA, `kubectl top`), stormblock's storage.storm.io (comment).
-- [ ] `aggregation.rs` rewrite: follow APIServices via the watch cache (1 s),
-      proxy `/apis/{g}/{v}/…` after authn + RBAC (not for built-in groups):
-      Service ClusterIP, TLS for `<svc>.<ns>.svc` against caBundle (or
-      insecureSkipTLSVerify), `--proxy-client-cert/key-file` presented
-      (reloaded), X-Remote-User/Group set, client Authorization/Impersonate/
-      X-Remote stripped, streamed both ways (watch); unavailable → 503;
-      protobuf middleware bypassed for aggregated paths
-- [ ] Availability in the apiserver (10 s): Local / ServiceNotFound /
-      ServiceUnavailable (no ClusterIP) / FailedDiscoveryCheck / Passed,
-      written to `/status` only on change
-- [ ] Discovery: aggregated groups in `/apis` and `/apis/{g}`;
-      `/apis/{g}/{v}` proxied
-- [ ] `kube-system/extension-apiserver-authentication` ConfigMap
-      (`--requestheader-client-ca-file`, `--requestheader-allowed-names`,
-      client-ca) + upstream roles `extension-apiserver-authentication-reader`,
-      `system:auth-delegator`
-- [ ] Units; `test/e2e/aggregation.sh` (stub backend on 127.0.0.x);
-      README/CHANGELOG; build; file stormcos issue for proxy-client certs
+- [x] 4c294b3 `aggregation.rs` rewrite: APIServices followed via the watch
+      cache (1 s); proxy middleware inside authn + RBAC (ClusterIP, TLS for
+      `<svc>.<ns>.svc` / caBundle, `--proxy-client-cert/key-file` reloaded,
+      X-Remote-User/Group, client creds dropped, responses streamed,
+      unavailable 503, upgrades 501, built-in groups never); protobuf mw
+      bypassed for claimed paths; availability every 5 s (Local /
+      ServiceNotFound / Passed / FailedDiscoveryCheck) written on change;
+      `/apis`, `/apis/{g}` list aggregated groups
+- [x] `extension-apiserver-authentication` ConfigMap (client CA,
+      `--requestheader-client-ca-file`, allowed names, header names; 30 s
+      re-read) + `system:auth-delegator`, reader Role
+- [x] Units (aggregation 5, contract 1); `test/e2e/aggregation.sh` (rigs);
+      README/inventory/presentation/oc-compat/test README/CHANGELOG
+- [ ] Build: three build-VM jobs cancelled while queued, every project
+      (filed stormcentral#535). Retry; then rigs run (stormcentral#526);
+      file stormcos issue for proxy-client certs; golden
 
 ### Store compaction / continue-token expiry (#139, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention

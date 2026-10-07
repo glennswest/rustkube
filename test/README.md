@@ -221,6 +221,17 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/aggregation.sh` (#83, suite `rigs`): a Python stub aggregated API
+server behind Service `agg/stub` (ClusterIP 127.0.0.9, caBundle the rig's
+CA, front-proxy client certificate required). The APIService goes
+`Passed`; the group is in `/apis` and `/apis/{group}`; LIST, POST and a
+streamed watch are proxied with the front-proxy certificate and the
+caller's X-Remote-User/Group (forged ones and Authorization dropped); RBAC
+is enforced here first; protobuf Accept passes untranscoded;
+extension-apiserver-authentication and the delegator roles exist; an
+APIService for `apps/v1` changes nothing; a missing Service is
+`ServiceNotFound`; a stopped backend is `FailedDiscoveryCheck` and 503.
+
 `e2e/bad-token.sh` (#115, suite `rigs`) runs the apiserver with
 `--anonymous-auth true`: no credentials and an empty `Bearer ` token are
 anonymous (discovery 200, namespaces 403); a garbage token, a JWT not signed

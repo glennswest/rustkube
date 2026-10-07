@@ -95,8 +95,7 @@ to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 schema defaults custom resources on write and on read, prunes undeclared
 fields, and `fieldValidation=Strict` refuses them (`Warn`, the default,
 returns warnings) — #121; types, patterns and other validation are not
-checked, and there is no conversion), `apiregistration.k8s.io/v1` (APIService objects are stored, but
-nothing is proxied to them, #83),
+checked, and there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated APIs, below),
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `rustkube.io/v1alpha1` (PodMigration) and
@@ -183,6 +182,35 @@ kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
 4. a request with no credentials (no client certificate, no `Authorization`,
    an empty `Bearer ` token, or another scheme) is `system:anonymous` if
    `--anonymous-auth` is true; else 401.
+
+**API aggregation** (#83). An `apiregistration.k8s.io/v1` APIService with
+a `service` makes its group/version an aggregated API, as with upstream's
+kube-aggregator:
+- every apiserver follows the stored APIServices (within about a second) and
+  checks each one's backend every 5 s, writing its `Available` condition when
+  the answer changes: `Local` without a service, `ServiceNotFound`, or a GET
+  of `/apis/{group}/{version}` on the backend — `Passed` on a 2xx,
+  `FailedDiscoveryCheck` otherwise;
+- a request under `/apis/{group}/{version}` is proxied once authentication
+  and RBAC here have passed (a backend may authorize again). The backend is
+  dialled at the Service's ClusterIP with TLS verified for
+  `<service>.<namespace>.svc` against `caBundle` (none: the system roots;
+  `insecureSkipTLSVerify` verifies nothing), presenting
+  `--proxy-client-cert-file`. The caller is named in `X-Remote-User` and
+  `X-Remote-Group`; the caller's own `Authorization`, `Impersonate-*` and
+  `X-Remote-*` headers are not forwarded. Responses stream (watches work);
+  bodies and protobuf are passed as they are. Not `Available`: 503.
+  Connection upgrades are refused (501);
+- aggregated groups are in `/apis` and `/apis/{group}`; `/apis/{group}/{version}`
+  is the backend's own answer. Aggregated discovery (#107) is not served;
+- a built-in group is never proxied, whatever an APIService says;
+- `kube-system/extension-apiserver-authentication` publishes `client-ca-file`,
+  `requestheader-client-ca-file` (`--requestheader-client-ca-file`),
+  `requestheader-allowed-names` and the `X-Remote-User`/`X-Remote-Group`/
+  `X-Remote-Extra-` header names, rewritten when a CA file changes; the
+  `system:auth-delegator` ClusterRole and the kube-system Role
+  `extension-apiserver-authentication-reader` are bootstrapped for backends to
+  bind to, as upstream's are.
 
 **Impersonation** (`Impersonate-User`, `-Group`, `-Uid`; `kubectl --as`): the
 caller needs the `impersonate` verb on the `users` (or `serviceaccounts`),
@@ -537,6 +565,9 @@ override environment values.
 | `--tls` | | off | serve a self-signed cert generated at start, held in memory only; DNS SANs `kubernetes…` and `localhost`, no IP SANs |
 | `--insecure` | | `false` | allow plain HTTP when no TLS is configured; without it the server refuses to start |
 | `--client-ca-file` | | — | enables x509 client-certificate authentication; **reloaded when the file changes**, for new connections (#105) |
+| `--proxy-client-cert-file`, `--proxy-client-key-file` | | — | the client certificate presented to aggregated API servers (#83); followed on disk |
+| `--requestheader-client-ca-file` | | — | the CA of `--proxy-client-cert-file`, published in `kube-system/extension-apiserver-authentication` (#83) |
+| `--requestheader-allowed-names` | | — | front-proxy certificate common names, comma-separated, published with it; empty: any |
 | `--anonymous-auth` | | `true` | `false` answers 401 to requests without credentials; a rejected token is 401 either way (#115) |
 | `--dev-anonymous-admin` | | `false` | **dev only**: anonymous is `cluster-admin` (needs `--anonymous-auth true`) |
 | `--service-account-signing-key-file` | | — | RSA private key (PEM) that signs tokens |

@@ -92,7 +92,7 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
   discovery, events, coordination, rbac, authorization, certificates,
   storage, apiextensions (CRDs), gateway, `route.openshift.io`,
   `project.openshift.io`, kubevirt subresources. Admission webhooks are
-  called on every write (#82); APIServices are stored but not acted on (#83).
+  called on every write (#82); APIServices with a service are proxied (#83).
 - **Wire:** JSON + protobuf, Table output, `PartialObjectMetadata`, watch with
   bookmarks and `sendInitialEvents`, pagination, label/field selectors.
 - **Writes:** create/update/delete with `DeleteOptions`, JSON / merge /
@@ -189,12 +189,11 @@ Metric names follow upstream's: `docs/metrics.md`.
 ## Planned — not in the code yet
 
 Built as modules but **not wired**:
-- API aggregation (`aggregation.rs`, #83) · scheduler preemption
-  (`preemption.rs`, #84)
+- scheduler preemption (`preemption.rs`, #84)
 
 Missing:
 - `/scale` subresource — `kubectl scale` fails (#86) · `schedulingGates` (#87)
-- a real HPA with a metrics API (#89, needs #83)
+- a real HPA with a metrics API (#89)
 - generic ephemeral volumes (#94); expansion and snapshot API integration
   now have upstream-sidecar tests (#63/#64), not full node acceptance
 - Node authorizer
