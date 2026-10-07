@@ -107,6 +107,22 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### #147: WFFC claims bind one at a time (PVC row) — IN PROGRESS 2026-10-07
+#147's scale/multi-node acceptance waits for hardware (owner on #162: "when
+we have hardware we will have it"). What the test machine measures today:
+turbomode 7277704177 (pvetest1), 25 Pods each with a fresh WFFC claim:
+request→scheduled p50 1.42 / p95 2.54 / max 2.58 s — over the < 1 s target,
+node time excluded (plain Pods: 0.17 s p50). Cause: the PV binder's claim
+controller runs `workers() = 1` (so two claims cannot choose one PV); each
+bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
+- [ ] Binder: 8 workers; only choosing an unclaimed PV takes a lock (PV list
+      read inside it); a PV pre-bound to the claim (provisioned) binds in
+      parallel
+- [ ] Units; `test/e2e/wffc-latency.sh` (suite `rigs`): 25 Pods with fresh
+      `stormblock` WFFC claims → bound p99 < 1 s; control = 1 worker
+- [ ] Docs/CHANGELOG; test machine run; golden; comment on #147 (stays open
+      for the hardware profiles)
+
 ### Metadata-only CRD watch decode error (#180, P2) — IN PROGRESS 2026-10-07
 server1 (0.15.1) cilium agent: "unable to decode an event from the watch
 stream" on its `as=PartialObjectMetadata` CRD watch; the rest of the message
