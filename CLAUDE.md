@@ -107,6 +107,7 @@ VM status reacted only to phase `Failed`, so the VM read Starting forever.
       v1.12.0, 6 new); control (`failing_start` false) fails 3 — the
       CrashLoopBackOff/condition checks, #209's symptom
 - [x] README/CHANGELOG
+- [x] golden-rustkube-2b0e51a10e5a (stormcos#333); #209 closed
 
 ### CR main writes overwrite status (#128, P1) — COMPLETE 2026-10-06
 A CRD version with `subresources.status`: upstream's main POST drops the
