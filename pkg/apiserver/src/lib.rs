@@ -23,6 +23,7 @@ pub mod events;
 pub mod eviction;
 pub mod field_validation;
 pub mod handlers;
+pub mod limitranger;
 pub mod manifests;
 pub mod protobuf_mw;
 pub mod rbac_engine;

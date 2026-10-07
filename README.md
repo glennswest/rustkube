@@ -358,7 +358,12 @@ PodSecurity keyed on the namespace's `pod-security.kubernetes.io/enforce`
 label, CronJob schedule validation, PVC access-mode validation
 (`ReadWriteOncePod` may not be combined with another mode), ConfigMap and
 Secret data-key validation, pod sysctl-name validation, a pod's
-`status.qosClass`, and `status.phase: Pending` for a new Pod,
+`status.qosClass` (a container with a limit and no request gets the limit as
+its request first, as upstream defaults it), LimitRanger (#131: a
+namespace's LimitRanges fill `defaultRequest`/`default` into containers that
+set none and annotate `kubernetes.io/limit-ranger`, then refuse — 403 in
+upstream's words — a Container, Pod or PersistentVolumeClaim outside
+`min`/`max`/`maxLimitRequestRatio`; on create only), and `status.phase: Pending` for a new Pod,
 PersistentVolumeClaim or PersistentVolume. **On update**: immutable
 ConfigMaps/Secrets and PriorityClass `value`; a PersistentVolumeClaim's
 spec is immutable but for growing `resources.requests.storage` on a Bound

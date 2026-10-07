@@ -77,6 +77,18 @@ pub async fn admit_create(
         default_toleration_seconds(obj);
         priority_from_class(storage, obj).await;
         pod_sysctls(obj)?;
+        // The API's defaulting, then LimitRanger (#131) — before the QoS
+        // class, which reads the resources they set.
+        crate::limitranger::requests_from_limits(obj);
+        if let Some(ns) = namespace {
+            let ranges = limit_ranges(storage, ns).await;
+            if !ranges.is_empty() {
+                if let Some(text) = crate::limitranger::default_pod(obj, &ranges) {
+                    crate::limitranger::annotate(obj, text);
+                }
+                limit_refused("pods", obj, crate::limitranger::validate_pod(obj, &ranges))?;
+            }
+        }
         qos_class(obj);
         initial_phase(obj);
         // PodSecurity — validate against the namespace's enforce level.
@@ -86,6 +98,13 @@ pub async fn admit_create(
                 .as_str()
                 .unwrap_or("");
             pod_security(level, obj)?;
+        }
+    }
+
+    if resource == "persistentvolumeclaims" {
+        if let Some(ns) = namespace {
+            let ranges = limit_ranges(storage, ns).await;
+            limit_refused("persistentvolumeclaims", obj, crate::limitranger::validate_pvc(obj, &ranges))?;
         }
     }
 
@@ -132,6 +151,24 @@ pub async fn admit_create(
 ///
 /// Before this any change to a claim's spec was stored, and a larger request
 /// waited forever for a resize nobody would make.
+/// The namespace's LimitRanges (#131).
+async fn limit_ranges(storage: &ResourceStorage, ns: &str) -> Vec<Value> {
+    storage
+        .list(&ResourceStorage::namespace_prefix("limitranges", ns), 500, None)
+        .await
+        .map(|(items, _, _)| items)
+        .unwrap_or_default()
+}
+
+/// Upstream's refusal: 403, `pods "x" is forbidden: [what, what]`.
+fn limit_refused(resource: &str, obj: &Value, errs: Vec<String>) -> Result<(), ApiError> {
+    if errs.is_empty() {
+        return Ok(());
+    }
+    let name = obj["metadata"]["name"].as_str().or(obj["metadata"]["generateName"].as_str()).unwrap_or("");
+    Err(ApiError::forbidden(&format!("{resource} \"{name}\" is forbidden: [{}]", errs.join(", "))))
+}
+
 pub async fn pvc_update(storage: &ResourceStorage, old: &Value, new: &Value) -> Result<(), ApiError> {
     let grew = pvc_update_valid(old, new)?;
     if grew {

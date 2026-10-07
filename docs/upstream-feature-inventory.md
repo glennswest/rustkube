@@ -16,7 +16,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | Group / kind | Must-have | Status | Where / note |
 |---|---|---|---|
 | `core/v1` — Pod, Service, Endpoints, Namespace, Node, ConfigMap, Secret, ServiceAccount, Event, PV, PVC | core | ✅ | `server.rs`, `discovery.rs` |
-| `core/v1` — PodTemplate, ReplicationController, LimitRange, ResourceQuota | core | 🟡 | objects are served/discovered; no ReplicationController controller (#125), LimitRanger (#131), or quota enforcement (#124) |
+| `core/v1` — PodTemplate, ReplicationController, LimitRange, ResourceQuota | core | 🟡 | objects are served/discovered; LimitRanger enforces LimitRanges (#131); no ReplicationController controller (#125) or quota enforcement (#124) |
 | `core/v1` — `pods/binding` | core | 🔴 | scheduler binds with a conditional PUT of `spec.nodeName` |
 | `apps/v1` — Deployment, ReplicaSet, StatefulSet, DaemonSet | core | ✅ | apiserver + controllers |
 | `apps/v1` — ControllerRevision; the `/scale` subresource | core | 🔴 | ControllerRevision is not in discovery and nothing writes one; `/scale` served for deployments, replicasets, statefulsets and CRDs with `subresources.scale` (#86) |
@@ -58,7 +58,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | AuthZ: RBAC | core | 🟡 | escalation prevention since #98; no `aggregationRule` controller |
 | AuthZ: Node authorizer, webhook authorizer | core | 🔴 | `system:nodes` is bound to `cluster-admin` instead |
 | Admission: webhooks | core | 🟡 | wired (#82): rules, selectors, failurePolicy, reinvocation, JSONPatch, warnings; CEL `matchConditions` not evaluated |
-| Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS. 🔴 LimitRanger (#131), ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
+| Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service IP allocation, CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS; LimitRanger (#131, create only). 🔴 ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
 | Aggregation layer | core | 🔴 | not wired (#83) |
 | API Priority & Fairness, audit logging | optional | 🔴 | |
 | Discovery, `/openapi/v2`, `/openapi/v3` | core | 🟡 | served with GVK paths but **empty schemas**, so `kubectl explain` has nothing to show |
@@ -164,7 +164,7 @@ binder + StorageClass, Server-Side Apply, watch bookmarks, CSR, OpenAPI v3
 paths, `/status` optimistic concurrency (#78), Projects (#97).
 
 **Open, conformance-blocking:**
-1. LimitRanger, ResourceQuota (admission webhooks are wired, #82).
+1. ResourceQuota (admission webhooks are wired, #82).
 2. Node authorizer (nodes are `cluster-admin` today).
 3. ~~`/scale` (#86)~~ served.
 4. Kubelet exec/attach/port-forward (rustkube-node#56).

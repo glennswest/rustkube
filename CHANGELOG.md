@@ -3,6 +3,9 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** LimitRanger admission (#131). On a Pod create, a namespace's LimitRanges of type `Container` fill `defaultRequest` into requests and `default` into limits a container leaves out, and the Pod is annotated `kubernetes.io/limit-ranger` ("LimitRanger plugin set: …"). Then the Pod is checked: per container (`Container`) and summed (`Pod`) against `min`, `max` and `maxLimitRequestRatio`; a PersistentVolumeClaim against `type: PersistentVolumeClaim` `min`/`max` of storage. A violation is 403 in upstream's words ("minimum cpu usage per Container is 50m, but request is 10m"). Not done: updates are not checked (upstream checks only creates of Pods too), and the ranges are read from the datastore on each create in a namespace.
+- **fix:** A container with a limit and no request gets the limit as its request (upstream's defaulting), before QoS is computed: a Pod with only limits is `Guaranteed`, not `Burstable`.
+- **test:** limitranger units (the conformance spec's values, Pod sums and ratios, PVC bounds, requests from limits). New `test/e2e/limitrange.sh` (suite `rigs`).
 - **feat:** `autoscaling/v1` is served (#123): HorizontalPodAutoscaler as a view of the stored `autoscaling/v2` object, converted as upstream converts it.
   - **Conversion:** `targetCPUUtilizationPercentage` ⇄ the cpu Utilization metric, `currentCPUUtilizationPercentage` ⇄ its current metric. Other metrics, behavior, current metrics and conditions travel in `autoscaling.alpha.kubernetes.io/{metrics,behavior,current-metrics,conditions}`, so a v1 client's read-and-write-back loses nothing.
   - **Operations:** get, list and watch (converted line by line), create, update, PATCH (applied to the v1 view), delete, deletecollection, and `/status`.

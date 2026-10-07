@@ -233,6 +233,12 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/limitrange.sh` (#131, suite `rigs`): the conformance spec's
+LimitRange — defaults and the `kubernetes.io/limit-ranger` annotation on a
+Pod with none, a partial Pod merged, below-min / above-max refused 403, the
+range relaxed admits it, a PVC below `min` refused, requests defaulted from
+limits without a LimitRange.
+
 `e2e/admission-policy-api.sh` (#119, suite `rigs`): the four
 admission policy resources in discovery, cluster-scoped; each created (with
 the not-enforced Warning), read, listed, patched, read over protobuf and

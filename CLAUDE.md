@@ -112,6 +112,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### LimitRanger admission (#131, P2) — WRITTEN 2026-10-07
+- [x] `limitranger.rs`: Container defaults + annotation, Container/Pod
+      min/max/ratio, PVC storage bounds, 403 upstream wording; requests from
+      limits before QoS; units; `test/e2e/limitrange.sh` (rigs); docs
+- [ ] Workspace on a build VM; golden; rig run after stormcentral#512
+
 ### Secret stringData folded into data (#101, P2) — IN PROGRESS 2026-10-07
 - [x] `builtin_admission::fold_string_data` on create, PUT, PATCH (before
       the immutability check, again after webhooks), startup manifests; boot
