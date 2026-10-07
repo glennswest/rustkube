@@ -32,6 +32,14 @@
 //! left failed reads `Failed`, and either way the VMI's `status.message` is
 //! on the VM's `Failure` condition, so `oc describe vm` says why.
 //!
+//! A start that fails on the node is retried by the kubelet itself under
+//! `Always`, `RerunOnFailure` and `running: true` (rustkube-node#76): the VMI
+//! stays `Pending` with `reason: FailedStart` and the attempt and error in
+//! its message, and is never `Failed`. That reads `CrashLoopBackOff` too,
+//! with the same `Failure` condition (#209) — not `Starting` forever. The
+//! retry is the kubelet's, so the VMI is not replaced and `startFailure` is
+//! not counted for it.
+//!
 //! The owner reference is what makes deleting the VM take the machine with it.
 //! Without it a deleted VirtualMachine leaves its guest running on a node with
 //! nothing in the API pointing at it, which is the failure this whole object
@@ -261,6 +269,15 @@ fn finished_phase(vmi: &Value) -> Option<&str> {
     }
 }
 
+/// Is the kubelet retrying a start that failed (rustkube-node#76)? The VMI
+/// has not finished and is not running; its `reason` says why, and its
+/// `message` names the attempt and the error (#209).
+fn failing_start(vmi: &Value) -> bool {
+    vmi["status"]["reason"].as_str() == Some("FailedStart")
+        && finished_phase(vmi).is_none()
+        && !is_ready(vmi)
+}
+
 /// Does this VM's run strategy replace an instance that ended in `phase`?
 ///
 /// Plain `running: true` is upstream's `Always`. `Manual` is not: under it
@@ -333,7 +350,7 @@ fn desired_status(
         "type": "Ready",
         "status": if ready { "True" } else { "False" },
     })];
-    if let Some(i) = vmi.filter(|i| finished_phase(i) == Some("Failed")) {
+    if let Some(i) = vmi.filter(|i| finished_phase(i) == Some("Failed") || failing_start(i)) {
         conditions.push(json!({
             "type": "Failure",
             "status": "True",
@@ -374,6 +391,9 @@ fn printable_status(want: bool, vmi: Option<&Value>, restarting: bool) -> &'stat
         (true, Some(i)) if is_ready(i) => "Running",
         // Upstream's word for a failed guest waiting out its backoff.
         (true, Some(i)) if finished_phase(i) == Some("Failed") && restarting => "CrashLoopBackOff",
+        // The kubelet retrying a start that failed (#209): the same word, as
+        // the guest keeps failing and is being retried.
+        (true, Some(i)) if failing_start(i) => "CrashLoopBackOff",
         // Failed and staying that way (`Once`, `Manual`). Upstream would say
         // `Stopped`, which hides the one thing a reader needs to know.
         (true, Some(i)) if finished_phase(i) == Some("Failed") => "Failed",
@@ -530,6 +550,41 @@ mod tests {
         assert_eq!(printable_status(true, Some(&failed), false), "Failed");
         assert_eq!(printable_status(true, Some(&done), false), "Stopped");
         assert_eq!(printable_status(true, Some(&done), true), "Starting");
+    }
+
+    /// The kubelet retrying a failed start (rustkube-node#76) leaves the VMI
+    /// Pending with reason FailedStart. The VM must not read Starting (#209).
+    #[test]
+    fn a_start_the_kubelet_is_retrying_is_not_starting() {
+        let now = at("2026-10-06T10:00:00Z");
+        let msg = "start failed (attempt 2), retrying in 20s: multus network not supported";
+        let retrying = json!({"metadata": {"uid": "a"},
+            "status": {"phase": "Pending", "reason": "FailedStart", "message": msg}});
+        assert_eq!(printable_status(true, Some(&retrying), true), "CrashLoopBackOff");
+        // Whatever the strategy: the kubelet only retries where it restarts.
+        assert_eq!(printable_status(true, Some(&retrying), false), "CrashLoopBackOff");
+        let vm = json!({"spec": {"runStrategy": "Always"}, "status": {}});
+        let st = desired_status(&vm, true, Some(&retrying), true, &Value::Null, now);
+        let failure = st["conditions"].as_array().unwrap().iter()
+            .find(|c| c["type"] == "Failure").expect("a Failure condition");
+        assert_eq!((failure["reason"].as_str(), failure["message"].as_str()), (Some("FailedStart"), Some(msg)));
+        assert!(st.get("startFailure").is_none(), "the kubelet's retry is not counted here");
+        // The next attempt's message replaces it; the transition time stays.
+        let next = json!({"metadata": {"uid": "a"}, "status": {"phase": "Pending", "reason": "FailedStart",
+            "message": "start failed (attempt 3), retrying in 40s: multus network not supported"}});
+        let vm2 = json!({"spec": vm["spec"], "status": st.clone()});
+        let st2 = desired_status(&vm2, true, Some(&next), true, &Value::Null, at("2026-10-06T10:00:20Z"));
+        let f2 = st2["conditions"].as_array().unwrap().iter().find(|c| c["type"] == "Failure").unwrap();
+        assert!(f2["message"].as_str().unwrap().contains("attempt 3"));
+        assert_eq!(f2["lastTransitionTime"], failure["lastTransitionTime"]);
+        // Started at last: Running, and no Failure condition.
+        let up = json!({"metadata": {"uid": "a"}, "status": {"phase": "Running", "reason": "FailedStart"}});
+        let st3 = desired_status(&vm2, true, Some(&up), true, &Value::Null, now);
+        assert_eq!(st3["printableStatus"], "Running");
+        assert!(!st3["conditions"].as_array().unwrap().iter().any(|c| c["type"] == "Failure"));
+        // Another reason on a pending VMI is still just starting.
+        let sched = json!({"status": {"phase": "Pending", "reason": "Unschedulable"}});
+        assert_eq!(printable_status(true, Some(&sched), true), "Starting");
     }
 }
 

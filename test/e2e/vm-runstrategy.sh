@@ -12,6 +12,10 @@
 # - Once: a Failed VMI is left, the VM reads Failed, and the VMI's message
 #   is on the VM's Failure condition
 # - ready follows the VMI: Running → ready true, printableStatus Running
+# - Always, a start the kubelet retries itself (#209; rustkube-node#76): the
+#   VMI stays Pending with reason FailedStart; the VM reads CrashLoopBackOff,
+#   not Starting, with the attempt's message on its Failure condition, the
+#   VMI is not replaced, and Running clears it
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
@@ -46,12 +50,12 @@ vm() { # <name> <runStrategy>
     \"metadata\":{\"name\":\"$1\"},\"spec\":{\"runStrategy\":\"$2\",
     \"template\":{\"spec\":{\"domain\":{\"devices\":{}}}}}}" >/dev/null
 }
-vmi_status() { # <name> <phase> — the kubelet's write
+vmi_status() { # <name> <phase> [reason message] — the kubelet's write
   req GET "$VMI/$1" >/dev/null
-  python3 - "$W/out" "$2" >"$W/body" <<'PY'
+  python3 - "$W/out" "$2" "${3:-E2E}" "${4:-e2e: guest ${2,,}}" >"$W/body" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-d["status"] = {"phase": sys.argv[2], "reason": "E2E", "message": "e2e: guest " + sys.argv[2].lower()}
+d["status"] = {"phase": sys.argv[2], "reason": sys.argv[3], "message": sys.argv[4]}
 print(json.dumps(d))
 PY
   req PUT "$VMI/$1/status" "$(cat "$W/body")"
@@ -67,9 +71,10 @@ wait_for() { # <seconds> <path> <python expr on d> — true once it holds
 
 vm always Always
 vm once Once
+vm retrying Always
 start_controller_manager
 
-for n in always once; do
+for n in always once retrying; do
   wait_for 60 "$VMI/$n" "d['metadata']['uid'] != ''" && pass "$n: VMI created" \
     || { fail "$n: no VMI"; report; }
 done
@@ -103,5 +108,27 @@ sleep 15
 req GET "$VMI/once" >/dev/null
 [ "$(jq_ "d['metadata']['uid']")" = "$uid2" ] && [ "$(jq_ "d['status']['phase']")" = Failed ] \
   && pass "once: failed VMI left in place" || fail "once: VMI changed: $(cat "$W/out")"
+
+# Always, the kubelet retrying a failed start itself (#209).
+req GET "$VMI/retrying" >/dev/null; uid3=$(jq_ "d['metadata']['uid']")
+m1="start failed (attempt 1), retrying in 10s: e2e: multus network not supported"
+vmi_status retrying Pending FailedStart "$m1" >/dev/null
+wait_for 10 "$VM/retrying" "d['status']['printableStatus'] == 'CrashLoopBackOff'" \
+  && pass "retrying: FailedStart VMI → CrashLoopBackOff, not Starting" || fail "retrying: $(cat "$W/out")"
+[ "$(jq_ "[c['reason'] + ': ' + c['message'] for c in d['status']['conditions'] if c['type']=='Failure'][0]")" = "FailedStart: $m1" ] \
+  && pass "retrying: the attempt and error on the Failure condition" || fail "retrying: conditions: $(jq_ "d['status'].get('conditions')")"
+[ "$(jq_ "'startFailure' in d['status']")" = False ] \
+  && pass "retrying: no startFailure (the kubelet owns the retry)" || fail "retrying: startFailure: $(jq_ "d['status'].get('startFailure')")"
+m2="start failed (attempt 2), retrying in 20s: e2e: multus network not supported"
+vmi_status retrying Pending FailedStart "$m2" >/dev/null
+wait_for 10 "$VM/retrying" "[c['message'] for c in d['status']['conditions'] if c['type']=='Failure'] == ['$m2']" \
+  && pass "retrying: the next attempt's message replaces it" || fail "retrying: $(cat "$W/out")"
+sleep 12
+req GET "$VMI/retrying" >/dev/null
+[ "$(jq_ "d['metadata']['uid']")" = "$uid3" ] \
+  && pass "retrying: VMI not replaced" || fail "retrying: VMI replaced: $(cat "$W/out")"
+vmi_status retrying Running >/dev/null
+wait_for 10 "$VM/retrying" "d['status']['printableStatus'] == 'Running' and not [c for c in d['status']['conditions'] if c['type']=='Failure']" \
+  && pass "retrying: Running clears it" || fail "retrying: $(cat "$W/out")"
 
 report
