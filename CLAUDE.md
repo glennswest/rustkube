@@ -107,6 +107,16 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Store compaction / continue-token expiry (#139, P2) — investigated, code waits for a build host
+- [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
+      0`, revisions); space reclaim above 80% keeps 1000 revisions anyway;
+      stormcos passes none of these flags — no routine compaction today, and
+      an apiserver loop does not conflict (treat already-compacted as
+      success). Posted on #139
+- [ ] Loop (`--etcd-compaction-interval`, compact-key CAS), last compacted
+      revision, 410 Expired + inconsistent continue in `list_page`, #127's
+      watch check — after stormcentral#521
+
 ### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — NOT STARTED, waits for a build host
 Small (like #137): FlowSchema + PriorityLevelConfiguration via the generic
 handlers with /status, discovery, protobuf, bootstrap `exempt`/`catch-all`.
