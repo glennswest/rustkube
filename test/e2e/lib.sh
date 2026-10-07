@@ -38,7 +38,13 @@ mkdir -p "$PWD/tmp"
 : "${TMPDIR:=$PWD/tmp}"
 export TMPDIR
 W=$(mktemp -d)
-cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
+# Everything the rig prints is kept in $W/rig.out too, so report() can repeat
+# every `FAIL  …` line — the bash checks' and the ones the rigs' Python
+# prints — at the very end, where sc-build's excerpt and title look (#181).
+# fd 3 is the real stdout: cleanup() puts it back so tee sees EOF and exits.
+exec 3>&1
+exec > >(tee -a "$W/rig.out")
+cleanup() { exec 1>&3; kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
 
 FAIL=0
@@ -222,6 +228,9 @@ start_scheduler() {
 # The number of failed checks is the exit status; logs when any failed.
 report() {
   echo "---- $FAIL failed"
+  # The failed checks, taken before the log dumps below are written.
+  sleep 0.3   # let tee catch up
+  grep -a '^FAIL  ' "$W/rig.out" >"$W/failed.txt" 2>/dev/null || true
   if [ "$FAIL" -ne 0 ]; then
     echo "---- apiserver log (tail)"; tail -80 "$W/apiserver.log"
     echo "---- datastore log (tail)"; tail -80 "$W/fastetcd.log"
@@ -232,6 +241,11 @@ report() {
     [ -f "$W/cm.log" ] && { echo "---- controller-manager log (tail, 404 LISTs dropped)"
       grep -v 'reflector LIST failed.*404 Not Found' "$W/cm.log" | tail -60;
       grep 'reconciling PDB membership' "$W/cm.log" | tail -30; }
+    # Last, so the end of the output — what a build-failure issue quotes and
+    # titles itself from — names what failed (#181).
+    echo "---- failed checks ($FAIL):"
+    if [ -s "$W/failed.txt" ]; then cat "$W/failed.txt"
+    else echo "(no FAIL line printed: the rig stopped before or outside its checks, exit $FAIL)"; fi
   fi
   exit "$FAIL"
 }

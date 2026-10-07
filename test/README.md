@@ -118,6 +118,12 @@ stormcentral test run rustkube rigs-night --tag <pve VM>   # night window, ≤ 2
   ones (a minute or two each), `rigs-night` the idle windows, latency under
   load, failover and cert-reload ticks. `test-container.sh` is in neither: it
   is this image's own short/medium against a rig, and runs by hand.
+- A rig's output ends with its failures (#181): `lib.sh` keeps a copy of
+  everything the rig prints (`$W/rig.out`), and `report()` prints, after the
+  apiserver/datastore/controller-manager log tails, `---- failed checks (N):`
+  and every `FAIL  …` line — the bash checks' and the ones a rig's Python
+  printed. So the end of a log, and an excerpt or issue made from it, names
+  what failed rather than 80 lines of fastetcd INFO.
 - `test/requires.toml` declares both with `budget_secs` (#247). No privilege,
   host path or cluster read: the rigs listen on the pod's loopback.
 
