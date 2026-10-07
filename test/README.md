@@ -201,6 +201,13 @@ scheduler's µs `storm.io/scheduled-at`) through selected-node, the stormblock
 PV, the binder and the bind, on a stand-in Node with no kubelet: all bound,
 claims Bound to `pvc-<ns>-<claim>`, and p99 < 1 s.
 
+`e2e/dra-crud.sh` (#137, suite `rigs`) is what the conformance suite's four
+`[DRA] CRUD Tests resource.k8s.io/v1` specs exercise: discovery of the group
+and its four kinds (+ `resourceclaims/status`), and for each kind create,
+get, list (and across namespaces), a watch's ADDED, merge patch, update,
+protobuf GET and delete; a ResourceClaim allocation written through
+`/status` with spec untouched; deletecollection by label.
+
 `e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too

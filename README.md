@@ -81,6 +81,9 @@ wall clocks. Three-master failure testing remains required before rollout (#149)
 to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 `rbac.authorization.k8s.io/v1`, `authorization.k8s.io/v1`,
 `certificates.k8s.io/v1`, `storage.k8s.io/v1`, `admissionregistration.k8s.io/v1`,
+`resource.k8s.io/v1` (DRA's DeviceClass, ResourceSlice, ResourceClaim with
+`/status`, ResourceClaimTemplate — stored and served, nothing allocates:
+#137, #225),
 `apiextensions.k8s.io/v1` (CRDs, served dynamically; no schema validation or
 conversion), `apiregistration.k8s.io/v1` (APIService objects are stored, but
 nothing is proxied to them, #83),

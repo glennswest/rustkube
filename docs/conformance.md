@@ -149,7 +149,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 4 | aggregated discovery — #107 | not implemented |
 | 4 | custom resource defaulting/pruning/fieldValidation — #121 | not implemented |
 | 4 | NodePort allocation, ClusterIP on type change — #132 | not implemented |
-| 4 | `resource.k8s.io/v1` (DRA) — #137 | not implemented |
+| 4 | `resource.k8s.io/v1` (DRA) — #137 | served (CRUD); allocation is #225 |
 | 3 | in-place pod resize — #136 | not implemented |
 | 3 | `/scale` subresource — #86 | not implemented |
 | 2 | API Priority and Fairness — #118 | not implemented |
