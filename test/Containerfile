@@ -1,15 +1,29 @@
 # rustkube-test — rustkube's test image, per stormcentral
-# docs/test-standard.md (#96). One image for all three suites: the Job runs
-# `/test short|medium|long`, and the pods the suites create run `/test idle`
-# from this same image, so nothing is pulled from outside the cluster.
+# docs/test-standard.md (#96). One image for every suite: the Job runs
+# `/test <suite>`, and the pods the suites create run `/test idle` from this
+# same image, so nothing is pulled from outside the cluster.
 #
-# test/build.sh builds the static (musl) binary on the build box and stages
-# it in test/.stage/; this packages it. It needs nothing under it: it talks
-# HTTPS to the apiserver, verified with the ServiceAccount's mounted ca.crt.
+#   short, medium, long  rustkube on the node, through the node's apiserver
+#   rigs, rigs-night     the e2e rigs (#173): each starts its own fastetcd and
+#                        control plane inside this pod, from the commit's
+#                        binaries, and drives it — the regression rigs that
+#                        used to run inside build slots (test/rigs.sh)
+#
+# test/build.sh builds on the build box and stages under test/.stage/: the
+# static (musl) test binary, the control-plane binaries and fastetcd, and the
+# upstream tools some rigs drive (oc, kubectl, CSI hostpath + sidecars,
+# snapshot-controller, its CRDs and RBAC). The rigs are bash with python3,
+# curl and openssl, which is why this is fedora-minimal and not scratch.
 #
 # The build context is the repo root (the standard's).
-FROM scratch
+FROM registry.fedoraproject.org/fedora-minimal:latest
+RUN microdnf -y install --setopt=install_weak_deps=0 bash python3 curl openssl coreutils procps-ng findutils grep sed gawk tar gzip ca-certificates && microdnf clean all
 ARG COMMIT=unknown
 LABEL storm.io/test-of="rustkube" storm.io/test-commit="${COMMIT}"
 COPY test/.stage/rustkube-test /test
+COPY test/.stage/rigs /rigs
+COPY test/rigs.sh /rigs/run.sh
+COPY test/fetch-image-file.py /rigs/tree/test/fetch-image-file.py
+COPY test/e2e /rigs/tree/test/e2e
+COPY deploy /rigs/tree/deploy
 ENTRYPOINT ["/test"]

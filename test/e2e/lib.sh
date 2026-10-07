@@ -13,7 +13,10 @@
 # it (no toolchain, no build slot):
 #   RK_BIN       directory holding kube-apiserver, kube-controller-manager and
 #                kube-scheduler (test/conformance/stage.sh builds and publishes it)
-#   RK_FASTETCD_REF  source tag/branch (default v1.6.1, snapshot-safe Range)
+#   RK_FASTETCD_REF  source tag/branch (default in versions.sh)
+#   RK_TOOLS     directory of prestaged upstream tools (oc, kubectl, CSI and
+#                snapshot binaries, snapshot CRDs/RBAC) — the test image's
+#                /rigs/tools (#173); without it a rig fetches what it needs
 #   RK_FASTETCD  path to a fastetcd server binary
 #   RK_RELEASE=1 build both release (as shipped) rather than debug, for timing
 #   RK_APISERVER_ARGS  extra kube-apiserver flags (word-split; no spaces in values)
@@ -21,6 +24,8 @@
 # each; without an override the rig chooses a free block outside the host
 # ephemeral range just before starting servers (Linux /proc required).
 set -u
+# shellcheck source=versions.sh
+. "$(dirname "${BASH_SOURCE[0]}")/versions.sh"
 mkdir -p "$PWD/tmp"
 : "${TMPDIR:=$PWD/tmp}"
 export TMPDIR
@@ -47,8 +52,8 @@ if [ -n "${RK_FASTETCD:-}" ]; then
   FASTETCD=$RK_FASTETCD
   [ -x "$FASTETCD" ] || { echo "RK_FASTETCD=$FASTETCD is not executable"; exit 100; }
 else
-  git -c advice.detachedHead=false clone -q --depth 1 --branch "${RK_FASTETCD_REF:-v1.6.1}" https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
-  echo "rig: fastetcd $(git -C "$W/fastetcd" rev-parse HEAD) (${RK_FASTETCD_REF:-v1.6.1})"
+  git -c advice.detachedHead=false clone -q --depth 1 --branch "$RK_FASTETCD_REF" https://github.com/glennswest/fastetcd "$W/fastetcd" || exit 100
+  echo "rig: fastetcd $(git -C "$W/fastetcd" rev-parse HEAD) ($RK_FASTETCD_REF)"
   (cd "$W/fastetcd" && cargo build -q ${RK_RELEASE:+--release} -p fastetcd-server) || exit 100
   FASTETCD=${CARGO_TARGET_DIR:-$W/fastetcd/target}/$PROFILE/fastetcd
 fi

@@ -14,16 +14,15 @@
 # old capacity — which is the handshake rustkube's binder used to break by
 # copying the volume's new capacity onto the claim.
 #
-# Needs podman (to extract the three binaries from their release images) and
-# network access to registry.k8s.io. Exit status is the number of failed
+# Takes the three binaries from $RK_TOOLS (the test image's, #173); without
+# it, fetches them from registry.k8s.io (no podman). Exit status is the number of failed
 # checks.
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
-HOSTPATH=${HOSTPATH_VERSION:-v1.17.1}
-PROVISIONER=${PROVISIONER_VERSION:-v6.3.0}
-# v2.3.0 is released on GitHub but has no image on registry.k8s.io yet.
-RESIZER=${RESIZER_VERSION:-v2.2.0}
+HOSTPATH=$HOSTPATH_VERSION         # versions.sh, via lib.sh
+PROVISIONER=$PROVISIONER_VERSION
+RESIZER=$RESIZER_VERSION
 DRIVER=hostpath.csi.k8s.io
 start_controller_manager
 
@@ -42,7 +41,8 @@ logs() { for f in hostpath provisioner resizer; do echo "---- $f log (tail)"; ta
 trap '[ "$FAIL" -ne 0 ] && logs; cleanup; rm -rf "$DATA"' EXIT
 
 extract() { # <image> <path in image> <out>
-  podman pull -q "$1" >/dev/null && cid=$(podman create "$1") && podman cp "$cid:$2" "$3" && podman rm -f "$cid" >/dev/null \
+  if [ -x "${RK_TOOLS:-}$2" ]; then cp "$RK_TOOLS$2" "$3"; return; fi
+  python3 -I "$(dirname "$0")/../fetch-image-file.py" "$1" "$2" "$3" >/dev/null \
     || { echo "cannot extract $2 from $1"; exit 100; }
 }
 extract registry.k8s.io/sig-storage/hostpathplugin:$HOSTPATH /hostpathplugin "$W/hostpathplugin"

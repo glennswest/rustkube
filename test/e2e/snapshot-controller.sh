@@ -24,12 +24,12 @@
 #   PVC source protection added and released, VolumeSnapshot ready, and a
 #   delete that takes the content with it.
 #
-# Needs podman (to extract the binary) and network access to GitHub and
-# registry.k8s.io. Exit status is the number of failed checks.
+# Takes the controller, kubectl, CRDs and RBAC from $RK_TOOLS (the test
+# image's, #173); without it, fetches them from GitHub and registry.k8s.io. Exit status is the number of failed checks.
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
-SNAP_VERSION=${SNAP_VERSION:-v8.6.0}
+SNAP_VERSION=$SNAP_VERSION   # versions.sh, via lib.sh
 RAW=https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/$SNAP_VERSION
 start_controller_manager
 
@@ -44,7 +44,7 @@ sc_log_on_fail() { [ "$FAIL" -ne 0 ] && sc_log; cleanup; rm -rf "$DATA"; }
 KUBECTL=$(command -v kubectl || true)
 if [ -z "$KUBECTL" ]; then
   KUBECTL=$W/kubectl
-  curl -sfL -o "$KUBECTL" "https://dl.k8s.io/$(curl -sfL https://dl.k8s.io/release/stable-1.36.txt)/bin/linux/amd64/kubectl" || exit 100
+  curl -sfL -o "$KUBECTL" "https://dl.k8s.io/$(curl -sfL "https://dl.k8s.io/release/$KUBECTL_CHANNEL.txt")/bin/linux/amd64/kubectl" || exit 100
   chmod +x "$KUBECTL"
 fi
 kc() { # <kubeconfig> <server token>
@@ -61,16 +61,20 @@ kc "$W/admin.kubeconfig" "$ADMIN"
 k() { "$KUBECTL" --kubeconfig "$W/admin.kubeconfig" "$@"; }
 
 img=registry.k8s.io/sig-storage/snapshot-controller:$SNAP_VERSION
-podman pull -q "$img" >/dev/null || { echo "cannot pull $img"; exit 100; }
-cid=$(podman create "$img") && podman cp "$cid:/snapshot-controller" "$W/snapshot-controller" && podman rm -f "$cid" >/dev/null \
-  || { echo "cannot extract the snapshot-controller from $img"; exit 100; }
+if [ -x "${RK_TOOLS:-}/snapshot-controller" ]; then
+  cp "$RK_TOOLS/snapshot-controller" "$W/snapshot-controller"
+else
+  python3 -I "$(dirname "$0")/../fetch-image-file.py" "$img" /snapshot-controller "$W/snapshot-controller" >/dev/null \
+    || { echo "cannot extract the snapshot-controller from $img"; exit 100; }
+fi
 echo "snapshot-controller $SNAP_VERSION, kubectl $("$KUBECTL" version --client 2>/dev/null | head -1)"
 
 # --- CRDs --------------------------------------------------------------------------
 crds="snapshot.storage.k8s.io_volumesnapshotclasses snapshot.storage.k8s.io_volumesnapshotcontents snapshot.storage.k8s.io_volumesnapshots
       groupsnapshot.storage.k8s.io_volumegroupsnapshotclasses groupsnapshot.storage.k8s.io_volumegroupsnapshotcontents groupsnapshot.storage.k8s.io_volumegroupsnapshots"
 for c in $crds; do
-  curl -sfL "$RAW/client/config/crd/$c.yaml" -o "$W/$c.yaml" || { echo "cannot fetch $c"; exit 100; }
+  if [ -f "${RK_TOOLS:-}/snapshot/$c.yaml" ]; then cp "$RK_TOOLS/snapshot/$c.yaml" "$W/$c.yaml"
+  else curl -sfL "$RAW/client/config/crd/$c.yaml" -o "$W/$c.yaml" || { echo "cannot fetch $c"; exit 100; }; fi
   if k apply -f "$W/$c.yaml" >"$W/apply.out" 2>&1; then :; else fail "apply $c: $(cat "$W/apply.out")"; fi
 done
 for c in $crds; do
@@ -85,7 +89,11 @@ k api-resources --api-group=snapshot.storage.k8s.io 2>&1 | grep -q volumesnapsho
   && pass "discovery lists snapshot.storage.k8s.io" || fail "discovery: $(k api-resources --api-group=snapshot.storage.k8s.io 2>&1)"
 
 # --- the controller, as its ServiceAccount ------------------------------------------
-curl -sfL "$RAW/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml" -o "$W/rbac.yaml" || exit 100
+if [ -f "${RK_TOOLS:-}/snapshot/rbac-snapshot-controller.yaml" ]; then
+  cp "$RK_TOOLS/snapshot/rbac-snapshot-controller.yaml" "$W/rbac.yaml"
+else
+  curl -sfL "$RAW/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml" -o "$W/rbac.yaml" || exit 100
+fi
 k apply -f "$W/rbac.yaml" >"$W/apply.out" 2>&1 || fail "apply RBAC: $(cat "$W/apply.out")"
 kc "$W/sc.kubeconfig" "$(token system:serviceaccount:kube-system:snapshot-controller '[]')"
 "$W/snapshot-controller" --kubeconfig "$W/sc.kubeconfig" --v=5 \

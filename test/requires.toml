@@ -1,0 +1,17 @@
+# What rustkube-test's suites need from stormcentral's runner beyond the
+# run's namespace (docs/test-standard.md; budget_secs is #247). short, medium
+# and long take the standard's budgets and need nothing more than the
+# namespace (test/rustkube-test.yaml).
+
+# The e2e rigs (#173): each rig starts its own fastetcd and control plane in
+# this pod, on loopback, and drives that — nothing of the node's cluster, no
+# privilege, no host path, no cluster read. They need CPU more than anything:
+# a rig is three Rust servers and a datastore at once.
+[rigs]
+# The functional rigs, about 18 of a minute or two each: a day suite.
+budget_secs = 1800
+
+[rigs-night]
+# Idle-watch windows (400 s), latency under 40-client load, scheduler
+# failover, the cert reload ticks: over 30 minutes, so night only, on a VM.
+budget_secs = 7200
