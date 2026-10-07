@@ -878,7 +878,7 @@ when each piece landed.
 - [x] #35 closed as superseded — **owner, 2026-09-28: "tests per component,
       and only system burn or stress tests of the system in the qa."**
       rustkube's tests live in its own `test/` container, never stormcos_qa
-- [ ] Test containers per the stormcos test standard (#96) — IN PROGRESS
+- [ ] Test containers per the stormcos test standard (#96) — BLOCKED on stormcentral#512 (2026-10-07); IN PROGRESS
       2026-09-29: sc-build at a4dba9c compiled rustkube-test and passed all
       9 unit tests (remote exit 0; local build-log append read-only). Real
       short suite at main@d7bc1f8 was refused with HTTP 400 before any Job:
@@ -895,7 +895,10 @@ when each piece landed.
       re-created children of an owner being deleted
       [x] rig run at 3fe5869: short 5/5, medium 14 + 1 skip (the 4
       kubelet-only checks fail on the rig, as expected), long 2 waves pass
-      [ ] a real `stormcentral test run rustkube short` — refused
+      [ ] a real `stormcentral test run rustkube short` — 2026-10-07 run
+      cf99131f71 (C2NR0Q2, 566403b): image built and pushed (the dev build
+      step, stormcentral#526, is past), then "the registry did not list it"
+      within 10 min — every test machine (stormcentral#512). Earlier: refused
       2026-09-28: C2NR0Q2's apiserver not answering, install 11.52 failed; the e2e scripts
       in `test/e2e/` (lib.sh + projects, status-rv, watch-deleted,
       vm-runstrategy) are the
