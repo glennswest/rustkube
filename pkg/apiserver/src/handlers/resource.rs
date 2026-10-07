@@ -476,7 +476,7 @@ pub async fn update_cluster_resource(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = put_object(&state, &key, &name, None, body, StatusField::Writable).await?;
+    let obj = put_object(&state, &key, &name, None, body, Strategy::BuiltIn).await?;
     Ok(Json(obj))
 }
 
@@ -500,7 +500,7 @@ pub(crate) async fn put_object(
     name: &str,
     namespace: Option<&str>,
     mut body: Value,
-    status: StatusField,
+    status: Strategy,
 ) -> Result<Value, ApiError> {
     let existing = state.storage.get(key).await?;
     if !body.is_object() {
@@ -548,35 +548,48 @@ pub(crate) async fn put_object(
     persist_or_finalize(state, key, body).await
 }
 
-/// What a write through the main resource may do to `status` (#128).
+/// What the server decides about an object written through its main resource
+/// (not a subresource), beyond what the body says.
 ///
-/// A custom resource whose CRD enables the `status` subresource keeps status
-/// for `/status`: upstream's strategy drops the status a create submits and
-/// carries the stored status over an update, so a spec writer (a user's
-/// `kubectl apply`, a GitOps sync) cannot replace what the controller
-/// reported. Every other object is `Writable`, as it was.
+/// Built-in objects are stored as sent (their own rules live elsewhere). A
+/// custom resource follows upstream's custom-resource strategy:
+///
+/// - **generation** (#198): `1` on create; on an update the stored value,
+///   plus one when the object's meaning changed — `spec`, when the CRD
+///   version has the status subresource, or anything outside `metadata`
+///   when it has not. Metadata-only writes (labels, annotations,
+///   finalizers) and `/status` writes leave it, and a value the client sent
+///   is ignored. It is what lets a controller report
+///   `status.observedGeneration`, and a client tell whether a status speaks
+///   for the spec it just wrote (`kubectl wait`, stormcluster#12).
+/// - **status** (#128): with the status subresource, status belongs to
+///   `/status` — a create drops the body's status, and an update keeps the
+///   stored one, so a spec writer cannot replace what a controller reported.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum StatusField {
-    Writable,
-    Kept,
+pub enum Strategy {
+    BuiltIn,
+    Custom { status_subresource: bool },
 }
 
-impl StatusField {
+impl Strategy {
     /// A create through the main resource.
     pub fn on_create(self, obj: &mut Value) {
-        if self == StatusField::Kept {
-            if let Some(o) = obj.as_object_mut() {
-                o.remove("status");
-            }
+        let Strategy::Custom { status_subresource } = self else { return };
+        let Some(o) = obj.as_object_mut() else { return };
+        if status_subresource {
+            o.remove("status");
+        }
+        if let Some(meta) = o.get_mut("metadata").and_then(Value::as_object_mut) {
+            meta.insert("generation".into(), json!(1));
         }
     }
 
     /// An update through the main resource: `stored` is what is there now.
+    /// Idempotent — the write paths apply it again after admission.
     pub fn on_update(self, obj: &mut Value, stored: &Value) {
-        if self != StatusField::Kept {
-            return;
-        }
-        if let Some(o) = obj.as_object_mut() {
+        let Strategy::Custom { status_subresource } = self else { return };
+        let Some(o) = obj.as_object_mut() else { return };
+        if status_subresource {
             match stored.get("status") {
                 Some(s) => {
                     o.insert("status".into(), s.clone());
@@ -586,25 +599,22 @@ impl StatusField {
                 }
             }
         }
-    }
-}
-
-/// Carry the fields the server owns from the stored object into its
-/// replacement: identity (name, namespace from the URL), `uid` and
-/// `creationTimestamp`. Shared by PUT and PATCH (#67).
-pub(crate) fn keep_server_fields(obj: &mut Value, stored: &Value, name: &str, namespace: Option<&str>) {
-    if !obj["metadata"].is_object() {
-        obj["metadata"] = json!({});
-    }
-    obj["metadata"]["name"] = json!(name);
-    if let Some(ns) = namespace {
-        obj["metadata"]["namespace"] = json!(ns);
-    }
-    for field in ["uid", "creationTimestamp"] {
-        match stored["metadata"].get(field) {
-            Some(v) if !v.is_null() => obj["metadata"][field] = v.clone(),
-            _ => {}
+        // An object stored before generations were kept counts as 1.
+        let base = stored["metadata"]["generation"].as_i64().filter(|g| *g > 0).unwrap_or(1);
+        let changed = if status_subresource {
+            o.get("spec") != stored.get("spec")
+        } else {
+            let outside_metadata = |v: &serde_json::Map<String, Value>| {
+                v.iter().filter(|(k, _)| k.as_str() != "metadata").map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            };
+            stored.as_object().map(outside_metadata) != Some(outside_metadata(o))
+        };
+        let generation = if changed { base + 1 } else { base };
+        if !o.get("metadata").is_some_and(Value::is_object) {
+            o.insert("metadata".into(), json!({}));
         }
+        o["metadata"]["generation"] = json!(generation);
     }
 }
 
@@ -615,7 +625,7 @@ pub async fn update_namespaced_resource(
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
-    let obj = put_object(&state, &key, &name, Some(&namespace), body, StatusField::Writable).await?;
+    let obj = put_object(&state, &key, &name, Some(&namespace), body, Strategy::BuiltIn).await?;
     Ok(Json(obj))
 }
 
@@ -1420,7 +1430,7 @@ pub(crate) async fn patch_stored_object(
     headers: &axum::http::HeaderMap,
     query: &str,
     body: &[u8],
-    status: StatusField,
+    status: Strategy,
 ) -> Result<Value, ApiError> {
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -1516,7 +1526,7 @@ pub async fn patch_cluster_resource(
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key(&resource, &name);
     let q = query.as_deref().unwrap_or("");
-    let obj = patch_stored_object(&state, &key, &resource, &name, None, &headers, q, &body, StatusField::Writable).await?;
+    let obj = patch_stored_object(&state, &key, &resource, &name, None, &headers, q, &body, Strategy::BuiltIn).await?;
     Ok(Json(obj))
 }
 
@@ -1531,7 +1541,7 @@ pub async fn patch_namespaced_resource(
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
     let q = query.as_deref().unwrap_or("");
     let obj =
-        patch_stored_object(&state, &key, &resource, &name, Some(&namespace), &headers, q, &body, StatusField::Writable)
+        patch_stored_object(&state, &key, &resource, &name, Some(&namespace), &headers, q, &body, Strategy::BuiltIn)
             .await?;
     Ok(Json(obj))
 }
@@ -2535,21 +2545,21 @@ mod status_put_tests {
         // Zero-valued server fields, as a protobuf body decodes: kept.
         let body = json!({"metadata": {"name": "c1", "uid": "", "creationTimestamp": null,
                                        "resourceVersion": rv}, "data": {"a": "2"}});
-        let out = put_object(&s, &key, "c1", Some("default"), body, StatusField::Writable).await.unwrap();
+        let out = put_object(&s, &key, "c1", Some("default"), body, Strategy::BuiltIn).await.unwrap();
         assert_eq!(out["metadata"]["uid"], "u1");
         assert_eq!(out["metadata"]["creationTimestamp"], "2026-01-01T00:00:00Z");
         assert_eq!(out["data"]["a"], "2");
 
         let rename = json!({"metadata": {"name": "other"}, "data": {}});
-        let err = put_object(&s, &key, "c1", Some("default"), rename, StatusField::Writable).await.unwrap_err();
+        let err = put_object(&s, &key, "c1", Some("default"), rename, Strategy::BuiltIn).await.unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
 
         let other_uid = json!({"metadata": {"name": "c1", "uid": "u2"}, "data": {}});
-        let err = put_object(&s, &key, "c1", Some("default"), other_uid, StatusField::Writable).await.unwrap_err();
+        let err = put_object(&s, &key, "c1", Some("default"), other_uid, Strategy::BuiltIn).await.unwrap_err();
         assert_eq!(err.status, StatusCode::CONFLICT);
 
         let missing = ResourceStorage::namespaced_key("configmaps", "default", "nope");
-        let err = put_object(&s, &missing, "nope", Some("default"), json!({"metadata": {"name": "nope"}}), StatusField::Writable)
+        let err = put_object(&s, &missing, "nope", Some("default"), json!({"metadata": {"name": "nope"}}), Strategy::BuiltIn)
             .await.unwrap_err();
         assert_eq!(err.status, StatusCode::NOT_FOUND);
     }
@@ -2574,11 +2584,11 @@ mod status_put_tests {
 
         let out = put_object(&s, &key, "w1", Some("default"), json!({
             "metadata": {"name": "w1"}, "spec": {"size": 2}, "status": {"phase": "Hacked"}}),
-            StatusField::Kept).await.unwrap();
+            Strategy::Custom { status_subresource: true }).await.unwrap();
         assert_eq!((out["spec"]["size"].clone(), out["status"].clone()), (json!(2), json!({"phase": "Ready"})));
         // A PUT without status does not delete it either.
         let out = put_object(&s, &key, "w1", Some("default"), json!({"metadata": {"name": "w1"}, "spec": {"size": 3}}),
-            StatusField::Kept).await.unwrap();
+            Strategy::Custom { status_subresource: true }).await.unwrap();
         assert_eq!(out["status"], json!({"phase": "Ready"}));
 
         for (ct, body) in [
@@ -2587,7 +2597,7 @@ mod status_put_tests {
             ("application/apply-patch+yaml", "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w1}\nspec: {size: 6}\nstatus: {phase: Hacked}\n"),
         ] {
             let out = patch_stored_object(&s, &key, "widgets", "w1", Some("default"), &hdr(ct),
-                "fieldManager=t&force=true", body.as_bytes(), StatusField::Kept).await.unwrap();
+                "fieldManager=t&force=true", body.as_bytes(), Strategy::Custom { status_subresource: true }).await.unwrap();
             assert_eq!(out["status"], json!({"phase": "Ready"}), "{ct}");
         }
         assert_eq!(s.storage.get(&key).await.unwrap()["spec"]["size"], 6);
@@ -2599,27 +2609,70 @@ mod status_put_tests {
         let key2 = ResourceStorage::namespaced_key("example.com/widgets", "default", "w2");
         let out = patch_stored_object(&s, &key2, "widgets", "w2", Some("default"), &hdr("application/apply-patch+yaml"),
             "fieldManager=t", b"apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w2}\nspec: {size: 1}\nstatus: {phase: Hacked}\n",
-            StatusField::Kept).await.unwrap();
+            Strategy::Custom { status_subresource: true }).await.unwrap();
         assert!(out.get("status").is_none(), "{out}");
 
         // Writable: status is an ordinary field.
         let out = patch_stored_object(&s, &key, "widgets", "w1", Some("default"), &hdr("application/merge-patch+json"),
-            "", br#"{"status":{"phase":"Set"}}"#, StatusField::Writable).await.unwrap();
+            "", br#"{"status":{"phase":"Set"}}"#, Strategy::BuiltIn).await.unwrap();
         assert_eq!(out["status"], json!({"phase": "Set"}));
         let out = put_object(&s, &key, "w1", Some("default"), json!({"metadata": {"name": "w1"}, "spec": {}}),
-            StatusField::Writable).await.unwrap();
+            Strategy::BuiltIn).await.unwrap();
         assert!(out.get("status").is_none());
+    }
+
+    /// metadata.generation for custom resources (#198), as upstream.
+    #[test]
+    fn generation_counts_changes_to_what_the_object_asks_for() {
+        let with = Strategy::Custom { status_subresource: true };
+        let without = Strategy::Custom { status_subresource: false };
+        let gen = |o: &Value| o["metadata"]["generation"].as_i64();
+
+        let mut o = json!({"metadata": {"name": "a", "generation": 7}, "spec": {"x": 1}});
+        with.on_create(&mut o);
+        assert_eq!(gen(&o), Some(1), "a client's generation is not taken");
+        let stored = o.clone();
+
+        // With the status subresource: spec moves it, metadata does not.
+        let mut same = json!({"metadata": {"name": "a", "labels": {"l": "1"}, "generation": 99}, "spec": {"x": 1}});
+        with.on_update(&mut same, &stored);
+        assert_eq!(gen(&same), Some(1), "metadata-only write");
+        let mut changed = json!({"metadata": {"name": "a"}, "spec": {"x": 2}});
+        with.on_update(&mut changed, &stored);
+        assert_eq!(gen(&changed), Some(2));
+        with.on_update(&mut changed, &stored);
+        assert_eq!(gen(&changed), Some(2), "applying it twice is the same");
+
+        // Without it: anything outside metadata, status included.
+        let stored = json!({"metadata": {"name": "a", "generation": 3}, "spec": {"x": 1}, "status": {"p": 1}});
+        let mut st = json!({"metadata": {"name": "a"}, "spec": {"x": 1}, "status": {"p": 2}});
+        without.on_update(&mut st, &stored);
+        assert_eq!(gen(&st), Some(4));
+        let mut meta = json!({"metadata": {"name": "a", "finalizers": ["f"]}, "spec": {"x": 1}, "status": {"p": 1}});
+        without.on_update(&mut meta, &stored);
+        assert_eq!(gen(&meta), Some(3));
+
+        // Stored before generations were kept: counts from 1.
+        let mut old = json!({"metadata": {"name": "a"}, "spec": {"x": 5}});
+        with.on_update(&mut old, &json!({"metadata": {"name": "a"}, "spec": {"x": 1}}));
+        assert_eq!(gen(&old), Some(2));
+
+        // Built-ins are untouched.
+        let mut b = json!({"metadata": {"name": "a"}, "spec": {}});
+        Strategy::BuiltIn.on_create(&mut b);
+        Strategy::BuiltIn.on_update(&mut b, &json!({"metadata": {"generation": 4}}));
+        assert_eq!(gen(&b), None);
     }
 
     #[test]
     fn status_field_on_create_and_update() {
         let mut o = json!({"spec": {}, "status": {"a": 1}});
-        StatusField::Writable.on_create(&mut o);
+        Strategy::BuiltIn.on_create(&mut o);
         assert!(o.get("status").is_some());
-        StatusField::Kept.on_create(&mut o);
+        Strategy::Custom { status_subresource: true }.on_create(&mut o);
         assert!(o.get("status").is_none());
         let mut o = json!({"spec": {}, "status": {"a": 2}});
-        StatusField::Kept.on_update(&mut o, &json!({"spec": {}}));
+        Strategy::Custom { status_subresource: true }.on_update(&mut o, &json!({"spec": {}}));
         assert!(o.get("status").is_none(), "nothing stored, nothing kept");
     }
 

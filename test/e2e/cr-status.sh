@@ -12,6 +12,10 @@
 #     stale resourceVersion is a 409 (#78)
 # Without it, status is an ordinary field: POST, PUT and PATCH store it.
 #
+# metadata.generation (#198): 1 on create whatever the body says; +1 when
+# spec changes (with the subresource) or anything outside metadata does
+# (without); unchanged by metadata-only writes and by /status.
+#
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
@@ -71,16 +75,23 @@ for plural, scope, has_status in cases:
 
     code, out = req("POST", base, obj("a", {"size": 1}, {"phase": "FromCreate"}))
     check(code == 201, f"{tag}: create {code}")
+    gen = lambda: req("GET", base + "/a")[1]["metadata"].get("generation")
+    check(out["metadata"].get("generation") == 1, f"{tag}: create sets generation 1 ({out['metadata'].get('generation')})")
     if has_status:
         check("status" not in out, f"{tag}: POST drops the body's status (got {out.get('status')})")
         # The controller reports, through /status.
         code, out = req("PUT", base + "/a/status", {**out, "status": {"phase": "Ready"}})
         check(code == 200 and out.get("status") == {"phase": "Ready"} and out["spec"] == {"size": 1},
               f"{tag}: PUT /status sets status, keeps spec ({code} {out.get('status')} {out.get('spec')})")
+        check(gen() == 1, f"{tag}: /status leaves generation ({gen()})")
+        code, out = req("PATCH", base + "/a", {"metadata": {"labels": {"l": "1"}, "generation": 42}},
+                        "application/merge-patch+json")
+        check(code == 200 and gen() == 1, f"{tag}: a metadata-only PATCH (and a sent generation) leaves it ({gen()})")
         cur = out
         code, out = req("PUT", base + "/a", {**cur, "spec": {"size": 2}, "status": {"phase": "Hacked"}})
         check(code == 200 and out["spec"] == {"size": 2} and out.get("status") == {"phase": "Ready"},
               f"{tag}: main PUT changes spec, keeps status ({out.get('spec')} {out.get('status')})")
+        check(out["metadata"].get("generation") == 2, f"{tag}: a spec PUT bumps generation to 2 ({out['metadata'].get('generation')})")
         code, out = req("PATCH", base + "/a", {"spec": {"size": 3}, "status": {"phase": "Hacked"}},
                         "application/merge-patch+json")
         check(code == 200 and out["spec"] == {"size": 3} and out.get("status") == {"phase": "Ready"},
@@ -103,6 +114,8 @@ for plural, scope, has_status in cases:
                         "application/merge-patch+json")
         check(code == 200 and out.get("status") == {"phase": "Degraded"} and out["spec"] == {"size": 5},
               f"{tag}: PATCH /status sets status, keeps spec ({out.get('status')} {out.get('spec')})")
+        # PUT, merge, JSON patch and apply each changed spec once: 2..5.
+        check(gen() == 5, f"{tag}: four spec writes, generation 5 ({gen()})")
         stale = {**cur, "status": {"phase": "Stale"}}
         code, out = req("PUT", base + "/a/status", stale)
         check(code == 409, f"{tag}: /status PUT with a stale resourceVersion is 409 (got {code})")
@@ -114,8 +127,12 @@ for plural, scope, has_status in cases:
         code, out = req("PUT", base + "/a", {**out, "spec": {"size": 2}, "status": {"phase": "FromPut"}})
         check(code == 200 and out.get("status") == {"phase": "FromPut"} and out["spec"] == {"size": 2},
               f"{tag}: main PUT writes status ({out.get('status')})")
+        check(out["metadata"].get("generation") == 2, f"{tag}: a PUT changing spec and status bumps to 2 ({out['metadata'].get('generation')})")
         code, out = req("PATCH", base + "/a", {"status": {"phase": "FromPatch"}}, "application/merge-patch+json")
         check(code == 200 and out.get("status") == {"phase": "FromPatch"}, f"{tag}: merge PATCH writes status ({out.get('status')})")
+        check(out["metadata"].get("generation") == 3, f"{tag}: without the subresource a status change bumps it ({out['metadata'].get('generation')})")
+        code, out = req("PATCH", base + "/a", {"metadata": {"annotations": {"a": "1"}}}, "application/merge-patch+json")
+        check(code == 200 and out["metadata"].get("generation") == 3, f"{tag}: metadata-only PATCH leaves it ({out['metadata'].get('generation')})")
         code, out = req("PUT", base + "/a", {**out, "spec": {"size": 3}, "status": None})
         out2 = req("GET", base + "/a")[1]
         check(out2.get("status") in (None, {}), f"{tag}: main PUT without status clears it ({out2.get('status')})")
