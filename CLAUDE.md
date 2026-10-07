@@ -116,10 +116,10 @@ stream" on its `as=PartialObjectMetadata` CRD watch; the rest of the message
       failure or a non-EOF/non-timeout stream error. stormcos manifests carry
       no non-string label/annotation values (the manifest loader stores YAML
       unchecked)
-- [ ] Units: every frame (ADDED, MODIFIED, DELETED with/without last state,
-      BOOKMARK heartbeat/initial-end, initial ADDED, ERROR) against Go's
-      ObjectMeta types; `test/e2e/metadata-watch.sh` (suite `rigs`) — three
-      live metadata watches through create/patch/delete/heartbeat
+- [x] 0644141 units: every frame (ADDED, MODIFIED, DELETED with/without last
+      state, BOOKMARK heartbeat/initial-end, initial ADDED, ERROR) decodes under
+      Go's ObjectMeta types — pass (apiserver 255 at 0644141).
+      `test/e2e/metadata-watch.sh` (suite `rigs`) written; needs a test machine
 - [ ] On server1 (blade, on after 11:00 UTC): grep the cilium agent log;
       absent → close; present → the full error, reproduce
 
