@@ -149,11 +149,17 @@ handlers with /status, discovery, protobuf, bootstrap `exempt`/`catch-all`.
 Held so as not to stack a fourth uncompiled change. Proposed after
 stormcentral#521.
 
-### CR schema defaulting/pruning/fieldValidation (#121, P2) — NOT STARTED, waits for a build host
-Not written blind: a schema walker (defaults on write and read, pruning with
-preserve-unknown-fields/embedded-resource, fieldValidation Strict/Warn) plus
-duplicate-key detection at JSON decode is too large to land uncompiled on top
-of #137/#138/#150. Proposed after stormcentral#521.
+### CR schema defaulting/pruning/fieldValidation (#121, P2) — IN PROGRESS 2026-10-07
+Failing specs: SSA (YAML, fieldValidation=Strict) on cluster CRs expect
+`.unknownField: field not declared in schema`, `.metadata.unknownMeta` /
+`.spec.template.metadata.unknownSubMeta` (embedded resource), YAML dup
+`line 9: key "foo" already set in map`; defaulting on request and on read.
+- [ ] `schema.rs` walker (defaults, prune, unknown paths; preserve-unknown,
+      additionalProperties, embedded-resource, ObjectMeta pruning)
+- [ ] CrdDefinition.schema; Strategy::Custom carries schema + fieldValidation;
+      create/PUT/PATCH/apply prune+default, Strict 400 / Warn headers;
+      GET/LIST default on read; YAML/JSON duplicate detection under Strict
+- [ ] Units; e2e `cr-schema.sh` (rigs); build on a build VM (SC_BUILD_VM=1)
 
 ### Service ports in strategic merge patch (#150, P2) — WRITTEN, not yet built 2026-10-07
 - [x] `ports` keyed by content: `containerPort` when entries carry it, else
