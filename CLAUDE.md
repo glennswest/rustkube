@@ -107,19 +107,20 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### LIST/GET from the watch cache (#171, P2) — IN PROGRESS 2026-10-07
+### LIST/GET from the watch cache (#171, P2) — IMPLEMENTED, awaiting a test-machine run 2026-10-07
 Every LIST and GET is a linearizable fastetcd Range, `resourceVersion=0`
 included; #5's cached LIST was switched off and never back on. Upstream's
 cacher rules: RV "" → store; RV 0 → cache; RV N (NotOlderThan) → cache once
 at N; Exact → store at N; continuation → store pinned to the token's rev.
-- [ ] `storage::Read`; `ResourceStorage::{list_page_read, get_read}` serve
-      from the resource-wide prefix cache (`/registry/<res>/`, filtered to the
-      namespace), wait for N (else store), token `{rev}:{key}` so page 2 is
-      the store pinned to the cache's revision; RV unparseable → 400
-- [ ] Built-in + CR LIST and GET handlers; units (cache == store, RV rules)
-- [ ] e2e `test/e2e/cache-reads.sh` (suite `rigs`): A/B cache vs store LIST
-      and GET, RV=N after a write, relist storm counted in
-      `etcd_request_duration_seconds_count`; run on a test machine (#173)
+- [x] 241ce6a (+91c82b1): `storage::Read`; `ResourceStorage::{list_page_read,
+      get_read}` from the resource-wide prefix cache (`read_page`/`read_one`,
+      namespace by key range), 50 ms wait else store, `{rev}:{key}` tokens,
+      Exact → store at N, RV unparseable → 400; built-in + CR LIST/GET;
+      `apiserver_watch_cache_reads_total`. Units: apiserver 253; workspace at
+      91c82b1 527 passed / 4 ignored. #222 (my type error) closed
+- [x] `test/e2e/cache-reads.sh` (suite `rigs`)
+- [ ] Test-machine run 03a09c82aa (`rigs` at c82ef9e, pvetest1) — queued
+      behind a VM that keeps failing to settle; blades off 00–11 UTC
 - [ ] README/design doc/CHANGELOG; golden; close #171 (server1 GET p99 < 20
       ms acceptance after the release, per #187)
 
