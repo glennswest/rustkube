@@ -95,18 +95,22 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### CR main writes overwrite status (#128, P1) — IN PROGRESS 2026-10-06
+### CR main writes overwrite status (#128, P1) — COMPLETE 2026-10-06
 A CRD version with `subresources.status`: upstream's main POST drops the
-body's status, main PUT/PATCH/apply keep the stored status. Today the
-submitted status is stored. CRDs without the subresource keep whole-object
-semantics; `/status` writes already copy only status (+ #78's RV check).
-- [ ] `CrdDefinition.status_subresource` (per version; v1beta1 spec-level
-      too); `StatusField::{Writable, Kept}` through `put_object` and
-      `patch_stored_object` (+ apply upsert); CR create strips status after
-      mutating admission
-- [ ] Units (handler tests on MemStore); e2e `test/e2e/cr-status.sh`: the
-      audit's C12 cases for namespaced + cluster CRDs with and without status
-- [ ] README/CHANGELOG; sc-build; golden; close #128
+body's status, main PUT/PATCH/apply keep the stored status; rustkube stored
+the submitted status. CRDs without the subresource keep whole-object
+semantics; `/status` writes already copied only status (+ #78's RV check).
+- [x] f88a92f `CrdDefinition.status_subresource` (per version; v1beta1
+      spec-level too); `StatusField::{Writable, Kept}` through `put_object`
+      and `patch_stored_object` (+ apply upsert); CR create drops status
+      after mutating admission. Built-ins unchanged (`Writable`)
+- [x] Units: apiserver 248 (3 new); workspace at 539786c 521 passed / 4
+      ignored. #219 (the new unit's missing namespace) closed
+- [x] `test/e2e/cr-status.sh` 32/32 at 539786c (fastetcd v1.12.0), the
+      audit's C12 for namespaced + cluster CRDs with/without the
+      subresource; control (StatusField a no-op) fails 12, every isolation
+      check
+- [x] README/test README/CHANGELOG
 
 ### Client cert + client CA reload (#105, P1) — COMPLETE 2026-10-06
 controller-manager/scheduler built reqwest once with `Identity::from_pem`;
