@@ -148,6 +148,13 @@ stored status, apply-create drops it, `/status` PUT and PATCH change status
 and keep spec, and a stale `/status` PUT is a 409; without it, POST, PUT and
 PATCH store status as an ordinary field.
 
+`e2e/requester.sh` (#210) creates `storage.storm.io` CRDs (cluster and
+namespaced) and checks that a create by alice, with forged
+`storage.storm.io/requester[-groups]`, is stamped alice and her groups; that
+bob's PUT, merge PATCH, JSON PATCH remove, server-side apply and `/status`
+PUT cannot change or drop the stamp; that bob's apply-create is stamped bob;
+and that another group's object keeps the annotation its client wrote.
+
 `e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too

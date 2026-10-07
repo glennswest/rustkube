@@ -232,6 +232,14 @@ the namespace cascade takes everything in it.
   (`pod-security.kubernetes.io/enforce` among them) stay cluster-scoped to
   write. A project admin can share only what `admin` holds: binding
   cluster-admin, or writing a Role beyond `admin`, is refused (#98).
+- **Requester stamp on `storage.storm.io` objects** (#210): on create of any
+  object in that group, the apiserver sets `storage.storm.io/requester` (the
+  authenticated username) and `storage.storm.io/requester-groups` (its
+  groups, comma-joined) over whatever the client sent. Every update (PUT,
+  PATCH, server-side apply, `/status`) keeps the stored values, so they keep
+  naming the creator; an object stored without them cannot gain them. It runs
+  after the mutating webhooks. stormdrive's controller reads it to
+  SubjectAccessReview a `DriveOperation`'s creator (stormdrive#45).
 - Sharing is RBAC: `oc adm policy add-role-to-user edit bob -n demo` binds
   one of `admin` (edit + roles/rolebindings + delete the project), `edit`
   (write workloads, read secrets, exec/attach/port-forward, VM start/stop)
