@@ -121,13 +121,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### ServiceCIDR / IPAddress served (#134, P3) — IN PROGRESS 2026-10-07
+### ServiceCIDR / IPAddress served (#134, P3) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] networking/v1 proto re-vendored (release-1.36, additions only);
       routes (+ cluster /status), discovery, resources_for (networking was
       missing), kinds; bootstrap `kubernetes` ServiceCIDR Ready; protobuf unit;
       `test/e2e/service-cidr.sh` (rigs); docs/CHANGELOG
-- [ ] Build; rig (stormcentral#512); golden; close. Not done (optional in
-      the issue): IPAddress per ClusterIP, allocation from extra ServiceCIDRs
+- [x] Build VM 9c265a5785 at aafcbdf: 572 passed / 4 ignored;
+      golden-rustkube-44fc40d7ae0d (stormcos#366)
+- [ ] service-cidr rig (stormcentral#512); close. Not done (optional in the
+      issue): IPAddress per ClusterIP, allocation from extra ServiceCIDRs
 
 ### VMI migrate addedNodeSelector (#208, P2) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] cf83dc4 apiserver: MigrateOptions.addedNodeSelector → migration spec
