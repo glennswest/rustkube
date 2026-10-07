@@ -79,6 +79,16 @@ token() { # <user> <groups-json>
   printf '%s.%s.%s' "$h" "$p" "$s"
 }
 ADMIN=$(token admin '["system:masters"]')
+# The controller-manager and scheduler run as themselves, held to their
+# bootstrap roles (#176), so every rig that starts them checks those roles.
+# RK_CONTROL_PLANE_ADMIN=1 runs them as system:masters instead.
+if [ -n "${RK_CONTROL_PLANE_ADMIN:-}" ]; then
+  CM_TOKEN=$ADMIN SCHED_TOKEN=$ADMIN
+else
+  CM_TOKEN=$(token system:kube-controller-manager '[]')
+  SCHED_TOKEN=$(token system:kube-scheduler '[]')
+fi
+export CM_TOKEN SCHED_TOKEN
 
 # A throwaway CA and a serving cert from it, so the controllers verify the
 # apiserver as they do in stormcos, and the root CA publisher has a real
@@ -197,12 +207,12 @@ done
 echo "rig: 20 namespace creates in $(( ($(date +%s%N) - t0) / 1000000 )) ms (store at $DATA)"
 
 start_controller_manager() {
-  "$BIN/kube-controller-manager" --apiserver "$API" --token "$ADMIN" \
+  "$BIN/kube-controller-manager" --apiserver "$API" --token "$CM_TOKEN" \
     --certificate-authority "$W/ca.crt" --leader-elect false >"$W/cm.log" 2>&1 &
 }
 
 start_scheduler() {
-  "$BIN/kube-scheduler" --apiserver "$API" --token "$ADMIN" \
+  "$BIN/kube-scheduler" --apiserver "$API" --token "$SCHED_TOKEN" \
     --certificate-authority "$W/ca.crt" --leader-elect false >"$W/sched.log" 2>&1 &
 }
 

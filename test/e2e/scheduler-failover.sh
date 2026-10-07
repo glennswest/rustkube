@@ -45,7 +45,7 @@ procs = {}
 def launch(name):
     log = open(f'{W}/sched-{name}.log', 'w')
     procs[name] = subprocess.Popen([os.environ['BIN']+'/kube-scheduler', '--apiserver', base,
-        '--token', token, '--certificate-authority', W+'/ca.crt', '--leader-elect', 'true'],
+        '--token', os.environ['SCHED_TOKEN'], '--certificate-authority', W+'/ca.crt', '--leader-elect', 'true'],
         stdout=log, stderr=subprocess.STDOUT)
 def identity(name):
     end = time.monotonic()+60

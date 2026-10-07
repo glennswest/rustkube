@@ -78,7 +78,8 @@ procs = {}
 def launch(kind, name, n):
     log = open(f"{W}/{kind}-{name}.log", "w")
     procs[f"{kind}-{name}"] = subprocess.Popen(
-        [f"{BIN}/kube-{kind}", "--apiserver", APIS[n], "--token", ADMIN,
+        [f"{BIN}/kube-{kind}", "--apiserver", APIS[n],
+         "--token", os.environ["CM_TOKEN" if kind == "controller-manager" else "SCHED_TOKEN"],
          "--certificate-authority", f"{W}/ca.crt", "--leader-elect", "true"],
         stdout=log, stderr=subprocess.STDOUT)
 def identity(kind, name):

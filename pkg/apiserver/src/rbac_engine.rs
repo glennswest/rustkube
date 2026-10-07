@@ -886,6 +886,20 @@ fn parse_authorization_request(
         _ => return None,
     };
 
+    // A shell, an attach or a port-forward is `create` on its subresource
+    // whichever method opened it, as upstream authorizes it since 1.31
+    // (websocket GETs too): with `get`, any reader of `*` — the
+    // controller-manager's role (#176), a monitoring tool — could open a
+    // shell in any pod.
+    let verb = if api_group.is_empty()
+        && resource == "pods"
+        && matches!(subresource.as_deref(), Some("exec" | "attach" | "portforward"))
+    {
+        "create"
+    } else {
+        verb
+    };
+
     // Only *reading* a Namespace is authorized in the namespace itself.
     //
     // Upstream authorizes every verb there, and relies on RBAC escalation

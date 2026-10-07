@@ -13,6 +13,7 @@ pub mod apply;
 pub mod builtin_admission;
 pub mod auth;
 pub mod config;
+pub mod control_plane_rbac;
 pub mod crd;
 pub mod discovery;
 pub mod error;

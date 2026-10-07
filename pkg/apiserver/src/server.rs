@@ -1502,6 +1502,39 @@ async fn reconcile_bootstrap_role(storage: &ResourceStorage, role: serde_json::V
     }
 }
 
+/// Create a bootstrap ClusterRoleBinding, or bring a stored one's roleRef and
+/// subjects up to date (#176: the control-plane bindings moved from
+/// cluster-admin to their own roles). The same opt-out as the roles: one
+/// annotated `rbac.authorization.kubernetes.io/autoupdate: "false"` is left.
+async fn reconcile_bootstrap_binding(storage: &ResourceStorage, binding: serde_json::Value) {
+    let name = binding["metadata"]["name"].as_str().unwrap_or_default().to_string();
+    let key = ResourceStorage::cluster_key("clusterrolebindings", &name);
+    match storage.get(&key).await {
+        Ok(mut stored) => {
+            let pinned = stored["metadata"]["annotations"]["rbac.authorization.kubernetes.io/autoupdate"]
+                .as_str()
+                == Some("false");
+            if pinned || (stored["roleRef"] == binding["roleRef"] && stored["subjects"] == binding["subjects"]) {
+                return;
+            }
+            let was = stored["roleRef"]["name"].as_str().unwrap_or("").to_string();
+            stored["roleRef"] = binding["roleRef"].clone();
+            stored["subjects"] = binding["subjects"].clone();
+            let rev = stored["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
+            match storage.update(&key, stored, rev).await {
+                Ok(_) => tracing::info!("bootstrap: clusterrolebindings {name}: {was} → {}", binding["roleRef"]["name"]),
+                Err(e) if e.reason == "Conflict" => {}
+                Err(e) => tracing::error!("bootstrap: clusterrolebindings {name} not updated: {}", e.message),
+            }
+        }
+        Err(_) => {
+            let mut binding = binding;
+            crate::handlers::resource::ensure_metadata_pub(&mut binding, &name, None);
+            create_bootstrap(storage, &key, binding, &format!("clusterrolebindings {name}")).await;
+        }
+    }
+}
+
 /// Bootstrap RBAC resources for initial cluster access.
 async fn bootstrap_rbac(
     storage: &ResourceStorage,
@@ -1559,36 +1592,18 @@ async fn bootstrap_rbac(
         )
         .await;
 
-    // ClusterRoleBindings for the control-plane components (they authenticate
-    // via their client certs as these users). Bound to cluster-admin for now;
-    // can be tightened to the upstream system:kube-* roles later.
-    for user in ["system:kube-controller-manager", "system:kube-scheduler"] {
-        let binding = json!({
-            "apiVersion": "rbac.authorization.k8s.io/v1",
-            "kind": "ClusterRoleBinding",
-            "metadata": {
-                "name": user,
-                "uid": uuid::Uuid::new_v4().to_string(),
-                "creationTimestamp": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
-            },
-            "roleRef": {
-                "apiGroup": "rbac.authorization.k8s.io",
-                "kind": "ClusterRole",
-                "name": "cluster-admin"
-            },
-            "subjects": [{
-                "kind": "User",
-                "name": user,
-                "apiGroup": "rbac.authorization.k8s.io"
-            }]
-        });
-        create_bootstrap(
-            storage,
-            &ResourceStorage::cluster_key("clusterrolebindings", user),
-            binding,
-            &format!("clusterrolebindings {}", user),
-        )
-        .await;
+    // The control-plane components (they authenticate via their client certs
+    // as these users) get their own least-privilege roles, not cluster-admin
+    // (#176). Reconciled every boot, and a binding left pointing at
+    // cluster-admin by an earlier release is repointed.
+    for role in [
+        crate::control_plane_rbac::controller_manager_role(),
+        crate::control_plane_rbac::scheduler_role(),
+    ] {
+        reconcile_bootstrap_role(storage, role).await;
+    }
+    for user in [crate::control_plane_rbac::CONTROLLER_MANAGER, crate::control_plane_rbac::SCHEDULER] {
+        reconcile_bootstrap_binding(storage, crate::control_plane_rbac::binding(user)).await;
     }
 
     // kube-system/node-admin: the identity of a node's ssh login (#79).
