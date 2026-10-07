@@ -679,6 +679,7 @@ async fn impersonated(
             status: StatusCode::BAD_REQUEST,
             reason: "BadRequest".into(),
             message: "requested impersonation of groups or a uid without impersonating a user".into(),
+            continue_token: None,
         });
     };
     let sa = username
@@ -718,6 +719,7 @@ async fn impersonated(
                     c.resource,
                     c.name.as_deref().unwrap_or("")
                 ),
+                continue_token: None,
             });
         }
     }
@@ -795,6 +797,7 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
             status: StatusCode::FORBIDDEN,
             reason: "Forbidden".into(),
             message: format!("{} cannot be authorized for {path}: unrecognized API path", user.username),
+            continue_token: None,
         }
         .into_response());
     }
@@ -816,6 +819,7 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
                         },
                         auth_req.namespace.as_deref().unwrap_or(""),
                     ),
+                    continue_token: None,
                 };
                 return Err(status.into_response());
             }

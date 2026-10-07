@@ -25,6 +25,8 @@ pub struct ApiServerConfig {
     pub etcd_cert: Option<PathBuf>,
     /// Client private key (PEM) for mutual TLS to etcd/fastetcd.
     pub etcd_key: Option<PathBuf>,
+    /// How often the datastore is compacted (#139); zero turns it off.
+    pub etcd_compaction_interval: std::time::Duration,
     /// Data directory (TLS material, misc runtime state).
     pub data_dir: PathBuf,
     /// Cluster CIDR for service IPs.
@@ -87,6 +89,7 @@ impl Default for ApiServerConfig {
             etcd_cacert: None,
             etcd_cert: None,
             etcd_key: None,
+            etcd_compaction_interval: std::time::Duration::from_secs(300),
             data_dir: PathBuf::from("/var/lib/kubernetes"),
             service_cidr: "10.96.0.0/12".into(),
             cluster_domain: "cluster.local".into(),

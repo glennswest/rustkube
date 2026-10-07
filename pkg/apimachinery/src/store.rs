@@ -79,6 +79,17 @@ pub trait KvStore: Send + Sync + 'static {
     /// Revoke a lease, deleting all associated keys.
     async fn lease_revoke(&self, id: LeaseId) -> Result<()>;
 
-    /// Compact all revisions up to and including the given revision.
+    /// Compact all revisions below the given revision. A store already
+    /// compacted at or past it answers `Ok`: someone else got there first.
     async fn compact(&self, revision: u64) -> Result<()>;
+
+    /// One claim of upstream's compaction coordination (#139; k8s.io/apiserver
+    /// `storage/etcd3/compact.go`): in one transaction, if `key`'s version is
+    /// still `seen`, write `value` to it, else read it. Returns whether this
+    /// caller won, the key's version afterwards, and the store's revision.
+    /// Stores without transactions refuse.
+    async fn compact_claim(&self, key: &str, seen: i64, value: &str) -> Result<(bool, i64, u64)> {
+        let _ = (key, seen, value);
+        Err(crate::Error::Store("this store does not support compaction claims".into()))
+    }
 }

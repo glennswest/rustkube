@@ -35,6 +35,10 @@ pub struct ApiError {
     pub status: StatusCode,
     pub reason: String,
     pub message: String,
+    /// `metadata.continue` of the Status: set only on the 410 for a continue
+    /// token whose snapshot was compacted away, where it lets the client
+    /// list the rest at the current revision (#139).
+    pub continue_token: Option<String>,
 }
 
 impl ApiError {
@@ -43,6 +47,7 @@ impl ApiError {
             status: StatusCode::NOT_FOUND,
             reason: "NotFound".into(),
             message: format!("{resource} \"{name}\" not found"),
+            continue_token: None,
         }
     }
 
@@ -51,6 +56,7 @@ impl ApiError {
             status: StatusCode::CONFLICT,
             reason: "AlreadyExists".into(),
             message: format!("{resource} \"{name}\" already exists"),
+            continue_token: None,
         }
     }
 
@@ -67,6 +73,7 @@ impl ApiError {
             status: StatusCode::CONFLICT,
             reason: "Conflict".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 
@@ -75,6 +82,7 @@ impl ApiError {
             status: StatusCode::BAD_REQUEST,
             reason: "BadRequest".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 
@@ -83,6 +91,7 @@ impl ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             reason: "Invalid".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 
@@ -91,14 +100,18 @@ impl ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             reason: "InternalError".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 
+    /// 410 `Expired` — upstream's `NewResourceExpired`, which client-go's
+    /// `IsResourceExpired` (and so every reflector's relist) recognises.
     pub fn gone(message: &str) -> Self {
         Self {
             status: StatusCode::GONE,
-            reason: "Gone".into(),
+            reason: "Expired".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 
@@ -107,6 +120,7 @@ impl ApiError {
             status: StatusCode::UNAUTHORIZED,
             reason: "Unauthorized".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 
@@ -115,6 +129,7 @@ impl ApiError {
             status: StatusCode::FORBIDDEN,
             reason: "Forbidden".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 
@@ -129,6 +144,7 @@ impl ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             reason: "ServiceUnavailable".into(),
             message: message.into(),
+            continue_token: None,
         }
     }
 }
@@ -178,7 +194,10 @@ impl std::fmt::Display for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let status_obj = Status::new(self.status, &self.reason, &self.message);
+        let mut status_obj = Status::new(self.status, &self.reason, &self.message);
+        if let Some(token) = &self.continue_token {
+            status_obj.metadata = serde_json::json!({"continue": token});
+        }
         let body = serde_json::to_string(&status_obj).unwrap_or_default();
         // A backend outage is an operator's problem, not the client's: say so
         // in the way HTTP has a word for, so a retry is paced rather than
@@ -207,11 +226,13 @@ impl From<apimachinery::Error> for ApiError {
                 status: StatusCode::NOT_FOUND,
                 reason: "NotFound".into(),
                 message: msg,
+                continue_token: None,
             },
             apimachinery::Error::AlreadyExists(msg) => Self {
                 status: StatusCode::CONFLICT,
                 reason: "AlreadyExists".into(),
                 message: msg,
+                continue_token: None,
             },
             apimachinery::Error::Conflict => Self::conflict("resource version mismatch"),
             apimachinery::Error::Gone(rev) => {
@@ -221,11 +242,13 @@ impl From<apimachinery::Error> for ApiError {
                 status: StatusCode::UNAUTHORIZED,
                 reason: "Unauthorized".into(),
                 message: msg,
+                continue_token: None,
             },
             apimachinery::Error::Forbidden(msg) => Self {
                 status: StatusCode::FORBIDDEN,
                 reason: "Forbidden".into(),
                 message: msg,
+                continue_token: None,
             },
             apimachinery::Error::Invalid(msg) => Self::invalid(&msg),
             apimachinery::Error::Unavailable(ref cause) => {

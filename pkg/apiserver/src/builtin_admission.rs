@@ -251,6 +251,7 @@ fn access_modes(obj: &Value) -> Result<(), ApiError> {
                 "spec.accessModes: ReadWriteOncePod may not be combined with other modes (got [{}])",
                 modes.join(", ")
             ),
+            continue_token: None,
         });
     }
     Ok(())

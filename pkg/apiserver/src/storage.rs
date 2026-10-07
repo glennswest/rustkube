@@ -163,11 +163,19 @@ impl ResourceStorage {
         // An API server's local recent-write table cannot establish freshness
         // for writes accepted by another master. Read the shared datastore,
         // pinning continuation pages to the first page's actual revision.
-        let page = self
-            .store
-            .list_at(prefix, limit, continue_token, pinned)
-            .await
-            .map_err(ApiError::from)?;
+        let page = match self.store.list_at(prefix, limit, continue_token, pinned).await {
+            Ok(page) => page,
+            // The token's snapshot was compacted away (#139): upstream's 410
+            // with an "inconsistent" token that lists the rest from the same
+            // key at the current revision — a bare key, which starts from the
+            // current snapshot and pins the pages after it to that one.
+            Err(apimachinery::Error::Gone(_)) if continue_token.is_some() => {
+                let mut gone = ApiError::gone(INCONSISTENT_CONTINUE);
+                gone.continue_token = continue_token.map(str::to_string);
+                return Err(gone);
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         let mut items = Vec::with_capacity(page.items.len());
         for (_, bytes, mod_rev) in &page.items {
@@ -337,7 +345,9 @@ impl ResourceStorage {
     }
 }
 
-/// Set `metadata.resourceVersion` to the store revision the object reflects.
+/// Upstream's message for a continue token whose snapshot is compacted.
+const INCONSISTENT_CONTINUE: &str = "The provided continue parameter is too old to display a consistent list result. You can start a new list without the continue parameter, or use the continue token in this response to retrieve the remainder of the results. Continuing with the provided token results in an inconsistent list - objects that were created, modified, or deleted between the time the first chunk was returned and now may show up in the list.";
+
 /// A continue token: `{revision}:{key}`, or a bare key (keys start with `/`).
 fn parse_continue(token: &str) -> (Option<u64>, &str) {
     match token.split_once(':') {
@@ -435,6 +445,7 @@ pub struct ListPage {
     pub remaining: Option<u64>,
 }
 
+/// Set `metadata.resourceVersion` to the store revision the object reflects.
 fn inject_resource_version(obj: &mut Value, rev: u64) {
     if !obj.get("metadata").map(Value::is_object).unwrap_or(false) {
         obj["metadata"] = serde_json::json!({});
@@ -508,5 +519,94 @@ mod tests {
         );
         assert_eq!(metric_resource("/registry/pods/default/p"), "pods");
         assert_eq!(metric_resource("/registry/"), "unknown");
+    }
+}
+
+#[cfg(test)]
+mod compacted_continue_tests {
+    use super::ResourceStorage;
+    use apimachinery::store::{KvStore, LeaseId, ListResult, WatchStream};
+    use apimachinery::{Error, Result};
+    use async_trait::async_trait;
+    use axum::response::IntoResponse;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Three pods; history before revision 10 is compacted away.
+    struct Compacted;
+
+    #[async_trait]
+    impl KvStore for Compacted {
+        async fn get(&self, _: &str) -> Result<Option<(Vec<u8>, u64)>> {
+            Ok(None)
+        }
+        async fn put(&self, _: &str, _: &[u8], _: Option<u64>) -> Result<u64> {
+            unimplemented!()
+        }
+        async fn delete(&self, _: &str, _: Option<u64>) -> Result<u64> {
+            unimplemented!()
+        }
+        async fn list(&self, p: &str, l: usize, c: Option<&str>) -> Result<ListResult> {
+            self.list_at(p, l, c, None).await
+        }
+        async fn list_at(&self, _: &str, limit: usize, after: Option<&str>, pinned: Option<u64>) -> Result<ListResult> {
+            if let Some(rev) = pinned.filter(|r| *r < 10) {
+                return Err(Error::Gone(rev));
+            }
+            let keys = ["/registry/pods/a/p1", "/registry/pods/a/p2", "/registry/pods/a/p3"];
+            let rest: Vec<_> = keys.iter().filter(|k| after.map_or(true, |a| **k > a)).collect();
+            let page: Vec<_> = rest.iter().take(limit).map(|k| (k.to_string(), br#"{"metadata":{}}"#.to_vec(), 5)).collect();
+            Ok(ListResult {
+                continue_token: (rest.len() > limit).then(|| page.last().unwrap().0.clone()),
+                items: page,
+                revision: 12,
+                remaining: None,
+            })
+        }
+        async fn watch(&self, _: &str, _: u64) -> Result<WatchStream> {
+            unimplemented!()
+        }
+        async fn lease_grant(&self, _: Duration) -> Result<LeaseId> {
+            unimplemented!()
+        }
+        async fn lease_keepalive(&self, _: LeaseId) -> Result<()> {
+            unimplemented!()
+        }
+        async fn lease_revoke(&self, _: LeaseId) -> Result<()> {
+            unimplemented!()
+        }
+        async fn compact(&self, _: u64) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_compacted_continue_is_410_expired_with_a_token_for_the_rest() {
+        let storage = ResourceStorage::new(Arc::new(Compacted));
+        let err = match storage.list_page("/registry/pods/", 1, Some("7:/registry/pods/a/p1")).await {
+            Err(e) => e,
+            Ok(_) => panic!("a token pinned below the compaction must not list"),
+        };
+        assert_eq!(err.status, axum::http::StatusCode::GONE);
+        assert_eq!(err.reason, "Expired", "client-go's IsResourceExpired");
+        let token = err.continue_token.clone().expect("an inconsistent continue token");
+
+        let body = axum::body::to_bytes(err.into_response().into_body(), usize::MAX).await.unwrap();
+        let status: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(status["code"], 410);
+        assert_eq!(status["metadata"]["continue"], token.as_str());
+        assert!(status["message"].as_str().unwrap().contains("inconsistent list"));
+
+        // The token lists the rest from the same key, at the current
+        // revision, and pins the pages after it there.
+        let page = storage.list_page("/registry/pods/", 1, Some(&token)).await.ok().unwrap();
+        assert_eq!(page.revision, 12);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.continue_token.as_deref(), Some("12:/registry/pods/a/p2"));
+        let last = storage.list_page("/registry/pods/", 1, page.continue_token.as_deref()).await.ok().unwrap();
+        assert_eq!((last.revision, last.items.len(), last.continue_token), (12, 1, None));
+
+        // A token still inside history pages as before.
+        assert!(storage.list_page("/registry/pods/", 1, Some("11:/registry/pods/a/p1")).await.is_ok());
     }
 }

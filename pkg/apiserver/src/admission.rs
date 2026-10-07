@@ -652,6 +652,7 @@ fn denied(webhook: &str, status: &Value) -> ApiError {
             _ => "BadRequest".into(),
         }),
         message,
+        continue_token: None,
     }
 }
 

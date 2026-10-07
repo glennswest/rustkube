@@ -543,6 +543,7 @@ pub(crate) async fn put_object(
         status: StatusCode::BAD_REQUEST,
         reason: "BadRequest".into(),
         message,
+        continue_token: None,
     };
     if let Some(n) = meta["name"].as_str().filter(|n| !n.is_empty() && *n != name) {
         return Err(bad_request(format!(
@@ -1130,6 +1131,7 @@ fn refuse_namespaced(resource: &str) -> ApiError {
         status: StatusCode::METHOD_NOT_ALLOWED,
         reason: "MethodNotAllowed".into(),
         message: format!("the server does not allow this method on the requested resource (deletecollection {resource} across namespaces)"),
+        continue_token: None,
     }
 }
 
@@ -2067,6 +2069,7 @@ pub(crate) fn check_body_namespace(body: &Value, namespace: &str) -> Result<(), 
             message: format!(
                 "the namespace of the provided object does not match the namespace sent on the request ({ns} != {namespace})"
             ),
+            continue_token: None,
         }),
         _ => Ok(()),
     }

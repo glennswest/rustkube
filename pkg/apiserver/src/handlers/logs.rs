@@ -45,6 +45,7 @@ pub async fn pod_logs(
             status: StatusCode::BAD_REQUEST,
             reason: "BadRequest".into(),
             message: format!("pod {namespace}/{name} is not assigned to a node yet"),
+            continue_token: None,
         }
         .into_response();
     };
@@ -54,6 +55,7 @@ pub async fn pod_logs(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             reason: "InternalError".into(),
             message: format!("no usable address for node {node_name}"),
+            continue_token: None,
         }
         .into_response();
     };
@@ -193,6 +195,7 @@ pub(crate) fn pick_container(
                         "container {c} is not valid for pod {pod_name}; choose one of [{}]",
                         all.join(", ")
                     ),
+                    continue_token: None,
                 });
             }
             Ok(c.to_string())
@@ -205,6 +208,7 @@ pub(crate) fn pick_container(
                 "a container name must be specified for pod {pod_name}, choose one of: [{}]",
                 containers.join(", ")
             ),
+            continue_token: None,
         }),
     }
 }

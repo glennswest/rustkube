@@ -68,9 +68,16 @@ the first page's revision, even through another API server — a page served
 from the cache hands out the same `{revision}:{key}` token, so the next page
 is the datastore at the cache's revision. That needs correct datastore snapshots,
 which fastetcd has from v1.6.1 ([fastetcd#50](https://github.com/glennswest/fastetcd/issues/50),
-fixed); `test/e2e/list-snapshot-race.sh` checks it. Compacted LIST revisions return 410; automatic
-compaction is absent (#139), and compacted watch error handling is incomplete
-(#127). Controller and scheduler
+fixed); `test/e2e/list-snapshot-race.sh` checks it. The apiserver compacts the
+datastore every `--etcd-compaction-interval` (5 m, as upstream; #139): one
+apiserver per interval wins a CAS on `compact_rev_key` and compacts to the
+revision it recorded an interval earlier, so a snapshot stays readable for
+one to two intervals. A continue token whose snapshot is compacted is a 410
+`Expired` whose Status carries an "inconsistent" token in
+`metadata.continue`, listing the rest from the same key at the current
+revision; a LIST at a compacted `Exact` revision and a watch from below the
+compaction are 410 `Expired` too. fastetcd compacting on its own (its space
+reclaim) is treated as done, not an error. Controller and scheduler
 leadership uses Kubernetes Leases; watch queues are local, reconstructible
 state. Lease expiration uses local elapsed time rather than comparing master
 wall clocks. Three-master failure testing remains required before rollout (#149).
@@ -516,6 +523,7 @@ override environment values.
 |---|---|---|---|
 | `--etcd-servers` | `ETCD_SERVERS` | **required** | fastetcd endpoints, comma-separated |
 | `--etcd-cacert`, `--etcd-cert`, `--etcd-key` | `ETCD_CACERT`, `ETCD_CERT`, `ETCD_KEY` | — | TLS / mutual TLS to fastetcd |
+| `--etcd-compaction-interval` | | `5m0s` | compact the datastore's history this often (Go duration, `0` off); one apiserver per interval, coordinated on `compact_rev_key` (#139) |
 | `--bind-addr` | | `0.0.0.0` | |
 | `--secure-port` | | `6443` | |
 | `--tls-cert-file`, `--tls-private-key-file` | | — | serving cert; **reloaded when the files change**, no restart; a key that is not the cert's is refused (#93) |

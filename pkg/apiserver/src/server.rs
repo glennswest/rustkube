@@ -808,13 +808,14 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("failed to connect to etcd/fastetcd {:?}: {e}", config.etcd_servers))?;
     let kv: Arc<dyn KvStore> = Arc::new(store);
-    let storage = Arc::new(ResourceStorage::new(kv));
+    let storage = Arc::new(ResourceStorage::new(kv.clone()));
 
     // One gate for the whole of bootstrap. `Client::connect` above succeeds
     // against a datastore that is not up — the connection is lazy — so without
     // this the next dozen writes go into a hole and the cluster comes up with
     // no namespaces and no RBAC (#52).
     wait_for_datastore(&storage).await;
+    crate::compactor::spawn(kv, config.etcd_compaction_interval);
 
     // Bootstrap default namespaces
     bootstrap_namespace(&storage, "default").await;

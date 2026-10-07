@@ -145,6 +145,7 @@ fn validate_name(name: &str) -> Result<(), ApiError> {
                 "Project \"{name}\" is invalid: metadata.name: must be a lowercase RFC 1123 \
                  label (a-z, 0-9 and '-', starting and ending alphanumeric, at most 63 characters)"
             ),
+            continue_token: None,
         })
     }
 }

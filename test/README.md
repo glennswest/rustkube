@@ -221,6 +221,13 @@ overcommitted); an apiserver killed (GC still works); quorum loss (writes
 refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
 Takeover times are printed. A stopped process stands in for a partition.
 
+`e2e/compaction.sh` (#139, #127, suite `rigs`) runs the apiserver with
+`--etcd-compaction-interval=3s`: a continue token works, then is a 410
+`Expired` with an inconsistent token in `metadata.continue`, which lists the
+rest (including an object created after the first page) at one newer
+revision; an `Exact` LIST at the old revision and a WATCH from below the
+compaction are 410 `Expired`; `apiserver_storage_compacted_revision` moves.
+
 `e2e/cr-schema.sh` (#121, suite `rigs`) replays the conformance suite's
 FieldValidation and CRD-defaulting bodies over HTTP: Strict server-side apply
 refused for an undeclared field, unknown root/embedded metadata and a

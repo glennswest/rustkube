@@ -123,6 +123,7 @@ fn pod_node(pod: &Value, namespace: &str, name: &str) -> Result<String, ApiError
             status: StatusCode::BAD_REQUEST,
             reason: "BadRequest".into(),
             message: format!("pod {namespace}/{name} is not assigned to a node yet"),
+            continue_token: None,
         })
 }
 

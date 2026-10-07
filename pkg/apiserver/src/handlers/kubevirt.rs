@@ -99,6 +99,7 @@ async fn door(
             message: format!(
                 "VirtualMachineInstance {namespace}/{name} is not running on a node yet"
             ),
+            continue_token: None,
         }
         .into_response();
     };
@@ -148,6 +149,7 @@ pub async fn vm_restart(
             status: StatusCode::CONFLICT,
             reason: "Conflict".into(),
             message: format!("VirtualMachine {namespace}/{name} is not running"),
+            continue_token: None,
         }
         .into_response();
     }
@@ -243,7 +245,7 @@ pub async fn vmi_migrate(
 
 async fn migrate(state: AppState, namespace: String, name: String, body: axum::body::Bytes, what: &str) -> Response {
     let conflict = |message: String| {
-        ApiError { status: StatusCode::CONFLICT, reason: "Conflict".into(), message }.into_response()
+        ApiError { status: StatusCode::CONFLICT, reason: "Conflict".into(), message, continue_token: None }.into_response()
     };
     if state
         .crd_registry
@@ -257,6 +259,7 @@ async fn migrate(state: AppState, namespace: String, name: String, body: axum::b
             message: "VirtualMachineInstanceMigration is not served: its CRD \
                       (virtualmachineinstancemigrations.kubevirt.io) is not installed"
                 .into(),
+            continue_token: None,
         }
         .into_response();
     }

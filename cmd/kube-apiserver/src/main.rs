@@ -31,6 +31,12 @@ struct Cli {
     #[arg(long, env = "ETCD_KEY")]
     etcd_key: Option<PathBuf>,
 
+    /// How often to compact the datastore's history (a Go duration; 0 turns
+    /// it off). One apiserver compacts per interval, to the revision of one
+    /// interval earlier, so a LIST continue token lasts one to two intervals.
+    #[arg(long = "etcd-compaction-interval", default_value = "5m0s", value_parser = apiserver::compactor::parse_interval)]
+    etcd_compaction_interval: std::time::Duration,
+
     /// Serve HTTPS with an auto-generated self-signed cert (dev/bootstrap)
     #[arg(long)]
     tls: bool,
@@ -139,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
         etcd_cacert: cli.etcd_cacert,
         etcd_cert: cli.etcd_cert,
         etcd_key: cli.etcd_key,
+        etcd_compaction_interval: cli.etcd_compaction_interval,
         tls_cert: cli.tls_cert,
         tls_key: cli.tls_key,
         tls_auto: cli.tls,

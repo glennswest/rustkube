@@ -357,11 +357,36 @@ impl KvStore for EtcdStore {
 
     async fn compact(&self, revision: u64) -> Result<()> {
         let mut client = self.client.clone();
-        client
-            .compact(revision as i64, None)
-            .await
-            .map_err(etcd_err)?;
-        Ok(())
+        match client.compact(revision as i64, None).await {
+            Ok(_) => Ok(()),
+            // Already compacted past it — by another apiserver, or by
+            // fastetcd's own space reclaim (#139). Nothing left to do.
+            Err(e) if e.to_string().contains("required revision has been compacted") => Ok(()),
+            Err(e) => Err(etcd_err(e)),
+        }
+    }
+
+    async fn compact_claim(&self, key: &str, seen: i64, value: &str) -> Result<(bool, i64, u64)> {
+        let mut client = self.client.clone();
+        let txn = Txn::new()
+            .when(vec![Compare::version(key, CompareOp::Equal, seen)])
+            .and_then(vec![TxnOp::put(key, value, None)])
+            .or_else(vec![TxnOp::get(key, None)]);
+        let resp = client.txn(txn).await.map_err(etcd_err)?;
+        let revision = resp.header().map(|h| h.revision() as u64).unwrap_or(0);
+        if resp.succeeded() {
+            // The put bumped the key's version by one.
+            return Ok((true, seen + 1, revision));
+        }
+        let version = resp
+            .op_responses()
+            .into_iter()
+            .find_map(|op| match op {
+                etcd_client::TxnOpResponse::Get(get) => get.kvs().first().map(|kv| kv.version()),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok((false, version, revision))
     }
 }
 

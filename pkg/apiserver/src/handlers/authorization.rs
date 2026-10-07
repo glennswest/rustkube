@@ -152,6 +152,7 @@ pub async fn create_local_subject_access_review(
                 message: format!(
                     "spec.resourceAttributes.namespace ({asked}) must match the request namespace ({namespace})"
                 ),
+                continue_token: None,
             }
             .into_response();
         }
