@@ -310,7 +310,8 @@ async fn migrate(state: AppState, namespace: String, name: String, body: axum::b
     match crate::crd::crd_create_ns(
         State(state),
         Path((KUBEVIRT.into(), "v1".into(), namespace.clone(), "virtualmachineinstancemigrations".into())),
-        axum::Json(migration),
+        axum::extract::RawQuery(None),
+        axum::body::Bytes::from(serde_json::to_vec(&migration).unwrap_or_default()),
     )
     .await
     {
