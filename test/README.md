@@ -195,6 +195,12 @@ bob's PUT, merge PATCH, JSON PATCH remove, server-side apply and `/status`
 PUT cannot change or drop the stamp; that bob's apply-create is stamped bob;
 and that another group's object keeps the annotation its client wrote.
 
+`e2e/wffc-latency.sh` (#147, suite `rigs`) times 25 Pods, each with a fresh
+`stormblock` WaitForFirstConsumer claim, from create to bound (the
+scheduler's µs `storm.io/scheduled-at`) through selected-node, the stormblock
+PV, the binder and the bind, on a stand-in Node with no kubelet: all bound,
+claims Bound to `pvc-<ns>-<claim>`, and p99 < 1 s.
+
 `e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too

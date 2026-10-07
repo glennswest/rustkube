@@ -63,7 +63,11 @@ stays the default; see [class selection](#class-selection-is-by-name).
    `pv.kubernetes.io/provisioned-by`.
 5. **The bind completes.** `persistentvolume.rs` sees the pre-bound PV, fills
    in `spec.volumeName` on the claim, sets both phases to `Bound`, and copies
-   the real capacity into `status`.
+   the real capacity into `status`. Claims are worked on in parallel (8
+   workers); only a claim that must *choose* among unclaimed volumes takes the
+   binder's lock, reading the volumes inside it so two claims never take one.
+   A pre-bound (provisioned) volume is no choice, so a burst of new claims no
+   longer binds one after another (#147: 25 claims took 0–2.6 s in a line).
 6. **The attach.** `csi.stormblock.io` declares `attachRequired: true`, so
    `attachdetach.rs` creates a `VolumeAttachment` named exactly as upstream
    names it (`csi-` + SHA-256 of handle+driver+node). The `external-attacher`
