@@ -20,6 +20,11 @@
 #   RK_FASTETCD  path to a fastetcd server binary
 #   RK_RELEASE=1 build both release (as shipped) rather than debug, for timing
 #   RK_APISERVER_ARGS  extra kube-apiserver flags (word-split; no spaces in values)
+#   RK_ETCD_MEMBERS  datastore members (default 1); 3 starts a Raft cluster on
+#                loopback, member i on ports ETCD+3i (client), +1 (peer),
+#                +2 (metrics); `start_member i` restarts one (#149)
+#   RK_APISERVERS  apiserver ports to reserve (default 1); `start_apiserver n`
+#                starts the nth on PORT+n against the same datastore (#149)
 # Ports: 36443 (apiserver), 32379-32381 (fastetcd); RK_PORT_OFFSET=n adds n to
 # each; without an override the rig chooses a free block outside the host
 # ephemeral range just before starting servers (Linux /proc required).
@@ -89,18 +94,19 @@ openssl x509 -req -in "$W/apiserver.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" -CAc
 if [ -n "${RK_PORT_OFFSET:-}" ]; then
   OFF=$RK_PORT_OFFSET
 else
-  OFF=$(python3 - <<'PORTS'
-import pathlib, random, socket
+  OFF=$(RK_PORTS="$(seq -s ' ' 36443 $((36443 + ${RK_APISERVERS:-1} - 1))) $(seq -s ' ' 32379 $((32379 + 3 * ${RK_ETCD_MEMBERS:-1} - 1)))" python3 - <<'PORTS'
+import os, pathlib, random, socket
+ports = [int(p) for p in os.environ["RK_PORTS"].split()]
 # Do not select a listener from Linux's outbound ephemeral range: another
 # connection can claim it after this check and before the server binds.
 ephemeral=pathlib.Path('/proc/sys/net/ipv4/ip_local_port_range').read_text().split()
 lo,hi=map(int,ephemeral)
 candidates=[offset for offset in range(-22000,16000)
-    if all(not lo <= port+offset <= hi for port in (36443,32379,32380,32381))]
+    if all(not lo <= port+offset <= hi for port in ports)]
 for offset in random.sample(candidates, min(100,len(candidates))):
     sockets = []
     try:
-        for port in (36443+offset, 32379+offset, 32380+offset, 32381+offset):
+        for port in (p + offset for p in ports):
             sock = socket.socket(); sockets.append(sock); sock.bind(('127.0.0.1', port))
         print(offset); break
     except OSError: pass
@@ -117,10 +123,36 @@ API=https://127.0.0.1:$PORT
 # --- start --------------------------------------------------------------------
 # Keep the datastore on the build's private disposable drive too.
 DATA=$W/etcd
-"$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:$ETCD \
-  --listen-peer-urls http://127.0.0.1:$((ETCD + 1)) --listen-metrics-url 127.0.0.1:$((ETCD + 2)) \
-  >"$W/fastetcd.log" 2>&1 &
-STORE_PID=$!
+MEMBERS=${RK_ETCD_MEMBERS:-1}
+if [ "$MEMBERS" = 1 ]; then
+  ETCD_SERVERS=http://127.0.0.1:$ETCD
+  "$FASTETCD" --data-dir "$DATA" --listen-client-urls http://127.0.0.1:$ETCD \
+    --listen-peer-urls http://127.0.0.1:$((ETCD + 1)) --listen-metrics-url 127.0.0.1:$((ETCD + 2)) \
+    >"$W/fastetcd.log" 2>&1 &
+  STORE_PID=$!
+  STORE_PIDS=("$STORE_PID")
+else
+  # A Raft cluster on loopback: member 0's data and log keep the single
+  # member's names, so report() and the rigs read them unchanged.
+  CLUSTER=$(for i in $(seq 0 $((MEMBERS - 1))); do printf 'm%d=http://127.0.0.1:%d,' "$i" $((ETCD + 3 * i + 1)); done)
+  CLUSTER=${CLUSTER%,}
+  ETCD_SERVERS=$(for i in $(seq 0 $((MEMBERS - 1))); do printf 'http://127.0.0.1:%d,' $((ETCD + 3 * i)); done)
+  ETCD_SERVERS=${ETCD_SERVERS%,}
+  STORE_PIDS=()
+  start_member() { # <i> [existing]
+    local i=$1 dir=$W/etcd log=$W/fastetcd.log
+    [ "$i" = 0 ] || { dir=$W/etcd$i; log=$W/fastetcd$i.log; }
+    "$FASTETCD" --name "m$i" --data-dir "$dir" \
+      --listen-client-urls http://127.0.0.1:$((ETCD + 3 * i)) \
+      --listen-peer-urls http://127.0.0.1:$((ETCD + 3 * i + 1)) \
+      --initial-advertise-peer-urls http://127.0.0.1:$((ETCD + 3 * i + 1)) \
+      --listen-metrics-url 127.0.0.1:$((ETCD + 3 * i + 2)) \
+      --initial-cluster-token rig --initial-cluster "$CLUSTER" >>"$log" 2>&1 &
+    STORE_PIDS[$i]=$!
+  }
+  for i in $(seq 0 $((MEMBERS - 1))); do start_member "$i"; done
+  STORE_PID=${STORE_PIDS[0]}
+fi
 # fastetcd first: an apiserver that outwaits its 60s datastore gate boots
 # into a hole.
 for _ in $(seq 180); do
@@ -129,12 +161,20 @@ for _ in $(seq 180); do
   sleep 1
 done
 (exec 3<>/dev/tcp/127.0.0.1/$ETCD) 2>/dev/null || { echo "fastetcd never listened"; tail -40 "$W/fastetcd.log"; exit 100; }
-"$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $PORT \
-  --tls-cert-file "$W/apiserver.crt" --tls-private-key-file "$W/apiserver.key" \
-  --etcd-servers http://127.0.0.1:$ETCD --anonymous-auth false \
-  --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
-  ${RK_APISERVER_ARGS:-} >"$W/apiserver.log" 2>&1 &
-API_PID=$!
+# The nth apiserver (0 is $API) on PORT+n, against every datastore member.
+API_PIDS=()
+start_apiserver() { # <n>
+  local n=$1 log=$W/apiserver.log
+  [ "$n" = 0 ] || log=$W/apiserver$n.log
+  "$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port $((PORT + n)) \
+    --tls-cert-file "$W/apiserver.crt" --tls-private-key-file "$W/apiserver.key" \
+    --etcd-servers "$ETCD_SERVERS" --anonymous-auth false \
+    --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
+    ${RK_APISERVER_ARGS:-} >>"$log" 2>&1 &
+  API_PIDS[$n]=$!
+}
+start_apiserver 0
+API_PID=${API_PIDS[0]}
 # Six minutes: on a loaded build box the bootstrap writes alone have taken
 # three.
 ready=

@@ -25,7 +25,7 @@ DAY="status-rv watch-deleted cache-reads metadata-watch wffc-latency dra-crud to
      projects oc-adm vm-runstrategy vmi-launcher vmi-migration pod-limit daemonset-nodes
      indexed-selectors indexed-safety volume-expansion snapshot-controller"
 # Night: idle and load windows, failover and reload ticks.
-NIGHT="list-snapshot-race crd-restart deadlines scheduler-failover schedule-latency
+NIGHT="multi-master list-snapshot-race crd-restart deadlines scheduler-failover schedule-latency
        get-latency watch-deadline serving-cert client-cert-reload"
 
 case "$suite" in

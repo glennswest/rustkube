@@ -107,6 +107,16 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Multi-master safety and failover (#149, P2) — rig written, not run 2026-10-07
+Real three-master hardware: none (owner on #162). The matrix that fits one
+host is a rig: `test/e2e/multi-master.sh` (rigs-night) with lib.sh
+`RK_ETCD_MEMBERS=3` / `RK_APISERVERS=3`. Existing coverage: scheduler
+leader pause/kill (scheduler-failover), second apiserver (crd-restart),
+paged snapshots (list-snapshot-race).
+- [x] lib.sh multi-member/multi-apiserver; multi-master.sh; docs
+- [ ] Run it (rigs-night, a pve VM at night): no build host until
+      stormcentral#521. Then fix what it finds; real hardware stays #162's
+
 ### Least-privilege bootstrap RBAC (#176, P2) — NEEDS OWNER 2026-10-07
 Bootstrap binds kube-controller-manager, kube-scheduler and system:nodes to
 cluster-admin. Upstream's small `system:kube-controller-manager` role

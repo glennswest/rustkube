@@ -208,6 +208,19 @@ get, list (and across namespaces), a watch's ADDED, merge patch, update,
 protobuf GET and delete; a ResourceClaim allocation written through
 `/status` with spec untouched; deletecollection by label.
 
+`e2e/multi-master.sh` (#149, suite `rigs-night`) is three masters on one
+host: a 3-member fastetcd Raft cluster (`RK_ETCD_MEMBERS=3` in `lib.sh`),
+three apiservers (`RK_APISERVERS=3`, `start_apiserver n`), two electing
+controller-managers and two electing schedulers on different apiservers, a
+stand-in Node. It checks writes through one apiserver read through the
+others; a LIST paged across three apiservers is one snapshot; a watch moved
+to another apiserver at its last revision loses and repeats nothing; the
+controller-manager leader paused past its lease (standby scales, resumed
+leader creates nothing extra); the scheduler leader killed (no node
+overcommitted); an apiserver killed (GC still works); quorum loss (writes
+refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
+Takeover times are printed. A stopped process stands in for a partition.
+
 `e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too
