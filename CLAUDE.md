@@ -95,6 +95,24 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### e2e rigs as pods on the test machines (#173, P2) — IN PROGRESS 2026-10-07
+Owner (#162): "Persistent tests should be pods, and should live on forge."
+Every `test/e2e/*.sh` rig ran inside an sc-build slot (this session's #98,
+#105, #128, #209, #210, #198 runs too). The test standard already has the
+path: `test/Containerfile` (fedora-minimal + microdnf), `test/build.sh` on
+the build box, extra suites declared in `test/requires.toml` (#247).
+- [ ] `test/build.sh` stages the commit's release (musl) kube-* binaries,
+      fastetcd (pinned tag), `oc`, `kubectl`, the CSI/snapshot sidecars
+      (fetched from registry.k8s.io over the registry API, no podman) and
+      the snapshot CRDs/RBAC; rigs prefer them via `RK_TOOLS`
+- [ ] `/test rigs` (day, ≤ 30 min) and `/test rigs-night` (slow/timing
+      rigs) run `test/rigs.sh`: each rig in its own pod-local control plane,
+      one JSON line per rig, logs under /results; `test/requires.toml`
+      declares both with budgets
+- [ ] Verify: `stormcentral test run rustkube rigs` on a test machine.
+      From then on rigs run there, never in sc-build (docs + memory)
+- [ ] README/test README/CHANGELOG; close #173
+
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
 report `status.observedGeneration` (stormcluster#12).
