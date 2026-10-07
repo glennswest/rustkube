@@ -348,12 +348,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### EndpointSliceMirroring (#133, P3) — WRITTEN 2026-10-07
+### EndpointSliceMirroring (#133, P3) — BUILT 2026-10-07
 - [x] `endpointslicemirroring.rs` (desired slices) + Service controller:
       Endpoints-by-name and mirrored-slice routes, mirror/remove, delete on
       Service deletion; own Endpoints labelled skip-mirror; units;
       `test/e2e/endpointslice-mirroring.sh` (rigs); docs
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at 44b5ced: 587 passed / 4 ignored (controller-manager 98);
+      golden-rustkube-fb045ca519eb (stormcos#366)
+- [ ] endpointslice-mirroring rig (stormcentral#512); close
 
 ### In-place pod resize, apiserver half (#136, P2) — BUILT 2026-10-07
 - [x] `handlers/pod_resize.rs` (merge resources/resizePolicy; upstream's
