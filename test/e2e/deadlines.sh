@@ -155,7 +155,7 @@ PY
 # --- No idle polling: with nothing changing, the controller-manager makes no
 # API requests. Watches are long-lived and not counted.
 scrape() {
-  curl --max-time 5 -sk "$API/metrics" | grep '^apiserver_request_total{' | grep -v 'verb="watch"'
+  curl --max-time 5 -sk -H "Authorization: Bearer $ADMIN" "$API/metrics" | grep '^apiserver_request_total{' | grep -v 'verb="watch"'
 }
 sleep 10   # let the cleanup above settle
 scrape >"$W/idle.before"

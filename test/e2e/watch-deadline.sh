@@ -20,12 +20,12 @@ start_scheduler
 # The apiserver counts a GET of /metrics itself as verb="list",
 # resource="metrics": the rig's own scrapes are not counted.
 counter() { # <verb> — apiserver requests of that verb, 404s excluded
-  curl --max-time 5 -sk "$API/metrics" | grep '^apiserver_request_total{' |
+  curl --max-time 5 -sk -H "Authorization: Bearer $ADMIN" "$API/metrics" | grep '^apiserver_request_total{' |
     grep "verb=\"$1\"" | grep -v 'code="404"' | grep -v 'resource="metrics"' |
     awk '{ n += $2 } END { printf "%d\n", n }'
 }
 reconnects() { # controller-manager's rustkube_watch_reconnects_total, or empty
-  curl --max-time 5 -s http://127.0.0.1:10257/metrics 2>/dev/null |
+  curl --max-time 5 -s -H "Authorization: Bearer $ADMIN" http://127.0.0.1:10257/metrics 2>/dev/null |
     awk '/^rustkube_watch_reconnects_total/ { n += $2; seen = 1 } END { if (seen) printf "%d\n", n; else if (NR) print 0 }'
 }
 warnings() { # <log> — reconnect warnings so far
@@ -34,7 +34,7 @@ warnings() { # <log> — reconnect warnings so far
 
 # Let both open their watches and settle. Startup may legitimately retry.
 sleep 20
-series() { curl --max-time 5 -sk "$API/metrics" | grep '^apiserver_request_total{' | grep 'verb="list"'; }
+series() { curl --max-time 5 -sk -H "Authorization: Bearer $ADMIN" "$API/metrics" | grep '^apiserver_request_total{' | grep 'verb="list"'; }
 series >"$W/lists.before"
 watch0=$(counter watch); list0=$(counter list)
 cm0=$(warnings "$W/cm.log"); sched0=$(warnings "$W/sched.log")

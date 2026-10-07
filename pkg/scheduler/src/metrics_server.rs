@@ -4,10 +4,10 @@
 //! controller manager and the apiserver; what is here is the scheduler's own
 //! metrics, under the names upstream gives them.
 
-/// Install the recorder and serve `/metrics` + `/healthz` on `port`.
-pub fn spawn(port: u16) {
+/// Install the recorder and serve `/metrics` + health on `port`.
+pub fn spawn(port: u16, serving: apimachinery::metrics::Serving) {
     if let Some(handle) = apimachinery::metrics::install("kube-scheduler") {
-        apimachinery::metrics::serve(port, handle, "scheduler");
+        apimachinery::metrics::serve(port, handle, "scheduler", serving);
     }
 }
 

@@ -59,6 +59,10 @@ pub fn controller_manager_role() -> Value {
             rule(&["storage.k8s.io"], &["volumeattachments"], &["create"]),
             rule(&["kubevirt.io"], &["virtualmachineinstances", "virtualmachineinstancemigrations"], &["create"]),
             rule(&["rustkube.io"], &["podmigrations"], &["create"]),
+            // Its metrics port asks the apiserver who a scraper is and whether
+            // it may read /metrics (#90), as upstream's delegated auth does.
+            rule(&["authentication.k8s.io"], &["tokenreviews"], &["create"]),
+            rule(&["authorization.k8s.io"], &["subjectaccessreviews"], &["create"]),
             // The CSR controller approves kubelet client CSRs and signs them.
             json!({"apiGroups": ["certificates.k8s.io"], "resources": ["signers"],
                    "resourceNames": ["kubernetes.io/kube-apiserver-client-kubelet"], "verbs": ["approve", "sign"]}),
@@ -90,6 +94,9 @@ pub fn scheduler_role() -> Value {
                  &["patch", "update"]),
             rule(&["coordination.k8s.io"], &["leases"], &["create", "get", "update"]),
             rule(&["", "events.k8s.io"], &["events"], &["create", "patch", "update"]),
+            // Delegated auth for its metrics port (#90).
+            rule(&["authentication.k8s.io"], &["tokenreviews"], &["create"]),
+            rule(&["authorization.k8s.io"], &["subjectaccessreviews"], &["create"]),
         ],
     )
 }
@@ -125,7 +132,8 @@ mod tests {
         for (verb, group, res) in [("create", "", "pods"), ("create", "apps", "replicasets"), ("create", "batch", "jobs"),
             ("create", "", "persistentvolumes"), ("create", "kubevirt.io", "virtualmachineinstances"),
             ("create", "coordination.k8s.io", "leases"), ("delete", "", "secrets"), ("delete", "rbac.authorization.k8s.io", "rolebindings"),
-            ("list", "cilium.io", "ciliumnodes"), ("patch", "apps", "deployments"), ("update", "", "namespaces")] {
+            ("list", "cilium.io", "ciliumnodes"), ("patch", "apps", "deployments"), ("update", "", "namespaces"),
+            ("create", "authentication.k8s.io", "tokenreviews"), ("create", "authorization.k8s.io", "subjectaccessreviews")] {
             assert!(allows(&cm, verb, group, res, None, None), "{verb} {group}/{res}");
         }
         assert!(allows(&cm, "update", "certificates.k8s.io", "certificatesigningrequests", Some("approval"), None));
@@ -146,7 +154,8 @@ mod tests {
         for (verb, group, res, sub) in [("list", "", "pods", None), ("update", "", "pods", None), ("patch", "", "pods", Some("status")),
             ("patch", "", "persistentvolumeclaims", None), ("watch", "storage.k8s.io", "csistoragecapacities", None),
             ("patch", "kubevirt.io", "virtualmachineinstances", Some("status")), ("create", "", "events", None),
-            ("update", "coordination.k8s.io", "leases", None), ("list", "apiextensions.k8s.io", "customresourcedefinitions", None)] {
+            ("update", "coordination.k8s.io", "leases", None), ("list", "apiextensions.k8s.io", "customresourcedefinitions", None),
+            ("create", "authentication.k8s.io", "tokenreviews", None), ("create", "authorization.k8s.io", "subjectaccessreviews", None)] {
             assert!(allows(&s, verb, group, res, sub, None), "{verb} {group}/{res}{sub:?}");
         }
         for (verb, group, res) in [("get", "", "secrets"), ("create", "", "pods"), ("delete", "", "pods"),

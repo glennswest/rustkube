@@ -605,6 +605,8 @@ override environment values.
 | `--startup-timeout` | `STARTUP_TIMEOUT` | `120` | seconds to wait for credential files and for the apiserver |
 | `--cluster-signing-cert-file`, `--cluster-signing-key-file` | | — | controller manager only: the CA the CSR controller signs with; without them CSRs are approved but not signed |
 | `--root-ca-file` | | `--certificate-authority` | controller manager only: the CA bundle published as `kube-root-ca.crt` in every namespace; with neither, nothing is published |
+| `--tls-cert-file`, `--tls-private-key-file` | | — | serving pair for the metrics port (10257/10259): HTTPS only with it, plain HTTP without; renewed in place (#90) |
+| `--authorization-always-allow-paths` | | `/healthz,/readyz,/livez` | metrics-port paths served without authorization; the rest need a bearer token the apiserver's TokenReview accepts and SubjectAccessReview allows (#90) |
 
 `--token` (including `APISERVER_TOKEN`) takes precedence over `--token-file`.
 Boolean value flags (`--leader-elect`, `--anonymous-auth`, `--insecure`,

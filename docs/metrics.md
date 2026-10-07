@@ -6,20 +6,35 @@ rule or alert written against Kubernetes should work here unchanged, and an
 equivalent metric under a different name is worth much less than the same
 metric under the same name (#51).
 
-That promise holds for **names** and not yet for **shapes**: see
-[Where this differs from upstream](#where-this-differs-from-upstream).
+Histograms carry `_bucket` series with upstream's buckets (#90); see
+[Where this differs from upstream](#where-this-differs-from-upstream) for what
+is still not upstream's shape.
 
 | component | endpoint |
 |---|---|
-| kube-apiserver | `/metrics` on the API listener (`--bind-addr:--secure-port`), **unauthenticated** (#90) |
-| kube-controller-manager | `http://0.0.0.0:10257/metrics`, plain HTTP, no auth, port fixed |
-| kube-scheduler | `http://0.0.0.0:10259/metrics`, plain HTTP, no auth, port fixed |
+| kube-apiserver | `/metrics` on the API listener (`--bind-addr:--secure-port`): authenticated, and RBAC `get` on the non-resource URL `/metrics` (`system:monitoring` has it) |
+| kube-controller-manager | `:10257/metrics`: HTTPS with `--tls-cert-file`/`--tls-private-key-file` (plain HTTP without), port fixed |
+| kube-scheduler | `:10259/metrics`, the same |
 | rustkube-node | separate repo — see the note at the end |
 
-The controller manager and scheduler also answer `/healthz` (always `ok`) on
-the same port; the apiserver answers `/healthz`, `/livez` and `/readyz`, which
-RBAC lets anyone read. A failed bind of 10257/10259 is logged as a warning and
-the component carries on without metrics.
+**Who may read them (#90).** The apiserver's `/metrics` is inside its
+authentication and RBAC: a principal allowed `get` on `/metrics`. Bootstrap
+reconciles upstream's `system:monitoring` ClusterRole (`get` on `/metrics`,
+`/metrics/slis` and the health paths) bound to the group `system:monitoring`;
+`system:masters` and cluster-admin may too. The controller manager and
+scheduler delegate to the apiserver as upstream's do: a `/metrics` request
+needs a bearer token the apiserver's TokenReview accepts (401 otherwise) and
+whose user a SubjectAccessReview allows `get` on the path (403 otherwise);
+answers are cached 10 s. `--authorization-always-allow-paths` (default
+`/healthz,/readyz,/livez`; a trailing `*` is a prefix) are served to anyone.
+Their serving pair is followed on disk, so a renewed certificate is used
+without a restart; the files are waited for if not there yet.
+
+The controller manager and scheduler answer `/healthz`, `/readyz` and
+`/livez` (always `ok`) on the same port; the apiserver answers `/healthz`,
+`/livez` and `/readyz`, which RBAC lets anyone read. A failed bind of
+10257/10259 is logged as a warning and the component carries on without
+metrics.
 
 The exporter is shared (`apimachinery::metrics`); each component adds only
 what is its own. It was three copies before, and they had drifted.
@@ -70,9 +85,9 @@ are not timed.
 `apiserver_storage_objects` and `apiserver_watch_events_total` come from the
 watch cache, which already holds the numbers — no extra LIST, no extra cost.
 The consequences: a resource nobody has listed or watched since boot has no
-series; the cache is per requested prefix, so a namespaced and a cluster-wide
-cache for the same resource share one `resource` label and the gauge shows
-whichever fired last; `kind` is the event type (`ADDED`, `MODIFIED`, …); and
+series; `apiserver_storage_objects` is set only from a resource-wide cache (#90:
+a namespace's cache used to overwrite the total with its share), so a
+resource watched only per namespace has no series; `kind` is the event type (`ADDED`, `MODIFIED`, …); and
 built-in resources are labelled `deployments`, not upstream's
 `deployments.apps`. `watch_cache_capacity` is the constant 1024.
 
@@ -84,15 +99,23 @@ built-in resources are labelled `deployments`, not upstream's
 leader_election_master_status{name="kube-controller-manager"}
 ```
 
-`controller_reconcile_duration_seconds{controller}` and
-`controller_reconcile_errors_total{controller}` are declared but **never
-emitted**: nothing calls `record_reconcile` (#90).
+controller_reconcile_duration_seconds{controller}
+controller_reconcile_errors_total{controller}
+```
+
+are recorded for every object reconcile the indexed workers run (#90): the
+time of one pass for one object, and an error when the pass returned one or
+an API call in it failed. `controller` is the worker's name (`deployments`,
+`gatewayclasses`, …). Upstream has no such pair (its shape is `workqueue_*`),
+so the names are rustkube's own.
+
+```
 
 `leader_election_master_status` is upstream's name and the one that matters:
 it is 1 on the holder, so **two instances both reporting 1** is visible the
 moment it happens rather than when they start fighting. The scheduler sets 0
-before it tries to acquire; the controller manager sets 0 only after losing
-the lease, so a standby that has never led has no series.
+before it tries to acquire, and the controller manager from the moment its
+metrics port is up (#90), so a standby reads 0 rather than nothing.
 
 There are **no `workqueue_*` metrics**. With the turbomode implementation, controllers have
 deduplicated per-object queues and bounded workers, but queue depth, queue
@@ -131,15 +154,18 @@ A pod that is placed but waiting for its volumes to bind counts as
 
 ## Where this differs from upstream
 
-- **Histograms render as summaries.** No buckets are configured, so every
-  `_duration_seconds` metric is emitted as quantiles with no `_bucket` series,
-  and `histogram_quantile(…_bucket…)` — what upstream dashboards use — returns
-  nothing (#90).
-- **`process_cpu_seconds_total` is typed gauge**, not counter; `rate()` still
-  works on the values, but a type-checking tool will complain.
-- **No authentication on any `/metrics`.** Upstream requires a principal that
-  may `get` the non-resource URL `/metrics`, and serves 10257/10259 over
-  HTTPS.
+- **Buckets** (#90): `apiserver_request_duration_seconds` and
+  `etcd_request_duration_seconds` use upstream's 0.005 s … 60 s list,
+  `scheduler_e2e_scheduling_duration_seconds` upstream's exponential 1 ms ×2
+  (15 buckets), every other histogram client_golang's `DefBuckets`. None are
+  summaries any more.
+- **`process_cpu_seconds_total`** is typed `counter`, as client_golang's; the
+  exporter records it as a gauge (its counters are integers) and the TYPE line
+  is corrected on render.
+- **10257/10259 speak plain HTTP** unless given `--tls-cert-file`; upstream
+  generates a self-signed pair instead. Client certificates are not accepted
+  for authentication there, only bearer tokens.
+- **No `workqueue_*`** (see the controller-manager section).
 
 ## Where metrics do not live
 

@@ -21,6 +21,8 @@
 #   RK_RELEASE=1 build both release (as shipped) rather than debug, for timing
 #   RK_APISERVER_ARGS  extra kube-apiserver flags (word-split; no spaces in values)
 #   RK_ANONYMOUS_AUTH  the apiserver's --anonymous-auth (default false)
+#   RK_CM_ARGS, RK_SCHED_ARGS  extra kube-controller-manager / kube-scheduler
+#                flags (word-split)
 #   RK_ETCD_MEMBERS  datastore members (default 1); 3 starts a Raft cluster on
 #                loopback, member i on ports ETCD+3i (client), +1 (peer),
 #                +2 (metrics); `start_member i` restarts one (#149)
@@ -209,12 +211,12 @@ echo "rig: 20 namespace creates in $(( ($(date +%s%N) - t0) / 1000000 )) ms (sto
 
 start_controller_manager() {
   "$BIN/kube-controller-manager" --apiserver "$API" --token "$CM_TOKEN" \
-    --certificate-authority "$W/ca.crt" --leader-elect false >"$W/cm.log" 2>&1 &
+    --certificate-authority "$W/ca.crt" --leader-elect false ${RK_CM_ARGS:-} >"$W/cm.log" 2>&1 &
 }
 
 start_scheduler() {
   "$BIN/kube-scheduler" --apiserver "$API" --token "$SCHED_TOKEN" \
-    --certificate-authority "$W/ca.crt" --leader-elect false >"$W/sched.log" 2>&1 &
+    --certificate-authority "$W/ca.crt" --leader-elect false ${RK_SCHED_ARGS:-} >"$W/sched.log" 2>&1 &
 }
 
 # The number of failed checks is the exit status; logs when any failed.
@@ -224,7 +226,7 @@ report() {
     echo "---- apiserver log (tail)"; tail -80 "$W/apiserver.log"
     echo "---- datastore log (tail)"; tail -80 "$W/fastetcd.log"
     echo "---- request/store counters at failure"
-    curl --max-time 3 -sk "$API/metrics" | grep -E '^(apiserver_current_inflight|apiserver_request_total|rustkube_store_)' || true
+    curl --max-time 3 -sk -H "Authorization: Bearer $ADMIN" "$API/metrics" | grep -E '^(apiserver_current_inflight|apiserver_request_total|rustkube_store_)' || true
     # Without kubevirt's CRDs every namespace's VM LIST is a 404; that noise
     # would fill the tail.
     [ -f "$W/cm.log" ] && { echo "---- controller-manager log (tail, 404 LISTs dropped)"

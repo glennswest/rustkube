@@ -357,6 +357,9 @@ pub struct Scheduler {
     identity: String,
     /// How long to wait for the apiserver to serve before running anyway.
     startup_timeout: Duration,
+    /// The metrics listener's certificate and open paths (#90).
+    metrics_tls: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    metrics_always_allow: Vec<String>,
     /// Last "no target" message written per migration uid (#184), so a
     /// migration that stays unschedulable is not re-listed and re-written on
     /// every placement change.
@@ -370,6 +373,8 @@ impl Scheduler {
             leader_elect: true,
             identity: default_identity(),
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
+            metrics_tls: None,
+            metrics_always_allow: apimachinery::metrics::ALWAYS_ALLOW.iter().map(|s| s.to_string()).collect(),
             migration_reports: Mutex::default(),
         }
     }
@@ -381,6 +386,8 @@ impl Scheduler {
             leader_elect: true,
             identity: default_identity(),
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
+            metrics_tls: None,
+            metrics_always_allow: apimachinery::metrics::ALWAYS_ALLOW.iter().map(|s| s.to_string()).collect(),
             migration_reports: Mutex::default(),
         })
     }
@@ -398,11 +405,27 @@ impl Scheduler {
         self
     }
 
+    /// Serve metrics over HTTPS from this pair, and leave `always_allow`
+    /// open; everything else needs the apiserver's say-so (#90).
+    pub fn with_metrics_serving(
+        mut self,
+        tls: Option<(std::path::PathBuf, std::path::PathBuf)>,
+        always_allow: Vec<String>,
+    ) -> Self {
+        self.metrics_tls = tls;
+        self.metrics_always_allow = always_allow;
+        self
+    }
+
     /// Run the scheduler. With leader election, only the elected leader schedules
     /// — so 3 masters can each run a kube-scheduler without double-binding.
     pub async fn run(&self) -> anyhow::Result<()> {
         // Prometheus /metrics + /healthz (scraped by ironprom), upstream :10259.
-        crate::metrics_server::spawn(10259);
+        crate::metrics_server::spawn(10259, apimachinery::metrics::Serving {
+            tls: self.metrics_tls.clone(),
+            auth: Some(apimachinery::metrics::DelegatedAuth::new(self.api.client.clone(), &self.api.base_url)),
+            always_allow: self.metrics_always_allow.clone(),
+        });
 
         // Started alongside the apiserver: wait for it rather than spraying
         // failed leases until it appears.

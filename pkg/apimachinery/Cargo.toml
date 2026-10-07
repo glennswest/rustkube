@@ -34,6 +34,9 @@ metrics = { workspace = true }
 # same /metrics endpoint, and three copies of it had already drifted (#51).
 metrics-exporter-prometheus = { workspace = true }
 axum = { workspace = true }
+# HTTPS for the controller-manager's and scheduler's metrics listeners (#90).
+tokio-rustls = { workspace = true }
+hyper-util = { workspace = true }
 
 # Utilities
 chrono = { workspace = true }

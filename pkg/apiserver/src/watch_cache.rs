@@ -28,6 +28,19 @@ fn resource_of_prefix(prefix: &str) -> String {
     crate::storage::metric_resource(prefix)
 }
 
+/// Whether a cache prefix holds a whole resource: `/registry/{resource}/`,
+/// or `/registry/{group}/{plural}/` for a custom resource (a CRD group has a
+/// dot, a built-in plural never does).
+fn resource_wide(prefix: &str) -> bool {
+    let Some(rest) = prefix.strip_prefix("/registry/") else { return false };
+    let segs: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+    match segs.as_slice() {
+        [r] => !r.is_empty() && !r.contains('.'),
+        [group, plural] => group.contains('.') && !plural.is_empty(),
+        _ => false,
+    }
+}
+
 /// The watch event kind, as upstream labels it.
 fn event_kind(ev: &WatchEvent) -> &'static str {
     match ev {
@@ -259,8 +272,13 @@ impl WatchCache {
                     "kind" => event_kind(&ev),
                 )
                 .increment(1);
-                metrics::gauge!("apiserver_storage_objects", "resource" => resource.clone())
-                    .set(pump.snapshot.lock().unwrap().len() as f64);
+                // Only a resource-wide prefix counts all of a resource; a
+                // namespace's prefix would overwrite the total with its own
+                // share (#90).
+                if resource_wide(&prefix_metric) {
+                    metrics::gauge!("apiserver_storage_objects", "resource" => resource.clone())
+                        .set(pump.snapshot.lock().unwrap().len() as f64);
+                }
                 metrics::gauge!("watch_cache_capacity", "resource" => resource)
                     .set(RING_CAPACITY as f64);
                 {
@@ -675,6 +693,18 @@ async fn wait_for_revision(cache: &PrefixCache, min_rev: u64, budget: std::time:
         if tokio::time::timeout_at(deadline, advanced).await.is_err() {
             return cache.snapshot_rev.load(Ordering::SeqCst) >= min_rev;
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_objects_tests {
+    #[test]
+    fn only_resource_wide_prefixes_count_a_resource() {
+        assert!(super::resource_wide("/registry/pods/"));
+        assert!(super::resource_wide("/registry/cilium.io/ciliumnodes/"));
+        assert!(!super::resource_wide("/registry/pods/default/"));
+        assert!(!super::resource_wide("/registry/cilium.io/ciliumnetworkpolicies/kube-system/"));
+        assert!(!super::resource_wide("/registry/"));
     }
 }
 

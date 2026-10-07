@@ -2,13 +2,13 @@
 //!
 //! The exporter itself is [`apimachinery::metrics`], shared with the scheduler
 //! and the apiserver — this file is what is specific to the controller
-//! manager: the leader gauge, the per-controller reconcile metrics (declared,
-//! but `record_reconcile` has no callers yet, #90), and the port number.
+//! manager: the leader gauge, the per-controller reconcile metrics (recorded
+//! by every object pass, `owned::run`, #90), and the port number.
 
-/// Install the recorder and serve `/metrics` + `/healthz` on `port`.
-pub fn spawn(port: u16) -> Option<metrics_exporter_prometheus::PrometheusHandle> {
+/// Install the recorder and serve `/metrics` + health on `port`.
+pub fn spawn(port: u16, serving: apimachinery::metrics::Serving) -> Option<metrics_exporter_prometheus::PrometheusHandle> {
     let handle = apimachinery::metrics::install("kube-controller-manager")?;
-    apimachinery::metrics::serve(port, handle.clone(), "controller-manager");
+    apimachinery::metrics::serve(port, handle.clone(), "controller-manager", serving);
     Some(handle)
 }
 
@@ -21,7 +21,8 @@ pub fn set_leader(is_leader: bool) {
     apimachinery::metrics::set_leader("kube-controller-manager", is_leader);
 }
 
-/// How long one controller's reconcile pass took, and whether it failed.
+/// How long one controller's reconcile of one object took, and whether it
+/// failed (a pass that returned an error or reported a failed API call).
 ///
 /// Deliberately **not** `workqueue_*`: the per-object work queues export no
 /// depth yet (#90), and a `workqueue_depth` of constant zero would be a

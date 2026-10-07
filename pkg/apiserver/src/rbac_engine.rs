@@ -802,6 +802,24 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
         .into_response());
     }
 
+    // /metrics is a non-resource URL a principal must be allowed to `get`,
+    // as upstream (#90); it used to be mounted outside this middleware.
+    if path == "/metrics" || path.starts_with("/metrics/") {
+        let allowed = match request.extensions().get::<Arc<RbacEngine>>() {
+            Some(rbac) => rbac.authorize_non_resource(&user, &path, "get").await.allowed,
+            None => false,
+        };
+        if !allowed {
+            return Err(crate::error::ApiError {
+                status: StatusCode::FORBIDDEN,
+                reason: "Forbidden".into(),
+                message: format!("forbidden: User \"{}\" cannot get path \"{path}\"", user.username),
+                continue_token: None,
+            }
+            .into_response());
+        }
+    }
+
     if let Some(auth_req) = auth_req {
         if let Some(rbac) = request.extensions().get::<Arc<RbacEngine>>() {
             let rbac = rbac.clone();

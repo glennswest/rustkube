@@ -602,6 +602,9 @@ pub struct ControllerManager {
     root_ca: Option<String>,
     /// How long to wait for the apiserver to serve before running anyway.
     startup_timeout: std::time::Duration,
+    /// The metrics listener's certificate and open paths (#90).
+    metrics_tls: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    metrics_always_allow: Vec<String>,
 }
 
 impl ControllerManager {
@@ -620,6 +623,8 @@ impl ControllerManager {
             signing_ca: None,
             root_ca: None,
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
+            metrics_tls: None,
+            metrics_always_allow: apimachinery::metrics::ALWAYS_ALLOW.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -632,6 +637,8 @@ impl ControllerManager {
             signing_ca: None,
             root_ca: None,
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
+            metrics_tls: None,
+            metrics_always_allow: apimachinery::metrics::ALWAYS_ALLOW.iter().map(|s| s.to_string()).collect(),
         })
     }
 
@@ -645,6 +652,18 @@ impl ControllerManager {
     /// into the retry loop anyway.
     pub fn with_startup_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.startup_timeout = timeout;
+        self
+    }
+
+    /// Serve metrics over HTTPS from this pair, and leave `always_allow`
+    /// open; everything else needs the apiserver's say-so (#90).
+    pub fn with_metrics_serving(
+        mut self,
+        tls: Option<(std::path::PathBuf, std::path::PathBuf)>,
+        always_allow: Vec<String>,
+    ) -> Self {
+        self.metrics_tls = tls;
+        self.metrics_always_allow = always_allow;
         self
     }
 
@@ -800,7 +819,13 @@ impl ControllerManager {
     /// they stop and the manager stands by to re-acquire.
     pub async fn run(&self) -> anyhow::Result<()> {
         // Prometheus /metrics + /healthz (scraped by ironprom), upstream :10257.
-        crate::metrics_server::spawn(10257);
+        crate::metrics_server::spawn(10257, apimachinery::metrics::Serving {
+            tls: self.metrics_tls.clone(),
+            auth: Some(apimachinery::metrics::DelegatedAuth::new(self.api.client.clone(), &self.api.base_url)),
+            always_allow: self.metrics_always_allow.clone(),
+        });
+        // A standby reads 0 from the start, not absent (#90).
+        crate::metrics_server::set_leader(false);
 
         // Started alongside the apiserver: wait for it rather than spraying
         // failed leases until it appears.

@@ -63,6 +63,21 @@ struct Cli {
 
     #[arg(long = "startup-timeout", env = "STARTUP_TIMEOUT", default_value_t = 120)]
     startup_timeout: u64,
+
+    /// Serving certificate (PEM) for the metrics port; with it the port speaks
+    /// HTTPS only. Renewed in place without a restart.
+    #[arg(long = "tls-cert-file")]
+    tls_cert: Option<std::path::PathBuf>,
+
+    /// Private key (PEM) for --tls-cert-file
+    #[arg(long = "tls-private-key-file")]
+    tls_key: Option<std::path::PathBuf>,
+
+    /// Paths of the metrics port served without authorization (a trailing *
+    /// is a prefix); everything else needs a bearer token the apiserver's
+    /// TokenReview accepts and a SubjectAccessReview allows
+    #[arg(long = "authorization-always-allow-paths", value_delimiter = ',', default_value = "/healthz,/readyz,/livez")]
+    always_allow: Vec<String>,
 }
 
 #[tokio::main]
@@ -85,6 +100,11 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let metrics_tls = match (cli.tls_cert.clone(), cli.tls_key.clone()) {
+        (Some(cert), Some(key)) => Some((cert, key)),
+        (None, None) => None,
+        _ => anyhow::bail!("--tls-cert-file and --tls-private-key-file go together"),
+    };
     tracing::info!("kube-controller-manager starting — apiserver={}", cli.apiserver);
     let wait = Duration::from_secs(cli.startup_timeout);
 
@@ -136,7 +156,8 @@ async fn run() -> anyhow::Result<()> {
         ControllerManager::new(&cli.apiserver)
     }
     .with_leader_election(cli.leader_elect)
-    .with_startup_timeout(wait);
+    .with_startup_timeout(wait)
+    .with_metrics_serving(metrics_tls, cli.always_allow.clone());
 
     if let Some(pem) = root_ca {
         cm = cm.with_root_ca(pem);

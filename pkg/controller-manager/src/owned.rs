@@ -343,7 +343,9 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
                 let deps = deps.clone();
                 let queue = ready.clone();
                 let key = work.key().clone();
+                let name = controller.name();
                 active.push(async move {
+                    let started = std::time::Instant::now();
                     let (result,failed) = apimachinery::reactor::scope_object(move |delay| {
                         queue.add_at(key.clone(),tokio::time::Instant::now()+delay);
                     },async {
@@ -361,6 +363,7 @@ pub async fn run(api: &ApiClient, controller: &dyn Controller) {
                             None => { api.forget_creates(&work.key().uid); controller.deleted(work.key(), &children, &deps).await },
                         }
                     }).await;
+                    crate::metrics_server::record_reconcile(name, started.elapsed().as_secs_f64(), !(failed || result.is_err()));
                     (work,result,failed)
                 });
             }

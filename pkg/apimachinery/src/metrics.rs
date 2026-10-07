@@ -24,7 +24,53 @@
 //! On anything but Linux the collector is absent rather than wrong — a
 //! workstation build compiles and serves the rest.
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// Prometheus client_golang's `DefBuckets`, for every histogram upstream
+/// gives no buckets of its own.
+const DEFAULT_BUCKETS: &[f64] = &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
+/// Upstream's buckets for `apiserver_request_duration_seconds` and
+/// `etcd_request_duration_seconds`.
+const REQUEST_BUCKETS: &[f64] = &[
+    0.005, 0.025, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 15.0,
+    20.0, 30.0, 45.0, 60.0,
+];
+
+/// `count` buckets from `start`, each `factor` times the last (client_golang's
+/// `ExponentialBuckets`).
+fn exponential(start: f64, factor: f64, count: usize) -> Vec<f64> {
+    (0..count).map(|i| start * factor.powi(i as i32)).collect()
+}
+
+/// The exporter with buckets on every histogram (#90). Without them
+/// metrics-exporter-prometheus renders each histogram as a summary — no
+/// `_bucket` series — and `histogram_quantile(…_bucket)`, which every upstream
+/// dashboard and alert uses, returns nothing.
+pub fn builder() -> metrics_exporter_prometheus::PrometheusBuilder {
+    use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
+    let full = |name: &str| Matcher::Full(name.to_string());
+    PrometheusBuilder::new()
+        .set_buckets(DEFAULT_BUCKETS)
+        .and_then(|b| b.set_buckets_for_metric(full("apiserver_request_duration_seconds"), REQUEST_BUCKETS))
+        .and_then(|b| b.set_buckets_for_metric(full("etcd_request_duration_seconds"), REQUEST_BUCKETS))
+        .and_then(|b| {
+            b.set_buckets_for_metric(full("scheduler_e2e_scheduling_duration_seconds"), &exponential(0.001, 2.0, 15))
+        })
+        .expect("bucket lists are non-empty")
+}
+
+/// `/metrics` as served: the `process_*` family refreshed, and
+/// `process_cpu_seconds_total` typed a counter, as client_golang types it —
+/// the exporter's counters are integers, so it is recorded as a gauge (#90).
+pub fn render(handle: &metrics_exporter_prometheus::PrometheusHandle) -> String {
+    refresh_process_metrics();
+    handle
+        .render()
+        .replace("# TYPE process_cpu_seconds_total gauge", "# TYPE process_cpu_seconds_total counter")
+}
 
 /// Install the Prometheus recorder for this process.
 ///
@@ -32,7 +78,7 @@ use std::time::Duration;
 /// already installed (which is not an error worth failing a component over —
 /// it means someone else is exporting).
 pub fn install(component: &str) -> Option<metrics_exporter_prometheus::PrometheusHandle> {
-    let handle = match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
+    let handle = match builder().install_recorder() {
         Ok(h) => h,
         Err(e) => {
             tracing::warn!("metrics recorder install failed: {e}");
@@ -50,32 +96,210 @@ pub fn install(component: &str) -> Option<metrics_exporter_prometheus::Prometheu
     Some(handle)
 }
 
-/// Serve `/metrics` and `/healthz` on `port`.
+/// Paths a metrics listener serves to anyone: upstream's
+/// `--authorization-always-allow-paths` default. A trailing `*` is a prefix.
+pub const ALWAYS_ALLOW: &[&str] = &["/healthz", "/readyz", "/livez"];
+
+/// How a component's own metrics listener is served (#90): TLS from a
+/// stormcert pair, and everything but the always-allowed paths behind the
+/// apiserver's TokenReview and SubjectAccessReview, as upstream's
+/// kube-controller-manager and kube-scheduler delegate.
+#[derive(Clone, Default)]
+pub struct Serving {
+    /// Certificate and key files; followed on disk. None: plain HTTP.
+    pub tls: Option<(PathBuf, PathBuf)>,
+    /// None: nothing is checked (tests and a component with no apiserver).
+    pub auth: Option<Arc<DelegatedAuth>>,
+    pub always_allow: Vec<String>,
+}
+
+fn allowed_path(patterns: &[String], path: &str) -> bool {
+    patterns.iter().any(|p| match p.strip_suffix('*') {
+        Some(prefix) => path.starts_with(prefix),
+        None => p == path,
+    })
+}
+
+/// What the apiserver said about a bearer token for a path.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Decision {
+    Allowed,
+    Unauthenticated,
+    Forbidden(String),
+}
+
+/// Authentication and authorization delegated to the apiserver: a
+/// TokenReview for who the bearer is, a SubjectAccessReview for whether they
+/// may `get` the path. Answers are kept 10 s, as upstream caches them.
+pub struct DelegatedAuth {
+    client: reqwest::Client,
+    base: String,
+    cache: Mutex<HashMap<(String, String), (Instant, Decision)>>,
+}
+
+const AUTH_CACHE_TTL: Duration = Duration::from_secs(10);
+
+impl DelegatedAuth {
+    /// `client` already carries this component's own credentials.
+    pub fn new(client: reqwest::Client, base: &str) -> Arc<Self> {
+        Arc::new(Self { client, base: base.trim_end_matches('/').to_string(), cache: Mutex::new(HashMap::new()) })
+    }
+
+    pub async fn check(&self, token: &str, path: &str) -> Result<Decision, String> {
+        let key = (token.to_string(), path.to_string());
+        if let Some((at, d)) = self.cache.lock().unwrap().get(&key) {
+            if at.elapsed() < AUTH_CACHE_TTL {
+                return Ok(d.clone());
+            }
+        }
+        let decision = self.ask(token, path).await?;
+        let mut cache = self.cache.lock().unwrap();
+        if cache.len() > 1000 {
+            cache.clear();
+        }
+        cache.insert(key, (Instant::now(), decision.clone()));
+        Ok(decision)
+    }
+
+    async fn post(&self, path: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+        let resp = self.client.post(format!("{}{path}", self.base)).json(&body).send().await.map_err(|e| e.to_string())?;
+        let status = resp.status();
+        let out: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        if !status.is_success() {
+            return Err(format!("{path}: {status} {}", out["message"].as_str().unwrap_or("")));
+        }
+        Ok(out)
+    }
+
+    async fn ask(&self, token: &str, path: &str) -> Result<Decision, String> {
+        let review = self
+            .post("/apis/authentication.k8s.io/v1/tokenreviews", serde_json::json!({
+                "apiVersion": "authentication.k8s.io/v1", "kind": "TokenReview", "spec": {"token": token}}))
+            .await?;
+        if review["status"]["authenticated"] != true {
+            return Ok(Decision::Unauthenticated);
+        }
+        let user = &review["status"]["user"];
+        let sar = self
+            .post("/apis/authorization.k8s.io/v1/subjectaccessreviews", serde_json::json!({
+                "apiVersion": "authorization.k8s.io/v1", "kind": "SubjectAccessReview",
+                "spec": {"user": user["username"], "groups": user["groups"], "uid": user["uid"], "extra": user["extra"],
+                         "nonResourceAttributes": {"path": path, "verb": "get"}}}))
+            .await?;
+        Ok(if sar["status"]["allowed"] == true {
+            Decision::Allowed
+        } else {
+            Decision::Forbidden(user["username"].as_str().unwrap_or("").to_string())
+        })
+    }
+}
+
+async fn guard(
+    axum::extract::State(serving): axum::extract::State<Arc<Serving>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    let path = req.uri().path().to_string();
+    let Some(auth) = serving.auth.as_ref().filter(|_| !allowed_path(&serving.always_allow, &path)) else {
+        return next.run(req).await;
+    };
+    let token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.split_once(' ').filter(|(s, t)| s.eq_ignore_ascii_case("bearer") && !t.is_empty()).map(|(_, t)| t.to_string()));
+    let Some(token) = token else {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    };
+    match auth.check(&token, &path).await {
+        Ok(Decision::Allowed) => next.run(req).await,
+        Ok(Decision::Unauthenticated) => (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
+        Ok(Decision::Forbidden(user)) => {
+            (StatusCode::FORBIDDEN, format!("forbidden: User \"{user}\" cannot get path \"{path}\"")).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("metrics: delegated authorization failed: {e}");
+            (StatusCode::SERVICE_UNAVAILABLE, "authorization unavailable").into_response()
+        }
+    }
+}
+
+/// The router a component's metrics listener serves.
+pub fn router(handle: metrics_exporter_prometheus::PrometheusHandle, serving: Arc<Serving>) -> axum::Router {
+    let ok = || async { "ok" };
+    axum::Router::new()
+        .route("/healthz", axum::routing::get(ok))
+        .route("/readyz", axum::routing::get(ok))
+        .route("/livez", axum::routing::get(ok))
+        .route(
+            "/metrics",
+            axum::routing::get(move || {
+                let h = handle.clone();
+                async move { render(&h) }
+            }),
+        )
+        .layer(axum::middleware::from_fn_with_state(serving, guard))
+}
+
+/// Serve `/metrics`, `/healthz`, `/readyz` and `/livez` on `port`.
 ///
 /// Upstream ports: apiserver 6443 (on the API listener), controller-manager
 /// 10257, scheduler 10259. Failure to bind is a warning, not a fatal error: a
-/// component that cannot export is still a component that should run.
-pub fn serve(port: u16, handle: metrics_exporter_prometheus::PrometheusHandle, component: &str) {
+/// component that cannot export is still a component that should run. With
+/// `serving.tls` the port speaks HTTPS only, from a certificate followed on
+/// disk (#105's reload); the files are waited for if not there yet.
+pub fn serve(port: u16, handle: metrics_exporter_prometheus::PrometheusHandle, component: &str, serving: Serving) {
     let component = component.to_string();
     tokio::spawn(async move {
-        let app = axum::Router::new()
-            .route("/healthz", axum::routing::get(|| async { "ok" }))
-            .route(
-                "/metrics",
-                axum::routing::get(move || {
-                    let h = handle.clone();
-                    async move {
-                        refresh_process_metrics();
-                        h.render()
-                    }
-                }),
-            );
-        match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
-            Ok(listener) => {
-                tracing::info!("{component} metrics on :{port}/metrics");
-                let _ = axum::serve(listener, app).await;
+        let tls = serving.tls.clone();
+        if serving.auth.is_none() {
+            tracing::warn!("{component} metrics: no delegated authorization; /metrics is open");
+        }
+        let app = router(handle, Arc::new(serving));
+        let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+            Ok(l) => l,
+            Err(e) => return tracing::warn!("{component} metrics bind :{port} failed: {e}"),
+        };
+        let Some((cert, key)) = tls else {
+            tracing::warn!("{component} metrics on http://:{port} (no --tls-cert-file: plain HTTP)");
+            let _ = axum::serve(listener, app).await;
+            return;
+        };
+        let pair = loop {
+            match (std::fs::read(&cert), std::fs::read(&key)) {
+                (Ok(c), Ok(k)) => match crate::tls_reload::ReloadingKey::from_pem(&c, &k) {
+                    Ok(pair) => break pair,
+                    Err(e) => tracing::warn!("{component} metrics: serving certificate: {e}; retrying"),
+                },
+                _ => tracing::warn!("{component} metrics: waiting for {} and {}", cert.display(), key.display()),
             }
-            Err(e) => tracing::warn!("{component} metrics bind :{port} failed: {e}"),
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        };
+        pair.watch("metrics serving certificate", cert, key, |_| {});
+        let config = match rustls::ServerConfig::builder_with_provider(crate::tls_reload::provider())
+            .with_safe_default_protocol_versions()
+        {
+            Ok(b) => {
+                let mut c = b.with_no_client_auth().with_cert_resolver(pair);
+                c.alpn_protocols = vec![b"http/1.1".to_vec()];
+                Arc::new(c)
+            }
+            Err(e) => return tracing::error!("{component} metrics: TLS: {e}"),
+        };
+        tracing::info!("{component} metrics on https://:{port}");
+        let acceptor = tokio_rustls::TlsAcceptor::from(config);
+        loop {
+            let Ok((stream, _)) = listener.accept().await else { continue };
+            let (acceptor, app) = (acceptor.clone(), app.clone());
+            tokio::spawn(async move {
+                let Ok(tls) = acceptor.accept(stream).await else { return };
+                let svc = hyper_util::service::TowerToHyperService::new(app);
+                let _ = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+                    .serve_connection(hyper_util::rt::TokioIo::new(tls), svc)
+                    .await;
+            });
         }
     });
 }
@@ -224,6 +448,69 @@ pub const SCRAPE_TIMEOUT_HINT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn histograms_have_buckets_upstream_dashboards_can_use() {
+        let recorder = builder().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            metrics::histogram!("apiserver_request_duration_seconds", "verb" => "GET").record(0.3);
+            metrics::histogram!("scheduler_e2e_scheduling_duration_seconds").record(0.003);
+            metrics::histogram!("controller_reconcile_duration_seconds").record(0.02);
+        });
+        let text = handle.render();
+        assert!(!text.contains("quantile="), "no summaries:\n{text}");
+        assert!(text.contains("apiserver_request_duration_seconds_bucket{verb=\"GET\",le=\"0.4\"} 1"), "{text}");
+        assert!(text.contains("apiserver_request_duration_seconds_bucket{verb=\"GET\",le=\"0.2\"} 0"), "{text}");
+        assert!(text.contains("scheduler_e2e_scheduling_duration_seconds_bucket{le=\"0.004\"} 1"), "{text}");
+        assert!(text.contains("controller_reconcile_duration_seconds_bucket{le=\"0.025\"} 1"), "{text}");
+    }
+
+    #[test]
+    fn always_allowed_paths_match_exactly_or_by_star_prefix() {
+        let p: Vec<String> = ["/healthz", "/debug/*"].iter().map(|s| s.to_string()).collect();
+        assert!(allowed_path(&p, "/healthz"));
+        assert!(allowed_path(&p, "/debug/pprof"));
+        assert!(!allowed_path(&p, "/metrics"));
+        assert!(!allowed_path(&p, "/healthzx"));
+    }
+
+    #[tokio::test]
+    async fn metrics_need_a_token_the_apiserver_accepts_and_health_does_not() {
+        // A stand-in apiserver: token "good" is alice, allowed; "nosy" is bob,
+        // not allowed; anything else unauthenticated.
+        let api = axum::Router::new()
+            .route("/apis/authentication.k8s.io/v1/tokenreviews", axum::routing::post(|axum::Json(b): axum::Json<serde_json::Value>| async move {
+                let user = match b["spec"]["token"].as_str() { Some("good") => "alice", Some("nosy") => "bob", _ => "" };
+                axum::Json(serde_json::json!({"status": {"authenticated": !user.is_empty(), "user": {"username": user, "groups": []}}}))
+            }))
+            .route("/apis/authorization.k8s.io/v1/subjectaccessreviews", axum::routing::post(|axum::Json(b): axum::Json<serde_json::Value>| async move {
+                let ok = b["spec"]["user"] == "alice" && b["spec"]["nonResourceAttributes"]["path"] == "/metrics";
+                axum::Json(serde_json::json!({"status": {"allowed": ok}}))
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
+        let auth = DelegatedAuth::new(reqwest::Client::new(), &format!("http://{addr}"));
+        let serving = Arc::new(Serving { tls: None, auth: Some(auth), always_allow: ALWAYS_ALLOW.iter().map(|s| s.to_string()).collect() });
+        let handle = builder().build_recorder().handle();
+        let app = router(handle, serving);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let me = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        let get = |path: &str, token: Option<&str>| {
+            let mut r = client.get(format!("http://{me}{path}"));
+            if let Some(t) = token { r = r.bearer_auth(t); }
+            r.send()
+        };
+        assert_eq!(get("/healthz", None).await.unwrap().status(), 200);
+        assert_eq!(get("/livez", None).await.unwrap().status(), 200);
+        assert_eq!(get("/metrics", None).await.unwrap().status(), 401);
+        assert_eq!(get("/metrics", Some("forged")).await.unwrap().status(), 401);
+        assert_eq!(get("/metrics", Some("nosy")).await.unwrap().status(), 403);
+        assert_eq!(get("/metrics", Some("good")).await.unwrap().status(), 200);
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

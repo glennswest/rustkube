@@ -28,8 +28,16 @@ fn build_router(
     static_tokens: crate::token_file::StaticTokens,
     rbac: Arc<RbacEngine>,
     anonymous_auth: bool,
+    prom: metrics_exporter_prometheus::PrometheusHandle,
 ) -> Router {
     Router::new()
+        .route(
+            "/metrics",
+            get(move || {
+                let h = prom.clone();
+                async move { apimachinery::metrics::render(&h) }
+            }),
+        )
         // Discovery & health
         .route("/version", get(discovery::version))
         .route("/healthz", get(discovery::healthz))
@@ -1012,20 +1020,9 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     let prom = apimachinery::metrics::install("kube-apiserver")
         .ok_or_else(|| anyhow::anyhow!("prometheus recorder could not be installed"))?;
 
-    let app = build_router(state, signing_keys, static_tokens, rbac, config.anonymous_auth)
-        .route(
-            "/metrics",
-            axum::routing::get({
-                let h = prom.clone();
-                move || {
-                    let h = h.clone();
-                    async move {
-                        apimachinery::metrics::refresh_process_metrics();
-                        h.render()
-                    }
-                }
-            }),
-        )
+    // /metrics is inside authentication and RBAC (#90): a principal allowed
+    // `get` on the non-resource URL, as upstream (`system:monitoring`).
+    let app = build_router(state, signing_keys, static_tokens, rbac, config.anonymous_auth, prom)
         // Protobuf content negotiation: decode application/vnd.kubernetes.protobuf
         // requests to JSON and re-encode JSON responses when the client asked
         // for protobuf (client-go's default for built-in types) — #32.
@@ -1680,6 +1677,23 @@ async fn bootstrap_rbac(
             &format!("clusterrolebindings {}", "system:masters"),
         )
         .await;
+
+    // Who may read /metrics and the health endpoints (#90): upstream's
+    // `system:monitoring` role, bound to the group of the same name.
+    reconcile_bootstrap_role(storage, json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
+        "metadata": {"name": "system:monitoring"},
+        "rules": [{"nonResourceURLs": ["/healthz", "/healthz/*", "/livez", "/livez/*", "/metrics", "/metrics/slis", "/readyz", "/readyz/*"],
+                   "verbs": ["get"]}],
+    }))
+    .await;
+    reconcile_bootstrap_binding(storage, json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding",
+        "metadata": {"name": "system:monitoring"},
+        "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "system:monitoring"},
+        "subjects": [{"kind": "Group", "name": "system:monitoring", "apiGroup": "rbac.authorization.k8s.io"}],
+    }))
+    .await;
 
     // What an aggregated API server binds itself to (#83), as upstream
     // bootstraps them: delegated authentication/authorization, and reading
