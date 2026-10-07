@@ -131,7 +131,9 @@ served or unserved within about a second. `/readyz` answers 503 until the
 stored CRDs are registered (#185).
 
 **Wire.** JSON and client-go's protobuf (`application/vnd.kubernetes.protobuf`)
-in both directions; Table output for `kubectl get`; `PartialObjectMetadata`;
+in both directions; Table output for `kubectl get` (the create-only reviews —
+TokenReview, the access reviews, SelfSubjectRulesReview — have none: an
+Accept offering only a Table is 406 `NotAcceptable`, #126); `PartialObjectMetadata`;
 watch with bookmarks and `sendInitialEvents` (a watch with no
 `resourceVersion`, or `0`, starts with the current objects as ADDED events;
 a DELETED event carries the

@@ -112,6 +112,11 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Table-only Accept on reviews → 406 (#126, P3) — WRITTEN 2026-10-07
+- [x] `table::{only_table, refuse_table}` on the five review routes; unit;
+      `test/e2e/table-review.sh` (rigs); README/conformance/CHANGELOG
+- [ ] Build VM; golden; rig after stormcentral#512
+
 ### LimitRanger admission (#131, P2) — BUILT 2026-10-07
 - [x] `limitranger.rs`: Container defaults + annotation, Container/Pod
       min/max/ratio, PVC storage bounds, 403 upstream wording; requests from

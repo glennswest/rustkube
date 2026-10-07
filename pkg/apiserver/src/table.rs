@@ -23,6 +23,49 @@ pub fn wants_table(headers: &axum::http::HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
+/// Does this request accept *only* a Table — no plain media type it would
+/// take instead? An entry without `as=` (JSON, YAML, protobuf, a wildcard)
+/// is an alternative; `kubectl get` sends one after its Table entries.
+pub fn only_table(headers: &axum::http::HeaderMap) -> bool {
+    let Some(accept) = headers.get(axum::http::header::ACCEPT).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let mut table = false;
+    for entry in accept.split(',') {
+        let params: Vec<&str> = entry.split(';').skip(1).map(str::trim).collect();
+        match params.iter().find_map(|p| p.strip_prefix("as=")) {
+            Some("Table") => table = true,
+            Some(_) => {}
+            None => return false,
+        }
+    }
+    table
+}
+
+/// Middleware for resources with no Table form — the create-only reviews
+/// (TokenReview, Self/Local/SubjectAccessReview, SelfSubjectRulesReview):
+/// a request that will take nothing but a Table is 406 `NotAcceptable`, as
+/// upstream answers a backend without a table convertor (#126), instead of
+/// a review the client cannot read.
+pub async fn refuse_table(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !only_table(req.headers()) {
+        return next.run(req).await;
+    }
+    let segs: Vec<&str> = req.uri().path().trim_matches('/').split('/').collect();
+    let resource = match segs.as_slice() {
+        ["apis", group, _v, .., res] => format!("{res}.{group}"),
+        _ => req.uri().path().to_string(),
+    };
+    crate::error::ApiError {
+        status: axum::http::StatusCode::NOT_ACCEPTABLE,
+        reason: "NotAcceptable".into(),
+        message: format!("the resource {resource} does not support being converted to a Table"),
+        continue_token: None,
+    }
+    .into_response()
+}
+
 /// A column definition, in the shape `meta.k8s.io/v1` expects.
 fn col(name: &str, kind: &str, priority: i64, desc: &str) -> Value {
     json!({
@@ -848,5 +891,21 @@ mod tests {
             "involvedObject": {"kind": "Pod", "name": "p"}, "message": "m",
         }]});
         assert_eq!(to_table("events", list)["rows"][0]["cells"][0], json!(""));
+    }
+
+    #[test]
+    fn only_table_needs_every_entry_to_be_a_table() {
+        let h = |a: &str| {
+            let mut m = axum::http::HeaderMap::new();
+            m.insert(axum::http::header::ACCEPT, a.parse().unwrap());
+            only_table(&m)
+        };
+        assert!(h("application/json;as=Table;v=v1;g=meta.k8s.io"), "the conformance spec's Accept");
+        assert!(h("application/json;as=Table;v=v1;g=meta.k8s.io, application/json;as=Table;v=v1beta1;g=meta.k8s.io"));
+        assert!(!h("application/json;as=Table;v=v1;g=meta.k8s.io,application/json"), "kubectl's has a JSON fallback");
+        assert!(!h("application/json"));
+        assert!(!h("application/vnd.kubernetes.protobuf;as=Table;v=v1;g=meta.k8s.io,*/*"));
+        assert!(!h("application/json;as=PartialObjectMetadata;v=v1;g=meta.k8s.io"));
+        assert!(!only_table(&axum::http::HeaderMap::new()));
     }
 }

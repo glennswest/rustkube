@@ -439,31 +439,36 @@ fn build_router(
         // request this way.
         .route(
             "/apis/authentication.k8s.io/v1/tokenreviews",
-            axum::routing::post(crate::handlers::token::create_token_review),
+            axum::routing::post(crate::handlers::token::create_token_review)
+                .layer(axum::middleware::from_fn(crate::table::refuse_table)),
         )
         // authorization.k8s.io — "may I?" and "what may I?", answered by the
         // same engine that decides the real request (#59). Write-only virtual
         // resources: nothing is stored.
         .route(
             "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
-            axum::routing::post(crate::handlers::authorization::create_self_subject_access_review),
+            axum::routing::post(crate::handlers::authorization::create_self_subject_access_review)
+                .layer(axum::middleware::from_fn(crate::table::refuse_table)),
         )
         .route(
             "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
-            axum::routing::post(crate::handlers::authorization::create_self_subject_rules_review),
+            axum::routing::post(crate::handlers::authorization::create_self_subject_rules_review)
+                .layer(axum::middleware::from_fn(crate::table::refuse_table)),
         )
         // The privileged siblings: asking about *another* identity. Ordinary
         // RBAC governs them — no bootstrap role grants them but cluster-admin
         // — which is what `oc adm policy who-can` needs (#69).
         .route(
             "/apis/authorization.k8s.io/v1/subjectaccessreviews",
-            axum::routing::post(crate::handlers::authorization::create_subject_access_review),
+            axum::routing::post(crate::handlers::authorization::create_subject_access_review)
+                .layer(axum::middleware::from_fn(crate::table::refuse_table)),
         )
         .route(
             "/apis/authorization.k8s.io/v1/namespaces/{namespace}/localsubjectaccessreviews",
             axum::routing::post(
                 crate::handlers::authorization::create_local_subject_access_review,
-            ),
+            )
+            .layer(axum::middleware::from_fn(crate::table::refuse_table)),
         )
         // subresources.kubevirt.io — the console doors `virtctl` resolves
         // through (#61). Not CRD subresources: a CRD gets `/status` and

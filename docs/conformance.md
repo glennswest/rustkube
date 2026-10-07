@@ -156,7 +156,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 2 | YAML bodies, fieldValidation for built-ins — #122 | implemented 2026-10-07 (protos re-vendored to release-1.36); not rerun |
 | 2 | ServiceCIDR/IPAddress — #134 | served since 2026-10-07 (CRUD, bootstrap ServiceCIDR); not rerun |
 | 2 | scheduler records no Scheduled/FailedScheduling events — #138 | implemented after this run |
-| 1 each | autoscaling/v1 #123 (served since 2026-10-07, not rerun); Table 406 #126; LimitRanger #131 (enforced since 2026-10-07, not rerun); EndpointSliceMirroring #133; store compaction / continue-token expiry #139 | not implemented |
+| 1 each | autoscaling/v1 #123 (served since 2026-10-07, not rerun); Table 406 #126 (since 2026-10-07, not rerun); LimitRanger #131 (enforced since 2026-10-07, not rerun); EndpointSliceMirroring #133; store compaction / continue-token expiry #139 | not implemented |
 | 6 | CSR `/approval` PATCH, Event `source` selector, all invalid sysctls in one error, Pod/PVC/PV `Pending` phase (#102), Ingress `/status` | wrong — fixed in 6d0ed10, after this run |
 | 1 | default ServiceAccount not provisioned in time under six parallel chunks — the poll-and-list controllers (#66) | load |
 

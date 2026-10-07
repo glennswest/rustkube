@@ -233,6 +233,11 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/table-review.sh` (#126, suite `rigs`): a Table-only Accept on
+SelfSubjectAccessReview, SubjectAccessReview and TokenReview is 406
+NotAcceptable; with kubectl's JSON fallback they answer; a pods LIST still
+gets its Table.
+
 `e2e/limitrange.sh` (#131, suite `rigs`): the conformance spec's
 LimitRange — defaults and the `kubernetes.io/limit-ranger` annotation on a
 Pod with none, a partial Pod merged, below-min / above-max refused 403, the
