@@ -121,12 +121,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### autoscaling/v1 served (#123, P3) — IN PROGRESS 2026-10-07
+### autoscaling/v1 served (#123, P3) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] `handlers/hpa_v1.rs` (to_v1/to_v2 with upstream's annotations; v1
       routes delegating to the v2 handlers; watch converted per line; PATCH
       on the v1 view); discovery (v2 preferred + v1), apply table; autoscaling/v1
       proto vendored (Scale's schema too); units; `test/e2e/hpa-v1.sh`; docs
-- [ ] Build; rig (stormcentral#512); golden; close
+- [x] Build VM cabae5a433 at 7ef6fac: 577 passed / 4 ignored (#235: my
+      unit caught a null-annotations insert, fixed 7ef6fac);
+      golden-rustkube-10934b6134a7 (stormcos#366)
+- [ ] hpa-v1 rig (stormcentral#512); close
 
 ### Admission policies served (#119, P3) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
 Split: (1) serve the four resources here; (2) CEL evaluation is #234 (the
