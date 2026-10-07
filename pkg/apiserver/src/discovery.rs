@@ -325,6 +325,13 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "verbs": ["get", "patch", "update"]
             },
             {
+                "name": "pods/resize",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Pod",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
                 "name": "pods/log",
                 "singularName": "",
                 "namespaced": true,

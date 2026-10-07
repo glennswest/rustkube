@@ -29,6 +29,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `admissionregistration.k8s.io/v1` — webhook configurations | core | 🟡 | mutating + validating webhooks called on every write (#82); no CEL `matchConditions`, AdmissionReview v1 only. Validating/MutatingAdmissionPolicy (+ bindings) served, not evaluated (#119, #234) |
 | `networking.k8s.io/v1` — NetworkPolicy, Ingress, IngressClass, ServiceCIDR, IPAddress | core | 🟡 | API served; no Ingress controller. NetworkPolicy is enforced by Cilium. ServiceCIDR/IPAddress served with a bootstrapped `kubernetes` ServiceCIDR; allocation still uses `--service-cidr` and its own claim keys (#134) |
 | `discovery.k8s.io/v1` — EndpointSlice | core | ✅ | served; the Service controller writes them (v0.7.5, #22) |
+| `pods/resize` — in-place pod resize (1.35 GA) | core | 🟡 | apiserver half (#136): subresource + upstream's resize validation; the kubelet does not resize yet (rustkube-node#192), so a running Pod's resize is refused |
 | `policy/v1` — PodDisruptionBudget, Eviction | core | ✅ | `eviction.rs` (429 when blocked), `pdb.rs` (v0.7.18, #7). Not: 500 on multiple matching PDBs, `unhealthyPodEvictionPolicy`, `disruptedPods` |
 | `storage.k8s.io/v1` — StorageClass, CSIDriver, CSINode, VolumeAttachment, CSIStorageCapacity, VolumeAttributesClass | core | ✅ | v0.7.11 (#24); see [storage.md](storage.md) |
 | `scheduling.k8s.io/v1` — PriorityClass | core | ✅ | served, in `/apis`, and resolved at pod admission (#85) |

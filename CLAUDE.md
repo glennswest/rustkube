@@ -348,6 +348,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### In-place pod resize, apiserver half (#136, P2) — WRITTEN 2026-10-07
+- [x] `handlers/pod_resize.rs` (merge resources/resizePolicy; upstream's
+      ValidatePodResize incl. the version-skew guard), route, discovery;
+      `qos_of`; units; `test/e2e/pod-resize.sh` (rigs); docs. Kubelet half
+      filed rustkube-node#192
+- [ ] Build VM; golden; rig (stormcentral#512); close when the apiserver
+      half is verified (the conformance specs need rustkube-node#192 too)
+
 ### Legacy Terragrunt/RPM path (#157) — NEEDS OWNER 2026-10-07
 Cloud-init installs RPMs no release has carried since v0.7.30 (and a
 kube-proxy/CRI-O rustkube-node RPM); master1/2.g8.lo don't answer on 6443.

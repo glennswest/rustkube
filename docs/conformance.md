@@ -150,7 +150,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 4 | custom resource defaulting/pruning/fieldValidation — #121 | implemented after this run (watch events are not defaulted) |
 | 4 | NodePort allocation, ClusterIP on type change — #132 | not implemented |
 | 4 | `resource.k8s.io/v1` (DRA) — #137 | served (CRUD); allocation is #225 |
-| 3 | in-place pod resize — #136 | not implemented |
+| 3 | in-place pod resize — #136 | apiserver half since 2026-10-07 (`pods/resize`); the specs also need the kubelet's, rustkube-node#192 |
 | 3 | `/scale` subresource — #86 | served since 2026-10-07; not rerun |
 | 2 | API Priority and Fairness — #118 | served since 2026-10-07 (CRUD, `/status`, mandatory objects; not enforced); not rerun |
 | 2 | YAML bodies, fieldValidation for built-ins — #122 | implemented 2026-10-07 (protos re-vendored to release-1.36); not rerun |

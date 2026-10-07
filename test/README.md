@@ -233,6 +233,13 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/pod-resize.sh` (#136, suite `rigs`): `pods/resize` in discovery;
+`kubectl patch --subresource=resize` changes resources/resizePolicy and not
+the image; PUT with and with a stale resourceVersion; 422 for a QoS change,
+a removed request, a non-cpu/memory resource, request > limit, a non-sidecar
+init container; a running Pod without status resources refused, with them
+resized.
+
 `e2e/flowcontrol.sh` (#118, suite `rigs`): flowcontrol.apiserver.k8s.io/v1
 in `/apis` and discovery, the mandatory exempt/catch-all objects, and per
 resource create, get, list, watch, merge patch, PUT, `/status` patch/get,

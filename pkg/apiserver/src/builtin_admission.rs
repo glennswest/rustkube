@@ -547,6 +547,16 @@ fn pod_sysctls(obj: &Value) -> Result<(), ApiError> {
 /// limits) equal them; BestEffort when no container requests or limits
 /// either; Burstable otherwise. It was never set (#67).
 fn qos_class(obj: &mut Value) {
+    let class = qos_of(obj);
+    if !obj["status"].is_object() {
+        obj["status"] = json!({});
+    }
+    obj["status"]["qosClass"] = json!(class);
+}
+
+/// The QoS class [`qos_class`] would set, without setting it (in-place
+/// resize must not change it, #136).
+pub(crate) fn qos_of(obj: &Value) -> &'static str {
     let spec = &obj["spec"];
     let containers: Vec<&Value> = ["containers", "initContainers"]
         .iter()
@@ -577,11 +587,7 @@ fn qos_class(obj: &mut Value) {
             }
         }
     }
-    let class = if guaranteed { "Guaranteed" } else if any { "Burstable" } else { "BestEffort" };
-    if !obj["status"].is_object() {
-        obj["status"] = json!({});
-    }
-    obj["status"]["qosClass"] = json!(class);
+    if guaranteed { "Guaranteed" } else if any { "Burstable" } else { "BestEffort" }
 }
 
 /// `status.phase: Pending` on create for a Pod, PersistentVolumeClaim or

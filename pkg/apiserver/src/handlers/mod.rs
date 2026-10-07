@@ -10,6 +10,7 @@ pub mod authorization;
 pub mod hpa_v1;
 pub mod kubevirt;
 pub mod logs;
+pub mod pod_resize;
 pub mod project;
 pub mod resource;
 pub mod scale;

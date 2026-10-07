@@ -171,7 +171,12 @@ and field selectors on every generic collection path and for custom resources
 strategic merge patch (fixed merge-key table; a Service's ports merge on port
 and protocol, a container's on containerPort, #150) and
 server-side apply with `managedFields` ownership and conflicts. The `/status`
-subresource; pod `eviction` gated by PodDisruptionBudgets; namespace
+subresource; pod `eviction` gated by PodDisruptionBudgets; pod `resize`
+(in-place resize, #136: GET/PUT/PATCH change only containers' and sidecars'
+`resources`/`resizePolicy`, validated as upstream — QoS class kept, cpu and
+memory only, nothing removed, non-sidecar init containers fixed; a Pod with a
+running container whose status reports no `resources` is refused, so until
+the kubelet resizes (rustkube-node#192) only not-yet-running Pods resize); namespace
 `/finalize`; CSR `/approval`. A PUT to `/status` (and `/approval`) is
 conditional on the body's `resourceVersion`: stale is a 409 and nothing is
 written; none is an unconditional update (#78). A `/status` write changes

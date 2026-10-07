@@ -505,6 +505,13 @@ fn build_router(
             "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances/{name}/migrate",
             axum::routing::put(crate::handlers::kubevirt::vmi_migrate),
         )
+        // In-place resize (#136)
+        .route(
+            "/api/v1/namespaces/{namespace}/pods/{name}/resize",
+            get(crate::handlers::pod_resize::get)
+                .put(crate::handlers::pod_resize::put)
+                .patch(crate::handlers::pod_resize::patch),
+        )
         // pods/log — what `kubectl logs` actually calls. Registered before the
         // generic {resource}/{name}/status route so the more specific path
         // wins, and separate from it because a log is proxied to the node
