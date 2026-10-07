@@ -107,6 +107,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — NOT STARTED, waits for a build host
+Small (like #137): FlowSchema + PriorityLevelConfiguration via the generic
+handlers with /status, discovery, protobuf, bootstrap `exempt`/`catch-all`.
+Held so as not to stack a fourth uncompiled change. Proposed after
+stormcentral#521.
+
 ### CR schema defaulting/pruning/fieldValidation (#121, P2) — NOT STARTED, waits for a build host
 Not written blind: a schema walker (defaults on write and read, pruning with
 preserve-unknown-fields/embedded-resource, fieldValidation Strict/Warn) plus
