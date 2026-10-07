@@ -107,6 +107,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Least-privilege bootstrap RBAC (#176, P2) — NEEDS OWNER 2026-10-07
+Bootstrap binds kube-controller-manager, kube-scheduler and system:nodes to
+cluster-admin. Upstream's small `system:kube-controller-manager` role
+assumes per-controller ServiceAccounts; rustkube's CM runs ~25 controllers
+under one identity (GC + namespace deletion need read/delete on everything).
+- [x] Question posted on #176, `wait-owner`: CM A (one rustkube role,
+      recommended) or B (upstream per-controller SAs); nodes C (separate
+      Node-authorizer issue with rustkube-node, recommended) or D (a
+      system:node-style role now). Scheduler (upstream role + KubeVirt
+      status writes) needs no decision and follows the answer
+- [ ] On the answer: roles + bindings, rigs under each component's own client
+      certificate (no build host until stormcentral#521)
+
 ### Scheduler Events (#138, P2) — WRITTEN, not yet built 2026-10-07
 PodScheduled=False/Unschedulable landed with #194; the Events were missing.
 - [x] `scheduler::events`: `Scheduled` on an acknowledged bind (spawned off
