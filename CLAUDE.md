@@ -348,12 +348,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — WRITTEN 2026-10-07
+### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — BUILT 2026-10-07
 - [x] Routes (+ cluster /status), discovery (/apis + APIResourceList),
       resources_for, kinds; flowcontrol/v1 proto vendored (release-1.36);
       bootstrap exempt/catch-all; protobuf unit; `test/e2e/flowcontrol.sh`
       (rigs); README/inventory/conformance/CHANGELOG. Not enforced
-- [ ] Build VM; golden; rig after stormcentral#512
+- [x] Build VM at 451d783: 582 passed / 4 ignored (apimachinery 120);
+      golden-rustkube-f52d8fa2f47f (stormcos#366)
+- [ ] flowcontrol rig after stormcentral#512; then close
 
 ### CR schema defaulting/pruning/fieldValidation (#121, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] 3ae6a5c `schema.rs` (defaults, prune, unknown paths; preserve-unknown,
