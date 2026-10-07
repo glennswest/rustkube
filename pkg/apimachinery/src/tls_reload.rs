@@ -225,6 +225,18 @@ pub fn client_config(
     insecure: bool,
     identity: Option<Arc<ReloadingKey>>,
 ) -> anyhow::Result<rustls::ClientConfig> {
+    client_config_with(ca_pem, true, insecure, identity)
+}
+
+/// [`client_config`], choosing whether webpki's roots are trusted beside
+/// `ca_pem`. An aggregated API server is trusted by its APIService's
+/// `caBundle` alone, as upstream's proxy does (#83).
+pub fn client_config_with(
+    ca_pem: Option<&[u8]>,
+    webpki: bool,
+    insecure: bool,
+    identity: Option<Arc<ReloadingKey>>,
+) -> anyhow::Result<rustls::ClientConfig> {
     let provider = provider();
     let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
@@ -235,7 +247,9 @@ pub fn client_config(
             .with_custom_certificate_verifier(Arc::new(NoVerification(provider)))
     } else {
         let mut roots = rustls::RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        if webpki {
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        }
         if let Some(pem) = ca_pem {
             let mut added = 0;
             for c in rustls_pemfile::certs(&mut &pem[..]) {

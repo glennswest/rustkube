@@ -760,6 +760,9 @@ fn build_router(
         )
         // Dynamic CRD discovery
         .route("/apis/{group}/{version}", get(crd::crd_api_resources))
+        // Inside authentication and RBAC: an aggregated API's requests go to
+        // its backend once this apiserver has authorized them (#83).
+        .layer(middleware::from_fn_with_state(state.clone(), crate::aggregation::proxy))
         .layer(middleware::from_fn(move |req, next| {
             let rbac = rbac.clone();
             async move {
@@ -975,11 +978,30 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             .with_anonymous_admin(config.anonymous_auth && config.dev_anonymous_admin),
     );
 
+    // API aggregation (#83): the APIService table, followed from storage,
+    // the backends' availability, and what aggregated servers are told about
+    // this apiserver's front-proxy identity.
+    let proxy_identity = match (&config.proxy_client_cert, &config.proxy_client_key) {
+        (Some(cert), Some(key)) => {
+            let pair = apimachinery::tls_reload::ReloadingKey::from_pem(&std::fs::read(cert)?, &std::fs::read(key)?)
+                .map_err(|e| anyhow::anyhow!("--proxy-client-cert-file: {e}"))?;
+            pair.watch("proxy client certificate", cert.clone(), key.clone(), |_| {});
+            Some(pair)
+        }
+        (None, None) => None,
+        _ => anyhow::bail!("--proxy-client-cert-file and --proxy-client-key-file go together"),
+    };
+    let aggregator = Arc::new(crate::aggregation::Aggregator::new(proxy_identity));
+    tokio::spawn(crate::aggregation::follow(storage.clone(), aggregator.clone()));
+    tokio::spawn(crate::aggregation::keep_available(storage.clone(), aggregator.clone()));
+    publish_extension_authentication(storage.clone(), &config);
+
     let state = AppState {
         storage,
         crd_registry,
         service_cidr: config.service_cidr.clone(),
         admission: Default::default(),
+        aggregator: aggregator.clone(),
     };
     // Prometheus recorder + /metrics, shared with the other components
     // (apimachinery::metrics) so the `process_*` family and the build-info
@@ -1007,7 +1029,17 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         // Protobuf content negotiation: decode application/vnd.kubernetes.protobuf
         // requests to JSON and re-encode JSON responses when the client asked
         // for protobuf (client-go's default for built-in types) — #32.
-        .layer(middleware::from_fn(crate::protobuf_mw::transcode))
+        // An aggregated API's bodies are its own (#83): passed as they are.
+        .layer(middleware::from_fn(move |req: axum::extract::Request, next: middleware::Next| {
+            let aggregator = aggregator.clone();
+            async move {
+                if aggregator.claims(req.uri().path()).is_some() {
+                    next.run(req).await
+                } else {
+                    crate::protobuf_mw::transcode(req, next).await
+                }
+            }
+        }))
         .layer(middleware::from_fn(metrics_middleware))
         // Outermost: no single request may panic the process. Any panic in a
         // handler/middleware is caught and turned into a 500 (rustkube#9).
@@ -1123,6 +1155,62 @@ pub(crate) fn report_cert_expiry(name: &'static str, cert_pem: &[u8]) {
     } else {
         info!("certificate '{name}' valid for {days_left} more day(s)");
     }
+}
+
+/// The `data` of `kube-system/extension-apiserver-authentication`: how an
+/// aggregated API server authenticates this apiserver's proxied requests
+/// (the front-proxy CA, allowed names and the X-Remote-* headers), and the
+/// client CA, as upstream publishes them (#83).
+pub(crate) fn extension_authentication_data(client_ca: Option<&str>, requestheader_ca: Option<&str>, allowed_names: &[String]) -> serde_json::Value {
+    let mut data = serde_json::Map::new();
+    if let Some(ca) = client_ca {
+        data.insert("client-ca-file".into(), json!(ca));
+    }
+    if let Some(ca) = requestheader_ca {
+        data.insert("requestheader-client-ca-file".into(), json!(ca));
+        data.insert("requestheader-allowed-names".into(), json!(serde_json::to_string(allowed_names).unwrap_or_default()));
+        data.insert("requestheader-username-headers".into(), json!(r#"["X-Remote-User"]"#));
+        data.insert("requestheader-group-headers".into(), json!(r#"["X-Remote-Group"]"#));
+        data.insert("requestheader-extra-headers-prefix".into(), json!(r#"["X-Remote-Extra-"]"#));
+    }
+    serde_json::Value::Object(data)
+}
+
+/// Keep `kube-system/extension-apiserver-authentication` current: written
+/// at start and whenever a CA file's content changes (checked every 30 s,
+/// so a renewed CA reaches the aggregated servers).
+fn publish_extension_authentication(storage: Arc<ResourceStorage>, config: &ApiServerConfig) {
+    if config.client_ca.is_none() && config.requestheader_client_ca.is_none() {
+        return;
+    }
+    let (client_ca, requestheader_ca, names) =
+        (config.client_ca.clone(), config.requestheader_client_ca.clone(), config.requestheader_allowed_names.clone());
+    tokio::spawn(async move {
+        const NAME: &str = "extension-apiserver-authentication";
+        let key = ResourceStorage::namespaced_key("configmaps", "kube-system", NAME);
+        let read = |p: &Option<std::path::PathBuf>| p.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+        loop {
+            let data = extension_authentication_data(read(&client_ca).as_deref(), read(&requestheader_ca).as_deref(), &names);
+            match storage.get(&key).await {
+                Ok(mut cm) if cm["data"] != data => {
+                    let rev = cm["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
+                    cm["data"] = data;
+                    if let Err(e) = storage.update(&key, cm, rev).await {
+                        if e.reason != "Conflict" {
+                            tracing::warn!("{NAME}: not updated: {}", e.message);
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    let mut cm = json!({"apiVersion": "v1", "kind": "ConfigMap", "data": data});
+                    crate::handlers::resource::ensure_metadata_pub(&mut cm, NAME, Some("kube-system"));
+                    create_bootstrap(&storage, &key, cm, &format!("configmaps kube-system/{NAME}")).await;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
 }
 
 /// Create a namespace if it doesn't already exist.
@@ -1592,6 +1680,33 @@ async fn bootstrap_rbac(
             &format!("clusterrolebindings {}", "system:masters"),
         )
         .await;
+
+    // What an aggregated API server binds itself to (#83), as upstream
+    // bootstraps them: delegated authentication/authorization, and reading
+    // the front-proxy contract in kube-system.
+    reconcile_bootstrap_role(storage, json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
+        "metadata": {"name": "system:auth-delegator"},
+        "rules": [
+            {"apiGroups": ["authentication.k8s.io"], "resources": ["tokenreviews"], "verbs": ["create"]},
+            {"apiGroups": ["authorization.k8s.io"], "resources": ["subjectaccessreviews"], "verbs": ["create"]},
+        ],
+    }))
+    .await;
+    let mut reader = json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
+        "metadata": {"name": "extension-apiserver-authentication-reader", "namespace": "kube-system"},
+        "rules": [{"apiGroups": [""], "resources": ["configmaps"],
+                   "resourceNames": ["extension-apiserver-authentication"], "verbs": ["get", "list", "watch"]}],
+    });
+    crate::handlers::resource::ensure_metadata_pub(&mut reader, "extension-apiserver-authentication-reader", Some("kube-system"));
+    create_bootstrap(
+        storage,
+        &ResourceStorage::namespaced_key("roles", "kube-system", "extension-apiserver-authentication-reader"),
+        reader,
+        "roles kube-system/extension-apiserver-authentication-reader",
+    )
+    .await;
 
     // The control-plane components (they authenticate via their client certs
     // as these users) get their own least-privilege roles, not cluster-admin
@@ -2185,5 +2300,21 @@ mod metrics_label_tests {
         assert_eq!(attrs("/healthz", "", Method::GET).resource, "health");
         assert_eq!(attrs("/metrics", "", Method::GET).resource, "metrics");
         assert_eq!(attrs("/openapi/v3", "", Method::GET).resource, "openapi");
+    }
+}
+
+#[cfg(test)]
+mod extension_authentication_tests {
+    #[test]
+    fn the_front_proxy_contract_is_published_as_upstream_spells_it() {
+        let d = super::extension_authentication_data(Some("CLIENT"), Some("PROXY"), &["front-proxy-client".into()]);
+        assert_eq!(d["client-ca-file"], "CLIENT");
+        assert_eq!(d["requestheader-client-ca-file"], "PROXY");
+        assert_eq!(d["requestheader-allowed-names"], r#"["front-proxy-client"]"#);
+        assert_eq!(d["requestheader-username-headers"], r#"["X-Remote-User"]"#);
+        assert_eq!(d["requestheader-group-headers"], r#"["X-Remote-Group"]"#);
+        assert_eq!(d["requestheader-extra-headers-prefix"], r#"["X-Remote-Extra-"]"#);
+        let only_client = super::extension_authentication_data(Some("CLIENT"), None, &[]);
+        assert_eq!(only_client.as_object().unwrap().len(), 1);
     }
 }

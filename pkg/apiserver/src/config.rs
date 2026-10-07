@@ -25,6 +25,15 @@ pub struct ApiServerConfig {
     pub etcd_cert: Option<PathBuf>,
     /// Client private key (PEM) for mutual TLS to etcd/fastetcd.
     pub etcd_key: Option<PathBuf>,
+    /// The client certificate this apiserver presents to aggregated API
+    /// servers (#83), upstream's front-proxy identity; followed on disk.
+    pub proxy_client_cert: Option<PathBuf>,
+    pub proxy_client_key: Option<PathBuf>,
+    /// The CA that signed `proxy_client_cert`, published for aggregated API
+    /// servers in `kube-system/extension-apiserver-authentication`.
+    pub requestheader_client_ca: Option<PathBuf>,
+    /// Common names a front-proxy certificate may have; empty: any.
+    pub requestheader_allowed_names: Vec<String>,
     /// How often the datastore is compacted (#139); zero turns it off.
     pub etcd_compaction_interval: std::time::Duration,
     /// Data directory (TLS material, misc runtime state).
@@ -89,6 +98,10 @@ impl Default for ApiServerConfig {
             etcd_cacert: None,
             etcd_cert: None,
             etcd_key: None,
+            proxy_client_cert: None,
+            proxy_client_key: None,
+            requestheader_client_ca: None,
+            requestheader_allowed_names: Vec::new(),
             etcd_compaction_interval: std::time::Duration::from_secs(300),
             data_dir: PathBuf::from("/var/lib/kubernetes"),
             service_cidr: "10.96.0.0/12".into(),

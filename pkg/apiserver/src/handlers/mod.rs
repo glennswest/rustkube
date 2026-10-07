@@ -27,4 +27,6 @@ pub struct AppState {
     pub service_cidr: String,
     /// Admission webhook configurations and their clients (#82).
     pub admission: Arc<crate::admission::Webhooks>,
+    /// The APIServices this apiserver proxies to (#83).
+    pub aggregator: Arc<crate::aggregation::Aggregator>,
 }

@@ -71,6 +71,33 @@ pub async fn api_versions() -> impl IntoResponse {
 /// resources exist and nothing finds them — which is exactly how the Route
 /// group shipped serving `/apis/route.openshift.io/v1` while `/apis` did not
 /// mention it.
+/// The names of the built-in groups, which no APIService may take over (#83).
+pub(crate) fn builtin_group_names() -> std::collections::HashSet<String> {
+    builtin_groups().iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect()
+}
+
+/// Built-in, CRD and aggregated groups, as `/apis` lists them. An
+/// aggregated version of a group a CRD also serves joins that group.
+async fn all_groups(state: &AppState) -> Vec<Value> {
+    let mut groups = builtin_groups();
+    groups.extend(state.crd_registry.api_groups().await);
+    for agg in state.aggregator.groups() {
+        match groups.iter_mut().find(|g| g["name"] == agg["name"]) {
+            Some(g) => {
+                for v in agg["versions"].as_array().into_iter().flatten() {
+                    if let Some(list) = g["versions"].as_array_mut() {
+                        if !list.iter().any(|x| x["groupVersion"] == v["groupVersion"]) {
+                            list.push(v.clone());
+                        }
+                    }
+                }
+            }
+            None => groups.push(agg),
+        }
+    }
+    groups
+}
+
 fn builtin_groups() -> Vec<Value> {
     vec![
         json!({
@@ -204,11 +231,7 @@ fn builtin_groups() -> Vec<Value> {
 }
 
 pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoResponse {
-    let mut groups = builtin_groups();
-
-    // Add dynamically registered CRD groups
-    let crd_groups = state.crd_registry.api_groups().await;
-    groups.extend(crd_groups);
+    let groups = all_groups(&state).await;
 
     Json(json!({
         "kind": "APIGroupList",
@@ -226,8 +249,7 @@ pub async fn api_group(
     State(state): State<AppState>,
     axum::extract::Path(group): axum::extract::Path<String>,
 ) -> axum::response::Response {
-    let mut groups = builtin_groups();
-    groups.extend(state.crd_registry.api_groups().await);
+    let groups = all_groups(&state).await;
     match groups.into_iter().find(|g| g["name"] == group.as_str()) {
         Some(mut g) => {
             g["kind"] = json!("APIGroup");

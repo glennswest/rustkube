@@ -37,6 +37,25 @@ struct Cli {
     #[arg(long = "etcd-compaction-interval", default_value = "5m0s", value_parser = apiserver::compactor::parse_interval)]
     etcd_compaction_interval: std::time::Duration,
 
+    /// Client certificate (PEM) presented to aggregated API servers, as
+    /// upstream's front proxy; renewed in place without a restart
+    #[arg(long = "proxy-client-cert-file")]
+    proxy_client_cert: Option<PathBuf>,
+
+    /// Private key (PEM) for --proxy-client-cert-file
+    #[arg(long = "proxy-client-key-file")]
+    proxy_client_key: Option<PathBuf>,
+
+    /// CA bundle (PEM) that signed --proxy-client-cert-file, published to
+    /// aggregated API servers in kube-system/extension-apiserver-authentication
+    #[arg(long = "requestheader-client-ca-file")]
+    requestheader_client_ca: Option<PathBuf>,
+
+    /// Common names allowed for the front-proxy certificate (comma-separated;
+    /// empty: any signed by --requestheader-client-ca-file)
+    #[arg(long = "requestheader-allowed-names", value_delimiter = ',')]
+    requestheader_allowed_names: Vec<String>,
+
     /// Serve HTTPS with an auto-generated self-signed cert (dev/bootstrap)
     #[arg(long)]
     tls: bool,
@@ -146,6 +165,10 @@ async fn main() -> anyhow::Result<()> {
         etcd_cert: cli.etcd_cert,
         etcd_key: cli.etcd_key,
         etcd_compaction_interval: cli.etcd_compaction_interval,
+        proxy_client_cert: cli.proxy_client_cert,
+        proxy_client_key: cli.proxy_client_key,
+        requestheader_client_ca: cli.requestheader_client_ca,
+        requestheader_allowed_names: cli.requestheader_allowed_names,
         tls_cert: cli.tls_cert,
         tls_key: cli.tls_key,
         tls_auto: cli.tls,

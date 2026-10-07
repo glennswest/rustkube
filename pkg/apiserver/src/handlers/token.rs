@@ -323,6 +323,7 @@ mod tests {
             crd_registry: Arc::new(CrdRegistry::new()),
             service_cidr: "10.96.0.0/12".into(),
             admission: Default::default(),
+            aggregator: Arc::new(crate::aggregation::Aggregator::new(None)),
         };
         (state, test_keys().with_bound_objects(storage))
     }
