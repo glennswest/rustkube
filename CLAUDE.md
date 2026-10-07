@@ -127,13 +127,15 @@ The issue leaves the choice to the owner. Asked, `wait-owner`: A inert with
 ScalingActive=False (recommended now), B remove the controller, C a real HPA
 from kubelets' /metrics/resource (own issue after A).
 
-### Rejected bearer token → 401, not anonymous (#115, P2) — IN PROGRESS 2026-10-07
+### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401
       Status (reason Unauthorized) whatever `--anonymous-auth`; anonymous only
       without credentials (no header, empty `Bearer `, other scheme); scheme
       any case (upstream's bearertoken.go). Units; `test/e2e/bad-token.sh`
       (rigs, `RK_ANONYMOUS_AUTH=true`); README/test README/CHANGELOG
-- [ ] Build on a build VM; rigs run waits for stormcentral#526; golden
+- [x] 7bebbaf on a build VM (sc-build-e80aa11f7e): workspace 548 passed /
+      4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
+- [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
 ### Store compaction / continue-token expiry (#139, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
