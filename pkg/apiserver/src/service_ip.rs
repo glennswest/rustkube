@@ -195,7 +195,7 @@ fn static_band(count: u64) -> u64 {
 /// random point, wrapping, then the lower band the same way. The network
 /// (0) and broadcast (`count - 1`) offsets are never offered.
 fn candidates(count: u64, start: u64) -> impl Iterator<Item = u64> {
-    let usable = |o: u64| o >= 1 && o + 1 < count;
+    let usable = move |o: u64| o >= 1 && o + 1 < count;
     let band = static_band(count);
     let upper = band..count;
     let lower = 0..band;
