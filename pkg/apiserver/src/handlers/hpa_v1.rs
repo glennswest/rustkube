@@ -44,7 +44,8 @@ fn set_ann(obj: &mut Value, key: &str, v: &Value) {
 }
 
 fn take_ann(obj: &mut Value, key: &str) -> Option<Value> {
-    let anns = obj["metadata"]["annotations"].as_object_mut()?;
+    // get_mut, not indexing: a mutable index inserts the key it misses.
+    let anns = obj.get_mut("metadata")?.get_mut("annotations")?.as_object_mut()?;
     let raw = anns.remove(key)?;
     let out = raw.as_str().and_then(|s| serde_json::from_str(s).ok());
     if anns.is_empty() {
