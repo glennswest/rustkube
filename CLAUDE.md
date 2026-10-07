@@ -121,21 +121,27 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### HPA (#89, P2) — A done; C's data source needs the owner 2026-10-07
-Owner (2026-10-07): real HPA now (C), CPU/memory from **cadvisor**, serve
-`metrics.k8s.io` (pods/nodes, `kubectl top`), upstream ratio + tolerance +
-scale-down stabilisation; until then A (inert and honest).
-- [x] A: `hpa.rs` changes no replica counts; status current = desired =
-      target's, AbleToScale=True / ScalingActive=False
-      (FailedGetResourceMetric), missing target FailedGetScale; no Pod
-      watch. Units; README/inventory/presentation/design/CHANGELOG
-- [x] A: compiled + units at 566403b (controller-manager 89, 2 HPA units)
-- [ ] A: golden (stormcentral#527)
-- [ ] C: the standalone cadvisor (9096) cannot attribute stormpump pod
-      cgroups (cadvisor#3 open: `/stormpump/w<tag>-<n>`, only `id`), and has
-      no TLS/token on stormcos yet (stormcos#143). Per-pod CPU/memory exists
-      today only in the kubelet's `/stats/summary` / `/metrics/cadvisor`
-      (from stormpump QUERY). Asked the owner which source
+### HPA (#89, P2) — C IN PROGRESS 2026-10-07
+Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
+serve `metrics.k8s.io` (pods/nodes, `kubectl top`); upstream's ratio,
+tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
+- [x] A: `hpa.rs` inert (5415161), compiled + units at 566403b
+- [ ] apiserver `resource_metrics.rs`: `metrics.k8s.io/v1beta1` NodeMetrics
+      and PodMetrics served natively from each node's cadvisor
+      (`/api/v1.3/subcontainers/`, InternalIP:`--cadvisor-port` 9096,
+      optional token/CA/https): node = root cgroup, pods by the
+      `io.kubernetes.pod.{namespace,name}` / `io.kubernetes.container.name`
+      labels (upstream's contract — stormpump pods carry none until
+      cadvisor#3); CPU rate from the last two samples, memory working set;
+      10 s cache per node; discovery; view/edit/admin get pod metrics
+- [ ] HPA controller: upstream replica calculator (Utilization/AverageValue,
+      tolerance 0.1, missing/unready pods), max over metrics, behavior
+      (default scale-up 100%/4 pods per 15 s, scale-down stabilisation 300 s,
+      100% per 15 s; spec.behavior honoured), min/max, conditions
+      (AbleToScale, ScalingActive, ScalingLimited), currentMetrics; 15 s resync;
+      no pod metrics → ScalingActive=False as now
+- [ ] Units; rig `hpa-metrics.sh` (stub cadvisor); docs; build; comment
+      cadvisor#3 with the labels consumed
 
 ### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401
