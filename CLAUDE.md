@@ -131,14 +131,16 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] Golden: `component build rustkube` 9dd5d09f110a, 7017a6c1f962 cancelled
       while waiting for a build VM (stormcentral#541); then shipped/close
 
-### Scale subresource (#86, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
+### Scale subresource (#86, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] `handlers/scale.rs`: autoscaling/v1 Scale GET/PUT/PATCH for
       deployments/replicasets/statefulsets and CRDs with
       `subresources.scale` (`CrdDefinition.scale`); discovery entries (apps +
       CR `/scale`, `/status`); protobuf path → Scale. Units;
       `test/e2e/scale.sh` (rigs, real kubectl); docs/CHANGELOG
 - [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
-- [ ] rigs (stormcentral#512); golden (stormcentral#541); close #86
+- [ ] rigs: 465e6c4490 (C2NR0Q2) and 7219e85020 (server3) at 90208b0 —
+      image never listed by the registry (stormcentral#512); golden
+      (stormcentral#541); close #86
 
 ### Scheduling gates (#87, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] ddcc821 scheduler: gated Pod → PodScheduled=False/SchedulingGated (no
