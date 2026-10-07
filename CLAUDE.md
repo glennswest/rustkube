@@ -119,8 +119,10 @@ at N; Exact → store at N; continuation → store pinned to the token's rev.
       `apiserver_watch_cache_reads_total`. Units: apiserver 253; workspace at
       91c82b1 527 passed / 4 ignored. #222 (my type error) closed
 - [x] `test/e2e/cache-reads.sh` (suite `rigs`)
-- [ ] Test-machine run 03a09c82aa (`rigs` at c82ef9e, pvetest1) — queued
-      behind a VM that keeps failing to settle; blades off 00–11 UTC
+- [ ] Test-machine run of `rigs` (has cache-reads): 03a09c82aa at c82ef9e
+      ended "no VM 3101" (pvetest1 lost its VM; pvetest2 too); blades off
+      00–11 UTC. Rerun on a blade or a reinstalled VM; then golden, close
+      #171 (server1 GET p99 < 20 ms after the release, #187)
 - [ ] README/design doc/CHANGELOG; golden; close #171 (server1 GET p99 < 20
       ms acceptance after the release, per #187)
 
