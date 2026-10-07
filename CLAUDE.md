@@ -121,13 +121,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [ ] rigs run + golden: test images still build on dev (c47ec57c27
       errored there) — stormcentral#521
 
-### ServiceAccount key rotation (#223, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
+### ServiceAccount key rotation (#223, P2) — BUILT + VERIFIED (unit), golden blocked on stormcentral#541 2026-10-07
 - [x] `SigningKeys::from_pem`: signing key RSA or P-256; verify against
       every public key of every `--service-account-key-file` (repeatable,
       comma-separated, multi-PEM); unit (old key verifies after rotation);
       README/certificates.md (rotation steps)/CHANGELOG
-- [ ] Build (stormcentral#544); token-auth / bound-token rigs (#512);
-      golden; close #223
+- [x] Built + units on a build VM at 90208b0 (job 50292519d5): workspace
+      570 passed / 4 ignored (apiserver 280, incl. the rotation unit), exit 0
+- [ ] Golden: `component build rustkube` 9dd5d09f110a, 7017a6c1f962 cancelled
+      while waiting for a build VM (stormcentral#541); then shipped/close
 
 ### Scale subresource (#86, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
 - [x] `handlers/scale.rs`: autoscaling/v1 Scale GET/PUT/PATCH for
@@ -135,15 +137,16 @@ clone requests. README's configuration tables come from the three CLI sources.
       `subresources.scale` (`CrdDefinition.scale`); discovery entries (apps +
       CR `/scale`, `/status`); protobuf path → Scale. Units;
       `test/e2e/scale.sh` (rigs, real kubectl); docs/CHANGELOG
-- [ ] Build (stormcentral#544); rigs (stormcentral#512); golden; close #86
+- [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
+- [ ] rigs (stormcentral#512); golden (stormcentral#541); close #86
 
 ### Scheduling gates (#87, P2) — WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
 - [x] ddcc821 scheduler: gated Pod → PodScheduled=False/SchedulingGated (no
       Event), placed when the last gate goes; apiserver PUT/PATCH adding a
       gate → 422 (upstream's message). Units; `test/e2e/scheduling-gates.sh`
       (rigs); README/inventory/research/presentation/test README/CHANGELOG
-- [ ] Build: `409 build VMs are off` (stormcentral#544). Then rigs
-      (stormcentral#512), golden, close #87
+- [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
+- [ ] rigs (stormcentral#512); golden (stormcentral#541); close #87
 
 ### HPA (#89, P2) — C WRITTEN, BLOCKED on stormcentral#544 (no build) 2026-10-07
 Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
@@ -160,8 +163,9 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
 - [x] Units; `test/e2e/hpa-metrics.sh` (rigs, stub cadvisor); README,
       inventory, oc-compat, presentation, design, test README, CHANGELOG
 - [x] cadvisor#3 told the labels rustkube reads
-- [ ] Build: refused, `409 build VMs are off` (stormcentral#544), plain
-      sc-build too. Then rigs run (stormcentral#512), golden. On stormcos
+- [x] Built + units at 90208b0 (job 50292519d5): controller-manager 94
+      (HPA calculator/behavior units), apiserver 280 (cadvisor summary)
+- [ ] rigs run (stormcentral#512), golden (stormcentral#541). On stormcos
       pod metrics wait for cadvisor#3
 
 ### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
