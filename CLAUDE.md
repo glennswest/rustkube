@@ -33,6 +33,11 @@ sc-build                              # cargo build && cargo test at the pushed 
 sc-build 'cargo test -p apiserver'    # any command
 ```
 
+While dev.g8.lo is retired (stormcentral#521, 2026-10-07) plain `sc-build`
+fails before it starts; `SC_BUILD_VM=1 sc-build '…'` runs the same job on a
+fresh build VM and works. Test-run image builds and goldens still go to dev
+until #521 is fixed.
+
 **The e2e rigs (`test/e2e/*.sh`) never run in a build slot** (#173; the
 build rules: "Test workloads never hold a build slot"). They are suites of
 the test image, run on a test machine:
@@ -111,8 +116,10 @@ clone requests. README's configuration tables come from the three CLI sources.
 - [x] `builtin_admission::fold_string_data` on create, PUT, PATCH (before
       the immutability check, again after webhooks), startup manifests; boot
       backfill for stored Secrets; unit; README/CHANGELOG
-- [ ] Build+test on a build VM (`SC_BUILD_VM=1 sc-build`, works while
-      stormcentral#521 is open); a rig line; golden waits for #521
+- [x] b677499 on a build VM (`SC_BUILD_VM=1 sc-build`, job 414c3ccedc):
+      workspace 534 passed / 4 ignored; `test/e2e/secret-stringdata.sh`
+- [ ] rigs run + golden: test images still build on dev (c47ec57c27
+      errored there) — stormcentral#521
 
 ### HPA placeholder (#89, P2) — NEEDS OWNER 2026-10-07
 The issue leaves the choice to the owner. Asked, `wait-owner`: A inert with
@@ -151,7 +158,7 @@ of #137/#138/#150. Proposed after stormcentral#521.
 - [x] `ports` keyed by content: `containerPort` when entries carry it, else
       port + protocol (default TCP); `merge_id` used by merge, `$patch:
       delete` and `$setElementOrder`; unit test; README/CHANGELOG
-- [ ] Compile + test when a build host exists (stormcentral#521); golden;
+- [ ] COMPILED + unit tests pass on a build VM at b677499; rigs + golden wait for (stormcentral#521); golden;
       close #150
 
 ### Multi-master safety and failover (#149, P2) — rig written, not run 2026-10-07
@@ -182,7 +189,7 @@ PodScheduled=False/Unschedulable landed with #194; the Events were missing.
 - [x] `scheduler::events`: `Scheduled` on an acknowledged bind (spawned off
       the loop), `FailedScheduling` inside `report_pod_unschedulable` after
       its message-change check; unit for the shape; pod-limit.sh checks
-- [ ] NOT YET COMPILED (stormcentral#521: no build host). Then workspace
+- [ ] COMPILED + unit tests pass on a build VM at b677499 (534 passed / 4 ignored); rigs + golden still wait — (stormcentral#521: no build host). Then workspace
       build+test, `rigs` run (pod-limit), golden, close #138
 
 ### resource.k8s.io/v1 (DRA) served (#137, P2) — IN PROGRESS 2026-10-07
@@ -193,7 +200,7 @@ Owner (#137): "Please make sure there added, … after our turbomode merge"
       protobuf round-trip unit; discovery test
 - [x] 9939bcb: `test/e2e/dra-crud.sh` (suite `rigs`); README/conformance/
       test README/CHANGELOG. Allocation filed as #225
-- [ ] NOT YET COMPILED: sc-build and test runs need a build host —
+- [ ] COMPILED + unit tests pass on a build VM at b677499 (534 passed / 4 ignored); rigs + golden still wait —: sc-build and test runs need a build host —
       stormcentral#521 (dev.g8.lo retired). Then: workspace build+test, the
       `rigs` run, golden, close #137
 
