@@ -348,6 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Legacy Terragrunt/RPM path (#157) — NEEDS OWNER 2026-10-07
+Cloud-init installs RPMs no release has carried since v0.7.30 (and a
+kube-proxy/CRI-O rustkube-node RPM); master1/2.g8.lo don't answer on 6443.
+Asked, `wait-owner`: A retire (delete deploy/terragrunt, packaging, the
+scripts only they use; docs → stormcos), recommended; B repair (needs a
+publication route for pinned tarballs + proven fresh provisioning).
+
 ### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — BUILT 2026-10-07
 - [x] Routes (+ cluster /status), discovery (/apis + APIResourceList),
       resources_for, kinds; flowcontrol/v1 proto vendored (release-1.36);
