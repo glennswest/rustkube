@@ -476,16 +476,19 @@ mod tests {
     fn only_a_served_version_of_a_non_builtin_group_is_claimed() {
         let agg = Aggregator::new(None);
         agg.set(vec![
-            ApiService::parse(&api("metrics.k8s.io", "v1beta1", true, 100, 100)).unwrap(),
+            ApiService::parse(&api("custom.metrics.k8s.io", "v1beta1", true, 100, 100)).unwrap(),
             ApiService::parse(&api("local.example.com", "v1", false, 100, 100)).unwrap(),
             ApiService::parse(&api("apps", "v1", true, 100, 100)).unwrap(),
         ]);
-        assert!(agg.claims("/apis/metrics.k8s.io/v1beta1").is_some());
-        assert!(agg.claims("/apis/metrics.k8s.io/v1beta1/namespaces/a/pods").is_some());
-        assert!(agg.claims("/apis/metrics.k8s.io").is_none(), "the group document is local");
-        assert!(agg.claims("/apis/metrics.k8s.io/v1").is_none());
+        assert!(agg.claims("/apis/custom.metrics.k8s.io/v1beta1").is_some());
+        assert!(agg.claims("/apis/custom.metrics.k8s.io/v1beta1/namespaces/a/pods").is_some());
+        assert!(agg.claims("/apis/custom.metrics.k8s.io").is_none(), "the group document is local");
+        assert!(agg.claims("/apis/custom.metrics.k8s.io/v1").is_none());
         assert!(agg.claims("/apis/local.example.com/v1/things").is_none(), "no service: local");
         assert!(agg.claims("/apis/apps/v1/deployments").is_none(), "built-in groups are never proxied");
+        // metrics.k8s.io is served by the apiserver itself (#89).
+        agg.set(vec![ApiService::parse(&api("metrics.k8s.io", "v1beta1", true, 100, 100)).unwrap()]);
+        assert!(agg.claims("/apis/metrics.k8s.io/v1beta1/nodes").is_none());
         assert!(agg.claims("/api/v1/pods").is_none());
     }
 
