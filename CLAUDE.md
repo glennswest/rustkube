@@ -107,6 +107,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### CR schema defaulting/pruning/fieldValidation (#121, P2) — NOT STARTED, waits for a build host
+Not written blind: a schema walker (defaults on write and read, pruning with
+preserve-unknown-fields/embedded-resource, fieldValidation Strict/Warn) plus
+duplicate-key detection at JSON decode is too large to land uncompiled on top
+of #137/#138/#150. Proposed after stormcentral#521.
+
 ### Service ports in strategic merge patch (#150, P2) — WRITTEN, not yet built 2026-10-07
 - [x] `ports` keyed by content: `containerPort` when entries carry it, else
       port + protocol (default TCP); `merge_id` used by merge, `$patch:
