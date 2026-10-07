@@ -566,7 +566,7 @@ pub(crate) async fn put_object(
         }
     }
     keep_server_fields(&mut body, &existing, name, namespace);
-    status.on_update(&mut body, &existing);
+    status.on_update(&mut body, &existing)?;
     if key.starts_with("/registry/secrets/") {
         crate::builtin_admission::fold_string_data(&mut body); // #101
     }
@@ -576,7 +576,7 @@ pub(crate) async fn put_object(
     }
     crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
     keep_server_fields(&mut body, &existing, name, namespace);
-    status.on_update(&mut body, &existing);
+    status.on_update(&mut body, &existing)?;
     if key.starts_with("/registry/secrets/") {
         crate::builtin_admission::fold_string_data(&mut body); // a webhook may add it
     }
@@ -600,30 +600,85 @@ pub(crate) async fn put_object(
 /// - **status** (#128): with the status subresource, status belongs to
 ///   `/status` — a create drops the body's status, and an update keeps the
 ///   stored one, so a spec writer cannot replace what a controller reported.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// - **schema** (#121): the version's structural schema defaults the object
+///   and prunes what it does not declare; `fieldValidation=Strict` refuses
+///   a request with undeclared fields, `Warn` (the default) returns them as
+///   `Warning` headers. See `crate::schema`.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Strategy {
     BuiltIn,
-    Custom { status_subresource: bool },
+    Custom {
+        status_subresource: bool,
+        /// The version's `openAPIV3Schema`, when it has one.
+        schema: Option<std::sync::Arc<Value>>,
+        validation: crate::schema::FieldValidation,
+    },
 }
 
 impl Strategy {
+    /// A custom resource without a schema (tests, and CRDs that declare none).
+    pub fn custom(status_subresource: bool) -> Self {
+        Strategy::Custom { status_subresource, schema: None, validation: Default::default() }
+    }
+
+    /// `fieldValidation=Strict`?
+    pub fn strict(&self) -> bool {
+        matches!(self, Strategy::Custom { validation: crate::schema::FieldValidation::Strict, .. })
+    }
+
+    /// Default and prune under the schema; refuse or warn about what was
+    /// undeclared. Idempotent: a second pass finds nothing left to prune.
+    fn apply_schema(&self, obj: &mut Value) -> Result<(), ApiError> {
+        let Strategy::Custom { schema: Some(schema), validation, .. } = self else { return Ok(()) };
+        let unknown = crate::schema::apply(obj, schema);
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let field = |p: &String| p.trim_start_matches('.').to_string();
+        match validation {
+            crate::schema::FieldValidation::Strict => {
+                // Both of upstream's spellings: a decoder's and
+                // server-side apply's.
+                let decoding: Vec<String> = unknown.iter().map(|p| format!("unknown field \"{}\"", field(p))).collect();
+                let typed: Vec<String> = unknown.iter().map(|p| format!("{p}: field not declared in schema")).collect();
+                Err(ApiError::bad_request(&format!(
+                    "strict decoding error: {} ({})",
+                    decoding.join(", "),
+                    typed.join(", ")
+                )))
+            }
+            crate::schema::FieldValidation::Warn => {
+                for p in &unknown {
+                    crate::admission::warn(format!("unknown field \"{}\"", field(p)));
+                }
+                Ok(())
+            }
+            crate::schema::FieldValidation::Ignore => Ok(()),
+        }
+    }
+
     /// A create through the main resource.
-    pub fn on_create(self, obj: &mut Value) {
-        let Strategy::Custom { status_subresource } = self else { return };
-        let Some(o) = obj.as_object_mut() else { return };
-        if status_subresource {
+    pub fn on_create(&self, obj: &mut Value) -> Result<(), ApiError> {
+        let Strategy::Custom { status_subresource, .. } = self else { return Ok(()) };
+        self.apply_schema(obj)?;
+        let Some(o) = obj.as_object_mut() else { return Ok(()) };
+        if *status_subresource {
             o.remove("status");
         }
         if let Some(meta) = o.get_mut("metadata").and_then(Value::as_object_mut) {
             meta.insert("generation".into(), json!(1));
         }
+        Ok(())
     }
 
     /// An update through the main resource: `stored` is what is there now.
     /// Idempotent — the write paths apply it again after admission.
-    pub fn on_update(self, obj: &mut Value, stored: &Value) {
-        let Strategy::Custom { status_subresource } = self else { return };
-        let Some(o) = obj.as_object_mut() else { return };
+    pub fn on_update(&self, obj: &mut Value, stored: &Value) -> Result<(), ApiError> {
+        let Strategy::Custom { status_subresource, .. } = self else { return Ok(()) };
+        // Pruned first: an undeclared field a client re-sends is no change.
+        self.apply_schema(obj)?;
+        let status_subresource = *status_subresource;
+        let Some(o) = obj.as_object_mut() else { return Ok(()) };
         if status_subresource {
             match stored.get("status") {
                 Some(s) => {
@@ -650,6 +705,7 @@ impl Strategy {
             o.insert("metadata".into(), json!({}));
         }
         o["metadata"]["generation"] = json!(generation);
+        Ok(())
     }
 }
 
@@ -1496,6 +1552,13 @@ pub(crate) async fn patch_stored_object(
     let is_apply = content_type.split(';').next().unwrap_or("").trim()
         == "application/apply-patch+yaml";
     let (field_manager, force) = apply_params(query);
+    // `fieldValidation=Strict` refuses a duplicate key, as upstream's YAML
+    // decoder does, before the decode keeps only one of them (#121).
+    if is_apply && status.strict() {
+        if let Some(dup) = crate::schema::yaml_duplicate(body) {
+            return Err(ApiError::bad_request(&format!("error decoding YAML: yaml: unmarshal errors:\n  {dup}")));
+        }
+    }
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let mut attempt = 0;
@@ -1520,7 +1583,7 @@ pub(crate) async fn patch_stored_object(
                         ))
                     })?
             };
-            status.on_update(&mut out, &stored);
+            status.on_update(&mut out, &stored)?;
             Ok(out)
         })
         .await;
@@ -1543,7 +1606,7 @@ pub(crate) async fn patch_stored_object(
                 }
                 crate::admission::admit(state, crate::admission::Operation::Create, Some(&mut obj), None).await?;
                 ensure_metadata(&mut obj, name, namespace);
-                status.on_create(&mut obj);
+                status.on_create(&mut obj)?;
                 match state.storage.create(key, obj).await {
                     // Somebody created it between the read and the create:
                     // apply to theirs, as the next attempt will.
@@ -2717,11 +2780,11 @@ mod status_put_tests {
 
         let out = put_object(&s, &key, "w1", Some("default"), json!({
             "metadata": {"name": "w1"}, "spec": {"size": 2}, "status": {"phase": "Hacked"}}),
-            Strategy::Custom { status_subresource: true }).await.unwrap();
+            Strategy::custom(true)).await.unwrap();
         assert_eq!((out["spec"]["size"].clone(), out["status"].clone()), (json!(2), json!({"phase": "Ready"})));
         // A PUT without status does not delete it either.
         let out = put_object(&s, &key, "w1", Some("default"), json!({"metadata": {"name": "w1"}, "spec": {"size": 3}}),
-            Strategy::Custom { status_subresource: true }).await.unwrap();
+            Strategy::custom(true)).await.unwrap();
         assert_eq!(out["status"], json!({"phase": "Ready"}));
 
         for (ct, body) in [
@@ -2730,7 +2793,7 @@ mod status_put_tests {
             ("application/apply-patch+yaml", "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w1}\nspec: {size: 6}\nstatus: {phase: Hacked}\n"),
         ] {
             let out = patch_stored_object(&s, &key, "widgets", "w1", Some("default"), &hdr(ct),
-                "fieldManager=t&force=true", body.as_bytes(), Strategy::Custom { status_subresource: true }).await.unwrap();
+                "fieldManager=t&force=true", body.as_bytes(), Strategy::custom(true)).await.unwrap();
             assert_eq!(out["status"], json!({"phase": "Ready"}), "{ct}");
         }
         assert_eq!(s.storage.get(&key).await.unwrap()["spec"]["size"], 6);
@@ -2742,7 +2805,7 @@ mod status_put_tests {
         let key2 = ResourceStorage::namespaced_key("example.com/widgets", "default", "w2");
         let out = patch_stored_object(&s, &key2, "widgets", "w2", Some("default"), &hdr("application/apply-patch+yaml"),
             "fieldManager=t", b"apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w2}\nspec: {size: 1}\nstatus: {phase: Hacked}\n",
-            Strategy::Custom { status_subresource: true }).await.unwrap();
+            Strategy::custom(true)).await.unwrap();
         assert!(out.get("status").is_none(), "{out}");
 
         // Writable: status is an ordinary field.
@@ -2757,55 +2820,55 @@ mod status_put_tests {
     /// metadata.generation for custom resources (#198), as upstream.
     #[test]
     fn generation_counts_changes_to_what_the_object_asks_for() {
-        let with = Strategy::Custom { status_subresource: true };
-        let without = Strategy::Custom { status_subresource: false };
+        let with = Strategy::custom(true);
+        let without = Strategy::custom(false);
         let gen = |o: &Value| o["metadata"]["generation"].as_i64();
 
         let mut o = json!({"metadata": {"name": "a", "generation": 7}, "spec": {"x": 1}});
-        with.on_create(&mut o);
+        with.on_create(&mut o).unwrap();
         assert_eq!(gen(&o), Some(1), "a client's generation is not taken");
         let stored = o.clone();
 
         // With the status subresource: spec moves it, metadata does not.
         let mut same = json!({"metadata": {"name": "a", "labels": {"l": "1"}, "generation": 99}, "spec": {"x": 1}});
-        with.on_update(&mut same, &stored);
+        with.on_update(&mut same, &stored).unwrap();
         assert_eq!(gen(&same), Some(1), "metadata-only write");
         let mut changed = json!({"metadata": {"name": "a"}, "spec": {"x": 2}});
-        with.on_update(&mut changed, &stored);
+        with.on_update(&mut changed, &stored).unwrap();
         assert_eq!(gen(&changed), Some(2));
-        with.on_update(&mut changed, &stored);
+        with.on_update(&mut changed, &stored).unwrap();
         assert_eq!(gen(&changed), Some(2), "applying it twice is the same");
 
         // Without it: anything outside metadata, status included.
         let stored = json!({"metadata": {"name": "a", "generation": 3}, "spec": {"x": 1}, "status": {"p": 1}});
         let mut st = json!({"metadata": {"name": "a"}, "spec": {"x": 1}, "status": {"p": 2}});
-        without.on_update(&mut st, &stored);
+        without.on_update(&mut st, &stored).unwrap();
         assert_eq!(gen(&st), Some(4));
         let mut meta = json!({"metadata": {"name": "a", "finalizers": ["f"]}, "spec": {"x": 1}, "status": {"p": 1}});
-        without.on_update(&mut meta, &stored);
+        without.on_update(&mut meta, &stored).unwrap();
         assert_eq!(gen(&meta), Some(3));
 
         // Stored before generations were kept: counts from 1.
         let mut old = json!({"metadata": {"name": "a"}, "spec": {"x": 5}});
-        with.on_update(&mut old, &json!({"metadata": {"name": "a"}, "spec": {"x": 1}}));
+        with.on_update(&mut old, &json!({"metadata": {"name": "a"}, "spec": {"x": 1}})).unwrap();
         assert_eq!(gen(&old), Some(2));
 
         // Built-ins are untouched.
         let mut b = json!({"metadata": {"name": "a"}, "spec": {}});
-        Strategy::BuiltIn.on_create(&mut b);
-        Strategy::BuiltIn.on_update(&mut b, &json!({"metadata": {"generation": 4}}));
+        Strategy::BuiltIn.on_create(&mut b).unwrap();
+        Strategy::BuiltIn.on_update(&mut b, &json!({"metadata": {"generation": 4}})).unwrap();
         assert_eq!(gen(&b), None);
     }
 
     #[test]
     fn status_field_on_create_and_update() {
         let mut o = json!({"spec": {}, "status": {"a": 1}});
-        Strategy::BuiltIn.on_create(&mut o);
+        Strategy::BuiltIn.on_create(&mut o).unwrap();
         assert!(o.get("status").is_some());
-        Strategy::Custom { status_subresource: true }.on_create(&mut o);
+        Strategy::custom(true).on_create(&mut o).unwrap();
         assert!(o.get("status").is_none());
         let mut o = json!({"spec": {}, "status": {"a": 2}});
-        Strategy::Custom { status_subresource: true }.on_update(&mut o, &json!({"spec": {}}));
+        Strategy::custom(true).on_update(&mut o, &json!({"spec": {}})).unwrap();
         assert!(o.get("status").is_none(), "nothing stored, nothing kept");
     }
 

@@ -24,6 +24,7 @@ pub mod manifests;
 pub mod protobuf_mw;
 pub mod rbac_engine;
 pub mod requester;
+pub mod schema;
 pub mod selector;
 pub mod service_ip;
 pub mod server;

@@ -45,6 +45,10 @@ pub struct CrdDefinition {
     /// upstream's custom-resource strategy does. Without it, status is an
     /// ordinary field of the object.
     pub status_subresource: bool,
+    /// The version's `openAPIV3Schema` (v1beta1: the spec's
+    /// `validation.openAPIV3Schema`), for defaulting, pruning and
+    /// fieldValidation (#121). `None`: stored as sent.
+    pub schema: Option<std::sync::Arc<Value>>,
 }
 
 /// Registry of all active CRDs, keyed by group → version → plural.
@@ -115,7 +119,9 @@ impl CrdRegistry {
         // `subresources` is per version in apiextensions v1; v1beta1 put it
         // on the spec for every version.
         let all_status = crd["spec"]["subresources"]["status"].is_object();
-        let mut versions: Vec<(String, Vec<Value>, bool)> = crd["spec"]["versions"]
+        let all_schema = crd["spec"]["validation"]["openAPIV3Schema"].clone();
+        #[allow(clippy::type_complexity)]
+        let mut versions: Vec<(String, Vec<Value>, bool, Value)> = crd["spec"]["versions"]
             .as_array()
             .map(|vs| {
                 vs.iter()
@@ -127,17 +133,21 @@ impl CrdRegistry {
                             .cloned()
                             .unwrap_or_default();
                         let status = all_status || v["subresources"]["status"].is_object();
-                        Some((name, cols, status))
+                        let schema = match &v["schema"]["openAPIV3Schema"] {
+                            Value::Object(_) => v["schema"]["openAPIV3Schema"].clone(),
+                            _ => all_schema.clone(),
+                        };
+                        Some((name, cols, status, schema))
                     })
                     .collect()
             })
             .unwrap_or_default();
         if versions.is_empty() {
-            versions.push(("v1".to_string(), Vec::new(), all_status));
+            versions.push(("v1".to_string(), Vec::new(), all_status, all_schema.clone()));
         }
 
         let mut crds = self.crds.write().await;
-        for (version, printer_columns, status_subresource) in versions {
+        for (version, printer_columns, status_subresource, schema) in versions {
             let def = CrdDefinition {
                 group: group.clone(),
                 version: version.clone(),
@@ -148,6 +158,7 @@ impl CrdRegistry {
                 scope,
                 printer_columns,
                 status_subresource,
+                schema: schema.is_object().then(|| std::sync::Arc::new(schema)),
             };
             crds.entry(group.clone())
                 .or_default()
@@ -221,10 +232,26 @@ impl CrdRegistry {
     /// registered custom resource, with or without the status subresource.
     /// Anything not registered here (the CRDs themselves) is `BuiltIn`.
     pub async fn strategy(&self, group: &str, version: &str, resource: &str) -> Strategy {
+        self.strategy_for(group, version, resource, Default::default()).await
+    }
+
+    /// `strategy`, for a request asking `validation` of undeclared fields.
+    pub async fn strategy_for(
+        &self,
+        group: &str,
+        version: &str,
+        resource: &str,
+        validation: crate::schema::FieldValidation,
+    ) -> Strategy {
         match self.lookup(group, version, resource).await {
-            Some(d) => Strategy::Custom { status_subresource: d.status_subresource },
+            Some(d) => Strategy::Custom { status_subresource: d.status_subresource, schema: d.schema, validation },
             None => Strategy::BuiltIn,
         }
+    }
+
+    /// The version's schema, for defaulting what is read (#121).
+    pub async fn schema(&self, group: &str, version: &str, resource: &str) -> Option<std::sync::Arc<Value>> {
+        self.lookup(group, version, resource).await.and_then(|d| d.schema)
     }
 
     /// Look up a CRD definition by group, version, and resource plural.
@@ -649,7 +676,10 @@ pub async fn crd_list_ns(
     let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
     // Upstream leaves it out when a selector filtered the page.
     let remaining = page.remaining.filter(|_| params.label_selector.is_none() && params.field_selector.is_none());
-    let items = crate::selector::filter_objects(items, &params.label_selector, &params.field_selector);
+    let mut items = crate::selector::filter_objects(items, &params.label_selector, &params.field_selector);
+    for item in items.iter_mut() {
+        default_read(&state, &group, &version, &resource, item).await;
+    }
 
     let mut list = json!({
         "apiVersion": format!("{group}/{version}"),
@@ -674,19 +704,44 @@ pub async fn crd_list_ns(
     Ok(Json(body).into_response())
 }
 
+/// A create or PUT body, read raw so `fieldValidation=Strict` can refuse a
+/// duplicate key before `serde_json::Value` keeps only the last (#121).
+fn decode_body(body: &[u8], validation: crate::schema::FieldValidation) -> Result<Value, ApiError> {
+    if validation == crate::schema::FieldValidation::Strict {
+        if let Ok(dups) = crate::schema::json_duplicates(body) {
+            if !dups.is_empty() {
+                let list: Vec<String> = dups.iter().map(|d| format!("duplicate field \"{d}\"")).collect();
+                return Err(ApiError::bad_request(&format!("strict decoding error: {}", list.join(", "))));
+            }
+        }
+    }
+    serde_json::from_slice(body).map_err(|e| ApiError::bad_request(&format!("invalid request body: {e}")))
+}
+
+/// Defaults from the version's schema on an object read from storage (#121):
+/// a default the CRD gained after the object was written shows on read.
+async fn default_read(state: &AppState, group: &str, version: &str, resource: &str, obj: &mut Value) {
+    if let Some(schema) = state.crd_registry.schema(group, version, resource).await {
+        crate::schema::default_only(obj, &schema);
+    }
+}
+
 /// POST — create namespaced CRD instance.
 pub async fn crd_create_ns(
     State(state): State<AppState>,
     Path((group, version, namespace, resource)): Path<(String, String, String, String)>,
-    Json(mut body): Json<Value>,
+    RawQuery(query): RawQuery,
+    raw: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
+    let validation = crate::schema::FieldValidation::from_query(query.as_deref().unwrap_or(""));
+    let mut body = decode_body(&raw, validation)?;
     let name = crate::handlers::resource::object_name(&mut body)?;
     crate::handlers::resource::check_body_namespace(&body, &namespace)?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
-    state.crd_registry.strategy(&group, &version, &resource).await.on_create(&mut body);
+    state.crd_registry.strategy_for(&group, &version, &resource, validation).await.on_create(&mut body)?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
@@ -703,7 +758,8 @@ pub async fn crd_get_ns(
     // `resourceVersion=0`/`N` is served from the watch cache (#171).
     let read = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
     let cache_prefix = ResourceStorage::cluster_prefix(&storage_resource(&group, &resource));
-    let obj = state.storage.get_read(&cache_prefix, &key, read).await?;
+    let mut obj = state.storage.get_read(&cache_prefix, &key, read).await?;
+    default_read(&state, &group, &version, &resource, &mut obj).await;
     Ok(Json(obj))
 }
 
@@ -711,11 +767,14 @@ pub async fn crd_get_ns(
 pub async fn crd_update_ns(
     State(state): State<AppState>,
     Path((group, version, namespace, resource, name)): Path<(String, String, String, String, String)>,
-    Json(body): Json<Value>,
+    RawQuery(query): RawQuery,
+    raw: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
+    let validation = crate::schema::FieldValidation::from_query(query.as_deref().unwrap_or(""));
+    let body = decode_body(&raw, validation)?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
-    let status = state.crd_registry.strategy(&group, &version, &resource).await;
+    let status = state.crd_registry.strategy_for(&group, &version, &resource, validation).await;
     let obj = crate::handlers::resource::put_object(&state, &key, &name, Some(&namespace), body, status).await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
@@ -732,7 +791,8 @@ pub async fn crd_patch_ns(
     validate_crd(&state, &group, &version, &resource).await?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
     // Shared path so server-side apply upserts a missing CR + tracks managedFields (#45).
-    let status = state.crd_registry.strategy(&group, &version, &resource).await;
+    let validation = crate::schema::FieldValidation::from_query(query.as_deref().unwrap_or(""));
+    let status = state.crd_registry.strategy_for(&group, &version, &resource, validation).await;
     let obj = crate::handlers::resource::patch_stored_object(
         &state, &key, &resource, &name, Some(&namespace), &headers,
         query.as_deref().unwrap_or(""), &body, status,
@@ -840,7 +900,8 @@ pub async fn crd_patch_cluster(
     check_crd_write(&resource, Some(&name), None)?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
     // Shared path so server-side apply upserts a missing CR + tracks managedFields (#45).
-    let status = state.crd_registry.strategy(&group, &version, &resource).await;
+    let validation = crate::schema::FieldValidation::from_query(query.as_deref().unwrap_or(""));
+    let status = state.crd_registry.strategy_for(&group, &version, &resource, validation).await;
     let obj = crate::handlers::resource::patch_stored_object(
         &state, &key, &resource, &name, None, &headers, query.as_deref().unwrap_or(""), &body, status,
     )
@@ -926,7 +987,10 @@ pub async fn crd_list_cluster(
     let (items, continue_token, revision) = (page.items, page.continue_token, page.revision);
     // Upstream leaves it out when a selector filtered the page.
     let remaining = page.remaining.filter(|_| params.label_selector.is_none() && params.field_selector.is_none());
-    let items = crate::selector::filter_objects(items, &params.label_selector, &params.field_selector);
+    let mut items = crate::selector::filter_objects(items, &params.label_selector, &params.field_selector);
+    for item in items.iter_mut() {
+        default_read(&state, &group, &version, &resource, item).await;
+    }
 
     let mut list = json!({
         "apiVersion": format!("{group}/{version}"),
@@ -1014,9 +1078,12 @@ async fn register_if_crd(state: &AppState, resource: &str, obj: &Value) -> Value
 pub async fn crd_create_cluster(
     State(state): State<AppState>,
     Path((group, version, resource)): Path<(String, String, String)>,
-    Json(mut body): Json<Value>,
+    RawQuery(query): RawQuery,
+    raw: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
+    let validation = crate::schema::FieldValidation::from_query(query.as_deref().unwrap_or(""));
+    let mut body = decode_body(&raw, validation)?;
     let name = crate::handlers::resource::object_name(&mut body)?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, None);
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
@@ -1034,7 +1101,7 @@ pub async fn crd_create_cluster(
         return Ok((StatusCode::CREATED, Json(obj)));
     }
 
-    state.crd_registry.strategy(&group, &version, &resource).await.on_create(&mut body);
+    state.crd_registry.strategy_for(&group, &version, &resource, validation).await.on_create(&mut body)?;
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
 }
@@ -1050,7 +1117,8 @@ pub async fn crd_get_cluster(
     // `resourceVersion=0`/`N` is served from the watch cache (#171).
     let read = crate::watch::WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
     let cache_prefix = ResourceStorage::cluster_prefix(&storage_resource(&group, &resource));
-    let obj = state.storage.get_read(&cache_prefix, &key, read).await?;
+    let mut obj = state.storage.get_read(&cache_prefix, &key, read).await?;
+    default_read(&state, &group, &version, &resource, &mut obj).await;
     Ok(Json(obj))
 }
 
@@ -1058,12 +1126,15 @@ pub async fn crd_get_cluster(
 pub async fn crd_update_cluster(
     State(state): State<AppState>,
     Path((group, version, resource, name)): Path<(String, String, String, String)>,
-    Json(body): Json<Value>,
+    RawQuery(query): RawQuery,
+    raw: axum::body::Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_crd(&state, &group, &version, &resource).await?;
+    let validation = crate::schema::FieldValidation::from_query(query.as_deref().unwrap_or(""));
+    let body = decode_body(&raw, validation)?;
     check_crd_write(&resource, Some(&name), Some(&body))?;
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
-    let status = state.crd_registry.strategy(&group, &version, &resource).await;
+    let status = state.crd_registry.strategy_for(&group, &version, &resource, validation).await;
     let obj = crate::handlers::resource::put_object(&state, &key, &name, None, body, status).await?;
     let obj = register_if_crd(&state, &resource, &obj).await;
     Ok(Json(obj))
@@ -1237,9 +1308,9 @@ mod establish_tests {
         reg.register(&json!({"spec": {"group": "old.example.com", "scope": "Cluster",
             "names": {"plural": "gadgets", "kind": "Gadget"}, "subresources": {"status": {}},
             "versions": [{"name": "v1beta1", "served": true}]}})).await;
-        assert_eq!(reg.strategy("example.com", "v1", "widgets").await, Strategy::Custom { status_subresource: true });
-        assert_eq!(reg.strategy("example.com", "v2", "widgets").await, Strategy::Custom { status_subresource: false });
-        assert_eq!(reg.strategy("old.example.com", "v1beta1", "gadgets").await, Strategy::Custom { status_subresource: true });
+        assert_eq!(reg.strategy("example.com", "v1", "widgets").await, Strategy::custom(true));
+        assert_eq!(reg.strategy("example.com", "v2", "widgets").await, Strategy::custom(false));
+        assert_eq!(reg.strategy("old.example.com", "v1beta1", "gadgets").await, Strategy::custom(true));
         assert_eq!(reg.strategy("example.com", "v1", "nothing").await, Strategy::BuiltIn);
     }
     use super::*;

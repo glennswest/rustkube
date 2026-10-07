@@ -130,6 +130,12 @@ impl RequestAttrs {
     }
 }
 
+/// Add a `Warning` header to the current request's response (#121: the
+/// fields `fieldValidation=Warn` pruned). Nothing outside a request.
+pub fn warn(message: String) {
+    let _ = REQUEST.try_with(|r| r.warnings.lock().unwrap().push(message));
+}
+
 /// Run a request's handler with its admission attributes, and return the
 /// webhooks' warnings as `Warning` headers, as upstream does.
 pub async fn in_request(
