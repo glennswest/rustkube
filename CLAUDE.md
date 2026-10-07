@@ -107,6 +107,22 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Metadata-only CRD watch decode error (#180, P2) — IN PROGRESS 2026-10-07
+server1 (0.15.1) cilium agent: "unable to decode an event from the watch
+stream" on its `as=PartialObjectMetadata` CRD watch; the rest of the message
+(cut stream vs malformed frame) was never captured.
+- [x] Code read: every metadata-only frame type is PartialObjectMetadata
+      (ERROR a Status); client-go raises this error only for a real decode
+      failure or a non-EOF/non-timeout stream error. stormcos manifests carry
+      no non-string label/annotation values (the manifest loader stores YAML
+      unchecked)
+- [ ] Units: every frame (ADDED, MODIFIED, DELETED with/without last state,
+      BOOKMARK heartbeat/initial-end, initial ADDED, ERROR) against Go's
+      ObjectMeta types; `test/e2e/metadata-watch.sh` (suite `rigs`) — three
+      live metadata watches through create/patch/delete/heartbeat
+- [ ] On server1 (blade, on after 11:00 UTC): grep the cilium agent log;
+      absent → close; present → the full error, reproduce
+
 ### LIST/GET from the watch cache (#171, P2) — IMPLEMENTED, awaiting a test-machine run 2026-10-07
 Every LIST and GET is a linearizable fastetcd Range, `resourceVersion=0`
 included; #5's cached LIST was switched off and never back on. Upstream's

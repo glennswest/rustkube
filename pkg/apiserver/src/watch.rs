@@ -764,3 +764,140 @@ mod tests {
         );
     }
 }
+
+/// Every frame of a metadata-only watch (`as=PartialObjectMetadata`), as a
+/// client-go metadata informer decodes it (#180): the cilium agent's CRD
+/// watch logged "unable to decode an event from the watch stream" on server1.
+/// Each frame type the watch can send is rendered here and held to what Go's
+/// `metav1.PartialObjectMetadata` decodes — the right TypeMeta, nothing beside
+/// `metadata`, and every `ObjectMeta` field of the Go type — so a frame that
+/// would fail that decode fails here.
+#[cfg(test)]
+mod metadata_projection_tests {
+    use super::*;
+
+    /// Would Go's `json.Unmarshal` into `metav1.ObjectMeta` accept this?
+    pub(crate) fn go_object_meta(meta: &Value) -> Result<(), String> {
+        let m = meta.as_object().ok_or("metadata is not an object")?;
+        let rfc3339 = |v: &Value| {
+            v.is_null() || v.as_str().is_some_and(|s| chrono::DateTime::parse_from_rfc3339(s).is_ok())
+        };
+        let string_map = |v: &Value| v.is_null() || v.as_object().is_some_and(|o| o.values().all(Value::is_string));
+        for (k, v) in m {
+            let ok = match k.as_str() {
+                "name" | "generateName" | "namespace" | "selfLink" | "uid" | "resourceVersion" => {
+                    v.is_string() || v.is_null()
+                }
+                "generation" | "deletionGracePeriodSeconds" => v.is_i64() || v.is_u64() || v.is_null(),
+                "creationTimestamp" | "deletionTimestamp" => rfc3339(v),
+                "labels" | "annotations" => string_map(v),
+                "finalizers" => v.is_null() || v.as_array().is_some_and(|a| a.iter().all(Value::is_string)),
+                "ownerReferences" => v.is_null() || v.as_array().is_some_and(|a| a.iter().all(|r| {
+                    r.as_object().is_some_and(|r| r.iter().all(|(k, v)| match k.as_str() {
+                        "controller" | "blockOwnerDeletion" => v.is_boolean() || v.is_null(),
+                        _ => v.is_string(),
+                    }))
+                })),
+                "managedFields" => v.is_null() || v.as_array().is_some_and(|a| a.iter().all(|e| {
+                    e.as_object().is_some_and(|e| e.iter().all(|(k, v)| match k.as_str() {
+                        "time" => rfc3339(v),
+                        "fieldsV1" => v.is_object() || v.is_null(),
+                        _ => v.is_string() || v.is_null(),
+                    }))
+                })),
+                _ => true, // unknown fields are ignored by encoding/json
+            };
+            if !ok {
+                return Err(format!("metadata.{k} = {v} does not decode into ObjectMeta"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The frame as client-go's metadata watch decodes it.
+    fn decodes(line: &str) -> Result<(String, Value), String> {
+        let ev: Value = serde_json::from_str(line.trim_end()).map_err(|e| format!("not JSON: {e}"))?;
+        let ty = ev["type"].as_str().ok_or("no type")?.to_string();
+        let obj = ev["object"].clone();
+        if ty == "ERROR" {
+            return (obj["kind"] == "Status").then_some((ty, obj)).ok_or("ERROR without a Status".into());
+        }
+        if !["ADDED", "MODIFIED", "DELETED", "BOOKMARK"].contains(&ty.as_str()) {
+            return Err(format!("unknown type {ty}"));
+        }
+        if obj["apiVersion"] != "meta.k8s.io/v1" || obj["kind"] != "PartialObjectMetadata" {
+            return Err(format!("{ty} object is {} {}", obj["apiVersion"], obj["kind"]));
+        }
+        if let Some(extra) = obj.as_object().unwrap().keys().find(|k| !["apiVersion", "kind", "metadata"].contains(&k.as_str())) {
+            return Err(format!("{ty} object carries {extra}"));
+        }
+        go_object_meta(&obj["metadata"])?;
+        Ok((ty, obj))
+    }
+
+    fn crd(name: &str) -> Value {
+        json!({
+            "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+            "metadata": {"name": name, "uid": "u-1", "creationTimestamp": "2026-10-01T00:00:00Z",
+                         "generation": 1, "labels": {"app": "x"}, "annotations": {"a": "b"},
+                         "finalizers": ["customresourcecleanup.apiextensions.k8s.io"],
+                         "managedFields": [{"manager": "cilium-operator", "operation": "Update",
+                                            "apiVersion": "apiextensions.k8s.io/v1",
+                                            "time": "2026-10-01T00:00:00Z", "fieldsType": "FieldsV1",
+                                            "fieldsV1": {"f:spec": {}}}]},
+            "spec": {"group": "cilium.io"}, "status": {"conditions": []},
+        })
+    }
+    const AV: &str = "meta.k8s.io/v1";
+    const K: &str = "PartialObjectMetadata";
+
+    #[test]
+    fn every_metadata_only_frame_decodes_as_partial_object_metadata() {
+        let key = "/registry/customresourcedefinitions/ciliumnodes.cilium.io".to_string();
+        let bytes = serde_json::to_vec(&crd("ciliumnodes.cilium.io")).unwrap();
+        let frames = [
+            render_event(&WatchEvent::Added { key: key.clone(), value: bytes.clone(), revision: 7 },
+                         &None, &None, AV, K, true, None).unwrap(),
+            render_event(&WatchEvent::Modified { key: key.clone(), value: bytes.clone(), revision: 8,
+                                                 prev_value: Some(bytes.clone()) },
+                         &None, &None, AV, K, true, None).unwrap(),
+            // The last state, from the watch cache (#100).
+            render_event(&WatchEvent::Deleted { key: key.clone(), revision: 9, prev_value: Some(bytes.clone()) },
+                         &None, &None, AV, K, true, None).unwrap(),
+            // A tombstone from the key alone, below the cache's window.
+            render_event(&WatchEvent::Deleted { key: key.clone(), revision: 9, prev_value: None },
+                         &None, &None, AV, K, true, None).unwrap(),
+            render_event(&WatchEvent::Bookmark { revision: 10 }, &None, &None, AV, K, true, None).unwrap(),
+            render_bookmark(10, false, AV, K),
+            render_bookmark(10, true, AV, K),
+            render_initial_added(&crd("a.cilium.io"), &None, &None, AV, K, 6, true, None).unwrap(),
+            render_event(&WatchEvent::Error { code: 410, message: "too old".into(), revision: 0 },
+                         &None, &None, AV, K, true, None).unwrap(),
+        ];
+        for f in &frames {
+            assert!(f.ends_with('\n') && !f[..f.len() - 1].contains('\n'), "one line per frame: {f:?}");
+            if let Err(e) = decodes(f) {
+                panic!("{e}: {f}");
+            }
+        }
+        // The tombstone names the object and the delete's revision.
+        let (_, t) = decodes(&frames[3]).unwrap();
+        assert_eq!((t["metadata"]["name"].as_str(), t["metadata"]["resourceVersion"].as_str()),
+                   (Some("ciliumnodes.cilium.io"), Some("9")));
+        // The end-of-initial-events bookmark carries its annotation.
+        let (_, b) = decodes(&frames[6]).unwrap();
+        assert_eq!(b["metadata"]["annotations"]["k8s.io/initial-events-end"], "true");
+    }
+
+    /// The checker itself catches what Go would refuse.
+    #[test]
+    fn the_checker_refuses_what_go_refuses() {
+        assert!(go_object_meta(&json!({"annotations": {"a": true}})).is_err());
+        assert!(go_object_meta(&json!({"labels": {"n": 1}})).is_err());
+        assert!(go_object_meta(&json!({"generation": "1"})).is_err());
+        assert!(go_object_meta(&json!({"creationTimestamp": "yesterday"})).is_err());
+        assert!(go_object_meta(&json!({"finalizers": "f"})).is_err());
+        assert!(go_object_meta(&json!({"name": "x", "somethingNew": [1]})).is_ok());
+        assert!(decodes("{\"type\":\"ADDED\",\"object\":{\"apiVersion\":\"apiextensions.k8s.io/v1\",\"kind\":\"CustomResourceDefinition\",\"metadata\":{}}}\n").is_err());
+    }
+}
