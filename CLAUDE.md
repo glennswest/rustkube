@@ -348,12 +348,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### NodePort allocation + type changes (#132, P2) — WRITTEN 2026-10-07
+### NodePort allocation + type changes (#132, P2) — BUILT 2026-10-07
 - [x] `node_port.rs` (claim keys, `--service-node-port-range`, Plan
       commit/abort), create (admission) + update (put_object,
       guaranteed_update) + delete + startup/manifests; create failure
       releases claims; units; `test/e2e/service-nodeport.sh` (rigs); docs
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at 706a807: 592 passed / 4 ignored (apiserver 295);
+      golden-rustkube-e7ee3d193c98 (stormcos#366)
+- [ ] service-nodeport rig (stormcentral#512); close
 
 ### Presentation rendered and inspected (#160) — COMPLETE 2026-10-07
 - [x] marp-cli 4.5.1 + Chrome 155 headless on a build VM (no browser on the
