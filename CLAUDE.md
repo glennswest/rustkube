@@ -147,7 +147,7 @@ scale-down stabilisation; until then A (inert and honest).
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
 - [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
 
-### Metrics (#90, P2) — WRITTEN, build next 2026-10-07
+### Metrics (#90, P2) — WRITTEN, BLOCKED on stormcentral#535 (no build) 2026-10-07
 - [x] Reconcile metrics recorded per object pass (`owned::run`)
 - [x] Buckets (upstream's for apiserver/etcd request durations and scheduler
       e2e; DefBuckets else); `render()` types process_cpu_seconds_total counter
@@ -160,8 +160,11 @@ scale-down stabilisation; until then A (inert and honest).
       from resource-wide prefixes only
 - [x] Units; `test/e2e/metrics-auth.sh` (rigs); rigs scrape with the admin
       token; docs/metrics.md, README, test README, CHANGELOG (BREAKING)
-- [ ] Build on a build VM; stormcos issue (ironprom token/https for
-      10257/10259, certs, probe scheme); rigs run (stormcentral#526); golden
+- [x] stormcos#384 filed (ironprom token/https for 10257/10259, certs,
+      probe scheme) — must land with the golden carrying this
+- [ ] Compile + units: six build-VM jobs for 97387ab cancelled while
+      queued (stormcentral#535; pool down to 1 slot). Then rigs run
+      (stormcentral#526), golden
 
 ### Service create cost (#113, P2) — BUILT, rig waits for test runs 2026-10-07
 Cause (from the code): `service_ip::allocate` walked the range from offset
