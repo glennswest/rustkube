@@ -348,11 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### WATCH honours timeoutSeconds (#165) — WRITTEN 2026-10-07
+### WATCH honours timeoutSeconds (#165) — BUILT 2026-10-07
 - [x] `WatchParams::timeout` (400 on a non-integer), `WatchResponseOpts
       .timeout` on every watch path, deadline in the initial and live loops;
       units; `test/e2e/watch-timeout.sh` (rigs); README/design/CHANGELOG
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at ad439d8: 589 passed / 4 ignored (apiserver 292);
+      golden-rustkube-b15e040af5b3 (stormcos#366)
+- [ ] watch-timeout rig (stormcentral#512); close
 
 ### EndpointSliceMirroring (#133, P3) — BUILT 2026-10-07
 - [x] `endpointslicemirroring.rs` (desired slices) + Service controller:
