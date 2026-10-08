@@ -63,7 +63,7 @@ Existing issues remain the source of work, rather than filing duplicates:
 | Safe LIST/informer snapshot guarantees already proved | fastetcd#50, #146; isolated test/e2e/list-snapshot-race.sh reproduced 165 inconsistent observations of 255. Since fixed in fastetcd v1.6.1 and verified by the same rig (see the 2026-10-02 addendum) |
 | Storage snapshots/expansion entirely absent | API compatibility now tested (#63/#64); external/node work remains as documented in storage.md |
 | Sbregistry clones built-in PVCs; engine API is loopback | #112/#117; corrected to built-in kubelet driver and per-node-token authorization |
-| CI publishes current release artifacts | #114 (Actions disabled; workflow removal still pending) |
+| CI publishes current release artifacts | #114 (Actions disabled; the workflow removed 2026-10-08) |
 | Build output survives sc-build teardown | Newly filed #156 (legacy release script); existing #140 (conformance staging; answered "Goldens", implementation pending) |
 | Terragrunt installs a current release | Newly filed #157: template requires an RPM that current delivery does not publish |
 | Conformance and component test containers never existed | Historical runs and implemented suites now documented; real-node acceptance remains #96/#147/#149 |

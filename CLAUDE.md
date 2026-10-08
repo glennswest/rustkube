@@ -1131,7 +1131,8 @@ integration, not completion or release of the pending turbomode feature work.
       26 relative documentation link targets resolve. sc-build at 635855d:
       five libraries 409 passed, 4 datastore-dependent tests ignored, doc tests
       passed; remote exit 0 in 33 seconds (local log append read-only).
-      #112/#117 closed with documentation evidence; #114 workflow removal and
+      #112/#117 closed with documentation evidence; #114 workflow removal (done
+      2026-10-08) and
       #156/#157 tooling gaps remain open. No code/version change or golden.
 
 ### History (condensed)
@@ -1511,8 +1512,8 @@ results are in docs/conformance.md.
     Owner answered **Goldens**: binaries reach conform.g8.lo as the
     component's golden; run.sh/vm.sh not yet changed. efbea2d is still
     staged there.
-- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — the disabled workflow
-      describes x86_64 musl only (#114); `build-release.sh` can target aarch64 via
+- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — no CI
+      (#114, workflow removed); `build-release.sh` can target aarch64 via
       `cross`, and no such build has been recorded
 
 ### `oc` compatibility — the surface that drives completeness

@@ -1,9 +1,9 @@
 # Building and delivery
 
 As of 2026-10-02, builds run through **sc-build** after the commit is pushed.
-GitHub Actions is disabled by owner decision (#114). The retained
-`.github/workflows/images.yml` describes an obsolete tag-triggered publication
-path; it does not currently publish releases. Removing that file remains #114.
+GitHub Actions is disabled by owner decision (#114), and the repository has
+no workflow: the old tag-triggered `.github/workflows/images.yml` was removed
+on 2026-10-08. Nothing is built, tested or published on GitHub.
 
 ## Current delivery
 
