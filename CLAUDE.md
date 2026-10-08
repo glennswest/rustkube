@@ -348,13 +348,16 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### Scheduler preemption (#84, P2) — WRITTEN 2026-10-07
+### Scheduler preemption (#84, P2) — BUILT 2026-10-07
 - [x] `preemption.rs` rewritten (on_node/select/waiting_for_victims over
       ClusterState + filters, PDB-aware reprieve); `Scheduler::preempt`
       (nominate, Eviction API, Preempted Event); nominated room held in
       snapshot; bind clears nominatedNodeName; scheduler role pods/eviction;
       units; `test/e2e/scheduler-preemption.sh`; docs
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at 72fc783: 601 passed / 4 ignored (scheduler 64: the old
+      module's 10 tests replaced by 3 on the wired path);
+      golden-rustkube-7df7dc5a5562 (stormcos#366)
+- [ ] scheduler-preemption rig (stormcentral#512); close
 
 ### Unserved resources → 404 (#110, P3) — BUILT 2026-10-07
 - [x] `served.rs` middleware from `discovery::advertised` (the discovery
