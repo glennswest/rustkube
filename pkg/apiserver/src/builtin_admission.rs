@@ -64,6 +64,10 @@ pub async fn admit_create(
         ));
     }
 
+    if resource == "replicationcontrollers" {
+        replication_controller_defaults(obj);
+    }
+
     if resource == "services" {
         default_service_ports(obj);
         // ClusterIP and node ports (#132); a failed create gives them back
@@ -544,6 +548,26 @@ fn pod_sysctls(obj: &Value) -> Result<(), ApiError> {
     }
 }
 
+/// A ReplicationController's defaults, as upstream's (#125): `replicas` 1,
+/// and the selector and the object's labels from the template's labels when
+/// left out.
+fn replication_controller_defaults(obj: &mut Value) {
+    if !obj["spec"].is_object() {
+        obj["spec"] = json!({});
+    }
+    let labels = obj["spec"]["template"]["metadata"]["labels"].clone();
+    let empty = |v: &Value| v.as_object().map_or(true, |m| m.is_empty());
+    if empty(&obj["spec"]["selector"]) && !empty(&labels) {
+        obj["spec"]["selector"] = labels.clone();
+    }
+    if empty(&obj["metadata"]["labels"]) && !empty(&labels) {
+        obj["metadata"]["labels"] = labels;
+    }
+    if obj["spec"]["replicas"].is_null() {
+        obj["spec"]["replicas"] = json!(1);
+    }
+}
+
 /// A pod's QoS class, set on create as upstream does: Guaranteed when every
 /// container has cpu and memory limits and its requests (defaulting to the
 /// limits) equal them; BestEffort when no container requests or limits
@@ -1002,6 +1026,22 @@ mod validation_tests {
             .message;
         assert!(msg.contains(r#"Invalid value: "foo-""#) && msg.contains(r#"Invalid value: "bar..""#), "{msg}");
         assert!(!msg.contains("safe-and-unsafe") && !msg.contains("kernel.shmmax"), "{msg}");
+    }
+
+    #[test]
+    fn a_replication_controller_is_defaulted_from_its_template() {
+        let mut rc = json!({"metadata": {"name": "rc"},
+            "spec": {"template": {"metadata": {"labels": {"app": "web"}}, "spec": {}}}});
+        super::replication_controller_defaults(&mut rc);
+        assert_eq!(rc["spec"]["selector"], json!({"app": "web"}));
+        assert_eq!(rc["metadata"]["labels"], json!({"app": "web"}));
+        assert_eq!(rc["spec"]["replicas"], 1);
+        let mut named = json!({"metadata": {"labels": {"x": "y"}},
+            "spec": {"replicas": 0, "selector": {"app": "other"}, "template": {"metadata": {"labels": {"app": "web"}}}}});
+        super::replication_controller_defaults(&mut named);
+        assert_eq!(named["spec"]["selector"], json!({"app": "other"}));
+        assert_eq!(named["metadata"]["labels"], json!({"x": "y"}));
+        assert_eq!(named["spec"]["replicas"], 0);
     }
 
     #[test]

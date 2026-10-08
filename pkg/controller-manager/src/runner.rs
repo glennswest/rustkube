@@ -695,6 +695,12 @@ impl ControllerManager {
             replicaset::ReplicaSetController::new(api).run().await;
         });
 
+        // ReplicationController: the same reconcile over core/v1 (#125).
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            replicaset::ReplicaSetController::of(api, replicaset::Kind::REPLICATION_CONTROLLER).run().await;
+        });
+
         // The KubeVirt controllers run only while their CRDs are Established
         // (#172): without KubeVirt their feeds would 404 and retry forever.
         let api = self.api.clone();

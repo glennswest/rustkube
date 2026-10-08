@@ -545,7 +545,14 @@ fn build_router(
                 .put(resource::update_namespaced_status)
                 .merge(patch(resource::patch_namespaced_status)),
         )
-        // Scale subresource, autoscaling/v1 Scale (#86)
+        // Scale subresource, autoscaling/v1 Scale (#86); a
+        // ReplicationController's (#125)
+        .route(
+            "/api/v1/namespaces/{namespace}/replicationcontrollers/{name}/scale",
+            get(crate::handlers::scale::get_rc)
+                .put(crate::handlers::scale::put_rc)
+                .merge(patch(crate::handlers::scale::patch_rc)),
+        )
         .route(
             "/apis/apps/v1/namespaces/{namespace}/{resource}/{name}/scale",
             get(crate::handlers::scale::get_apps)

@@ -233,6 +233,10 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/replication-controller.sh` (#125, suite `rigs`): defaults from the
+template, Pods owned by kind ReplicationController, status, `/scale` GET /
+PUT / PATCH, a deleted Pod replaced, orphan and background deletes.
+
 `e2e/service-nodeport.sh` (#132, suite `rigs`): node ports for NodePort
 and LoadBalancer, named/taken/out-of-range/ClusterIP-named ports, TCP+UDP on
 one number, PUT keeping allocated values, immutable ClusterIP, the type

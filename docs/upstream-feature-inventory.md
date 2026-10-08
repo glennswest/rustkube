@@ -16,7 +16,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | Group / kind | Must-have | Status | Where / note |
 |---|---|---|---|
 | `core/v1` — Pod, Service, Endpoints, Namespace, Node, ConfigMap, Secret, ServiceAccount, Event, PV, PVC | core | ✅ | `server.rs`, `discovery.rs` |
-| `core/v1` — PodTemplate, ReplicationController, LimitRange, ResourceQuota | core | 🟡 | objects are served/discovered; LimitRanger enforces LimitRanges (#131); no ReplicationController controller (#125) or quota enforcement (#124) |
+| `core/v1` — PodTemplate, ReplicationController, LimitRange, ResourceQuota | core | 🟡 | objects are served/discovered; LimitRanger enforces LimitRanges (#131); the ReplicationController controller and `/scale` (#125); no quota enforcement (#124) |
 | `core/v1` — `pods/binding` | core | 🔴 | scheduler binds with a conditional PUT of `spec.nodeName` |
 | `apps/v1` — Deployment, ReplicaSet, StatefulSet, DaemonSet | core | ✅ | apiserver + controllers |
 | `apps/v1` — ControllerRevision; the `/scale` subresource | core | 🔴 | ControllerRevision is not in discovery and nothing writes one; `/scale` served for deployments, replicasets, statefulsets and CRDs with `subresources.scale` (#86) |
@@ -81,8 +81,7 @@ only, own classes only, `Programmed=False`, no address; #70, #91).
 ✅ the `kube-root-ca.crt` publisher (#67).
 
 🔴 missing vs upstream: ResourceQuota, ServiceAccount token controller,
-TTL-after-finished, NodeIPAM/route, ClusterRole aggregation, endpoint-slice
-mirroring, ReplicationController.
+TTL-after-finished, NodeIPAM/route, ClusterRole aggregation.
 
 With the turbomode implementation, all controller families use shared informer feeds and bounded
 indexed object workers. GC and namespace finalization retain authoritative

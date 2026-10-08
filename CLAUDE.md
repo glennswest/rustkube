@@ -348,6 +348,12 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### ReplicationController controller (#125, P2) — WRITTEN 2026-10-07
+- [x] `replicaset::Kind` (RS / RC), RC instance in runner; fullyLabeledReplicas;
+      apiserver RC defaults; `replicationcontrollers/scale` + discovery;
+      units; `test/e2e/replication-controller.sh` (rigs); docs
+- [ ] Build VM; golden; rig (stormcentral#512)
+
 ### build-release.sh on the private volume (#156) — COMPLETE 2026-10-07
 - [x] OUT under $TMPDIR, cargo's target dir, no root/persistent-mount
       header, sha256s; docs/releasing.md

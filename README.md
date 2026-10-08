@@ -487,7 +487,10 @@ concurrent complete/paginated LISTs and exact WATCH replay after them; this
 does not upgrade any deployed datastore. Historical intermittent failures
 #153/#154 remain under investigation.
 
-Deployment (rolling updates), ReplicaSet, StatefulSet, DaemonSet (every
+Deployment (rolling updates), ReplicaSet, ReplicationController (the
+ReplicaSet reconcile over core/v1, Pods owned by kind `ReplicationController`;
+create defaults selector, labels and replicas from the template; `/scale`
+served, #125), StatefulSet, DaemonSet (every
 eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices; for a Service with no
 selector, EndpointSlices mirrored from its hand-written Endpoints, as
 upstream's EndpointSliceMirroring does — one per address type and port set,
@@ -590,7 +593,7 @@ classes, Gateways and route entries are left alone (#91). Its Gateways are
 `Accepted` and `Programmed=False` (`Pending`) with no `status.addresses`,
 since nothing listens.
 
-It has no ResourceQuota, ReplicationController,
+It has no ResourceQuota,
 ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or
 node-IPAM controller. Serving a resource object does not implement its controller.
 

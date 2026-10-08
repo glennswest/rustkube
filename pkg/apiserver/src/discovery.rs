@@ -378,6 +378,15 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "shortNames": ["rc"]
             },
             {
+                "name": "replicationcontrollers/scale",
+                "singularName": "",
+                "namespaced": true,
+                "kind": "Scale",
+                "group": "autoscaling",
+                "version": "v1",
+                "verbs": ["get", "patch", "update"]
+            },
+            {
                 "name": "replicationcontrollers/status",
                 "singularName": "",
                 "namespaced": true,

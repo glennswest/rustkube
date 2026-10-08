@@ -1,8 +1,15 @@
-//! ReplicaSet controller.
+//! ReplicaSet controller, and the ReplicationController controller (#125).
 //!
 //! Indexed ownership events drive per-ReplicaSet Pod reconciliation.
 //! Creates pods from the template when under-provisioned, deletes excess pods
 //! when over-provisioned.
+//!
+//! A core/v1 ReplicationController is a ReplicaSet with an equality-only
+//! selector, as upstream's own controller treats it: the same reconcile runs
+//! over `/api/v1/replicationcontrollers` ([`Kind::REPLICATION_CONTROLLER`]),
+//! its Pods owned by kind `ReplicationController`, its status written to
+//! `replicationcontrollers/status`. Pods are found by controller
+//! ownerReference, so the selector's shape does not matter here.
 
 use crate::backoff::CreateBackoff;
 use crate::runner::ApiClient;
@@ -11,8 +18,33 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
+/// Which of the two workload kinds a controller runs over.
+#[derive(Clone, Copy, Debug)]
+pub struct Kind {
+    name: &'static str,
+    /// The API path the kind is served under, e.g. `/apis/apps/v1`.
+    base: &'static str,
+    plural: &'static str,
+    api_version: &'static str,
+    kind: &'static str,
+    component: &'static str,
+}
+
+impl Kind {
+    pub const REPLICA_SET: Kind = Kind {
+        name: "replicaset", base: "/apis/apps/v1", plural: "replicasets", api_version: "apps/v1",
+        kind: "ReplicaSet", component: "replicaset-controller",
+    };
+    pub const REPLICATION_CONTROLLER: Kind = Kind {
+        name: "replicationcontroller", base: "/api/v1", plural: "replicationcontrollers", api_version: "v1",
+        kind: "ReplicationController", component: "replication-controller",
+    };
+}
+
 pub struct ReplicaSetController {
     api: Arc<ApiClient>,
+    kind: Kind,
+    primary: String,
     /// Per-ReplicaSet (keyed by uid) recreation backoff after failed pods.
     backoff: CreateBackoff,
     recorder: crate::events::EventRecorder,
@@ -20,15 +52,21 @@ pub struct ReplicaSetController {
 
 impl ReplicaSetController {
     pub fn new(api: Arc<ApiClient>) -> Self {
+        Self::of(api, Kind::REPLICA_SET)
+    }
+
+    pub fn of(api: Arc<ApiClient>, kind: Kind) -> Self {
         Self {
-            recorder: crate::events::EventRecorder::new(api.clone(), "replicaset-controller"),
+            recorder: crate::events::EventRecorder::new(api.clone(), kind.component),
             api,
+            kind,
+            primary: format!("{}/{}", kind.base, kind.plural),
             backoff: CreateBackoff::new(),
         }
     }
 
     pub async fn run(&self) {
-        info!("ReplicaSet indexed object workers started");
+        info!("{} indexed object workers started", self.kind.kind);
         crate::owned::run(&self.api, self).await;
     }
 
@@ -136,7 +174,7 @@ impl ReplicaSetController {
                 // Scale up — create missing pods
                 let to_create = desired - current;
                 for _i in 0..to_create {
-                    let pod = build_pod_from_template(namespace, rs_name, rs_uid, rs)?;
+                    let pod = build_pod_from_template(namespace, rs_name, rs_uid, rs, &self.kind)?;
                     match self
                         .api
                         .create(&format!("/api/v1/namespaces/{namespace}/pods"), &pod)
@@ -212,10 +250,22 @@ impl ReplicaSetController {
 
         // Update ReplicaSet status
         let ready_count = active.iter().filter(|pod| is_pod_ready(pod)).count();
+        // Pods whose labels carry every label of the template (upstream's
+        // fullyLabeledReplicas).
+        let template_labels = rs["spec"]["template"]["metadata"]["labels"].as_object();
+        let fully_labeled = active
+            .iter()
+            .filter(|pod| {
+                template_labels.map_or(true, |want| {
+                    want.iter().all(|(k, v)| pod["metadata"]["labels"].get(k) == Some(v))
+                })
+            })
+            .count();
 
         let mut updated_rs = rs.clone();
         updated_rs["status"] = json!({
             "replicas": current,
+            "fullyLabeledReplicas": fully_labeled,
             "readyReplicas": ready_count,
             "availableReplicas": ready_count,
             "observedGeneration": rs["metadata"]["generation"].as_u64().unwrap_or(1)
@@ -226,7 +276,7 @@ impl ReplicaSetController {
             // status only: a whole-object PUT would carry a spec read
             // before the last reconcile and revert it.
             .update_status(
-                &format!("/apis/apps/v1/namespaces/{namespace}/replicasets/{rs_name}"),
+                &format!("{}/namespaces/{namespace}/{}/{rs_name}", self.kind.base, self.kind.plural),
                 &updated_rs,
             )
             .await;
@@ -241,6 +291,7 @@ fn build_pod_from_template(
     rs_name: &str,
     rs_uid: &str,
     rs: &Value,
+    kind: &Kind,
 ) -> anyhow::Result<Value> {
     let template = &rs["spec"]["template"];
     let suffix = &uuid::Uuid::new_v4().to_string()[..5];
@@ -259,8 +310,8 @@ fn build_pod_from_template(
             "namespace": namespace,
             "labels": labels,
             "ownerReferences": [{
-                "apiVersion": "apps/v1",
-                "kind": "ReplicaSet",
+                "apiVersion": kind.api_version,
+                "kind": kind.kind,
                 "name": rs_name,
                 "uid": rs_uid,
                 "controller": true,
@@ -312,6 +363,20 @@ mod tests {
     }
 
     #[test]
+    fn a_replication_controller_s_pods_name_it_as_owner() {
+        let rc = json!({"spec": {"template": {"metadata": {"labels": {"app": "a"}},
+                                               "spec": {"containers": [{"name": "c", "image": "i"}]}}}});
+        let pod = build_pod_from_template("ns", "web", "u1", &rc, &Kind::REPLICATION_CONTROLLER).unwrap();
+        let owner = &pod["metadata"]["ownerReferences"][0];
+        assert_eq!((owner["apiVersion"].as_str(), owner["kind"].as_str()), (Some("v1"), Some("ReplicationController")));
+        assert_eq!(owner["uid"], "u1");
+        assert!(pod["metadata"]["name"].as_str().unwrap().starts_with("web-"));
+        assert_eq!(pod["metadata"]["labels"]["app"], "a");
+        let rs = build_pod_from_template("ns", "web", "u1", &rc, &Kind::REPLICA_SET).unwrap();
+        assert_eq!(rs["metadata"]["ownerReferences"][0]["kind"], "ReplicaSet");
+    }
+
+    #[test]
     fn failed_pod_is_terminal_not_active() {
         let owned = vec![
             json!({"metadata":{"name":"a"},"status":{"phase":"Running"}}),
@@ -342,10 +407,10 @@ mod tests {
 #[async_trait::async_trait]
 impl crate::owned::Controller for ReplicaSetController {
     fn name(&self) -> &'static str {
-        "replicaset"
+        self.kind.name
     }
-    fn primary(&self) -> &'static str {
-        "/apis/apps/v1/replicasets"
+    fn primary(&self) -> &str {
+        &self.primary
     }
     fn children(&self) -> Option<&'static str> {
         Some("/api/v1/pods")

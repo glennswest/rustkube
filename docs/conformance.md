@@ -142,7 +142,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 242 | needs a running pod: pod-start, Deployment/DaemonSet readiness, DNS, pod networking, logs, init containers | needs a node |
 | 26 | admission/conversion webhook and aggregator specs: their server is a pod (and then #82, #83) | needs a node, then not implemented |
 | 11 | ResourceQuota: no controller or admission — #124 | not implemented |
-| 11 | ReplicationController: no controller — #125 | not implemented |
+| 11 | ReplicationController: no controller — #125 | implemented 2026-10-07 (controller, `/scale`, defaults); not rerun — the specs that wait for Running/Ready Pods need a kubelet |
 | 9 | CRD schemas not in `/openapi` — #120 | not implemented |
 | 8 | Validating/MutatingAdmissionPolicy — #119 (three hang to the suite timeout) | the four API-operations specs: served since 2026-10-07 (not rerun); the evaluation specs (which hang) are #234 |
 | 5 | RuntimeClass — #135 | not implemented |

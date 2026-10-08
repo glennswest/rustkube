@@ -47,6 +47,12 @@ impl ScalePaths {
 
 /// A LabelSelector as the string `kubectl` and `status.selector` use.
 pub fn selector_string(sel: &Value) -> String {
+    // A ReplicationController's selector is a plain label map (#125).
+    if sel.get("matchLabels").is_none() && sel.get("matchExpressions").is_none() {
+        if let Some(m) = sel.as_object() {
+            return m.iter().map(|(k, v)| format!("{k}={}", v.as_str().unwrap_or(""))).collect::<Vec<_>>().join(",");
+        }
+    }
     let mut parts: Vec<String> = sel["matchLabels"]
         .as_object()
         .map(|m| m.iter().map(|(k, v)| format!("{k}={}", v.as_str().unwrap_or(""))).collect())
@@ -176,6 +182,35 @@ pub async fn patch_apps(
     patch(&state, &apps_key(&namespace, &resource, &name)?, &ScalePaths::builtin(), &headers, &body).await
 }
 
+fn rc_key(namespace: &str, name: &str) -> String {
+    ResourceStorage::namespaced_key("replicationcontrollers", namespace, name)
+}
+
+/// GET /api/v1/namespaces/{ns}/replicationcontrollers/{name}/scale (#125)
+pub async fn get_rc(
+    State(state): State<AppState>,
+    Path((namespace, name)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    get(&state, &rc_key(&namespace, &name), &ScalePaths::builtin()).await
+}
+
+pub async fn put_rc(
+    State(state): State<AppState>,
+    Path((namespace, name)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    put(&state, &rc_key(&namespace, &name), &ScalePaths::builtin(), &body).await
+}
+
+pub async fn patch_rc(
+    State(state): State<AppState>,
+    Path((namespace, name)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, ApiError> {
+    patch(&state, &rc_key(&namespace, &name), &ScalePaths::builtin(), &headers, &body).await
+}
+
 /// A custom resource's key and scale paths, or 404 when its CRD version
 /// declares no scale subresource.
 async fn cr(state: &AppState, group: &str, version: &str, resource: &str, namespace: Option<&str>, name: &str)
@@ -250,6 +285,15 @@ pub async fn patch_cr_cluster(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replication_controller_s_map_selector_reads_as_a_string() {
+        let rc = json!({"metadata": {"name": "rc", "namespace": "ns"},
+            "spec": {"replicas": 2, "selector": {"app": "web", "tier": "a"}}, "status": {"replicas": 1}});
+        let s = to_scale(&rc, &ScalePaths::builtin());
+        assert_eq!(s["status"]["selector"], "app=web,tier=a");
+        assert_eq!(s["spec"]["replicas"], 2);
+    }
 
     #[test]
     fn a_deployment_reads_as_a_scale() {
