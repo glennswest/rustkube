@@ -1172,7 +1172,9 @@ when each piece landed.
       6fd2722; discovery was exercised by the efbea2d conformance run.
 - [x] `/scale` subresource (#86, 2026-10-07): apps + CRDs; build blocked on
       stormcentral#544
-- [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88)
+- [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88) — NEEDS OWNER
+      (2026-10-08): B give them a job (SANs; self-signed cert in the data dir),
+      recommended / A remove (stormblock-csi e2e passes --data-dir) / C warn
 - [ ] HPA placeholder: no metrics, never scales down (#89)
 - [ ] Metrics: reconcile metrics never emitted, no histogram buckets,
       unauthenticated apiserver `/metrics` (#90)
