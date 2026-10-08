@@ -330,7 +330,7 @@ pub async fn vmi_migrate(
 
 async fn migrate(state: AppState, namespace: String, name: String, body: axum::body::Bytes, what: &str) -> Response {
     let conflict = |message: String| {
-        ApiError { status: StatusCode::CONFLICT, reason: "Conflict".into(), message, continue_token: None }.into_response()
+        ApiError { status: StatusCode::CONFLICT, reason: "Conflict".into(), message, continue_token: None, details: None }.into_response()
     };
     if state
         .crd_registry
