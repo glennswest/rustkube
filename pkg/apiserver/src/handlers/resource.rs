@@ -577,22 +577,7 @@ pub(crate) async fn put_object(
     }
     keep_server_fields(&mut body, &existing, name, namespace);
     status.on_update(&mut body, &existing)?;
-    if key.starts_with("/registry/secrets/") {
-        crate::builtin_admission::fold_string_data(&mut body); // #101
-    }
-    check_immutable(key, &existing, &body)?;
-    if key.starts_with("/registry/persistentvolumeclaims/") {
-        crate::builtin_admission::pvc_update(&state.storage, &existing, &body).await?;
-    }
-    if key.starts_with("/registry/pods/") {
-        crate::builtin_admission::pod_gates_update(&existing, &body)?; // #87
-    }
-    // A Service's ClusterIP and node ports follow its type (#132).
-    let plan = if key.starts_with("/registry/services/") {
-        Some(crate::node_port::plan(&state.storage, &state.service_cidr, Some(&existing), &mut body).await?)
-    } else {
-        None
-    };
+    let plan = builtin_update(&state.storage, &state.service_cidr, key, &existing, &mut body).await?;
     let written = async {
         crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
         keep_server_fields(&mut body, &existing, name, namespace);
@@ -607,6 +592,39 @@ pub(crate) async fn put_object(
         if written.is_ok() { plan.commit(&state.storage).await } else { plan.abort(&state.storage).await }
     }
     written
+}
+
+/// The built-in admission of an update of the object at `key` from
+/// `existing` to `body`, shared by PUT, every guaranteed update (PATCH,
+/// apply, `/status`) and a reconciled startup manifest (#158): a Secret's
+/// stringData folded (#101), a Service's port and spec defaults, immutable fields (ConfigMap/Secret,
+/// PriorityClass), a PersistentVolumeClaim's update rules (#63), a Pod's
+/// scheduling gates (#87), and a Service's ClusterIP and node ports (#132),
+/// whose [`crate::node_port::Plan`] the caller commits once its write lands
+/// or aborts when it fails.
+pub(crate) async fn builtin_update(
+    storage: &ResourceStorage,
+    service_cidr: &str,
+    key: &str,
+    existing: &Value,
+    body: &mut Value,
+) -> Result<Option<crate::node_port::Plan>, ApiError> {
+    if key.starts_with("/registry/secrets/") {
+        crate::builtin_admission::fold_string_data(body);
+    }
+    check_immutable(key, existing, body)?;
+    if key.starts_with("/registry/persistentvolumeclaims/") {
+        crate::builtin_admission::pvc_update(storage, existing, body).await?;
+    }
+    if key.starts_with("/registry/pods/") {
+        crate::builtin_admission::pod_gates_update(existing, body)?;
+    }
+    if key.starts_with("/registry/services/") {
+        // Upstream defaults every write, not just a create.
+        crate::builtin_admission::default_service_ports(body);
+        return Ok(Some(crate::node_port::plan(storage, service_cidr, Some(existing), body).await?));
+    }
+    Ok(None)
 }
 
 /// What the server decides about an object written through its main resource
@@ -1529,26 +1547,12 @@ where
         let namespace = fresh["metadata"]["namespace"].as_str().map(str::to_owned);
         let before = fresh.clone();
         let mut obj = mutate(fresh)?;
-        if key.starts_with("/registry/secrets/") {
-            crate::builtin_admission::fold_string_data(&mut obj); // #101: a PATCH of stringData
-        }
-        check_immutable(key, &before, &obj)?;
-        if key.starts_with("/registry/persistentvolumeclaims/") {
-            crate::builtin_admission::pvc_update(&state.storage, &before, &obj).await?;
-        }
-        if key.starts_with("/registry/pods/") {
-            crate::builtin_admission::pod_gates_update(&before, &obj)?; // #87
-        }
         if !obj["metadata"].is_object() {
             return Err(ApiError::invalid("metadata must be an object"));
         }
-        // A Service's ClusterIP and node ports follow its type (#132):
-        // claimed per attempt, given back when the attempt's write fails.
-        let plan = if key.starts_with("/registry/services/") {
-            Some(crate::node_port::plan(&state.storage, &state.service_cidr, Some(&before), &mut obj).await?)
-        } else {
-            None
-        };
+        // Claims (a Service's) are made per attempt and given back when the
+        // attempt's write fails.
+        let plan = builtin_update(&state.storage, &state.service_cidr, key, &before, &mut obj).await?;
         // A patch cannot rename the object or rewrite what the server owns —
         // the conformance suite's own ConfigMap patch sends
         // `creationTimestamp: null`, which used to delete it (#67).

@@ -233,6 +233,13 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/manifest-admission.sh` (#158, suite `rigs`): objects from
+`--manifest-dir` get the API's admission — a Pod's defaults, LimitRange,
+QoS; a NodePort Service's allocations; Secret stringData; an invalid
+ConfigMap refused; a CR's schema default and generation — and after a
+restart a Reconcile keeps the Service's allocations and refuses an immutable
+ConfigMap's change.
+
 `e2e/vmi-verbs.sh` (#141, suite `rigs`): the five VMI verbs against a stub
 kubelet on 127.0.0.1:10250 — path, bearer, query and answer passed through,
 dryRun not forwarded, 409/404 cases, `edit` allowed and `view` refused.

@@ -764,7 +764,7 @@ async fn priority_from_class(storage: &ResourceStorage, obj: &mut Value) {
 /// backend while the pod behind it answered on its own address perfectly well.
 /// Nothing logged an error — the Service simply never worked, which is the
 /// worst way for a default to be missing.
-fn default_service_ports(obj: &mut Value) {
+pub(crate) fn default_service_ports(obj: &mut Value) {
     default_service_spec(obj);
     let Some(ports) = obj["spec"]["ports"].as_array_mut() else {
         return;

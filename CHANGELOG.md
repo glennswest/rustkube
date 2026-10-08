@@ -3,6 +3,13 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **fix:** Startup manifests are admitted as the same object would be through the API (#158). A create from `--manifest-dir` runs `builtin_admission::admit_create`, or for a custom resource its CRD's create strategy (schema defaults and pruning, status, `generation: 1`). A `Reconcile` update runs the update checks PUT and PATCH run, now one function (`resource::builtin_update`): Secret stringData, Service defaults and allocations with commit/abort, immutable ConfigMap/Secret/PriorityClass fields, PVC update rules, Pod scheduling gates. Custom resources get their CRD's update strategy.
+  - **Effect:** a Pod from a manifest now gets its ServiceAccount, token volume, tolerations, priority, LimitRange defaults, QoS and phase; a Service without a clusterIP gets one, and node ports; an invalid object is refused and logged instead of stored. Before, only the Namespace and Secret defaults and the Service claims were applied, case by case.
+  - **Ordering unchanged:** filename order, EnsureExists by default.
+  - **Concurrency:** a manifest refused because another apiserver created the object first counts as already present.
+  - **Not applied:** RBAC, webhooks and the requester stamp, as for the apiserver's other own writes.
+- **fix:** A Service update carries a node port over by port **name**, as upstream's `patchAllocatedValues` does, so a port whose number changed keeps its node port. It was matched by port and protocol (#132). Service port defaults (`protocol`, `targetPort`) and spec defaults now apply on every write, not only on create.
+- **test:** node_port unit updated (names, a changed port number). New `test/e2e/manifest-admission.sh` (suite `rigs`, two boots).
 - **feat:** The VMI control verbs are served (#141): `PUT /apis/subresources.kubevirt.io/v1/namespaces/{ns}/virtualmachineinstances/{name}/{pause,unpause,softreboot,freeze,unfreeze}`, what `virtctl pause/unpause/softreboot/freeze/unfreeze vmi` sends.
   - **Path:** each is proxied to the kubelet on the VMI's node, `PUT https://<node>:10250/vmVerb/{ns}/{name}/{verb}` (rustkube-node#94), with the apiserver's bearer token and the query and body passed on. The kubelet hands it to stormvm's router. stormvm's answer comes back as is, including its 404 for a VMI it does not run.
   - A `dryRun` options body is answered without calling the node. A VMI on no node is 409, a missing one 404.

@@ -17,8 +17,9 @@
 //! - `ClusterIP` and `ExternalName`: none; naming one is 422.
 //!
 //! On an update ([`Plan`]), as upstream's Service strategy and REST update:
-//! - a port or ClusterIP the body leaves empty keeps the stored value (a PUT
-//!   of an edited `kubectl get -o yaml` does not move them);
+//! - a port or ClusterIP the body leaves empty keeps the stored value — node
+//!   ports by port name, as upstream (a PUT of an edited `kubectl get -o
+//!   yaml` does not move them);
 //! - a ClusterIP, once set, does not change (422);
 //! - a type change to one without node ports drops the ports it carried
 //!   over, to `ExternalName` drops the ClusterIP; from `ExternalName` a
@@ -162,13 +163,16 @@ fn patch_and_check(old: Option<&Value>, new: &mut Value) -> Result<(), ApiError>
                 }
             }
         }
-        // Node ports: a zero one keeps the stored port of the same port and
-        // protocol; a type without them drops the ones carried over.
+        // Node ports: a zero one keeps the stored port of the same port
+        // *name*, as upstream's patchAllocatedValues maps them (so a port
+        // whose number changed keeps its node port); a type without them
+        // drops the ones carried over.
         let old_ports = old["spec"]["ports"].as_array().cloned().unwrap_or_default();
         let (keep, new_may) = (may_have(old), may_have(new));
         if let Some(ports) = new["spec"]["ports"].as_array_mut() {
             for p in ports.iter_mut() {
-                let prev = old_ports.iter().find(|o| o["port"] == p["port"] && proto(o) == proto(p)).map(node_port).unwrap_or(0);
+                let pname = p["name"].as_str().unwrap_or("");
+                let prev = old_ports.iter().find(|o| o["name"].as_str().unwrap_or("") == pname).map(node_port).unwrap_or(0);
                 if prev == 0 {
                     continue;
                 }
@@ -348,9 +352,10 @@ mod tests {
     #[test]
     fn an_update_keeps_what_it_left_empty_and_drops_what_the_type_leaves() {
         let old = json!({"metadata": {"name": "s"}, "spec": {"type": "NodePort", "clusterIP": "10.96.0.9", "clusterIPs": ["10.96.0.9"],
-            "ports": [{"port": 80, "nodePort": 30080}, {"port": 53, "protocol": "UDP", "nodePort": 30053}]}});
-        // A PUT without the allocated values keeps them.
-        let mut new = svc("NodePort", json!([{"port": 80}, {"port": 53, "protocol": "UDP"}]));
+            "ports": [{"name": "http", "port": 80, "nodePort": 30080}, {"name": "dns", "port": 53, "protocol": "UDP", "nodePort": 30053}]}});
+        // A PUT without the allocated values keeps them, by port name — a
+        // port whose number changed too.
+        let mut new = svc("NodePort", json!([{"name": "http", "port": 8080}, {"name": "dns", "port": 53, "protocol": "UDP"}]));
         patch_and_check(Some(&old), &mut new).unwrap();
         assert_eq!(new["spec"]["clusterIP"], "10.96.0.9");
         assert_eq!(new["spec"]["ports"][0]["nodePort"], 30080);

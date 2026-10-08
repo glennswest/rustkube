@@ -427,7 +427,14 @@ applies within milliseconds of being stored.
 `kube-system`, `kube-public` and `kube-node-lease` namespaces and backfills
 older namespaces' phase and finalizer; migrates pre-#76 custom-resource keys;
 creates the bootstrap RBAC (below); registers itself in the `default/kubernetes`
-Service and Endpoints; then applies `--manifest-dir`.
+Service and Endpoints; then applies `--manifest-dir`. A manifest is admitted
+as the same object would be through the API (#158): a create runs the
+built-in admission (namespace lifecycle and defaults, Service ClusterIP and
+node ports, the Pod defaults, LimitRanger, QoS, PodSecurity, the
+validations) or the CRD's strategy (schema defaults, `generation`), and a
+`Reconcile` update runs the update checks of PUT/PATCH (immutable fields,
+PVC and Service rules); a refused manifest is logged and skipped. Not RBAC,
+webhooks or the requester stamp: these are the apiserver's own writes.
 
 Bootstrap RBAC: `cluster-admin`; `system:masters` and `system:nodes` bound
 to it (a Node authorizer for kubelets is #228);
@@ -693,7 +700,7 @@ override environment values.
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--service-node-port-range` | | `30000-32767` | NodePort range, inclusive (#132) |
-| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order; created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |
+| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |
 | `--data-dir` | | `/var/lib/kubernetes` | accepted and **unused** (#88) |
 | `--cluster-domain` | | `cluster.local` | accepted and **unused** (#88) |
 

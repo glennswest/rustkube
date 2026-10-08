@@ -348,6 +348,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Startup manifests through admission (#158, P3) — WRITTEN 2026-10-07
+- [x] `apply_one`: create → admit_create / CRD on_create; Reconcile →
+      `resource::builtin_update` (now shared with PUT and guaranteed_update)
+      / CRD on_update; Service claims released on a failed create; node
+      ports carried by port name (upstream; fixes #132's matching); Service
+      defaults on updates; `test/e2e/manifest-admission.sh`; docs
+- [ ] Build VM; golden; rig (stormcentral#512)
+
 ### VMI verbs pause/unpause/softreboot/freeze/unfreeze (#141, P2) — BUILT 2026-10-07
 - [x] `kubevirt::vmi_verb` → kubelet `/vmVerb` (rustkube-node#94), routes,
       discovery, edit role; unit; `test/e2e/vmi-verbs.sh` (rigs, stub

@@ -1008,7 +1008,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // already established; before the HTTP server starts, so a controller or a
     // kubelet never observes a half-applied cluster.
     if let Some(dir) = &config.manifest_dir {
-        crate::manifests::apply_dir(&storage, &crd_registry, dir).await;
+        crate::manifests::apply_dir(&storage, &crd_registry, &config.service_cidr, dir).await;
     }
 
     // Claim the addresses Services already hold.

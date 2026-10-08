@@ -114,10 +114,15 @@ pub fn group_version(api_version: &str) -> (String, String) {
 /// this apiserver serves rather than two that can disagree. Custom kinds come
 /// from the CRD registry, which is why a CRD in the same pass has to be
 /// registered as it is applied.
-async fn resolve(
-    obj: &Value,
-    crds: &CrdRegistry,
-) -> Result<(String, bool), String> {
+/// Where a manifest's object is stored: the storage resource, whether it is
+/// namespaced, and for a custom resource its `(group, version, plural)`.
+struct Target {
+    resource: String,
+    namespaced: bool,
+    custom: Option<(String, String, String)>,
+}
+
+async fn resolve(obj: &Value, crds: &CrdRegistry) -> Result<Target, String> {
     let api_version = obj["apiVersion"].as_str().unwrap_or("");
     let kind = obj["kind"].as_str().unwrap_or("");
     if api_version.is_empty() || kind.is_empty() {
@@ -129,23 +134,42 @@ async fn resolve(
         .into_iter()
         .find(|(_, k, _)| *k == kind)
     {
-        return Ok((plural.to_string(), namespaced));
+        return Ok(Target { resource: plural.to_string(), namespaced, custom: None });
     }
     // A custom kind is stored under its group, as the CRD handlers store it
     // (#76).
     if let Some((plural, namespaced)) = crds.resource_for_kind(&group, &version, kind).await {
-        return Ok((ResourceStorage::custom_resource(&group, &plural), namespaced));
+        return Ok(Target {
+            resource: ResourceStorage::custom_resource(&group, &plural),
+            namespaced,
+            custom: Some((group, version, plural)),
+        });
     }
     Err(format!("{api_version} {kind} is not served by this apiserver"))
 }
 
 /// Apply one manifest document.
+///
+/// **What the API would do, without the caller (#158).** A create goes
+/// through the same built-in admission as a create through the API
+/// (`builtin_admission::admit_create`): NamespaceLifecycle, a Namespace's
+/// defaults, a Service's ClusterIP and node ports, a Pod's ServiceAccount,
+/// token volume, tolerations, priority, LimitRanger, QoS, phase and
+/// PodSecurity, a Secret's stringData, the validations — or, for a custom
+/// resource, its CRD's strategy (schema defaults and pruning, status,
+/// `generation`). A Reconcile update goes through the update checks PUT and
+/// PATCH run (`resource::builtin_update`) or the CRD's update strategy.
+/// What a manifest is not put through is what belongs to a requester: RBAC
+/// and its escalation check, admission webhooks (their servers are not up
+/// this early), and the requester stamp — these are the apiserver's own
+/// writes.
 pub async fn apply_one(
     storage: &ResourceStorage,
     crds: &CrdRegistry,
+    service_cidr: &str,
     mut obj: Value,
 ) -> Outcome {
-    let (resource, namespaced) = match resolve(&obj, crds).await {
+    let Target { resource, namespaced, custom } = match resolve(&obj, crds).await {
         Ok(r) => r,
         Err(e) => return Outcome::Failed(e),
     };
@@ -159,10 +183,15 @@ pub async fn apply_one(
         .as_str()
         .unwrap_or("default")
         .to_string();
+    let ns = namespaced.then_some(namespace.as_str());
     let key = if namespaced {
         ResourceStorage::namespaced_key(&resource, &namespace, &name)
     } else {
         ResourceStorage::cluster_key(&resource, &name)
+    };
+    let strategy = match &custom {
+        Some((g, v, plural)) => crds.strategy(g, v, plural).await,
+        None => crate::handlers::resource::Strategy::BuiltIn,
     };
 
     let mode = Mode::of(&obj);
@@ -170,41 +199,28 @@ pub async fn apply_one(
 
     match existing {
         None => {
-            crate::handlers::resource::ensure_metadata_pub(
-                &mut obj,
-                &name,
-                namespaced.then_some(namespace.as_str()),
-            );
+            crate::handlers::resource::ensure_metadata_pub(&mut obj, &name, ns);
             // A CustomResourceDefinition has to register as it lands, or a
             // custom resource later in this same pass cannot be resolved.
             let is_crd = obj["kind"].as_str() == Some("CustomResourceDefinition");
             if is_crd {
-                let mut with_status = obj.clone();
-                crate::crd::establish_crd_status(&mut with_status);
-                obj = with_status;
+                crate::crd::establish_crd_status(&mut obj);
             }
-            // A Service written here must claim its address like any other.
-            //
-            // This path goes straight to storage rather than through
-            // admission, so nothing claimed the ClusterIP a manifest asks for
-            // — and the allocator, seeing it free, later handed the same
-            // address to somebody else. A duplicate address is the worst bug
-            // this system can have: silent, intermittent, and it blames the
-            // network.
-            if obj["kind"].as_str() == Some("Service") {
-                crate::service_ip::claim_for(storage, &obj).await;
-                crate::node_port::claim_for(storage, &obj).await; // #132
+            let admitted = match &custom {
+                Some(_) => strategy.on_create(&mut obj),
+                None => crate::builtin_admission::admit_create(storage, &resource, ns, &mut obj, service_cidr).await,
+            };
+            if let Err(e) = admitted {
+                // Another apiserver applying the same manifest got there
+                // first (its Service holds the address this one asked for):
+                // the state wanted anyway.
+                if storage.get(&key).await.is_ok() {
+                    return Outcome::Unchanged;
+                }
+                return Outcome::Failed(e.message);
             }
-            // Same reason: a namespace from a manifest is Active and carries
-            // the `kubernetes` finalizer like one created through the API (#75).
-            if obj["kind"].as_str() == Some("Namespace") {
-                crate::builtin_admission::namespace_defaults(&mut obj);
-            }
-            // And a Secret's stringData is folded into data, as any write
-            // folds it (#101).
-            if obj["kind"].as_str() == Some("Secret") {
-                crate::builtin_admission::fold_string_data(&mut obj);
-            }
+            crate::handlers::resource::ensure_metadata_pub(&mut obj, &name, ns);
+            let is_service = resource == "services";
             match storage.create(&key, obj.clone()).await {
                 Ok(_) => {
                     if is_crd {
@@ -212,12 +228,20 @@ pub async fn apply_one(
                     }
                     Outcome::Created
                 }
-                // Lost a race with another writer, which is the state we
-                // wanted anyway.
-                Err(e) if e.reason == "AlreadyExists" || e.reason == "Conflict" => {
-                    Outcome::Unchanged
+                Err(e) => {
+                    // What admission claimed for a Service that was not
+                    // written goes back, as on the API's create (#132).
+                    if is_service {
+                        crate::node_port::release_all(storage, &obj).await;
+                    }
+                    // Lost a race with another writer, which is the state
+                    // we wanted anyway.
+                    if e.reason == "AlreadyExists" || e.reason == "Conflict" {
+                        Outcome::Unchanged
+                    } else {
+                        Outcome::Failed(e.message)
+                    }
                 }
-                Err(e) => Outcome::Failed(e.message),
             }
         }
         Some(_) if mode == Mode::EnsureExists => Outcome::Unchanged,
@@ -231,19 +255,28 @@ pub async fn apply_one(
                     obj["metadata"][field] = v.clone();
                 }
             }
-            crate::handlers::resource::ensure_metadata_pub(
-                &mut obj,
-                &name,
-                namespaced.then_some(namespace.as_str()),
-            );
+            crate::handlers::resource::ensure_metadata_pub(&mut obj, &name, ns);
             // status is the cluster's, not the manifest's. A DaemonSet
             // manifest that carried an empty status would otherwise blank out
             // what the controller had recorded.
             if let Some(st) = current.get("status") {
                 obj["status"] = st.clone();
             }
+            // The update checks PUT and PATCH run (#158).
+            let plan = match &custom {
+                Some(_) => strategy.on_update(&mut obj, &current).map(|_| None),
+                None => crate::handlers::resource::builtin_update(storage, service_cidr, &key, &current, &mut obj).await,
+            };
+            let plan = match plan {
+                Ok(p) => p,
+                Err(e) => return Outcome::Failed(e.message),
+            };
             let is_crd = obj["kind"].as_str() == Some("CustomResourceDefinition");
-            match storage.update(&key, obj, None).await {
+            let written = storage.update(&key, obj, None).await;
+            if let Some(plan) = plan {
+                if written.is_ok() { plan.commit(storage).await } else { plan.abort(storage).await }
+            }
+            match written {
                 // A reconciled CRD may serve new versions; register what was
                 // stored, as the API's update path does.
                 Ok(stored) => {
@@ -288,7 +321,7 @@ pub fn manifest_files(dir: &Path) -> Vec<PathBuf> {
 /// is the normal case for a node that ships no addons; a manifest that cannot
 /// be applied is logged and the rest continue, because one bad addon must not
 /// keep an apiserver from serving.
-pub async fn apply_dir(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path) {
+pub async fn apply_dir(storage: &ResourceStorage, crds: &CrdRegistry, service_cidr: &str, dir: &Path) {
     let files = manifest_files(dir);
     if files.is_empty() {
         tracing::debug!("manifests: nothing to apply in {}", dir.display());
@@ -307,7 +340,7 @@ pub async fn apply_dir(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path
                 obj["kind"].as_str().unwrap_or("?"),
                 obj["metadata"]["name"].as_str().unwrap_or("?")
             );
-            match apply_one(storage, crds, obj).await {
+            match apply_one(storage, crds, service_cidr, obj).await {
                 Outcome::Created => {
                     tracing::info!("manifests: created {what}");
                     created += 1;
