@@ -109,7 +109,17 @@ not because of the control plane:
 - **GC "orphan RS created by deployment"** failed once under six parallel
   chunks and passed four times out of four focused, one of them alongside a
   full chunk: timing under load, not a regression. Counted as "load" with the
-  ServiceAccount one below.
+  ServiceAccount one below. **Investigated in #159** (2026-10-07), from the
+  code at efbea2d: its GC was a 30 s sweep that listed every kind in turn, so
+  under six chunks an orphan delete could wait past the spec's 2 minutes
+  (latency); and it judged an owner gone when the sweep's lists had not
+  seen its uid, then deleted without preconditions — a Deployment created
+  between the sweep's Deployment and ReplicaSet lists lost its ReplicaSet
+  (unsafe). The #146 rewrite (d69e618, 2026-09-29) removed both: event-driven
+  workers, owner absence confirmed by a GET of the owner, deletes with uid
+  and resourceVersion preconditions, orphan membership confirmed by LIST
+  before the finalizer goes. `test/e2e/gc-orphan-load.sh` runs the spec 20
+  at once under churn; the conformance rerun needs #140.
 - **PriorityClass endpoints** was reached for the first time (#85 put the kind
   in discovery) and found `value` writable; it is immutable upstream. Fixed in
   c241688 — PriorityClass `value` and `preemptionPolicy` refuse change (422).

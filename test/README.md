@@ -233,6 +233,12 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/gc-orphan-load.sh` (#159, suite `rigs`): the GC orphan conformance
+spec 20 times at once while other namespaces churn Deployments — ReplicaSet
+uids, resourceVersions, owner references and delete-to-gone times per run;
+no orphaned ReplicaSet deleted (also watched for DELETED), every Deployment
+gone within 120 s, references cut, ReplicaSets still there 15 s later.
+
 `e2e/resource-quota.sh` (#124, suite `rigs`): quota status computed,
 Pods charged at once, exceeded / must-specify 403s, counts for services,
 secrets and replicasets, usage lowered on delete, BestEffort scope, six

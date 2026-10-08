@@ -348,6 +348,16 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### GC orphan failure under concurrent chunks (#159, P3) — ANALYSED 2026-10-07
+- [x] efbea2d's GC (sweep, non-snapshot `live`, unconditional delete, 30 s
+      interval) has both a latency and an unsafe-deletion path for the spec;
+      d69e618 (#146) removed both. Remaining gap fixed: a failed owner strip
+      now fails the pass (retry with backoff). `test/e2e/gc-orphan-load.sh`
+      (20 concurrent runs under churn, per-run uid/RV/owners/timings);
+      docs/conformance.md
+- [ ] Build VM; golden; rig (stormcentral#512); conformance rerun with
+      concurrent chunks after #140 (goldens to conform.g8.lo)
+
 ### ResourceQuota controller + admission (#124, P2) — BUILT 2026-10-07
 - [x] `apimachinery::quota` (usage, scopes, formatting); apiserver
       `quota_admission.rs` (check all, CAS charge, rollback, charged-at);

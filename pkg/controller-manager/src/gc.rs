@@ -204,12 +204,18 @@ impl GarbageCollector {
     /// Foreground and orphan deletion: the two policies that hold an object
     /// with a finalizer until the collector has done something about its
     /// dependents.
+    ///
+    /// `Err` when an orphaning could not cut every dependent's reference
+    /// (a lost resourceVersion race, a refused patch): the finalizer stays
+    /// and the caller fails the pass, so it is retried with backoff instead
+    /// of waiting for some later event to wake it (#159).
     async fn process_finalizers(
         &self,
         objects: &[Object],
         dependents: &HashMap<String, Vec<usize>>,
-    ) -> bool {
+    ) -> anyhow::Result<bool> {
         let mut changed = false;
+        let mut incomplete = 0usize;
         for owner in objects.iter().take(1).filter(|o| o.deleting()) {
             let finalizers = owner.finalizers();
             let foreground = finalizers.contains(&FOREGROUND_FINALIZER);
@@ -248,6 +254,8 @@ impl GarbageCollector {
                         owner.resource.kind,
                         owner.name()
                     );
+                } else {
+                    incomplete += 1;
                 }
                 changed = true;
                 continue;
@@ -302,7 +310,11 @@ impl GarbageCollector {
                 );
             }
         }
-        changed
+        anyhow::ensure!(
+            incomplete == 0,
+            "orphaning left {incomplete} owner(s) with dependents still referencing them; retrying"
+        );
+        Ok(changed)
     }
 
     /// Background propagation: a child whose controlling owner no longer
@@ -634,7 +646,7 @@ impl Controller for Collection<'_> {
         }
         self.gc
             .process_finalizers(&objects, &HashMap::from([(uid, children)]))
-            .await;
+            .await?;
         let mut live = HashSet::new();
         let mut known = HashSet::new();
         // Cache absence is never authority for destructive background GC.
