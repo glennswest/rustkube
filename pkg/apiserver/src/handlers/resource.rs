@@ -1510,6 +1510,45 @@ where
     guaranteed_update(state, key, precondition, mutate).await
 }
 
+/// Where one guaranteed update's time went (#191), summed over its attempts:
+/// the datastore read, the mutation and built-in admission, the admission
+/// webhooks, the datastore write, and the pauses between attempts that lost
+/// a race. Recorded as `apiserver_write_phase_duration_seconds{phase}`, and
+/// logged with the key when the whole write took over [`SLOW_WRITE`] — the
+/// breakdown a one-off 729 ms pod status PUT never had.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct WritePhases {
+    pub read: std::time::Duration,
+    pub mutate: std::time::Duration,
+    pub webhooks: std::time::Duration,
+    pub write: std::time::Duration,
+    pub retry_wait: std::time::Duration,
+}
+
+pub(crate) const SLOW_WRITE: std::time::Duration = std::time::Duration::from_millis(100);
+
+impl WritePhases {
+    fn report(&self, key: &str, attempts: u32, total: std::time::Duration, ok: bool) {
+        for (phase, d) in [("read", self.read), ("mutate", self.mutate), ("webhooks", self.webhooks),
+                           ("write", self.write), ("retry_wait", self.retry_wait)] {
+            metrics::histogram!("apiserver_write_phase_duration_seconds", "phase" => phase).record(d.as_secs_f64());
+        }
+        if total > SLOW_WRITE {
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+            tracing::warn!(
+                key, attempts, ok,
+                total_ms = format!("{:.1}", ms(total)),
+                read_ms = format!("{:.1}", ms(self.read)),
+                mutate_ms = format!("{:.1}", ms(self.mutate)),
+                webhooks_ms = format!("{:.1}", ms(self.webhooks)),
+                write_ms = format!("{:.1}", ms(self.write)),
+                retry_wait_ms = format!("{:.1}", ms(self.retry_wait)),
+                "slow write"
+            );
+        }
+    }
+}
+
 /// The loop under [`guaranteed_patch`], for a caller that already knows its
 /// precondition.
 ///
@@ -1529,8 +1568,12 @@ where
 {
     let started = std::time::Instant::now();
     let mut attempt = 0;
+    let mut phases = WritePhases::default();
     loop {
+        let t = std::time::Instant::now();
         let fresh = state.storage.get(key).await?;
+        phases.read += t.elapsed();
+        let t = std::time::Instant::now();
         let read_rv = fresh["metadata"]["resourceVersion"].as_str().unwrap_or("").to_string();
         if let Some(want) = &precondition {
             if *want != read_rv {
@@ -1561,12 +1604,18 @@ where
         keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
         // Admission webhooks (#82) for a PATCH and every `/status` write;
         // again each attempt, as upstream admits inside GuaranteedUpdate.
+        phases.mutate += t.elapsed();
         let written = async {
+            let t = std::time::Instant::now();
             crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut obj), Some(&before)).await?;
+            phases.webhooks += t.elapsed();
             keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
             // Swap against what was read, whatever the patch did to the field.
             obj["metadata"]["resourceVersion"] = Value::String(read_rv);
-            persist_or_finalize(state, key, obj).await
+            let t = std::time::Instant::now();
+            let r = persist_or_finalize(state, key, obj).await;
+            phases.write += t.elapsed();
+            r
         }
         .await;
         if let Some(plan) = plan {
@@ -1575,9 +1624,14 @@ where
         match written {
             Err(e) if e.reason == "Conflict" && started.elapsed() < PATCH_RETRY_BUDGET => {
                 attempt += 1;
+                let t = std::time::Instant::now();
                 tokio::time::sleep(patch_retry_pause(attempt)).await;
+                phases.retry_wait += t.elapsed();
             }
-            result => return result,
+            result => {
+                phases.report(key, attempt + 1, started.elapsed(), result.is_ok());
+                return result;
+            }
         }
     }
 }

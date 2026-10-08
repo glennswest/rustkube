@@ -56,6 +56,7 @@ pub fn builder() -> metrics_exporter_prometheus::PrometheusBuilder {
         .set_buckets(DEFAULT_BUCKETS)
         .and_then(|b| b.set_buckets_for_metric(full("apiserver_request_duration_seconds"), REQUEST_BUCKETS))
         .and_then(|b| b.set_buckets_for_metric(full("etcd_request_duration_seconds"), REQUEST_BUCKETS))
+        .and_then(|b| b.set_buckets_for_metric(full("apiserver_write_phase_duration_seconds"), REQUEST_BUCKETS))
         .and_then(|b| {
             b.set_buckets_for_metric(full("scheduler_e2e_scheduling_duration_seconds"), &exponential(0.001, 2.0, 15))
         })

@@ -127,6 +127,14 @@ clone requests. README's configuration tables come from the three CLI sources.
       golden-rustkube-79c26ab4b5e5 (stormcos#366)
 - [ ] `rigs` run (limitrange.sh) after stormcentral#512; then close
 
+### Slow pod status PUT breakdown (#191, P2) — WRITTEN 2026-10-08
+- [x] `WritePhases` in `guaranteed_update`: read/mutate/webhooks/write/
+      retry_wait histogram; `slow write` warn > 100 ms with the key;
+      `slow request` warn in metrics_middleware (long-running left out);
+      unit; `test/e2e/status-put-latency.sh` (rigs); docs/metrics.md, CHANGELOG
+- [ ] build VM, golden; rig (stormcentral#512); real acceptance: the next
+      slow PUT on pvetest1 logs its breakdown after the release
+
 ### Secret stringData folded into data (#101, P2) — IN PROGRESS 2026-10-07
 - [x] `builtin_admission::fold_string_data` on create, PUT, PATCH (before
       the immutability check, again after webhooks), startup manifests; boot

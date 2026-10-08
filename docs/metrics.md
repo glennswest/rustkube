@@ -59,6 +59,7 @@ rather than zero: a zero would be read as a fact.
 ```
 apiserver_request_total{verb,group,version,resource,scope,code}
 apiserver_request_duration_seconds{verb,group,version,resource,scope}
+apiserver_write_phase_duration_seconds{phase}
 apiserver_current_inflight_requests{request_kind="mutating"|"readOnly"}
 etcd_request_duration_seconds{operation,type}
 apiserver_storage_objects{resource}
@@ -151,6 +152,26 @@ only `active`.
 
 A pod that is placed but waiting for its volumes to bind counts as
 `unschedulable`, which is what it is until the volume exists.
+
+### Write phases and slow requests (#191)
+
+`apiserver_write_phase_duration_seconds{phase}` splits every guaranteed
+update (PATCH, status PUT/PATCH, apply) into `read` (the datastore GET),
+`mutate` (the patch or new body and built-in admission), `webhooks`
+(admission webhooks), `write` (the datastore CAS) and `retry_wait` (pauses
+between attempts that lost a race), each summed over the attempts. Upstream
+has no such metric; it answers where a slow write went.
+
+Two `warn` log lines go with it:
+
+- `slow write` — a guaranteed update over 100 ms: the key, the attempts, and
+  the total and each phase in ms;
+- `slow request` — any request over 100 ms, with method, path, code and ms.
+  Watches, logs, exec/attach/port-forward and proxies are left out: they are
+  long by design.
+
+A slow request whose `slow write` is short spent its time outside the
+handler: authentication, RBAC, protobuf transcoding, or the client.
 
 ## Where this differs from upstream
 

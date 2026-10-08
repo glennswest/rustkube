@@ -21,7 +21,7 @@ set -u
 suite=${1:-${STORM_SUITE:-rigs}}
 
 # Day: functional rigs, each a minute or two.
-DAY="status-rv unserved-resource notfound-message csr-signers whoami node-proxy stormblock-class scheduler-preemption ephemeral-volume watch-timeout service-nodeport replication-controller vmi-verbs manifest-admission crd-openapi runtime-class resource-quota gc-orphan-load compaction bad-token aggregation service-create metrics-auth hpa-metrics hpa-v1 limitrange table-review flowcontrol pod-resize endpointslice-mirroring scheduling-gates scale service-cidr field-validation admission-policy-api secret-stringdata cr-schema watch-deleted cache-reads metadata-watch wffc-latency dra-crud token-auth bound-token cr-status requester admission-webhook
+DAY="status-rv status-put-latency unserved-resource notfound-message csr-signers whoami node-proxy stormblock-class scheduler-preemption ephemeral-volume watch-timeout service-nodeport replication-controller vmi-verbs manifest-admission crd-openapi runtime-class resource-quota gc-orphan-load compaction bad-token aggregation service-create metrics-auth hpa-metrics hpa-v1 limitrange table-review flowcontrol pod-resize endpointslice-mirroring scheduling-gates scale service-cidr field-validation admission-policy-api secret-stringdata cr-schema watch-deleted cache-reads metadata-watch wffc-latency dra-crud token-auth bound-token cr-status requester admission-webhook
      projects oc-adm vm-runstrategy vmi-launcher vmi-migration pod-limit daemonset-nodes
      indexed-selectors indexed-safety volume-expansion snapshot-controller"
 # Night: idle and load windows, failover and reload ticks.

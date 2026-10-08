@@ -2298,7 +2298,30 @@ async fn metrics_middleware(
     )
     .record(elapsed);
 
+    // A request over 100 ms says so (#191), whatever it was: with the write
+    // phases logged by the guaranteed update, the difference is the time
+    // spent before the handler (authentication, RBAC, transcoding). Watches
+    // and streams last as long as the client wants, so they are left out.
+    if elapsed > 0.1 && !attrs_long_running(&path, &query, &method) {
+        tracing::warn!(
+            method = %method, path = %path, code = response.status().as_u16(),
+            ms = format!("{:.1}", elapsed * 1000.0),
+            "slow request"
+        );
+    }
+
     response
+}
+
+/// Requests that are long by design — watches, logs, exec/attach/
+/// port-forward, proxies — as upstream's long-running check names them.
+fn attrs_long_running(path: &str, query: &str, method: &axum::http::Method) -> bool {
+    let a = RequestAttributes::of(path, query, method);
+    a.verb == "watch"
+        || path.contains("/watch/")
+        || ["/log", "/exec", "/attach", "/portforward", "/proxy", "/console", "/vnc"]
+            .iter()
+            .any(|s| a.resource.ends_with(s) || path.contains(&format!("{s}/")))
 }
 
 /// What upstream labels a request with.
@@ -2518,6 +2541,18 @@ mod metrics_label_tests {
         let a = attrs("/api/v1/pods", "watch=true", Method::GET);
         assert_eq!(a.verb, "watch");
         assert_eq!(a.scope, "cluster");
+    }
+
+    #[test]
+    fn slow_request_log_leaves_out_long_running() {
+        let get = axum::http::Method::GET;
+        assert!(attrs_long_running("/api/v1/pods", "watch=true", &get));
+        assert!(attrs_long_running("/api/v1/watch/pods", "", &get));
+        assert!(attrs_long_running("/api/v1/namespaces/d/pods/p/log", "follow=true", &get));
+        assert!(attrs_long_running("/api/v1/namespaces/d/pods/p/exec", "", &axum::http::Method::POST));
+        assert!(attrs_long_running("/api/v1/nodes/n/proxy/stats", "", &get));
+        assert!(!attrs_long_running("/api/v1/namespaces/d/pods/p/status", "", &axum::http::Method::PUT));
+        assert!(!attrs_long_running("/api/v1/namespaces/d/pods", "", &get));
     }
 
     #[test]
