@@ -46,6 +46,7 @@ pub async fn pod_logs(
             reason: "BadRequest".into(),
             message: format!("pod {namespace}/{name} is not assigned to a node yet"),
             continue_token: None,
+            details: None,
         }
         .into_response();
     };
@@ -56,6 +57,7 @@ pub async fn pod_logs(
             reason: "InternalError".into(),
             message: format!("no usable address for node {node_name}"),
             continue_token: None,
+            details: None,
         }
         .into_response();
     };
@@ -196,6 +198,7 @@ pub(crate) fn pick_container(
                         all.join(", ")
                     ),
                     continue_token: None,
+                    details: None,
                 });
             }
             Ok(c.to_string())
@@ -209,6 +212,7 @@ pub(crate) fn pick_container(
                 containers.join(", ")
             ),
             continue_token: None,
+            details: None,
         }),
     }
 }

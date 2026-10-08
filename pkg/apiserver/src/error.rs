@@ -12,6 +12,10 @@ pub struct Status {
     pub status: String,
     pub message: String,
     pub reason: String,
+    /// `details` (`name`, `group`, `kind`), when the error is about one
+    /// object (#109).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
     pub code: u16,
 }
 
@@ -24,6 +28,7 @@ impl Status {
             status: "Failure".into(),
             message: message.into(),
             reason: reason.into(),
+            details: None,
             code: code.as_u16(),
         }
     }
@@ -39,15 +44,21 @@ pub struct ApiError {
     /// token whose snapshot was compacted away, where it lets the client
     /// list the rest at the current revision (#139).
     pub continue_token: Option<String>,
+    /// The Status's `details`, for an error about one object (#109).
+    pub details: Option<serde_json::Value>,
 }
 
 impl ApiError {
+    /// Upstream's NotFound: `deployments.apps "web" not found`, with
+    /// `details` naming the object (`resource` is `plural[.group]`).
     pub fn not_found(resource: &str, name: &str) -> Self {
+        let (kind, group) = resource.split_once('.').unwrap_or((resource, ""));
         Self {
             status: StatusCode::NOT_FOUND,
             reason: "NotFound".into(),
             message: format!("{resource} \"{name}\" not found"),
             continue_token: None,
+            details: Some(serde_json::json!({"name": name, "group": group, "kind": kind})),
         }
     }
 
@@ -57,6 +68,7 @@ impl ApiError {
             reason: "AlreadyExists".into(),
             message: format!("{resource} \"{name}\" already exists"),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -74,6 +86,7 @@ impl ApiError {
             reason: "Conflict".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -83,6 +96,7 @@ impl ApiError {
             reason: "BadRequest".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -92,6 +106,7 @@ impl ApiError {
             reason: "Invalid".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -101,6 +116,7 @@ impl ApiError {
             reason: "InternalError".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -112,6 +128,7 @@ impl ApiError {
             reason: "Expired".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -121,6 +138,7 @@ impl ApiError {
             reason: "Unauthorized".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -130,6 +148,7 @@ impl ApiError {
             reason: "Forbidden".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 
@@ -145,6 +164,7 @@ impl ApiError {
             reason: "ServiceUnavailable".into(),
             message: message.into(),
             continue_token: None,
+            details: None,
         }
     }
 }
@@ -195,6 +215,7 @@ impl std::fmt::Display for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut status_obj = Status::new(self.status, &self.reason, &self.message);
+        status_obj.details = self.details.clone();
         if let Some(token) = &self.continue_token {
             status_obj.metadata = serde_json::json!({"continue": token});
         }
@@ -227,12 +248,14 @@ impl From<apimachinery::Error> for ApiError {
                 reason: "NotFound".into(),
                 message: msg,
                 continue_token: None,
+                details: None,
             },
             apimachinery::Error::AlreadyExists(msg) => Self {
                 status: StatusCode::CONFLICT,
                 reason: "AlreadyExists".into(),
                 message: msg,
                 continue_token: None,
+                details: None,
             },
             apimachinery::Error::Conflict => Self::conflict("resource version mismatch"),
             apimachinery::Error::Gone(rev) => {
@@ -243,12 +266,14 @@ impl From<apimachinery::Error> for ApiError {
                 reason: "Unauthorized".into(),
                 message: msg,
                 continue_token: None,
+                details: None,
             },
             apimachinery::Error::Forbidden(msg) => Self {
                 status: StatusCode::FORBIDDEN,
                 reason: "Forbidden".into(),
                 message: msg,
                 continue_token: None,
+                details: None,
             },
             apimachinery::Error::Invalid(msg) => Self::invalid(&msg),
             apimachinery::Error::Unavailable(ref cause) => {

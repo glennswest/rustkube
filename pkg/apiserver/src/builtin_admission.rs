@@ -334,6 +334,7 @@ fn access_modes(obj: &Value) -> Result<(), ApiError> {
                 modes.join(", ")
             ),
             continue_token: None,
+            details: None,
         });
     }
     Ok(())

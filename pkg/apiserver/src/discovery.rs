@@ -426,6 +426,7 @@ pub async fn api_group(
             reason: "NotFound".into(),
             message: "the server could not find the requested resource".into(),
             continue_token: None,
+            details: None,
         }
         .into_response(),
     }

@@ -295,6 +295,11 @@ nodes/proxy RBAC (403 without, 200 with), unknown node 404.
 `e2e/whoami.sh` (#116, suite `rigs`): selfsubjectreviews in discovery;
 `kubectl auth whoami` as a plain user and the admin; a raw POST's 201.
 
+`e2e/notfound-message.sh` (#109, suite `rigs`): 404s name the object as the
+API does (`namespaces "x"`, `deployments.apps "web"`, a custom resource's
+`widgets.<group>`) with Status `details`, never the storage key; an
+unregistered CR type is "could not find the requested resource".
+
 `e2e/unserved-resource.sh` (#110, suite `rigs`): GET/POST/PUT of unserved
 resources in core, apps and rbac are 404 and store nothing; RC, quota and
 pod-template lists carry their kinds; namespace and pods/log paths still

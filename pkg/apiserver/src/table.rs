@@ -62,6 +62,7 @@ pub async fn refuse_table(req: axum::extract::Request, next: axum::middleware::N
         reason: "NotAcceptable".into(),
         message: format!("the resource {resource} does not support being converted to a Table"),
         continue_token: None,
+        details: None,
     }
     .into_response()
 }

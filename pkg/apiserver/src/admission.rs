@@ -653,6 +653,7 @@ fn denied(webhook: &str, status: &Value) -> ApiError {
         }),
         message,
         continue_token: None,
+        details: None,
     }
 }
 

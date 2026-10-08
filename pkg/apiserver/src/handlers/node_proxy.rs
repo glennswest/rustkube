@@ -42,6 +42,7 @@ async fn proxy(
             reason: "ServiceUnavailable".into(),
             message: format!("node {node} has no address to proxy to"),
             continue_token: None,
+            details: None,
         }
         .into_response();
     };
@@ -85,6 +86,7 @@ async fn proxy(
             reason: "ServiceUnavailable".into(),
             message: format!("reaching kubelet at {addr}: {e}"),
             continue_token: None,
+            details: None,
         }
         .into_response(),
     }

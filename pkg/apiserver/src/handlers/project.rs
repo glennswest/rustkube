@@ -146,6 +146,7 @@ fn validate_name(name: &str) -> Result<(), ApiError> {
                  label (a-z, 0-9 and '-', starting and ending alphanumeric, at most 63 characters)"
             ),
             continue_token: None,
+            details: None,
         })
     }
 }

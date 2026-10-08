@@ -200,8 +200,8 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `upgrade`, `wait-for-stable-cluster`, `reboot-machine-config-pool`, `wait-for-node-reboot`, `ocp-certificates`, `node-image`, `release`, `catalog`, `build-chain`, `migrate`, `verify-image-signature` | 🔴 out of scope | the OpenShift platform: ClusterVersion, ClusterOperators, MachineConfigPools, the release payload, OLM (#70) |
 | `pod-network …` | — | OpenShift SDN, removed upstream |
 
-Found on the way, and not `oc adm`'s own: NotFound messages name the store
-key (#109); an unserved core resource answered an empty list rather than 404
+Found on the way, and not `oc adm`'s own: NotFound messages named the store
+key (#109, fixed 2026-10-08: `namespaces "x" not found` with `details`); an unserved core resource answered an empty list rather than 404
 (#110, fixed 2026-10-07: 404 for any resource a built-in group-version does
 not advertise); LIST items carry no `resourceVersion` (#111); objects created over
 protobuf were stored with an empty uid, which is what made the GC delete a

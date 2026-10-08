@@ -409,6 +409,7 @@ pub async fn proxy(State(state): State<crate::handlers::AppState>, req: Request,
             reason: "NotImplemented".into(),
             message: "connection upgrades to an aggregated API are not supported (rustkube#83)".into(),
             continue_token: None,
+            details: None,
         }
         .into_response();
     }

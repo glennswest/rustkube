@@ -1187,7 +1187,7 @@ when each piece landed.
 ### Open, found since the docs pass
 - [x] GC deleted a live Deployment's ReplicaSet (#99): protobuf creates were
       stored with `uid: ""`; fixed in v0.15.3
-- [ ] NotFound names the store key (#109)
+- [x] NotFound names the store key (#109) — upstream wording + details, 2026-10-08
 - [x] Unserved resources answer an empty list (#110) — 404 since 2026-10-07
 - [x] LIST items carry resourceVersion and continuation pages request the
       first page's revision (64963b2, #111). The still-open issue label does

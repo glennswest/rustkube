@@ -1329,7 +1329,15 @@ async fn validate_crd(
     if state.crd_registry.lookup(group, version, resource).await.is_some() {
         return Ok(());
     }
-    Err(ApiError::not_found("resource", resource))
+    // An unserved resource, as upstream answers it (#109, #110).
+    let _ = resource;
+    Err(ApiError {
+        status: axum::http::StatusCode::NOT_FOUND,
+        reason: "NotFound".into(),
+        message: "the server could not find the requested resource".into(),
+        continue_token: None,
+        details: None,
+    })
 }
 
 #[cfg(test)]

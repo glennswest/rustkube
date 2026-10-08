@@ -103,6 +103,7 @@ async fn door(
                 "VirtualMachineInstance {namespace}/{name} is not running on a node yet"
             ),
             continue_token: None,
+            details: None,
         }
         .into_response();
     };
@@ -233,6 +234,7 @@ pub async fn vm_restart(
             reason: "Conflict".into(),
             message: format!("VirtualMachine {namespace}/{name} is not running"),
             continue_token: None,
+            details: None,
         }
         .into_response();
     }
@@ -343,6 +345,7 @@ async fn migrate(state: AppState, namespace: String, name: String, body: axum::b
                       (virtualmachineinstancemigrations.kubevirt.io) is not installed"
                 .into(),
             continue_token: None,
+            details: None,
         }
         .into_response();
     }

@@ -113,7 +113,7 @@ impl ResourceStorage {
                 inject_resource_version(&mut obj, rev);
                 Ok(obj)
             }
-            None => Err(ApiError::not_found("resource", key)),
+            None => Err(not_found_at(key)),
         }
     }
 
@@ -210,7 +210,7 @@ impl ResourceStorage {
             }
             Ok(Some((None, _))) => {
                 apimachinery::metrics::record_cache_read("get", &Self::resource_of(key));
-                Err(ApiError::not_found("resource", key))
+                Err(not_found_at(key))
             }
             // Not caught up, or no cache: the store, which is never older.
             _ => self.get(key).await,
@@ -608,5 +608,47 @@ mod compacted_continue_tests {
 
         // A token still inside history pages as before.
         assert!(storage.list_page("/registry/pods/", 1, Some("11:/registry/pods/a/p1")).await.is_ok());
+    }
+}
+
+/// The NotFound for a missing object, named as the API names it (#109):
+/// `namespaces "x" not found`, `deployments.apps "web" not found`,
+/// `widgets.example.com "w" not found` — never the storage key, which used to
+/// be the message (`resource "/registry/namespaces/x" not found`). A key is
+/// `/registry/<plural>/[<ns>/]<name>`, or a custom resource's
+/// `/registry/<group>/<plural>/[<ns>/]<name>` (a group has a dot, a plural
+/// none, #76).
+pub(crate) fn not_found_at(key: &str) -> ApiError {
+    let segs: Vec<&str> = key.trim_start_matches("/registry/").split('/').filter(|s| !s.is_empty()).collect();
+    let name = segs.last().copied().unwrap_or(key);
+    let (group, plural) = match segs.as_slice() {
+        [g, p, _, ..] if g.contains('.') => (g.to_string(), p.to_string()),
+        [p, _, ..] => {
+            let av = crate::handlers::resource::resource_to_api_version(p);
+            (av.split_once('/').map(|(g, _)| g.to_string()).unwrap_or_default(), p.to_string())
+        }
+        _ => (String::new(), "resource".to_string()),
+    };
+    let resource = if group.is_empty() { plural } else { format!("{plural}.{group}") };
+    ApiError::not_found(&resource, name)
+}
+
+#[cfg(test)]
+mod not_found_tests {
+    use super::not_found_at;
+
+    #[test]
+    fn a_missing_object_is_named_as_the_api_names_it() {
+        let m = |k: &str| { let e = not_found_at(k); (e.message, e.details.unwrap()) };
+        let (msg, d) = m("/registry/namespaces/openshift-config-managed");
+        assert_eq!(msg, "namespaces \"openshift-config-managed\" not found");
+        assert_eq!(d, serde_json::json!({"name": "openshift-config-managed", "group": "", "kind": "namespaces"}));
+        assert_eq!(m("/registry/pods/default/web").0, "pods \"web\" not found");
+        let (msg, d) = m("/registry/deployments/default/web");
+        assert_eq!(msg, "deployments.apps \"web\" not found");
+        assert_eq!(d["group"], "apps");
+        assert_eq!(m("/registry/example.com/widgets/default/w").0, "widgets.example.com \"w\" not found");
+        assert_eq!(m("/registry/example.com/clusterwidgets/w").0, "clusterwidgets.example.com \"w\" not found");
+        assert!(!m("/registry/secrets/ns/s").0.contains("/registry"));
     }
 }
