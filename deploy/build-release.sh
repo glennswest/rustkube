@@ -22,10 +22,12 @@
 # persistent output directory, and none must be made with root or a mount.
 #
 # A non-native target is built with `cross` (containerised toolchain) when it
-# is installed. Without it, aarch64-unknown-linux-musl is built with the
-# target's GNU cross gcc as `ring`'s C compiler and the linker (the build VMs
-# have `aarch64-linux-gnu-gcc` and the Rust target, #68); Rust's own
-# self-contained musl makes the binary static either way. An aarch64 binary
+# is installed. Without it, aarch64-unknown-linux-musl is built with clang
+# (`--target=aarch64-unknown-linux-musl -ffreestanding`: `ring`'s C needs only
+# freestanding headers, and the GNU cross gcc ships no libc headers) and
+# `llvm-ar`, linked by `aarch64-linux-gnu-gcc` (the build VMs have all three
+# and the Rust target, #68); Rust's own self-contained musl makes the binary
+# static either way. An aarch64 binary
 # is then run once under `qemu-aarch64-static`, when there is one, so a
 # binary that does not start is caught here.
 
@@ -63,10 +65,13 @@ for target in ${TARGETS//,/ }; do
     else
         if command -v cross >/dev/null; then
             cross build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
-        elif [ "$target" = aarch64-unknown-linux-musl ] && command -v aarch64-linux-gnu-gcc >/dev/null; then
-            CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc \
+        elif [ "$target" = aarch64-unknown-linux-musl ] && command -v aarch64-linux-gnu-gcc >/dev/null \
+                && command -v clang >/dev/null && command -v llvm-ar >/dev/null; then
+            CC_aarch64_unknown_linux_musl=clang \
+            CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-unknown-linux-musl -ffreestanding" \
+            AR_aarch64_unknown_linux_musl=llvm-ar \
             CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
-                cargo build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
+                cargo build --release --target "$target" "${pkgs[@]}" 2>&1 | grep -E '^error|fatal error|Finished' -A6 | tail -20
         else
             echo "no cross and no cross compiler for $target — see the header" >&2
             exit 1
