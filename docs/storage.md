@@ -118,7 +118,9 @@ So the split for that one class is:
 `stormblock.rs` writes the PV only once the scheduler has written
 `volume.kubernetes.io/selected-node` (the claim is `WaitForFirstConsumer`),
 with a hostname `nodeAffinity` for that node, `provisioner`
-`stormblock.storm.io/in-kubelet` and CSI driver `stormblock.storm.io`. Both
+`stormblock.storm.io/in-kubelet`, CSI driver `stormblock.storm.io`, and the
+claim's `volumeMode` (#201: a `Block` claim gets a `Block` PV, which the node
+attaches raw at `volumeDevices[].devicePath`, rustkube-node#67). Both
 orders converge: the kubelet may provision before the controller writes the
 object or after it, and neither is an error.
 

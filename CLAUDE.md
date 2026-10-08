@@ -127,6 +127,12 @@ clone requests. README's configuration tables come from the three CLI sources.
       golden-rustkube-79c26ab4b5e5 (stormcos#366)
 - [ ] `rigs` run (limitrange.sh) after stormcentral#512; then close
 
+### stormblock PV volumeMode from the claim (#201, P2) — WRITTEN 2026-10-08
+- [x] `stormblock::desired_pv` (PV construction out of `provision_claim`)
+      sets `volumeMode` from the claim (default Filesystem); unit;
+      stormblock-class.sh Block case; storage.md, CHANGELOG
+- [ ] build VM, golden; rig (stormcentral#512)
+
 ### Slow pod status PUT breakdown (#191, P2) — BUILT 2026-10-08
 - [x] `WritePhases` in `guaranteed_update`: read/mutate/webhooks/write/
       retry_wait histogram; `slow write` warn > 100 ms with the key;

@@ -8,6 +8,8 @@
 #   in-kubelet PV
 # - the class recreated with provisioner stormblock.storm.io (stormcos's):
 #   the same claim gets PV pvc-<ns>-<claim>, annotated as this path's
+# - a `volumeMode: Block` claim gets a Block PV and binds to it (#201); the
+#   Filesystem claim's PV is Filesystem
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -52,6 +54,18 @@ klass("stormblock.storm.io")
 pv = until(lambda: (lambda c, o: o if c == 200 else None)(*req("GET", "/api/v1/persistentvolumes/pvc-default-data")))
 check(pv is not None and pv["metadata"]["annotations"].get("pv.kubernetes.io/provisioned-by") == "stormblock.storm.io/in-kubelet",
       f"provisioner stormblock.storm.io: the claim gets its PV ({pv['metadata'] if pv else None})")
+# A Block claim (#201): its PV is Block, and the claim binds to it.
+req("POST", "/api/v1/namespaces/default/persistentvolumeclaims", {"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+    "metadata": {"name": "raw", "annotations": {"volume.kubernetes.io/selected-node": "n1"}},
+    "spec": {"storageClassName": "stormblock", "accessModes": ["ReadWriteOnce"], "volumeMode": "Block",
+             "resources": {"requests": {"storage": "1Gi"}}}})
+pv = until(lambda: (lambda c, o: o if c == 200 else None)(*req("GET", "/api/v1/persistentvolumes/pvc-default-raw")))
+check(pv is not None and pv["spec"].get("volumeMode") == "Block",
+      f"a Block claim gets a Block PV ({pv['spec'].get('volumeMode') if pv else None})")
+bound = until(lambda: req("GET", "/api/v1/namespaces/default/persistentvolumeclaims/raw")[1].get("status", {}).get("phase") == "Bound")
+check(bound, "the Block claim binds to its PV")
+fs = req("GET", "/api/v1/persistentvolumes/pvc-default-data")[1]
+check(fs.get("spec", {}).get("volumeMode") == "Filesystem", "the Filesystem claim's PV stays Filesystem")
 sys.exit(failed)
 PY
 report

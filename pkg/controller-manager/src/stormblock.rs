@@ -136,62 +136,7 @@ impl StormblockProvisioner {
             response.status()
         );
 
-        // What the claim asked for. The node rounds this up to a size class
-        // and that class is the ceiling; reporting the request rather than the
-        // class would promise less than the volume has, and reporting the
-        // class would need this side to know the ladder. The node writes the
-        // real capacity onto the PV when it provisions.
-        let request = pvc["spec"]["resources"]["requests"]["storage"]
-            .as_str()
-            .unwrap_or("1Mi");
-        let modes = pvc["spec"]["accessModes"].clone();
-        let reclaim = pvc["spec"]["persistentVolumeReclaimPolicy"]
-            .as_str()
-            .unwrap_or("Delete");
-
-        let mut pv = json!({
-            "apiVersion": "v1",
-            "kind": "PersistentVolume",
-            "metadata": {
-                "name": pv_name,
-                "annotations": { PROVISIONED_BY: PROVISIONER },
-            },
-            "spec": {
-                "capacity": { "storage": request },
-                "accessModes": if modes.is_null() { json!(["ReadWriteOnce"]) } else { modes },
-                "persistentVolumeReclaimPolicy": reclaim,
-                "storageClassName": STORAGE_CLASS,
-                // The volume behind it: the name the node clones to. The
-                // kubelet resolves a bound claim through this handle, and the
-                // node's own PV for the claim (same name) carries the same one.
-                "csi": { "driver": "stormblock.storm.io", "volumeHandle": pv_name },
-                // Pre-bound to the claim that caused it, so no other claim can
-                // take it between this write and the binder's next pass.
-                "claimRef": {
-                    "kind": "PersistentVolumeClaim",
-                    "apiVersion": "v1",
-                    "namespace": namespace,
-                    "name": claim,
-                    "uid": pvc["metadata"]["uid"].clone(),
-                },
-            },
-            "status": { "phase": "Available" },
-        });
-
-        // A stormblock clone is attached over ublk on one node, so the volume
-        // is only reachable there. Saying so in `nodeAffinity` is what stops
-        // the scheduler placing a later pod somewhere the data is not — the
-        // volume-aware filters already read it (#56).
-        pv["spec"]["nodeAffinity"] = json!({
-            "required": { "nodeSelectorTerms": [{
-                "matchExpressions": [{
-                    "key": "kubernetes.io/hostname",
-                    "operator": "In",
-                    "values": [node],
-                }]
-            }]}
-        });
-
+        let pv = desired_pv(pvc, namespace, claim, node, &pv_name);
         self.api.create("/api/v1/persistentvolumes", &pv).await?;
         info!("stormblock: created PV {pv_name} for claim {namespace}/{claim}");
         self.events
@@ -266,6 +211,71 @@ impl StormblockProvisioner {
     }
 }
 
+/// The PV this path writes for `claim` once the scheduler chose `node`.
+pub fn desired_pv(pvc: &Value, namespace: &str, claim: &str, node: &str, pv_name: &str) -> Value {
+    // What the claim asked for. The node rounds this up to a size class
+    // and that class is the ceiling; reporting the request rather than the
+    // class would promise less than the volume has, and reporting the
+    // class would need this side to know the ladder. The node writes the
+    // real capacity onto the PV when it provisions.
+    let request = pvc["spec"]["resources"]["requests"]["storage"]
+        .as_str()
+        .unwrap_or("1Mi");
+    let modes = pvc["spec"]["accessModes"].clone();
+    let reclaim = pvc["spec"]["persistentVolumeReclaimPolicy"]
+        .as_str()
+        .unwrap_or("Delete");
+    // The claim's volumeMode (#201): a PV's is immutable and the binder
+    // pairs only equal modes, so a Block claim given admission's
+    // `Filesystem` default would never bind to its own pre-bound PV.
+    let volume_mode = pvc["spec"]["volumeMode"].as_str().unwrap_or("Filesystem");
+
+    let mut pv = json!({
+        "apiVersion": "v1",
+        "kind": "PersistentVolume",
+        "metadata": {
+            "name": pv_name,
+            "annotations": { PROVISIONED_BY: PROVISIONER },
+        },
+        "spec": {
+            "capacity": { "storage": request },
+            "accessModes": if modes.is_null() { json!(["ReadWriteOnce"]) } else { modes },
+            "persistentVolumeReclaimPolicy": reclaim,
+            "volumeMode": volume_mode,
+            "storageClassName": STORAGE_CLASS,
+            // The volume behind it: the name the node clones to. The
+            // kubelet resolves a bound claim through this handle, and the
+            // node's own PV for the claim (same name) carries the same one.
+            "csi": { "driver": "stormblock.storm.io", "volumeHandle": pv_name },
+            // Pre-bound to the claim that caused it, so no other claim can
+            // take it between this write and the binder's next pass.
+            "claimRef": {
+                "kind": "PersistentVolumeClaim",
+                "apiVersion": "v1",
+                "namespace": namespace,
+                "name": claim,
+                "uid": pvc["metadata"]["uid"].clone(),
+            },
+        },
+        "status": { "phase": "Available" },
+    });
+
+    // A stormblock clone is attached over ublk on one node, so the volume
+    // is only reachable there. Saying so in `nodeAffinity` is what stops
+    // the scheduler placing a later pod somewhere the data is not — the
+    // volume-aware filters already read it (#56).
+    pv["spec"]["nodeAffinity"] = json!({
+        "required": { "nodeSelectorTerms": [{
+            "matchExpressions": [{
+                "key": "kubernetes.io/hostname",
+                "operator": "In",
+                "values": [node],
+            }]
+        }]}
+    });
+    pv
+}
+
 /// The volume name for a claim.
 ///
 /// **The contract with the node.** `storage::volume_name()` in the kubelet
@@ -288,6 +298,24 @@ mod tests {
         assert!(!class_is_ours(Some(&json!({"provisioner": "csi.stormblock.io"}))), "a CSI class named stormblock");
         assert!(!class_is_ours(Some(&json!({}))));
         assert!(!class_is_ours(None), "no class: nothing to provision for");
+    }
+
+    #[test]
+    fn the_pv_carries_the_claims_volume_mode() {
+        let claim = |mode: Option<&str>| {
+            let mut c = json!({"metadata": {"uid": "u1"}, "spec": {"resources": {"requests": {"storage": "1Gi"}}}});
+            if let Some(m) = mode {
+                c["spec"]["volumeMode"] = json!(m);
+            }
+            c
+        };
+        let pv = desired_pv(&claim(Some("Block")), "default", "raw", "n1", "pvc-default-raw");
+        assert_eq!(pv["spec"]["volumeMode"], "Block");
+        assert_eq!(pv["spec"]["claimRef"]["name"], "raw");
+        let pv = desired_pv(&claim(Some("Filesystem")), "default", "fs", "n1", "pvc-default-fs");
+        assert_eq!(pv["spec"]["volumeMode"], "Filesystem");
+        let pv = desired_pv(&claim(None), "default", "fs", "n1", "pvc-default-fs");
+        assert_eq!(pv["spec"]["volumeMode"], "Filesystem", "unset is Filesystem, as upstream defaults it");
     }
 
     #[test]
