@@ -117,7 +117,7 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
   JWTs (`--service-account-*-file`), TokenRequest, TokenReview
   (`pkg/apiserver/src/auth.rs`).
 - **AuthZ:** RBAC, plus Kubernetes access reviews (`oc auth can-i`); OpenShift
-  `oc policy who-can` needs unserved reviews (#106) (`rbac_engine.rs`, `handlers/authorization.rs`).
+  `oc policy who-can` via OpenShift's reviews (#106) (`rbac_engine.rs`, `handlers/authorization.rs`).
 - **Admission (built-in):** namespace lifecycle, service IP allocation,
   default ServiceAccount, tolerations, priority, PodSecurity subset,
   `ReadWriteOncePod` (`builtin_admission.rs`).

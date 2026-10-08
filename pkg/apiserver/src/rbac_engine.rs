@@ -434,6 +434,81 @@ impl RbacEngine {
         }
         None
     }
+
+    /// Who may do `req` (#106, OpenShift's ResourceAccessReview): the users
+    /// and groups of every ClusterRoleBinding, and every RoleBinding in the
+    /// request's namespace, whose role permits it — a ServiceAccount as
+    /// `system:serviceaccount:<ns>:<name>` — plus `system:masters`, which
+    /// may do anything without a binding. A role that cannot be read is
+    /// named in `errors`, its subjects left out.
+    pub async fn who_can(&self, req: &AuthorizationRequest) -> WhoCan {
+        let mut out = WhoCan::default();
+        out.groups.insert("system:masters".into());
+        if self.dev_anonymous_admin {
+            out.users.insert("system:anonymous".into());
+        }
+        let take = |binding: &Value, out: &mut WhoCan| {
+            let bns = binding["metadata"]["namespace"].as_str().unwrap_or("");
+            for s in binding["subjects"].as_array().into_iter().flatten() {
+                let name = s["name"].as_str().unwrap_or("").to_string();
+                match s["kind"].as_str() {
+                    Some("User") => { out.users.insert(name); }
+                    Some("Group") => { out.groups.insert(name); }
+                    Some("ServiceAccount") => {
+                        let ns = s["namespace"].as_str().filter(|n| !n.is_empty()).unwrap_or(bns);
+                        out.users.insert(format!("system:serviceaccount:{ns}:{name}"));
+                    }
+                    _ => {}
+                }
+            }
+        };
+        match self.storage.list(&ResourceStorage::cluster_prefix("clusterrolebindings"), 1000, None).await {
+            Ok((bindings, _, _)) => {
+                for b in &bindings {
+                    if b["roleRef"]["kind"].as_str() != Some("ClusterRole") {
+                        continue;
+                    }
+                    let role = b["roleRef"]["name"].as_str().unwrap_or("");
+                    match self.storage.get(&ResourceStorage::cluster_key("clusterroles", role)).await {
+                        Ok(r) if rules_permit(&r, req) => take(b, &mut out),
+                        Ok(_) => {}
+                        Err(_) => out.errors.push(format!("clusterrole.rbac.authorization.k8s.io \"{role}\" not found")),
+                    }
+                }
+            }
+            Err(e) => out.errors.push(e.message),
+        }
+        if let Some(ns) = req.namespace.as_deref().filter(|n| !n.is_empty()) {
+            match self.storage.list(&ResourceStorage::namespace_prefix("rolebindings", ns), 1000, None).await {
+                Ok((bindings, _, _)) => {
+                    for b in &bindings {
+                        let role = b["roleRef"]["name"].as_str().unwrap_or("");
+                        let got = match b["roleRef"]["kind"].as_str() {
+                            Some("ClusterRole") => self.storage.get(&ResourceStorage::cluster_key("clusterroles", role)).await,
+                            Some("Role") => self.storage.get(&ResourceStorage::namespaced_key("roles", ns, role)).await,
+                            _ => continue,
+                        };
+                        match got {
+                            Ok(r) if rules_permit(&r, req) => take(b, &mut out),
+                            Ok(_) => {}
+                            Err(_) => out.errors.push(format!("role \"{role}\" of rolebinding {ns}/{} not found",
+                                b["metadata"]["name"].as_str().unwrap_or(""))),
+                        }
+                    }
+                }
+                Err(e) => out.errors.push(e.message),
+            }
+        }
+        out
+    }
+}
+
+/// Who may do a thing ([`RbacEngine::who_can`]).
+#[derive(Debug, Default, Clone)]
+pub struct WhoCan {
+    pub users: std::collections::BTreeSet<String>,
+    pub groups: std::collections::BTreeSet<String>,
+    pub errors: Vec<String>,
 }
 
 /// An authorization answer and why.

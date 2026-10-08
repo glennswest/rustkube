@@ -85,7 +85,8 @@ verb missing "top pod" adm adm top pod -n work
 
 # --- policy -------------------------------------------------------------------
 # authorization.openshift.io LocalResourceAccessReview, not the k8s SAR (#106)
-verb missing "policy who-can" adm adm policy who-can get pods -n work
+verb works "policy who-can" adm adm policy who-can get pods -n work
+check "who-can lists system:masters" bash -c "KUBECONFIG=$W/kc-admin timeout 60 $OC --cache-dir $W/cache-admin --server $API --insecure-skip-tls-verify --token $ADMIN adm policy who-can get pods -n work | grep -q system:masters"
 verb works "policy add-role-to-user" adm adm policy add-role-to-user edit alice -n work
 check "alice can now list pods in work" as "$ALICE" alice get pods -n work
 verb works "policy add-role-to-group" adm adm policy add-role-to-group view devs -n work
@@ -127,9 +128,9 @@ verb works "certificate deny" adm adm certificate deny csr-no
 check "csr-no is Denied" test "$(adm get csr csr-no -o jsonpath='{.status.conditions[0].type}')" = Denied
 
 # --- projects and groups ------------------------------------------------------
-# Creates the project and the binding, then fails its own post-check, an
-# authorization.openshift.io SubjectAccessReview (#106).
-verb missing "new-project (post-check)" adm adm new-project team --admin=alice --display-name=Team
+# Its post-check is an authorization.openshift.io SubjectAccessReview of
+# `get projects` (no group) as alice (#106).
+verb works "new-project" adm adm new-project team --admin=alice --display-name=Team
 check "team: alice is its admin" as "$ALICE" alice get project team
 for t in create-bootstrap-project-template create-login-template create-error-template create-provider-selection-template; do
   verb works "$t" adm adm $t

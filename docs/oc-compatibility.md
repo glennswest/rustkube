@@ -15,9 +15,9 @@ State on 2026-09-26, from the code and from running oc against it
   routes, #70); `oc auth can-i --list`; `oc events`; `oc adm` node
   lifecycle, `policy` role verbs, `certificate` — see the `oc adm` checklist
   below (#69).
-- **not** `oc policy who-can`: it needs OpenShift's
-  `authorization.openshift.io` reviews, not the k8s SubjectAccessReview
-  (#106).
+- `oc policy who-can` / `oc adm policy who-can` and `oc adm new-project`:
+  OpenShift's `authorization.openshift.io` reviews are served (#106,
+  2026-10-07).
 - proxied by the apiserver but not answered by the kubelet: `oc exec`,
   `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` (#42 here,
   rustkube-node#56 there).
@@ -31,8 +31,7 @@ State on 2026-09-26, from the code and from running oc against it
 
 This is the upstream command surface, not a list of implemented features.
 The checklist below records tested API obligations. As of 2026-09-29,
-aggregated discovery (#107), node proxy (#108), OpenShift
-reviews (#106), and kubelet streaming (rustkube-node#56) remain gaps. CSR
+aggregated discovery (#107), node proxy (#108) and kubelet streaming (rustkube-node#56) remain gaps. CSR
 approval PATCH exists (6d0ed10); actual signing requires controller-manager
 cluster-signing files. README and conformance.md describe current behavior.
 
@@ -185,9 +184,9 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `policy add-/remove-cluster-role-to/from-user/-group` | ✅ | ClusterRoleBindings |
 | `create-bootstrap-project-template`, `create-login-template`, `create-error-template`, `create-provider-selection-template` | ✅ | client-side only: print a template |
 | `policy add-scc-to-user/-group` | ⚪ inert | binds ClusterRole `system:openshift:scc:<name>`; there are no SCCs and no SCC admission (#70) |
-| `new-project` | 🟡 | the project and its admin binding are made; its post-check, an `authorization.openshift.io` SubjectAccessReview, fails, so it exits 1 (#106). `oc new-project` works |
+| `new-project` | ✅ | the project, its admin binding, and the post-check (an `authorization.openshift.io` SubjectAccessReview of `get projects`, #106) |
 | `inspect` | 🟡 | writes the data, then exits 1: `/apis` serves no aggregated discovery (#107) |
-| `policy who-can` | 🔴 | `authorization.openshift.io` LocalResourceAccessReview (#106) |
+| `policy who-can` | ✅ | `authorization.openshift.io` (Local)ResourceAccessReview: the users and groups of every binding whose role permits it (#106) |
 | `policy scc-review`, `scc-subject-review` | 🔴 | `security.openshift.io` (#70) |
 | `node-logs` | 🔴 | `nodes/{name}/proxy` (#108), then the kubelet's `/logs/` |
 | `top node`, `top pod` | 🟡 | `metrics.k8s.io` served from cadvisor (#89): nodes work; pods need cadvisor to label stormpump containers (cadvisor#3) |

@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** `authorization.openshift.io/v1` reviews are served (#106): `subjectaccessreviews`, `namespaces/{ns}/localsubjectaccessreviews`, `resourceaccessreviews` and `namespaces/{ns}/localresourceaccessreviews`, create only, in `/apis` and discovery, governed by ordinary RBAC.
+  - **SubjectAccessReview:** the OpenShift body (`verb`, `resource`, `resourceAPIGroup`, `resourceName`, `namespace`, `user`/`groups`, or the caller when neither is set; `isNonResourceURL`/`path`) is answered by `RbacEngine` as `SubjectAccessReviewResponse`.
+  - **ResourceAccessReview:** answered as `ResourceAccessReviewResponse` with `users` and `groups` from the new `RbacEngine::who_can`: the subjects of every ClusterRoleBinding, and every RoleBinding in the namespace, whose role permits the request (ServiceAccounts as `system:serviceaccount:…`), plus `system:masters`. `evalutionError` is spelled as OpenShift's API spells it.
+  - OpenShift kinds asked about in the legacy empty group (`projects`, `routes`, …) are answered for their own group too, as `oc adm new-project`'s check asks.
+  - `oc adm policy who-can` and `oc adm new-project` work.
+- **test:** request-mapping unit. `test/e2e/oc-adm.sh` flips `policy who-can` and `new-project` to `works` and checks who-can's output.
 - **feat:** The scheduler preempts (#84), as upstream's DefaultPreemption. `preemption.rs` was rewritten on the scheduler's own filters and cluster state, and is called when a Pod fits on no node.
   - **Choice:** a candidate node is one where removing all lower-priority Pods (not already terminating) lets the Pod pass every filter, storage included. Victims are reprieved while the Pod still fits: PodDisruptionBudget-protected first, highest priority first. The node with the fewest budget violations, then the lowest highest-victim priority, priority sum and victim count wins. `preemptionPolicy: Never` preempts nothing.
   - **Action:** the Pod gets `status.nominatedNodeName`, and the victims are evicted through the Eviction API (a budget can still refuse), each with a `Preempted` Event. The Pod binds once they are gone, and the bind clears `nominatedNodeName`.

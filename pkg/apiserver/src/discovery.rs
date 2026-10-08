@@ -192,6 +192,13 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "admissionregistration.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            // OpenShift's access reviews (#106): what `oc adm policy who-can`
+            // and `oc adm new-project` ask.
+            "name": "authorization.openshift.io",
+            "versions": [{"groupVersion": "authorization.openshift.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "authorization.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             "name": "node.k8s.io",
             "versions": [{"groupVersion": "node.k8s.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "node.k8s.io/v1", "version": "v1"}
@@ -686,6 +693,7 @@ pub async fn advertised(group: &str, version: &str) -> Option<&'static std::coll
         gv!("project.openshift.io", "v1", api_project_v1_resources());
         gv!("admissionregistration.k8s.io", "v1", api_admissionregistration_v1_resources());
         gv!("node.k8s.io", "v1", api_node_v1_resources());
+        gv!("authorization.openshift.io", "v1", api_openshift_authorization_v1_resources());
         gv!("flowcontrol.apiserver.k8s.io", "v1", api_flowcontrol_v1_resources());
         gv!("gateway.networking.k8s.io", "v1", api_gateway_v1_resources());
         gv!("apiregistration.k8s.io", "v1", api_apiregistration_v1_resources());
@@ -1568,6 +1576,23 @@ pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/authorization.openshift.io/v1 — OpenShift's access reviews (#106).
+pub async fn api_openshift_authorization_v1_resources() -> impl IntoResponse {
+    let r = |name: &str, kind: &str, namespaced: bool| json!({
+        "name": name, "singularName": "", "namespaced": namespaced, "kind": kind, "verbs": ["create"]
+    });
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "authorization.openshift.io/v1",
+        "resources": [
+            r("subjectaccessreviews", "SubjectAccessReview", false),
+            r("localsubjectaccessreviews", "LocalSubjectAccessReview", true),
+            r("resourceaccessreviews", "ResourceAccessReview", false),
+            r("localresourceaccessreviews", "LocalResourceAccessReview", true),
+        ]
+    }))
+}
+
 /// GET /apis/node.k8s.io/v1 — RuntimeClass (#135).
 pub async fn api_node_v1_resources() -> impl IntoResponse {
     Json(json!({
@@ -1773,6 +1798,7 @@ mod tests {
             "admissionregistration.k8s.io",
             "flowcontrol.apiserver.k8s.io",
             "node.k8s.io",
+            "authorization.openshift.io",
             "gateway.networking.k8s.io",
             "route.openshift.io",
             "project.openshift.io",

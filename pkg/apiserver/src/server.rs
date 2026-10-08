@@ -470,6 +470,24 @@ fn build_router(
             )
             .layer(axum::middleware::from_fn(crate::table::refuse_table)),
         )
+        // authorization.openshift.io/v1 reviews: who-can, new-project (#106)
+        .route("/apis/authorization.openshift.io/v1", get(discovery::api_openshift_authorization_v1_resources))
+        .route(
+            "/apis/authorization.openshift.io/v1/subjectaccessreviews",
+            axum::routing::post(crate::handlers::openshift_authorization::subject_access_review),
+        )
+        .route(
+            "/apis/authorization.openshift.io/v1/namespaces/{namespace}/localsubjectaccessreviews",
+            axum::routing::post(crate::handlers::openshift_authorization::local_subject_access_review),
+        )
+        .route(
+            "/apis/authorization.openshift.io/v1/resourceaccessreviews",
+            axum::routing::post(crate::handlers::openshift_authorization::resource_access_review),
+        )
+        .route(
+            "/apis/authorization.openshift.io/v1/namespaces/{namespace}/localresourceaccessreviews",
+            axum::routing::post(crate::handlers::openshift_authorization::local_resource_access_review),
+        )
         // subresources.kubevirt.io — the console doors `virtctl` resolves
         // through (#61). Not CRD subresources: a CRD gets `/status` and
         // `/scale`, and these are a WebSocket proxied to the node running the

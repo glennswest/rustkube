@@ -7,6 +7,7 @@
 //! `server.rs`.
 
 pub mod authorization;
+pub mod openshift_authorization;
 pub mod hpa_v1;
 pub mod kubevirt;
 pub mod logs;
