@@ -348,12 +348,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### VMI verbs pause/unpause/softreboot/freeze/unfreeze (#141, P2) — WRITTEN 2026-10-07
+### VMI verbs pause/unpause/softreboot/freeze/unfreeze (#141, P2) — BUILT 2026-10-07
 - [x] `kubevirt::vmi_verb` → kubelet `/vmVerb` (rustkube-node#94), routes,
       discovery, edit role; unit; `test/e2e/vmi-verbs.sh` (rigs, stub
       kubelet); README/CHANGELOG
-- [ ] Build VM; golden; rig (stormcentral#512); then on a node with
-      rustkube-node#94: `virtctl pause vmi` (stormvm#42's medium suite)
+- [x] Build VM at 0cf5acd: 596 passed / 4 ignored (apiserver 298);
+      golden-rustkube-2ac2b650df54 (stormcos#366); rustkube-node#94 closed
+- [ ] vmi-verbs rig (stormcentral#512); close. On a node: stormvm#42's
+      medium suite can use the verbs once both goldens are released
 
 ### ReplicationController controller (#125, P2) — BUILT 2026-10-07
 - [x] `replicaset::Kind` (RS / RC), RC instance in runner; fullyLabeledReplicas;
