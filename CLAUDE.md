@@ -348,11 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### Aggregated discovery (#107, P3) — WRITTEN 2026-10-07
+### Aggregated discovery (#107, P3) — BUILT 2026-10-07
 - [x] `wants_aggregated`, `to_v2_resources`, `aggregated` on `/api` + `/apis`
       from `builtin_lists` (now also events/metrics) + CRD registry; aggregated
       APIs Stale; units; oc-adm.sh `inspect` → works + curl checks; docs
-- [ ] Build VM; golden; rig (oc-adm, stormcentral#512)
+- [x] Build VM at 5215b7f: 604 passed / 4 ignored (apiserver 307);
+      golden-rustkube-b15d23ed5f76 (stormcos#366)
+- [ ] oc-adm rig (stormcentral#512); close
 
 ### authorization.openshift.io reviews (#106, P3) — BUILT 2026-10-07
 - [x] `RbacEngine::who_can`; `handlers/openshift_authorization.rs` (SAR,
