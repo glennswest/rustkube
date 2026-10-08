@@ -348,12 +348,15 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### nodes/{name}/proxy (#108, P3) — WRITTEN 2026-10-08
+### nodes/{name}/proxy (#108, P3) — BUILT 2026-10-08
 - [x] `handlers/node_proxy.rs` (every method → kubelet :10250, apiserver
       token, status/content type/body streamed), RBAC path arm
       (`nodes/proxy`), discovery; units; `test/e2e/node-proxy.sh` (stub
       kubelet); docs. Kubelet `/logs/` filed rustkube-node#198
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at 76f125d: 607 passed / 4 ignored (apiserver 309);
+      golden-rustkube-ac7748374265 (stormcos#366)
+- [ ] node-proxy rig (stormcentral#512); close (node-logs itself needs
+      rustkube-node#198)
 
 ### Remove the GitHub workflow (#114) — COMPLETE 2026-10-08
 - [x] `.github/workflows/images.yml` removed (458f598); Actions confirmed
