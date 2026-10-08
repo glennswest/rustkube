@@ -354,7 +354,9 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       / CRD on_update; Service claims released on a failed create; node
       ports carried by port name (upstream; fixes #132's matching); Service
       defaults on updates; `test/e2e/manifest-admission.sh`; docs
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [ ] Build VM: not built yet — build VMs drained for the 11.95 retest on
+      pvetest1 (owner: builds off during the test; sc-build gave up after
+      an hour, 2026-10-07). Then golden; rig (stormcentral#512)
 
 ### VMI verbs pause/unpause/softreboot/freeze/unfreeze (#141, P2) — BUILT 2026-10-07
 - [x] `kubevirt::vmi_verb` → kubelet `/vmVerb` (rustkube-node#94), routes,
