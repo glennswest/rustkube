@@ -1419,7 +1419,9 @@ Continue live acceptance in #147/#149; do not claim those gates passed.
 - [x] In-kubelet `stormblock` class: `stormblock.rs` writes the PV once the
       scheduler picks a node (#71, v0.13.0–v0.14.1)
 - [x] `stormblock.rs` checks the class's provisioner (#92, 2026-10-08):
-      `stormblock.storm.io` (or `/in-kubelet`); StorageClass feed wakes claims
+      `stormblock.storm.io` (or `/in-kubelet`); StorageClass feed wakes claims.
+      Built fe60e97 (608 passed); golden-rustkube-d638c9a6eb55. Rig
+      stormblock-class waits for stormcentral#512
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
   sbregistry and stormblock-csi. rustkube creates no volume bytes itself.
 
