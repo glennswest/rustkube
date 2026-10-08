@@ -348,6 +348,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### RuntimeClass (#135, P3) — WRITTEN 2026-10-07
+- [x] node.k8s.io/v1 served; `builtin_admission::runtime_class`; scheduler
+      `pod_requests` + overhead; units; `test/e2e/runtime-class.sh`; docs
+- [ ] Build VM (when builds are back on); golden; rig (stormcentral#512)
+
 ### CRD schemas in /openapi (#120, P2) — WRITTEN 2026-10-07
 - [x] `openapi_crd.rs` (v2 definitions, v3 index + documents), handlers take
       state; `CrdRegistry::all_versions`; register drops stale versions;

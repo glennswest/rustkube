@@ -82,6 +82,9 @@ pub async fn admit_create(
         }
         default_toleration_seconds(obj);
         priority_from_class(storage, obj).await;
+        // RuntimeClass (#135): the class must exist; its overhead and
+        // scheduling constraints become the Pod's.
+        runtime_class(storage, obj).await?;
         pod_sysctls(obj)?;
         // The API's defaulting, then LimitRanger (#131) — before the QoS
         // class, which reads the resources they set.
@@ -546,6 +549,86 @@ fn pod_sysctls(obj: &Value) -> Result<(), ApiError> {
     } else {
         Err(ApiError::invalid(&errors.join(", ")))
     }
+}
+
+/// RuntimeClass admission (#135), as upstream's plugin: a Pod naming a
+/// RuntimeClass that does not exist is refused (403). The class's
+/// `overhead.podFixed` becomes the Pod's `spec.overhead`; a Pod carrying a
+/// different overhead, or any overhead without a class that defines one, is
+/// refused. The class's `scheduling.nodeSelector` is merged into the Pod's
+/// (a conflicting value is refused) and its `scheduling.tolerations` added.
+async fn runtime_class(storage: &ResourceStorage, pod: &mut Value) -> Result<(), ApiError> {
+    let name = pod["metadata"]["name"].as_str().unwrap_or("").to_string();
+    let forbidden = |why: String| ApiError::forbidden(&format!("pods \"{name}\" is forbidden: pod rejected: {why}"));
+    let class = match pod["spec"]["runtimeClassName"].as_str().filter(|n| !n.is_empty()) {
+        Some(rc) => match storage.get(&ResourceStorage::cluster_key("runtimeclasses", rc)).await {
+            Ok(c) => Some(c),
+            Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => {
+                return Err(forbidden(format!("RuntimeClass \"{rc}\" not found")));
+            }
+            Err(e) => return Err(e),
+        },
+        None => None,
+    };
+    apply_runtime_class(pod, class.as_ref()).map_err(forbidden)
+}
+
+/// The pure half of [`runtime_class`]: `Err` is the reason for a 403.
+fn apply_runtime_class(pod: &mut Value, class: Option<&Value>) -> Result<(), String> {
+    let fixed = class.map(|c| &c["overhead"]["podFixed"]).filter(|o| o.is_object());
+    let has_overhead = pod["spec"]["overhead"].as_object().is_some_and(|o| !o.is_empty());
+    match fixed {
+        Some(f) => {
+            if has_overhead && !overhead_equal(&pod["spec"]["overhead"], f) {
+                return Err("Pod's Overhead doesn't match RuntimeClass's defined Overhead".into());
+            }
+            pod["spec"]["overhead"] = f.clone();
+        }
+        None if has_overhead => {
+            return Err("Pod Overhead set without corresponding RuntimeClass defined Overhead".into());
+        }
+        None => {}
+    }
+    let Some(class) = class else { return Ok(()) };
+    if let Some(sel) = class["scheduling"]["nodeSelector"].as_object() {
+        if !pod["spec"]["nodeSelector"].is_object() {
+            pod["spec"]["nodeSelector"] = json!({});
+        }
+        for (k, v) in sel {
+            match pod["spec"]["nodeSelector"].get(k) {
+                Some(existing) if existing != v => {
+                    return Err(format!(
+                        "conflict: runtimeClass.scheduling.nodeSelector[{k}] = {}; pod.spec.nodeSelector[{k}] = {}",
+                        v.as_str().unwrap_or(""),
+                        existing.as_str().unwrap_or("")
+                    ));
+                }
+                _ => pod["spec"]["nodeSelector"][k] = v.clone(),
+            }
+        }
+    }
+    if let Some(tols) = class["scheduling"]["tolerations"].as_array() {
+        if !pod["spec"]["tolerations"].is_array() {
+            pod["spec"]["tolerations"] = json!([]);
+        }
+        let list = pod["spec"]["tolerations"].as_array_mut().unwrap();
+        for t in tols {
+            if !list.contains(t) {
+                list.push(t.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Two resource lists with the same quantities, whatever their spelling.
+fn overhead_equal(a: &Value, b: &Value) -> bool {
+    let (Some(a), Some(b)) = (a.as_object(), b.as_object()) else { return false };
+    let amount = |k: &str, v: &Value| {
+        let s = v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+        if k == "cpu" { apimachinery::quantity::parse_cpu_millis(&s) } else { apimachinery::quantity::parse_bytes(&s) }
+    };
+    a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| amount(k, v) == amount(k, w)))
 }
 
 /// A ReplicationController's defaults, as upstream's (#125): `replicas` 1,
@@ -1026,6 +1109,32 @@ mod validation_tests {
             .message;
         assert!(msg.contains(r#"Invalid value: "foo-""#) && msg.contains(r#"Invalid value: "bar..""#), "{msg}");
         assert!(!msg.contains("safe-and-unsafe") && !msg.contains("kernel.shmmax"), "{msg}");
+    }
+
+    #[test]
+    fn runtime_class_overhead_and_scheduling() {
+        let class = json!({"overhead": {"podFixed": {"cpu": "250m", "memory": "120Mi"}},
+            "scheduling": {"nodeSelector": {"sandbox": "true"}, "tolerations": [{"key": "sandbox", "operator": "Exists"}]}});
+        let mut pod = json!({"spec": {"runtimeClassName": "kata", "nodeSelector": {"zone": "a"}, "containers": []}});
+        super::apply_runtime_class(&mut pod, Some(&class)).unwrap();
+        assert_eq!(pod["spec"]["overhead"], json!({"cpu": "250m", "memory": "120Mi"}));
+        assert_eq!(pod["spec"]["nodeSelector"], json!({"zone": "a", "sandbox": "true"}));
+        assert_eq!(pod["spec"]["tolerations"], json!([{"key": "sandbox", "operator": "Exists"}]));
+        // The same overhead, spelled differently, is accepted; a different one is not.
+        let mut same = json!({"spec": {"overhead": {"cpu": "0.25", "memory": "120Mi"}}});
+        assert!(super::apply_runtime_class(&mut same, Some(&class)).is_ok());
+        let mut other = json!({"spec": {"overhead": {"cpu": "1"}}});
+        assert_eq!(super::apply_runtime_class(&mut other, Some(&class)).unwrap_err(),
+                   "Pod's Overhead doesn't match RuntimeClass's defined Overhead");
+        let mut stray = json!({"spec": {"overhead": {"cpu": "1"}}});
+        assert!(super::apply_runtime_class(&mut stray, None).unwrap_err().contains("without corresponding RuntimeClass"));
+        let mut clash = json!({"spec": {"nodeSelector": {"sandbox": "false"}}});
+        assert!(super::apply_runtime_class(&mut clash, Some(&class)).unwrap_err()
+            .contains("conflict: runtimeClass.scheduling.nodeSelector[sandbox] = true; pod.spec.nodeSelector[sandbox] = false"));
+        // A class without overhead or scheduling changes nothing.
+        let mut plain = json!({"spec": {"runtimeClassName": "runc"}});
+        super::apply_runtime_class(&mut plain, Some(&json!({"handler": "runc"}))).unwrap();
+        assert_eq!(plain, json!({"spec": {"runtimeClassName": "runc"}}));
     }
 
     #[test]

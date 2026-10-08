@@ -3,6 +3,11 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** RuntimeClass (#135). `node.k8s.io/v1` `runtimeclasses` is served: cluster-scoped, generic handlers, `/apis`, discovery, apply table, protobuf (the schema was already vendored).
+  - **Admission:** a Pod with `runtimeClassName` is admitted against its class, as upstream's plugin. A missing class is 403 `pod rejected: RuntimeClass "x" not found`. The class's `overhead.podFixed` becomes `spec.overhead`; a different overhead, or overhead without a class that defines one, is 403. The class's `scheduling.nodeSelector` is merged (a conflicting value is 403) and its tolerations added.
+  - **Scheduler:** `spec.overhead` is added to a Pod's requests in resource fit and node accounting.
+  - Whether the kubelet runs the class's `handler` is rustkube-node's.
+- **test:** admission unit (overhead, equal spellings, mismatches, scheduling merge, conflict); scheduler unit (overhead added). New `test/e2e/runtime-class.sh` (suite `rigs`).
 - **feat:** CRD schemas are published in `/openapi/v2` and `/openapi/v3` (#120, `openapi_crd.rs`), built from the CRD registry on each request.
   - **Shape:** every served version of every CRD becomes a definition `{reversed group}.{version}.{Kind}`: its `openAPIV3Schema` (or an object keeping unknown fields when it has none), with `apiVersion`, `kind` and `metadata` properties (upstream's descriptions) and `x-kubernetes-group-version-kind`.
   - **v2** drops what Swagger 2.0 cannot express (`nullable`, `oneOf`, `anyOf`, `not`, the `type` of an int-or-string).

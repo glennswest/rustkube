@@ -233,6 +233,11 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/runtime-class.sh` (#135, suite `rigs`): RuntimeClass API operations,
+admission (missing/deleted class 403, overhead and scheduling from the
+class, mismatched or classless overhead 403), and the scheduler counting
+overhead on a 1-CPU stand-in node.
+
 `e2e/crd-openapi.sh` (#120, suite `rigs`): CRD schemas in `/openapi/v2`
 (the conformance equality check) and `/openapi/v3`, a schema-less CRD,
 `kubectl explain`, a renamed and an unserved version, a deleted CRD.

@@ -33,7 +33,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | `policy/v1` — PodDisruptionBudget, Eviction | core | ✅ | `eviction.rs` (429 when blocked), `pdb.rs` (v0.7.18, #7). Not: 500 on multiple matching PDBs, `unhealthyPodEvictionPolicy`, `disruptedPods` |
 | `storage.k8s.io/v1` — StorageClass, CSIDriver, CSINode, VolumeAttachment, CSIStorageCapacity, VolumeAttributesClass | core | ✅ | v0.7.11 (#24); see [storage.md](storage.md) |
 | `scheduling.k8s.io/v1` — PriorityClass | core | ✅ | served, in `/apis`, and resolved at pod admission (#85) |
-| `node.k8s.io/v1` — RuntimeClass | optional | 🔴 | #135 |
+| `node.k8s.io/v1` — RuntimeClass | optional | 🟡 | served; RuntimeClass admission (missing class 403, overhead, scheduling merge) and overhead in the scheduler's fit (#135); whether the kubelet honours `handler` is rustkube-node's |
 | `certificates.k8s.io/v1` — CSR | core | ✅ | with `/approval` and `/status`; `csr.rs` approves and signs |
 | `events.k8s.io/v1` — Event | optional | ✅ | translated to/from stored core/v1 (v0.7.34, #48) |
 | `flowcontrol.apiserver.k8s.io/v1` (APF) | optional | 🟡 | FlowSchema/PriorityLevelConfiguration served with `/status`, mandatory `exempt`/`catch-all` bootstrapped (#118); nothing classifies or queues requests, no `X-Kubernetes-PF-*` headers |

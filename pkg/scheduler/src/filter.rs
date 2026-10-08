@@ -253,7 +253,19 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: NodeUsage) -> FilterResu
 /// This is the only definition. Resource fit, the per-node accounting and
 /// preemption all read requests through it, because three copies of the rule
 /// drifted apart once already (#73).
+///
+/// Plus `spec.overhead`, what the Pod's RuntimeClass costs beyond its
+/// containers (#135), as upstream adds it.
 pub fn pod_requests(pod: &Value) -> (u64, u64) {
+    let (cpu, mem) = requests_without_overhead(pod);
+    let o = &pod["spec"]["overhead"];
+    (
+        cpu + o["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0),
+        mem + o["memory"].as_str().map(parse_memory_bytes).unwrap_or(0),
+    )
+}
+
+fn requests_without_overhead(pod: &Value) -> (u64, u64) {
     // Pod-level requests win outright when present.
     //
     // `spec.resources` on the pod (beta-on since v1.34) is the pod's total, and
@@ -465,6 +477,13 @@ mod tests {
             resource_fit_filter(&small, &full_node(), NodeUsage::default()),
             FilterResult::Pass
         ));
+    }
+
+    #[test]
+    fn overhead_is_added_to_the_requests() {
+        let pod = json!({"spec": {"overhead": {"cpu": "250m", "memory": "120Mi"},
+            "containers": [{"name": "app", "resources": {"requests": {"cpu": "100m", "memory": "8Mi"}}}]}});
+        assert_eq!(pod_requests(&pod), (350, 128 * 1024 * 1024));
     }
 
     #[test]

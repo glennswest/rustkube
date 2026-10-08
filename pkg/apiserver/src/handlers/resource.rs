@@ -2165,6 +2165,7 @@ fn resource_to_list_kind(resource: &str) -> String {
         "ingressclasses" => "IngressClass",
         "servicecidrs" => "ServiceCIDR",
         "flowschemas" => "FlowSchema",
+        "runtimeclasses" => "RuntimeClass",
         "prioritylevelconfigurations" => "PriorityLevelConfiguration",
         "ipaddresses" => "IPAddress",
         "mutatingwebhookconfigurations" => "MutatingWebhookConfiguration",
@@ -2223,6 +2224,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         }
         "priorityclasses" => "scheduling.k8s.io/v1",
         "flowschemas" | "prioritylevelconfigurations" => "flowcontrol.apiserver.k8s.io/v1",
+        "runtimeclasses" => "node.k8s.io/v1",
         "poddisruptionbudgets" => "policy/v1",
         "deviceclasses" | "resourceclaims" | "resourceclaimtemplates" | "resourceslices" => {
             "resource.k8s.io/v1"

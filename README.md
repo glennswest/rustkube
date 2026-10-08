@@ -98,6 +98,10 @@ to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 configurations, called on writes, below; Validating/MutatingAdmissionPolicy
 and their bindings stored and served with `/status`, but **not evaluated** —
 a create says so in a `Warning`; #119, #234),
+`node.k8s.io/v1` (RuntimeClass, #135; a Pod naming one is admitted against it —
+missing class 403, `overhead.podFixed` into `spec.overhead` (a different or
+classless overhead 403), the class's `scheduling` nodeSelector and tolerations
+merged — and the scheduler counts `spec.overhead` in resource fit),
 `flowcontrol.apiserver.k8s.io/v1` (FlowSchema and PriorityLevelConfiguration
 with `/status`, upstream's mandatory `exempt`/`catch-all` objects created at
 boot; stored and served, **not enforced** — no request is queued or

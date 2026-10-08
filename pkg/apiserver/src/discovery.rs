@@ -192,6 +192,11 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "admissionregistration.k8s.io/v1", "version": "v1"}
         }),
         json!({
+            "name": "node.k8s.io",
+            "versions": [{"groupVersion": "node.k8s.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "node.k8s.io/v1", "version": "v1"}
+        }),
+        json!({
             // API Priority and Fairness objects (#118): served and stored,
             // not enforced — every request is admitted as before.
             "name": "flowcontrol.apiserver.k8s.io",
@@ -824,6 +829,7 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
             ("mutatingadmissionpolicies", "MutatingAdmissionPolicy", false),
             ("mutatingadmissionpolicybindings", "MutatingAdmissionPolicyBinding", false),
         ],
+        ("node.k8s.io", "v1") => vec![("runtimeclasses", "RuntimeClass", false)],
         ("flowcontrol.apiserver.k8s.io", "v1") => vec![
             ("flowschemas", "FlowSchema", false),
             ("prioritylevelconfigurations", "PriorityLevelConfiguration", false),
@@ -1509,6 +1515,18 @@ pub async fn api_admissionregistration_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/node.k8s.io/v1 — RuntimeClass (#135).
+pub async fn api_node_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "groupVersion": "node.k8s.io/v1",
+        "resources": [{
+            "name": "runtimeclasses", "singularName": "runtimeclass", "namespaced": false, "kind": "RuntimeClass",
+            "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+        }]
+    }))
+}
+
 /// GET /apis/flowcontrol.apiserver.k8s.io/v1 — API Priority and Fairness
 /// objects (#118). Stored and served; nothing enforces them.
 pub async fn api_flowcontrol_v1_resources() -> impl IntoResponse {
@@ -1676,6 +1694,7 @@ mod tests {
             "networking.k8s.io",
             "admissionregistration.k8s.io",
             "flowcontrol.apiserver.k8s.io",
+            "node.k8s.io",
             "gateway.networking.k8s.io",
             "route.openshift.io",
             "project.openshift.io",

@@ -746,6 +746,21 @@ fn build_router(
                 .put(resource::update_cluster_status)
                 .merge(patch(resource::patch_cluster_status)),
         )
+        // node.k8s.io/v1 RuntimeClass (#135)
+        .route("/apis/node.k8s.io/v1", get(discovery::api_node_v1_resources))
+        .route(
+            "/apis/node.k8s.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/node.k8s.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
+        )
         // flowcontrol.apiserver.k8s.io/v1 (#118)
         .route(
             "/apis/flowcontrol.apiserver.k8s.io/v1",

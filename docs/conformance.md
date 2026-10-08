@@ -145,7 +145,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 11 | ReplicationController: no controller — #125 | implemented 2026-10-07 (controller, `/scale`, defaults); not rerun — the specs that wait for Running/Ready Pods need a kubelet |
 | 9 | CRD schemas not in `/openapi` — #120 | implemented 2026-10-07 (v2 definitions, v3 documents, stale versions dropped); not rerun |
 | 8 | Validating/MutatingAdmissionPolicy — #119 (three hang to the suite timeout) | the four API-operations specs: served since 2026-10-07 (not rerun); the evaluation specs (which hang) are #234 |
-| 5 | RuntimeClass — #135 | not implemented |
+| 5 | RuntimeClass — #135 | implemented 2026-10-07 (API, admission, scheduler overhead); not rerun — the Pod-runs specs need a kubelet |
 | 4 | aggregated discovery — #107 | not implemented |
 | 4 | custom resource defaulting/pruning/fieldValidation — #121 | implemented after this run (watch events are not defaulted) |
 | 4 | NodePort allocation, ClusterIP on type change — #132 | implemented 2026-10-07; not rerun (the functioning-NodePort spec also needs a node to reach it) |
