@@ -53,10 +53,17 @@ sc-build 'NO_IMAGES=1 deploy/build-release.sh'   # binaries and tarballs only
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TARGETS` | `$(uname -m)-unknown-linux-musl` | comma-separated targets; non-native uses `cross` |
+| `TARGETS` | `$(uname -m)-unknown-linux-musl` | comma-separated targets; non-native uses `cross` if installed, else (aarch64) clang + the GNU cross gcc, and an aarch64 binary must start under `qemu-aarch64-static` (#68) |
 | `OUT` | `$TMPDIR/rustkube-release/v<version>` (`tmp/…` in the checkout without `TMPDIR`) | output directory, on the job's private volume |
 | `CARGO_TARGET_DIR` | cargo's default, or what the job sets | build output directory |
 | `NO_IMAGES` | unset | any nonempty value skips image creation |
+
+ARM64 (#68): `sc-build 'TARGETS=x86_64-unknown-linux-musl,aarch64-unknown-linux-musl deploy/build-release.sh'`
+builds both on a build VM. At 8e82cca the aarch64 release binaries were
+kube-apiserver 16M, kube-controller-manager 11M, kube-scheduler 8.7M (x86_64:
+17M, 12M, 9.4M), static, starting under qemu, with arm64 `FROM scratch`
+images. No ARM64 golden is built (the component golden is x86_64), and no
+image is published, so there is no multi-arch manifest to make.
 
 Everything it writes lives on the job's private volume and is deleted with
 it: the script **checks** that a commit builds into static binaries, tarballs

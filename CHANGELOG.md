@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-08
+- **build:** ARM64 builds (#68). `deploy/build-release.sh` builds `aarch64-unknown-linux-musl` without `cross`: clang (`--target=aarch64-unknown-linux-musl -ffreestanding`) and `llvm-ar` for `ring`'s C, linked by `aarch64-linux-gnu-gcc`, all present on the build VMs. Every aarch64 binary must start under `qemu-aarch64-static`. Verified through sc-build at 8e82cca: kube-apiserver 16M, kube-controller-manager 11M, kube-scheduler 8.7M, static, with arm64 images and tarballs. The first attempt (GNU gcc as the C compiler: no libc headers) failed as #237, closed.
 - **feat:** `nodes/{name}/proxy` is served (#108). `/api/v1/nodes/{name}/proxy[/{path}]`, every method, is passed to the node's kubelet at `https://<address>:10250/{path}`, with the query, body, `Content-Type` and `Accept`, and the apiserver's own bearer token (the kubelet's TokenReview, as for `pods/log`). The kubelet's status, content type and body are streamed back.
   - **Authorization:** as `nodes/proxy` (GET `get`, POST `create`, …); the RBAC path parser knew no such path and refused it as unrecognized. It's in `/api/v1` discovery. An unknown node is 404, a node without an address 503.
   - `kubectl get --raw /api/v1/nodes/<n>/proxy/stats/summary` works. `oc adm node-logs` also needs the kubelet's `/logs/`, filed as rustkube-node#198.

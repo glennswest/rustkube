@@ -1527,9 +1527,10 @@ results are in docs/conformance.md.
     Owner answered **Goldens**: binaries reach conform.g8.lo as the
     component's golden; run.sh/vm.sh not yet changed. efbea2d is still
     staged there.
-- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) — no CI
-      (#114, workflow removed); `build-release.sh` can target aarch64 via
-      `cross`, and no such build has been recorded
+- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) —
+      2026-10-08: aarch64 musl builds through sc-build (8e82cca: 16M/11M/8.7M,
+      static, start under qemu, arm64 images). Device RSS/startup and what
+      "minimal" means: owner's (device access), asked on #68
 
 ### `oc` compatibility — the surface that drives completeness
 
