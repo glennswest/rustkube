@@ -527,7 +527,10 @@ Deployment (rolling updates), ReplicaSet, ReplicationController (the
 ReplicaSet reconcile over core/v1, Pods owned by kind `ReplicationController`;
 create defaults selector, labels and replicas from the template; `/scale`
 served, #125), StatefulSet, DaemonSet (every
-eligible node, Ready or not; places pods itself), Job, CronJob, ResourceQuota (`status.hard` and `status.used` per quota from
+eligible node, Ready or not; places pods itself), Job, CronJob, ephemeral volumes (a Pod's generic ephemeral volume gets its
+`<pod>-<volume>` PVC from `volumeClaimTemplate`, owned by the Pod; a claim of
+that name the Pod does not own is left alone with a Warning Event, #94),
+ResourceQuota (`status.hard` and `status.used` per quota from
 its namespace's objects — Pods' compute and counts, Services, Secrets,
 ConfigMaps, PVCs and per-class storage, RCs, quotas, `count/<resource>` —
 honouring scopes; recomputed on change and every 5 minutes, #124), Service (Endpoints and EndpointSlices; for a Service with no
@@ -632,7 +635,7 @@ classes, Gateways and route entries are left alone (#91). Its Gateways are
 `Accepted` and `Programmed=False` (`Pending`) with no `status.addresses`,
 since nothing listens.
 
-It has no ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or
+It has no ServiceAccount-token, TTL-after-finished or
 node-IPAM controller. Serving a resource object does not implement its controller.
 
 ## What the scheduler does

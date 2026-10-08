@@ -149,6 +149,17 @@ on a peer (#117). With that node's credentials, the kubelet's
 `reclaim_released` deletes the clone and then the PV (rustkube-node#46). The
 control plane only reports that the node will.
 
+## Generic ephemeral volumes
+
+A Pod volume with `ephemeral.volumeClaimTemplate` gets its claim from the
+controller-manager's ephemeral-volume controller (#94), as upstream's:
+`<pod>-<volume>` in the Pod's namespace, the template's labels, annotations
+and spec, owned by the Pod (`controller: true`), so the garbage collector
+deletes it with the Pod. From there it is an ordinary claim — bound by the PV
+binder, placed by the scheduler (which looks it up by that name), mounted by
+the kubelet. A claim of that name the Pod does not own is never adopted: the
+Pod gets a Warning Event and waits.
+
 ## Volume expansion
 
 Growing a claim is three parties, and rustkube is the first (#63):

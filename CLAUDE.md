@@ -348,6 +348,12 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Ephemeral-volume controller (#94, P2) — WRITTEN 2026-10-08
+- [x] `ephemeral.rs` (pods primary, owned PVC children; create from the
+      template; foreign claim → Warning Event, never adopted); CM role
+      creates PVCs; unit; `test/e2e/ephemeral-volume.sh`; README/storage.md
+- [ ] Build VM; golden; rig (stormcentral#512)
+
 ### Aggregated discovery (#107, P3) — BUILT 2026-10-07
 - [x] `wants_aggregated`, `to_v2_resources`, `aggregated` on `/api` + `/apis`
       from `builtin_lists` (now also events/metrics) + CRD registry; aggregated
@@ -1164,7 +1170,7 @@ when each piece landed.
 - [ ] Secrets: `stringData` not folded into `data` (#101)
 - [x] PVC `status.phase` not defaulted to `Pending` on create (#102) — Pods,
       PVCs and PVs get `Pending` on create (#67)
-- [ ] No generic ephemeral-volume controller (#94)
+- [x] No generic ephemeral-volume controller (#94) — `ephemeral.rs`, 2026-10-08
 - [x] #35 closed as superseded — **owner, 2026-09-28: "tests per component,
       and only system burn or stress tests of the system in the qa."**
       rustkube's tests live in its own `test/` container, never stormcos_qa

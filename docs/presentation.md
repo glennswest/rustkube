@@ -199,8 +199,8 @@ Metric names follow upstream's: `docs/metrics.md`.
 
 Missing:
 - pod metrics on stormcos: cadvisor attributing stormpump cgroups (cadvisor#3)
-- generic ephemeral volumes (#94); expansion and snapshot API integration
-  now have upstream-sidecar tests (#63/#64), not full node acceptance
+- expansion and snapshot API integration have upstream-sidecar tests
+  (#63/#64), not full node acceptance
 - Node authorizer (#228); evaluating admission policies (CEL, #234);
   API Priority and Fairness enforcement (#118 serves the objects only)
 - validation of turbomode informers at scale and under failover (#146/#149)

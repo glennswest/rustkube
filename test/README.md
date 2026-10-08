@@ -274,6 +274,11 @@ one number, PUT keeping allocated values, immutable ClusterIP, the type
 changes (to ClusterIP frees ports, to ExternalName drops the ClusterIP, from
 ExternalName allocates), delete frees.
 
+`e2e/ephemeral-volume.sh` (#94, suite `rigs`): a Pod's generic ephemeral
+volume gets `<pod>-<volume>` from its template, owned by the Pod; a foreign
+claim of that name is left alone with a Warning Event; the claim goes with
+the Pod.
+
 `e2e/scheduler-preemption.sh` (#84, suite `rigs`): a high-priority Pod on a
 full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
 loses its nominatedNodeName; Never and equal priority preempt nothing; a

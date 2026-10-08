@@ -50,7 +50,8 @@ pub fn controller_manager_role() -> Value {
             // Informers, the garbage collector and namespace deletion.
             rule(&["*"], &["*"], &["get", "list", "watch", "patch", "update", "delete", "deletecollection"]),
             // What the controllers create, and nothing else.
-            rule(&[""], &["pods", "events", "serviceaccounts", "configmaps", "persistentvolumes", "endpoints"], &["create"]),
+            rule(&[""], &["pods", "events", "serviceaccounts", "configmaps", "persistentvolumes", "endpoints",
+                         "persistentvolumeclaims"], &["create"]),
             rule(&["apps"], &["replicasets", "controllerrevisions"], &["create"]),
             rule(&["batch"], &["jobs"], &["create"]),
             rule(&["discovery.k8s.io"], &["endpointslices"], &["create"]),
@@ -132,7 +133,7 @@ mod tests {
         let cm = controller_manager_role();
         // What the controllers do.
         for (verb, group, res) in [("create", "", "pods"), ("create", "apps", "replicasets"), ("create", "batch", "jobs"),
-            ("create", "", "persistentvolumes"), ("create", "kubevirt.io", "virtualmachineinstances"),
+            ("create", "", "persistentvolumes"), ("create", "", "persistentvolumeclaims"), ("create", "kubevirt.io", "virtualmachineinstances"),
             ("create", "coordination.k8s.io", "leases"), ("delete", "", "secrets"), ("delete", "rbac.authorization.k8s.io", "rolebindings"),
             ("list", "cilium.io", "ciliumnodes"), ("patch", "apps", "deployments"), ("update", "", "namespaces"),
             ("create", "authentication.k8s.io", "tokenreviews"), ("create", "authorization.k8s.io", "subjectaccessreviews")] {

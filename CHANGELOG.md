@@ -2,6 +2,10 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-08
+- **feat:** The ephemeral-volume controller (#94, `ephemeral.rs`), as upstream's. A Pod's generic ephemeral volume (`volumes[].ephemeral.volumeClaimTemplate`) gets PVC `<pod>-<volume>` in its namespace, with the template's labels, annotations and spec, owned by the Pod (`controller`, `blockOwnerDeletion`), so the garbage collector deletes it with the Pod. A claim of that name the Pod does not own is not adopted: the Pod gets a Warning `FailedCreate` Event ("… pod is not owner"). A Pod being deleted gets no claims. The controller-manager's bootstrap role gains `create persistentvolumeclaims`.
+- **test:** template-to-claim unit; RBAC assertion. New `test/e2e/ephemeral-volume.sh` (suite `rigs`).
+
 ### 2026-10-07
 - **feat:** Aggregated discovery (#107). When `Accept` asks for `application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList` (or `v2beta1`), `/api` and `/apis` answer one `APIGroupDiscoveryList`, with the requested media type and `Vary: Accept`. It carries every group (built-in, CRD, aggregated), each version preferred first, and each resource with `responseKind`, `scope`, verbs, short names, categories, and its subresources folded in.
   - **Source:** the same lists the legacy `/api/v1` and `/apis/<g>/<v>` documents serve (`discovery::builtin_lists`, which now includes events.k8s.io and metrics.k8s.io), plus the CRD registry, so the two views cannot disagree.

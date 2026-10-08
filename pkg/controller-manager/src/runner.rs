@@ -695,6 +695,12 @@ impl ControllerManager {
             replicaset::ReplicaSetController::new(api).run().await;
         });
 
+        // Generic ephemeral volumes' claims (#94).
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::ephemeral::EphemeralVolumeController::new(api).run().await;
+        });
+
         // ResourceQuota status (#124).
         let api = self.api.clone();
         tasks.spawn(async move {
