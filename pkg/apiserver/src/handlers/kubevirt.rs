@@ -1,7 +1,10 @@
 //! `subresources.kubevirt.io/v1` — the console doors `virtctl` reaches for,
 //! the VirtualMachine `start`/`stop`/`restart` subresources, which set
 //! `spec.running`, and `migrate`, which creates a
-//! VirtualMachineInstanceMigration (#184).
+//! VirtualMachineInstanceMigration (#184), and the VMI control verbs
+//! `pause`, `unpause`, `softreboot`, `freeze` and `unfreeze` (#141), proxied
+//! to the VMI's kubelet (`PUT /vmVerb/{ns}/{name}/{verb}`, rustkube-node#94),
+//! which hands them to stormvm's router on the node.
 //!
 //! `oc get vmi` already works, because `VirtualMachineInstance` is applied as
 //! an ordinary CRD and a CRD gets its object and `/status`. What a CRD cannot
@@ -117,6 +120,86 @@ async fn door(
         req,
     )
     .await
+}
+
+/// The VMI control verbs KubeVirt serves, as `virtctl pause/unpause/
+/// softreboot/freeze/unfreeze vmi` sends them (#141).
+pub const VMI_VERBS: [&str; 5] = ["pause", "unpause", "softreboot", "freeze", "unfreeze"];
+
+/// `PUT /apis/subresources.kubevirt.io/v1/namespaces/{ns}/virtualmachineinstances/{name}/{verb}`
+///
+/// Proxied to the kubelet on the VMI's node, which passes it to stormvm's
+/// router there (`unfreeze` is stormvm's `thaw`). The kubelet's answer is
+/// passed through: stormvm's JSON, or its 404 for a VMI it does not run.
+/// A body's `dryRun` (KubeVirt's PauseOptions/UnpauseOptions) does nothing,
+/// as upstream. A VMI on no node is 409, as virt-api answers a VMI that is
+/// not running.
+pub async fn vmi_verb(
+    State(state): State<AppState>,
+    Extension(keys): Extension<crate::auth::SigningKeys>,
+    Path((namespace, name)): Path<(String, String)>,
+    verb: &'static str,
+    query: Option<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let vmi = match state
+        .storage
+        .get(&ResourceStorage::namespaced_key(
+            &ResourceStorage::custom_resource(KUBEVIRT, "virtualmachineinstances"),
+            &namespace,
+            &name,
+        ))
+        .await
+    {
+        Ok(v) => v,
+        Err(_) => return ApiError::not_found("virtualmachineinstances.kubevirt.io", &name).into_response(),
+    };
+    let Some(node) = node_of(&vmi) else {
+        return ApiError::conflict(&format!("VirtualMachineInstance {namespace}/{name} is not running")).into_response();
+    };
+    if dry_run(&body) {
+        return ok_message(&format!("{verb} of VirtualMachineInstance {namespace}/{name} (dry run)"));
+    }
+    let Some(addr) = crate::handlers::logs::node_address(&state.storage, &node).await else {
+        return ApiError::internal(&format!("no usable address for node {node}")).into_response();
+    };
+    let q = query.filter(|q| !q.is_empty()).map(|q| format!("?{q}")).unwrap_or_default();
+    let url = format!("https://{addr}:10250/vmVerb/{namespace}/{name}/{verb}{q}");
+    // Unverified like the log proxy: the kubelet's certificate is
+    // self-signed until certificates are issued (rustkube#20).
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return ApiError::internal(&format!("cannot build kubelet client: {e}")).into_response(),
+    };
+    // The apiserver's own identity, as for logs and the console.
+    let bearer = keys
+        .create_token("system:kube-apiserver", &["system:masters".to_string()])
+        .unwrap_or_default();
+    match client.put(&url).bearer_auth(&bearer).body(body).send().await {
+        Ok(resp) => {
+            let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let ctype = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(str::to_string);
+            let bytes = resp.bytes().await.unwrap_or_default();
+            let mut out = (status, bytes).into_response();
+            if let Some(ct) = ctype.and_then(|c| axum::http::HeaderValue::from_str(&c).ok()) {
+                out.headers_mut().insert(axum::http::header::CONTENT_TYPE, ct);
+            }
+            out
+        }
+        Err(e) => ApiError::internal(&format!("reaching kubelet at {addr}: {e}")).into_response(),
+    }
+}
+
+/// Does a verb's options body ask for a dry run (`dryRun: ["All"]`)?
+fn dry_run(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|b| b["dryRun"].as_array().map(|a| !a.is_empty()))
+        .unwrap_or(false)
 }
 
 /// `PUT /apis/subresources.kubevirt.io/v1/namespaces/{ns}/virtualmachines/{name}/start`
@@ -387,6 +470,14 @@ fn node_of(vmi: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_dry_run_is_read_from_the_options_body() {
+        assert!(dry_run(br#"{"dryRun": ["All"]}"#));
+        assert!(!dry_run(br#"{"dryRun": []}"#));
+        assert!(!dry_run(b""));
+        assert!(!dry_run(br#"{"unfreezeTimeout": "5m"}"#));
+    }
 
     #[test]
     fn the_node_comes_from_status_first() {

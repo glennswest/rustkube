@@ -505,6 +505,8 @@ fn build_router(
             "/apis/subresources.kubevirt.io/v1/namespaces/{namespace}/virtualmachineinstances/{name}/migrate",
             axum::routing::put(crate::handlers::kubevirt::vmi_migrate),
         )
+        // pause, unpause, softreboot, freeze, unfreeze (#141)
+        .merge(vmi_verb_routes())
         // In-place resize (#136)
         .route(
             "/api/v1/namespaces/{namespace}/pods/{name}/resize",
@@ -1440,6 +1442,26 @@ async fn bootstrap_service_cidr(storage: &ResourceStorage, cidr: &str) {
     });
     crate::handlers::resource::ensure_metadata_pub(&mut obj, "kubernetes", None);
     create_bootstrap(storage, &ResourceStorage::cluster_key("servicecidrs", "kubernetes"), obj, "servicecidrs kubernetes").await;
+}
+
+/// The VMI control verbs, one PUT route each (#141).
+fn vmi_verb_routes() -> Router<AppState> {
+    let mut r = Router::new();
+    for verb in crate::handlers::kubevirt::VMI_VERBS {
+        r = r.route(
+            &format!("/apis/subresources.kubevirt.io/v1/namespaces/{{namespace}}/virtualmachineinstances/{{name}}/{verb}"),
+            axum::routing::put(
+                move |state: axum::extract::State<AppState>,
+                      keys: axum::extract::Extension<crate::auth::SigningKeys>,
+                      path: axum::extract::Path<(String, String)>,
+                      axum::extract::RawQuery(query): axum::extract::RawQuery,
+                      body: axum::body::Bytes| async move {
+                    crate::handlers::kubevirt::vmi_verb(state, keys, path, verb, query, body).await
+                },
+            ),
+        );
+    }
+    r
 }
 
 /// Upstream's mandatory API Priority and Fairness objects (#118): the

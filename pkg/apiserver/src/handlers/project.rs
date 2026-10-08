@@ -569,6 +569,13 @@ fn edit_rules() -> Vec<Value> {
         &["virtualmachineinstances/console", "virtualmachineinstances/vnc"],
         &["get"],
     ));
+    // The VMI control verbs (#141), as KubeVirt's own edit role grants them.
+    rules.push(rule(
+        &["subresources.kubevirt.io"],
+        &["virtualmachineinstances/pause", "virtualmachineinstances/unpause", "virtualmachineinstances/softreboot",
+          "virtualmachineinstances/freeze", "virtualmachineinstances/unfreeze"],
+        &["update"],
+    ));
     rules
 }
 
@@ -812,6 +819,7 @@ mod tests {
         assert!(allows("edit", "get", "", "secrets", None));
         assert!(allows("edit", "create", "", "pods", Some("exec")));
         assert!(allows("edit", "update", "subresources.kubevirt.io", "virtualmachines", Some("start")));
+        assert!(allows("edit", "update", "subresources.kubevirt.io", "virtualmachineinstances", Some("pause")));
         assert!(!allows("edit", "create", "rbac.authorization.k8s.io", "rolebindings", None));
         assert!(!allows("edit", "delete", "project.openshift.io", "projects", None));
 

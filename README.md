@@ -113,7 +113,11 @@ checked, and there is no conversion), `apiregistration.k8s.io/v1` (APIServices: 
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `rustkube.io/v1alpha1` (PodMigration) and
-`subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet;
+`subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet; the
+VMI verbs `pause`, `unpause`, `softreboot`, `freeze`, `unfreeze` (#141), PUT
+proxied to the kubelet's `/vmVerb` (rustkube-node#94) and stormvm, its answer
+passed through, a `dryRun` body answered without the call, 409 for a VMI on no
+node, granted by `edit`;
 `start`/`stop`/`restart`; and `migrate` on a VirtualMachine — what `virtctl
 migrate` calls — or a VirtualMachineInstance, which creates a
 VirtualMachineInstanceMigration: 404 while that CRD is not installed, 409 for

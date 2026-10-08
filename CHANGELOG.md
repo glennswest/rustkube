@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** The VMI control verbs are served (#141): `PUT /apis/subresources.kubevirt.io/v1/namespaces/{ns}/virtualmachineinstances/{name}/{pause,unpause,softreboot,freeze,unfreeze}`, what `virtctl pause/unpause/softreboot/freeze/unfreeze vmi` sends.
+  - **Path:** each is proxied to the kubelet on the VMI's node, `PUT https://<node>:10250/vmVerb/{ns}/{name}/{verb}` (rustkube-node#94), with the apiserver's bearer token and the query and body passed on. The kubelet hands it to stormvm's router. stormvm's answer comes back as is, including its 404 for a VMI it does not run.
+  - A `dryRun` options body is answered without calling the node. A VMI on no node is 409, a missing one 404.
+  - The verbs are in discovery, and the `edit` role grants them, as KubeVirt's does.
+  - Needs the rustkube-node golden carrying `/vmVerb`.
+- **test:** dry-run unit; edit-role assertion. New `test/e2e/vmi-verbs.sh` (suite `rigs`, stub kubelet).
 - **feat:** ReplicationController controller (#125). The ReplicaSet reconcile, parametrized by kind (`replicaset::Kind`), also runs over `/api/v1/replicationcontrollers`. Its Pods are owned by `v1`/`ReplicationController` (controller), carry the template's labels, and are named `<rc>-<5>`. Status (`replicas`, `fullyLabeledReplicas`, `readyReplicas`, `availableReplicas`, `observedGeneration`) is written to `replicationcontrollers/status`. ReplicaSets now report `fullyLabeledReplicas` too.
   - **Create defaults:** the selector and the object's labels come from the template's labels when left out; `replicas` defaults to 1, as upstream.
   - **Scale:** `replicationcontrollers/scale` (GET/PUT/PATCH, autoscaling/v1 Scale) is served and in discovery; a Scale's `status.selector` renders an RC's plain label map.

@@ -945,11 +945,8 @@ pub async fn api_authorization_v1_resources() -> impl IntoResponse {
 /// `migrate` on a VM (what `virtctl migrate` calls) or a bare instance,
 /// which creates a VirtualMachineInstanceMigration (#184).
 ///
-/// Still absent, deliberately rather than stubbed: `pause`, `unpause`,
-/// `freeze` and `softreboot` need a QMP client stormvm does not have
-/// (stormvm#9). Advertising a verb that answers 404 is worse for a
-/// client than not advertising it, because `virtctl` reports the VM as
-/// refusing rather than the feature as missing.
+/// And the VMI control verbs `pause`, `unpause`, `softreboot`, `freeze`,
+/// `unfreeze` (#141), proxied to the VMI's kubelet and stormvm.
 pub async fn api_kubevirt_subresources_v1_resources() -> impl IntoResponse {
     Json(json!({
         "kind": "APIResourceList",
@@ -1004,7 +1001,17 @@ pub async fn api_kubevirt_subresources_v1_resources() -> impl IntoResponse {
                 "namespaced": true,
                 "kind": "VirtualMachineInstance",
                 "verbs": ["update"]
-            }
+            },
+            {"name": "virtualmachineinstances/pause", "singularName": "", "namespaced": true,
+             "kind": "VirtualMachineInstance", "verbs": ["update"]},
+            {"name": "virtualmachineinstances/unpause", "singularName": "", "namespaced": true,
+             "kind": "VirtualMachineInstance", "verbs": ["update"]},
+            {"name": "virtualmachineinstances/softreboot", "singularName": "", "namespaced": true,
+             "kind": "VirtualMachineInstance", "verbs": ["update"]},
+            {"name": "virtualmachineinstances/freeze", "singularName": "", "namespaced": true,
+             "kind": "VirtualMachineInstance", "verbs": ["update"]},
+            {"name": "virtualmachineinstances/unfreeze", "singularName": "", "namespaced": true,
+             "kind": "VirtualMachineInstance", "verbs": ["update"]}
         ]
     }))
 }

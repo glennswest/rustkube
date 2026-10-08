@@ -233,6 +233,10 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/vmi-verbs.sh` (#141, suite `rigs`): the five VMI verbs against a stub
+kubelet on 127.0.0.1:10250 — path, bearer, query and answer passed through,
+dryRun not forwarded, 409/404 cases, `edit` allowed and `view` refused.
+
 `e2e/replication-controller.sh` (#125, suite `rigs`): defaults from the
 template, Pods owned by kind ReplicationController, status, `/scale` GET /
 PUT / PATCH, a deleted Pod replaced, orphan and background deletes.
