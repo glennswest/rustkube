@@ -348,6 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### nodes/{name}/proxy (#108, P3) — WRITTEN 2026-10-08
+- [x] `handlers/node_proxy.rs` (every method → kubelet :10250, apiserver
+      token, status/content type/body streamed), RBAC path arm
+      (`nodes/proxy`), discovery; units; `test/e2e/node-proxy.sh` (stub
+      kubelet); docs. Kubelet `/logs/` filed rustkube-node#198
+- [ ] Build VM; golden; rig (stormcentral#512)
+
 ### Remove the GitHub workflow (#114) — COMPLETE 2026-10-08
 - [x] `.github/workflows/images.yml` removed (458f598); Actions confirmed
       disabled (`actions/permissions` → enabled false); releasing.md, audit
@@ -1551,7 +1558,8 @@ Known state on 2026-09-24:
       (`test/e2e/oc-adm.sh`); the checklist is in docs/oc-compatibility.md
       (#69). Open from it: OpenShift authorization reviews for `who-can` and
       `adm new-project` (#106, served 2026-10-07), aggregated discovery for `inspect` (#107, served 2026-10-07),
-      `nodes/proxy` for `node-logs` (#108); `top` needs #83
+      `nodes/proxy` for `node-logs` (#108, served 2026-10-08; kubelet `/logs/` is
+      rustkube-node#198); `top` needs #83
 - [x] `oc scale` — `/scale` served (#86), rig `test/e2e/scale.sh`.
 - [x] Projects (#97): `project.openshift.io/v1` Project + ProjectRequest over
       Namespaces, owned by their requester (`admin` RoleBinding), listed only

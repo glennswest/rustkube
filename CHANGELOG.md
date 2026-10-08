@@ -3,6 +3,10 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-08
+- **feat:** `nodes/{name}/proxy` is served (#108). `/api/v1/nodes/{name}/proxy[/{path}]`, every method, is passed to the node's kubelet at `https://<address>:10250/{path}`, with the query, body, `Content-Type` and `Accept`, and the apiserver's own bearer token (the kubelet's TokenReview, as for `pods/log`). The kubelet's status, content type and body are streamed back.
+  - **Authorization:** as `nodes/proxy` (GET `get`, POST `create`, …); the RBAC path parser knew no such path and refused it as unrecognized. It's in `/api/v1` discovery. An unknown node is 404, a node without an address 503.
+  - `kubectl get --raw /api/v1/nodes/<n>/proxy/stats/summary` works. `oc adm node-logs` also needs the kubelet's `/logs/`, filed as rustkube-node#198.
+- **test:** path and RBAC-parse units. New `test/e2e/node-proxy.sh` (suite `rigs`, stub kubelet).
 - **chore:** `.github/workflows/images.yml` removed (#114). GitHub Actions has been disabled on the repository since the owner's 2026-09-27 decision, so the workflow could not run; builds and tests are sc-build's, delivery is the component golden. `.github/secret_scanning.yml` stays: it configures secret scanning, not CI. docs/releasing.md and the audit table no longer call the removal pending.
 - **feat:** SelfSubjectReview, "who am I" (#116): `POST /apis/authentication.k8s.io/v1/selfsubjectreviews`, in discovery. It answers `status.userInfo` with the caller's username and groups as the apiserver authenticated them, `system:authenticated` included; `kubectl auth whoami` uses it. `system:basic-user` grants it to every authenticated user, and is now reconciled at boot (not create-only), so existing clusters gain the rule.
 - **test:** unit for the response. New `test/e2e/whoami.sh` (suite `rigs`).

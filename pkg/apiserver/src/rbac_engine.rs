@@ -1035,6 +1035,15 @@ pub(crate) fn parse_path_segments(
     Option<String>,
 )> {
     match segments {
+        // /api/v1/nodes/{name}/proxy[/...] — `nodes/proxy`, whatever follows
+        // (the kubelet's path, #108).
+        ["api", "v1", "nodes", name, "proxy", ..] => Some((
+            "".into(),
+            "nodes".into(),
+            None,
+            Some(name.to_string()),
+            Some("proxy".into()),
+        )),
         // /api/v1/{resource}
         ["api", "v1", resource] => Some(("".into(), resource.to_string(), None, None, None)),
         // /api/v1/namespaces/{name} — a Namespace is read *in itself*, as
@@ -1351,6 +1360,18 @@ mod subresource_tests {
         assert_eq!(status.resource, "nodes");
         assert_eq!(status.subresource.as_deref(), Some("status"));
         assert_eq!(status.verb, "update");
+
+        // nodes/{name}/proxy/... is `nodes/proxy` on that node, however
+        // deep the kubelet path (#108).
+        let proxy = parse_authorization_request(
+            "/api/v1/nodes/n1/proxy/logs/journal",
+            &axum::http::Method::GET,
+        )
+        .expect("node proxy path must parse");
+        assert_eq!((proxy.resource.as_str(), proxy.subresource.as_deref(), proxy.name.as_deref(), proxy.verb.as_str()),
+                   ("nodes", Some("proxy"), Some("n1"), "get"));
+        let root = parse_authorization_request("/api/v1/nodes/n1/proxy", &axum::http::Method::POST).expect("proxy root");
+        assert_eq!((root.subresource.as_deref(), root.verb.as_str()), (Some("proxy"), "create"));
 
         let crd = parse_authorization_request(
             "/apis/cilium.io/v2/namespaces/default/ciliumnetworkpolicies/p/status",

@@ -531,6 +531,10 @@ fn build_router(
         )
         // pause, unpause, softreboot, freeze, unfreeze (#141)
         .merge(vmi_verb_routes())
+        // nodes/{name}/proxy → the node's kubelet (#108)
+        .route("/api/v1/nodes/{name}/proxy", axum::routing::any(crate::handlers::node_proxy::node_proxy_root))
+        .route("/api/v1/nodes/{name}/proxy/", axum::routing::any(crate::handlers::node_proxy::node_proxy_root))
+        .route("/api/v1/nodes/{name}/proxy/{*path}", axum::routing::any(crate::handlers::node_proxy::node_proxy))
         // In-place resize (#136)
         .route(
             "/api/v1/namespaces/{namespace}/pods/{name}/resize",

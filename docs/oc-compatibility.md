@@ -22,7 +22,8 @@ State on 2026-09-26, from the code and from running oc against it
   `attach`, `rsh`, `cp`, `rsync`, `port-forward`, `debug` (#42 here,
   rustkube-node#56 there).
 - not served: `oc adm top pod` (pod metrics need cadvisor#3 on stormcos; `top node`
-  works from cadvisor, #89); `oc adm node-logs` (no `nodes/{name}/proxy`, #108);
+  works from cadvisor, #89); `oc adm node-logs` (`nodes/{name}/proxy` is served, #108, but the kubelet
+  serves no `/logs/`, rustkube-node#198);
   `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
   `user.openshift.io`; SelfSubjectReview is served, #116, so `kubectl auth
   whoami` works); `clusterversion`, `dc`, `scc` (their groups are not served).
@@ -32,7 +33,8 @@ State on 2026-09-26, from the code and from running oc against it
 
 This is the upstream command surface, not a list of implemented features.
 The checklist below records tested API obligations. As of 2026-09-29,
-node proxy (#108) and kubelet streaming (rustkube-node#56) remain gaps. CSR
+the kubelet's `/logs/` (rustkube-node#198) and streaming (rustkube-node#56)
+remain gaps. CSR
 approval PATCH exists (6d0ed10); actual signing requires controller-manager
 cluster-signing files. README and conformance.md describe current behavior.
 
@@ -189,7 +191,7 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `inspect` | ✅ | `/api` and `/apis` answer aggregated discovery (#107) |
 | `policy who-can` | ✅ | `authorization.openshift.io` (Local)ResourceAccessReview: the users and groups of every binding whose role permits it (#106) |
 | `policy scc-review`, `scc-subject-review` | 🔴 | `security.openshift.io` (#70) |
-| `node-logs` | 🔴 | `nodes/{name}/proxy` (#108), then the kubelet's `/logs/` |
+| `node-logs` | 🔴 | `nodes/{name}/proxy` is served (#108); the kubelet's `/logs/` is rustkube-node#198 |
 | `top node`, `top pod` | 🟡 | `metrics.k8s.io` served from cadvisor (#89): nodes work; pods need cadvisor to label stormpump containers (cadvisor#3) |
 | `copy-to-node`, `restart-kubelet` | 🔴 | a debug pod on the node, so kubelet exec (rustkube-node#56) — not in the script |
 | `must-gather` | 🔴 | the `openshift` imagestreams, then a running pod with exec |

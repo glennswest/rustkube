@@ -79,6 +79,8 @@ check "taint: on n2" test "$(adm get node n2 -o jsonpath='{.spec.taints[0].key}'
 verb works "taint (remove)" adm adm taint node n2 dedicated-
 verb works "drain" adm adm drain n1 --force --ignore-daemonsets --delete-emptydir-data --timeout=45s
 check "drain: n1 cordoned and empty" test "$(adm get node n1 -o jsonpath='{.spec.unschedulable}')/$(adm get pods -n work -o name | wc -l)" = "true/0"
+# nodes/n1/proxy is served (#108); there is no kubelet here, and the
+# kubelet serves no /logs/ yet (rustkube-node#198).
 verb missing "node-logs" adm adm node-logs n1
 verb missing "top node" adm adm top node
 verb missing "top pod" adm adm top pod -n work

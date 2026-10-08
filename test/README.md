@@ -284,6 +284,10 @@ full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
 loses its nominatedNodeName; Never and equal priority preempt nothing; a
 PDB-protected Pod is spared for an unprotected victim.
 
+`e2e/node-proxy.sh` (#108, suite `rigs`): nodes/n1/proxy against a stub
+kubelet — path, query, bearer, POST body, 404 passthrough, kubectl get --raw,
+nodes/proxy RBAC (403 without, 200 with), unknown node 404.
+
 `e2e/whoami.sh` (#116, suite `rigs`): selfsubjectreviews in discovery;
 `kubectl auth whoami` as a plain user and the admin; a raw POST's 201.
 

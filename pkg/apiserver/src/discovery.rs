@@ -454,6 +454,13 @@ pub async fn api_v1_resources() -> impl IntoResponse {
                 "shortNames": ["no"]
             },
             {
+                "name": "nodes/proxy",
+                "singularName": "",
+                "namespaced": false,
+                "kind": "NodeProxyOptions",
+                "verbs": ["create", "delete", "get", "patch", "update"]
+            },
+            {
                 "name": "nodes/status",
                 "singularName": "",
                 "namespaced": false,
