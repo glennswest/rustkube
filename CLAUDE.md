@@ -348,11 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### authorization.openshift.io reviews (#106, P3) — WRITTEN 2026-10-07
+### authorization.openshift.io reviews (#106, P3) — BUILT 2026-10-07
 - [x] `RbacEngine::who_can`; `handlers/openshift_authorization.rs` (SAR,
       LocalSAR, RAR, LocalRAR; legacy-group mapping); routes, discovery,
       advertised table; unit; oc-adm.sh verbs → works; docs
-- [ ] Build VM; golden; rig (oc-adm, stormcentral#512)
+- [x] Build VM at 046d2c3: 602 passed / 4 ignored (apiserver 305);
+      golden-rustkube-f4592f74ec16 (stormcos#366)
+- [ ] oc-adm rig (stormcentral#512); close
 
 ### Scheduler preemption (#84, P2) — BUILT 2026-10-07
 - [x] `preemption.rs` rewritten (on_node/select/waiting_for_victims over
