@@ -31,7 +31,7 @@ No new issuer or trust-root migration should be inferred from this roadmap.
 | controller-manager / scheduler client certs | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh`, **no restart** (#105) |
 | admin client cert | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh` (the client reads it per run) |
 | kubelet bootstrap client cert (`CN=kubelet-bootstrap`, `O=system:bootstrappers`) | `gen-pki.sh` | `deploy/renew-certs.sh` |
-| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves the `kubernetes.io/kube-apiserver-client-kubelet` signer, and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file` | the kubelet re-requests |
+| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves the `kubernetes.io/kube-apiserver-client-kubelet` signer, and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file`, only upstream's `kubernetes.io/*` signers, and never a signerName in `--csr-external-signer-names` — stormcert as the external signer approves and signs those (#199, stormcert#51) | the kubelet re-requests |
 | service-account signing key | `gen-pki.sh` | not rotatable yet (see below) |
 
 ## Certificates reload without a restart

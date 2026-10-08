@@ -295,6 +295,11 @@ nodes/proxy RBAC (403 without, 200 with), unknown node 404.
 `e2e/whoami.sh` (#116, suite `rigs`): selfsubjectreviews in discovery;
 `kubectl auth whoami` as a plain user and the admin; a raw POST's 201.
 
+`e2e/csr-signers.sh` (#199, suite `rigs`): the CSR controller signs the
+kubelet-client and (hand-approved) kube-apiserver-client signers, and leaves
+an external signerName (kubelet-serving here) and `stormcert.io/*` unapproved
+or unsigned.
+
 `e2e/notfound-message.sh` (#109, suite `rigs`): 404s name the object as the
 API does (`namespaces "x"`, `deployments.apps "web"`, a custom resource's
 `widgets.<group>`) with Status `details`, never the storage key; an

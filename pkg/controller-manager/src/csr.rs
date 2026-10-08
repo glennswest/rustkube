@@ -9,6 +9,14 @@
 //!
 //! Requires the cluster CA cert+key (`--cluster-signing-cert-file` /
 //! `--cluster-signing-key-file`); without them only approval runs.
+//!
+//! **Only its own signers (#199).** As upstream's controller-manager, it signs
+//! only the `kubernetes.io/*` signerNames it implements ([`SIGNERS`]): any
+//! other signerName (`stormcert.io/…`) is another signer's. And a signerName
+//! named in `--csr-external-signer-names` — stormcert as the cluster's
+//! external signer for the kubelet signers — is neither approved nor signed
+//! here, so stormcert's policy decides and only its CA writes
+//! `status.certificate`.
 
 use crate::owned::{self, Controller, Deps};
 use crate::runner::ApiClient;
@@ -20,15 +28,35 @@ use tracing::{info, warn};
 const CSR_PATH: &str = "/apis/certificates.k8s.io/v1/certificatesigningrequests";
 const KUBELET_CLIENT_SIGNER: &str = "kubernetes.io/kube-apiserver-client-kubelet";
 
+/// The signerNames upstream's controller-manager signs with the cluster CA.
+pub const SIGNERS: [&str; 4] = [
+    "kubernetes.io/kube-apiserver-client",
+    KUBELET_CLIENT_SIGNER,
+    "kubernetes.io/kubelet-serving",
+    "kubernetes.io/legacy-unknown",
+];
+
 pub struct CsrController {
     api: Arc<ApiClient>,
     /// CA cert + key PEM for signing (None → approval only).
     ca: Option<(String, String)>,
+    /// signerNames an external signer handles (#199).
+    external: Vec<String>,
 }
 
 impl CsrController {
     pub fn new(api: Arc<ApiClient>, ca: Option<(String, String)>) -> Self {
-        Self { api, ca }
+        Self { api, ca, external: Vec::new() }
+    }
+
+    pub fn with_external_signers(mut self, external: Vec<String>) -> Self {
+        self.external = external;
+        self
+    }
+
+    /// Is this CSR this controller's to approve or sign at all?
+    fn ours(&self, spec: &Value) -> bool {
+        is_ours(spec, &self.external)
     }
 
     pub async fn run(&self) {
@@ -44,6 +72,10 @@ impl CsrController {
         let status = &csr["status"];
         let approved = has_condition(status, "Approved");
         let denied = has_condition(status, "Denied");
+        // Another signer's, or the external signer's (#199): left alone.
+        if !self.ours(spec) {
+            return Ok(());
+        }
 
         // 1) Approve eligible, undecided CSRs.
         if !approved && !denied && self.should_auto_approve(spec) {
@@ -114,6 +146,13 @@ impl CsrController {
     }
 }
 
+/// A CSR this controller handles: one of [`SIGNERS`], and not one the
+/// external signer takes (#199).
+pub fn is_ours(spec: &Value, external: &[String]) -> bool {
+    let signer = spec["signerName"].as_str().unwrap_or("");
+    SIGNERS.contains(&signer) && !external.iter().any(|e| e == signer)
+}
+
 fn has_condition(status: &Value, cond_type: &str) -> bool {
     status["conditions"]
         .as_array()
@@ -146,5 +185,25 @@ impl Controller for CsrController {
         _deps: &Deps,
     ) -> anyhow::Result<()> {
         self.reconcile_csr(csr).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_its_own_signers_and_never_an_external_one() {
+        let spec = |s: &str| json!({"signerName": s});
+        let none: Vec<String> = Vec::new();
+        assert!(is_ours(&spec("kubernetes.io/kube-apiserver-client-kubelet"), &none));
+        assert!(is_ours(&spec("kubernetes.io/kubelet-serving"), &none));
+        assert!(is_ours(&spec("kubernetes.io/kube-apiserver-client"), &none));
+        assert!(!is_ours(&spec("stormcert.io/workload"), &none), "another signer's");
+        assert!(!is_ours(&json!({}), &none), "no signerName");
+        let stormcert = vec!["kubernetes.io/kube-apiserver-client-kubelet".to_string(), "kubernetes.io/kubelet-serving".to_string()];
+        assert!(!is_ours(&spec("kubernetes.io/kube-apiserver-client-kubelet"), &stormcert), "the external signer's");
+        assert!(!is_ours(&spec("kubernetes.io/kubelet-serving"), &stormcert));
+        assert!(is_ours(&spec("kubernetes.io/kube-apiserver-client"), &stormcert), "not listed: still ours");
     }
 }

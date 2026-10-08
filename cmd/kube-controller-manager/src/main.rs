@@ -52,6 +52,12 @@ struct Cli {
     #[arg(long = "cluster-signing-key-file")]
     signing_key: Option<std::path::PathBuf>,
 
+    /// signerNames an external signer (stormcert) handles: CSRs naming one
+    /// are neither approved nor signed here (#199). Comma-separated or
+    /// repeated.
+    #[arg(long = "csr-external-signer-names", value_delimiter = ',')]
+    external_signers: Vec<String>,
+
     /// Seconds to wait for a credential file to be written, and for the
     /// apiserver to start serving, before giving up. The whole control plane
     /// starts at once, so these are normally races, not failures.
@@ -165,6 +171,7 @@ async fn run() -> anyhow::Result<()> {
     if let Some((cert, key)) = signing_ca {
         cm = cm.with_signing_ca(cert, key);
     }
+    cm = cm.with_external_signers(cli.external_signers.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
 
     if let Err(e) = cm.run().await {
         anyhow::bail!("controller-manager failed: {e}");

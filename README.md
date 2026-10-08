@@ -553,7 +553,7 @@ NotReady → eviction), PodDisruptionBudget status, garbage collection
 (VolumeAttachment), the stormblock provisioner for the in-kubelet `stormblock`
 class, the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approval and signing (auto-approves only the
 `kubernetes.io/kube-apiserver-client-kubelet` signer; signs only with
-`--cluster-signing-*-file`), PodMigration, and VirtualMachine
+`--cluster-signing-*-file`; signs only upstream's `kubernetes.io/*` signers, never another signerName, and leaves `--csr-external-signer-names` to that signer, #199), PodMigration, and VirtualMachine
 (`start`/`stop`/`restart`; a failed VMI is recreated with backoff under
 `Always`/`RerunOnFailure`/`running: true` and left under `Once`/`Manual`,
 the VM reading `CrashLoopBackOff` or `Failed` with the VMI's message on a
@@ -763,6 +763,7 @@ override environment values.
 | `--leader-elect` | | `true` | |
 | `--startup-timeout` | `STARTUP_TIMEOUT` | `120` | seconds to wait for credential files and for the apiserver |
 | `--cluster-signing-cert-file`, `--cluster-signing-key-file` | | — | controller manager only: the CA the CSR controller signs with; without them CSRs are approved but not signed |
+| `--csr-external-signer-names` | | — | controller manager only: signerNames an external signer (stormcert) handles; CSRs naming one are neither approved nor signed here (#199). Comma-separated or repeated |
 | `--root-ca-file` | | `--certificate-authority` | controller manager only: the CA bundle published as `kube-root-ca.crt` in every namespace; with neither, nothing is published |
 | `--tls-cert-file`, `--tls-private-key-file` | | — | serving pair for the metrics port (10257/10259): HTTPS only with it, plain HTTP without; renewed in place (#90) |
 | `--authorization-always-allow-paths` | | `/healthz,/readyz,/livez` | metrics-port paths served without authorization; the rest need a bearer token the apiserver's TokenReview accepts and SubjectAccessReview allows (#90) |

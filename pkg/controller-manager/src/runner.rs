@@ -598,6 +598,9 @@ pub struct ControllerManager {
     identity: String,
     /// Cluster CA (cert PEM, key PEM) for signing approved CSRs.
     signing_ca: Option<(String, String)>,
+    /// signerNames an external signer (stormcert) handles: the CSR
+    /// controller neither approves nor signs these (#199).
+    external_signers: Vec<String>,
     /// The CA bundle published as `kube-root-ca.crt` in every namespace.
     root_ca: Option<String>,
     /// How long to wait for the apiserver to serve before running anyway.
@@ -621,6 +624,7 @@ impl ControllerManager {
             leader_elect: true,
             identity: Self::make_identity(),
             signing_ca: None,
+            external_signers: Vec::new(),
             root_ca: None,
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
             metrics_tls: None,
@@ -635,6 +639,7 @@ impl ControllerManager {
             leader_elect: true,
             identity: Self::make_identity(),
             signing_ca: None,
+            external_signers: Vec::new(),
             root_ca: None,
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
             metrics_tls: None,
@@ -678,6 +683,13 @@ impl ControllerManager {
     /// approved requests. Without it, CSRs are approved but not signed.
     pub fn with_signing_ca(mut self, cert_pem: String, key_pem: String) -> Self {
         self.signing_ca = Some((cert_pem, key_pem));
+        self
+    }
+
+    /// signerNames an external signer handles (`--csr-external-signer-names`,
+    /// #199): left to it, neither approved nor signed here.
+    pub fn with_external_signers(mut self, names: Vec<String>) -> Self {
+        self.external_signers = names;
         self
     }
 
@@ -802,8 +814,9 @@ impl ControllerManager {
 
         let api = self.api.clone();
         let ca = self.signing_ca.clone();
+        let external = self.external_signers.clone();
         tasks.spawn(async move {
-            crate::csr::CsrController::new(api, ca).run().await;
+            crate::csr::CsrController::new(api, ca).with_external_signers(external).run().await;
         });
 
         match self.root_ca.clone() {
