@@ -21,9 +21,13 @@
 # `stormcentral component build rustkube` (docs/releasing.md); there is no
 # persistent output directory, and none must be made with root or a mount.
 #
-# A non-native target is built with `cross` (containerised toolchain); the
-# build VMs have no aarch64 musl cross-compiler and `ring` needs a C compiler
-# for the target.
+# A non-native target is built with `cross` (containerised toolchain) when it
+# is installed. Without it, aarch64-unknown-linux-musl is built with the
+# target's GNU cross gcc as `ring`'s C compiler and the linker (the build VMs
+# have `aarch64-linux-gnu-gcc` and the Rust target, #68); Rust's own
+# self-contained musl makes the binary static either way. An aarch64 binary
+# is then run once under `qemu-aarch64-static`, when there is one, so a
+# binary that does not start is caught here.
 
 set -euo pipefail
 
@@ -57,11 +61,16 @@ for target in ${TARGETS//,/ }; do
     if [ "$target" = "$NATIVE" ]; then
         cargo build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
     else
-        command -v cross >/dev/null || {
-            echo "cross is not installed and $target is not native — see the header" >&2
+        if command -v cross >/dev/null; then
+            cross build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
+        elif [ "$target" = aarch64-unknown-linux-musl ] && command -v aarch64-linux-gnu-gcc >/dev/null; then
+            CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc \
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
+                cargo build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
+        else
+            echo "no cross and no cross compiler for $target — see the header" >&2
             exit 1
-        }
-        cross build --release --target "$target" "${pkgs[@]}" 2>&1 | tail -3
+        fi
     fi
 
     bindir="$TARGET_DIR/$target/release"
@@ -77,6 +86,11 @@ for target in ${TARGETS//,/ }; do
             echo "REFUSING: $c is not statically linked:" >&2
             file "$bin" >&2
             exit 1
+        fi
+
+        if [ "$arch" = aarch64 ] && command -v qemu-aarch64-static >/dev/null; then
+            qemu-aarch64-static "$bin" --help >/dev/null 2>&1 \
+                || { echo "REFUSING: $c (aarch64) does not start under qemu" >&2; exit 1; }
         fi
 
         comp="rustkube-${c#kube-}"
