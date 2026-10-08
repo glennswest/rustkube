@@ -348,6 +348,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Unserved resources → 404 (#110, P3) — WRITTEN 2026-10-07
+- [x] `served.rs` middleware from `discovery::advertised` (the discovery
+      handlers' own lists); units; `test/e2e/unserved-resource.sh`; docs
+- [ ] Build VM; golden; rig (stormcentral#512)
+
 ### Conformance binaries from goldens (#140, P2) — BLOCKED on stormcentral#557, 2026-10-07
 Owner: "Goldens". Goldens are sealed stormblock volumes on forge; nothing
 reads a golden's files from another machine (`registry/<c>:<tag>` is a
@@ -1120,8 +1125,8 @@ when each piece landed.
 ### Open, found since the docs pass
 - [x] GC deleted a live Deployment's ReplicaSet (#99): protobuf creates were
       stored with `uid: ""`; fixed in v0.15.3
-- [ ] NotFound names the store key (#109); unserved resources answer an empty
-      list (#110).
+- [ ] NotFound names the store key (#109)
+- [x] Unserved resources answer an empty list (#110) — 404 since 2026-10-07
 - [x] LIST items carry resourceVersion and continuation pages request the
       first page's revision (64963b2, #111). The still-open issue label does
       not mean this code is absent; fastetcd snapshot correctness is #50 there.

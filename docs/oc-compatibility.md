@@ -199,8 +199,9 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `pod-network …` | — | OpenShift SDN, removed upstream |
 
 Found on the way, and not `oc adm`'s own: NotFound messages name the store
-key (#109); an unserved core resource answers an empty list rather than 404
-(#110); LIST items carry no `resourceVersion` (#111); objects created over
+key (#109); an unserved core resource answered an empty list rather than 404
+(#110, fixed 2026-10-07: 404 for any resource a built-in group-version does
+not advertise); LIST items carry no `resourceVersion` (#111); objects created over
 protobuf were stored with an empty uid, which is what made the GC delete a
 new Deployment's ReplicaSet (#99, fixed in #69).
 

@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **fix:** A resource no built-in group-version serves is 404 `the server could not find the requested resource`, for every method (#110). The generic handlers sit behind catch-all routes, so `GET /api/v1/replicationcontrollerz` answered 200 with an empty `replicationcontrollerzList`, and a write to it was stored. The check (`served.rs`, inside authorization) reads each built-in group-version's own discovery list (`discovery::advertised`), so it cannot drift from what clients are told. Custom resources, aggregated APIs, events and metrics are left to their handlers. A registered CRD's resource in a built-in group still passes.
+- **test:** path parsing unit; a discovery unit that every advertised generic resource has its own list kind and the apply table names nothing unadvertised. New `test/e2e/unserved-resource.sh` (suite `rigs`).
 - **fix:** The GC retries an orphan deletion that could not cut every dependent's owner reference (#159). A lost resourceVersion race or a refused patch used to leave the owner's `orphan` finalizer in place until some later event woke it. It now fails the pass, which is retried with backoff.
 - **docs:** #159's investigation of the intermittent "orphan RS created by deployment" conformance failure at efbea2d is recorded in docs/conformance.md. The GC at that commit was a 30 s sweep: orphaning could take longer than the spec's 2 minutes under load, and a ReplicaSet whose Deployment appeared mid-sweep could be deleted as ownerless. The #146 GC (d69e618) closed both.
 - **test:** New `test/e2e/gc-orphan-load.sh` (suite `rigs`): the spec 20 times concurrently under churn, separating unsafe deletion from latency.

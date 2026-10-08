@@ -895,6 +895,9 @@ fn build_router(
         )
         // Dynamic CRD discovery
         .route("/apis/{group}/{version}", get(crd::crd_api_resources))
+        // A resource its built-in group-version does not serve is 404, not
+        // an empty list from a catch-all route (#110).
+        .layer(middleware::from_fn_with_state(state.clone(), crate::served::check))
         // Server-side field validation of built-in creates and updates
         // (#122), once the request is authorized.
         .layer(middleware::from_fn(crate::field_validation::check))

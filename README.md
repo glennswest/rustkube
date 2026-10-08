@@ -159,7 +159,9 @@ matching is ADDED);
 list pagination with `continue`
 tokens (every page reports the first page's `resourceVersion`, with
 `remainingItemCount`; items carry their own `resourceVersion`); label and
-field selectors; `/openapi/v2` and `/openapi/v3` (built-in types as GVK paths
+field selectors; a resource no built-in group-version advertises is 404 `the
+server could not find the requested resource`, not an empty list from a
+catch-all route (#110); `/openapi/v2` and `/openapi/v3` (built-in types as GVK paths
 without schemas; every served CRD version published from its schema as
 `{reversed group}.{version}.{Kind}` with `apiVersion`/`kind`/`metadata` and
 its GVK — v2 without what Swagger 2.0 cannot say — and its group-version in

@@ -641,6 +641,59 @@ pub async fn api_discovery_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// The resources a built-in group-version advertises (the first segment of
+/// each discovery entry's name, so `pods/log` is `pods`), read from its
+/// discovery handler, once. None for a group-version not served by one of
+/// the handlers below (custom resources, aggregated APIs, events, metrics).
+/// The served-resource check (#110, `served.rs`) reads it.
+pub async fn advertised(group: &str, version: &str) -> Option<&'static std::collections::HashSet<String>> {
+    use std::collections::{HashMap, HashSet};
+    static TABLE: tokio::sync::OnceCell<HashMap<(String, String), HashSet<String>>> = tokio::sync::OnceCell::const_new();
+    async fn names(r: axum::response::Response) -> HashSet<String> {
+        let b = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap_or_default();
+        v["resources"].as_array().into_iter().flatten()
+            .filter_map(|r| r["name"].as_str().map(|n| n.split('/').next().unwrap_or("").to_string()))
+            .collect()
+    }
+    let table = TABLE.get_or_init(|| async {
+        let mut m = HashMap::new();
+        macro_rules! gv {
+            ($g:expr, $v:expr, $f:expr) => {
+                m.insert(($g.to_string(), $v.to_string()), names($f.await.into_response()).await);
+            };
+        }
+        gv!("", "v1", api_v1_resources());
+        gv!("apps", "v1", api_apps_v1_resources());
+        gv!("batch", "v1", api_batch_v1_resources());
+        gv!("coordination.k8s.io", "v1", api_coordination_v1_resources());
+        gv!("discovery.k8s.io", "v1", api_discovery_v1_resources());
+        gv!("policy", "v1", api_policy_v1_resources());
+        gv!("authorization.k8s.io", "v1", api_authorization_v1_resources());
+        gv!("subresources.kubevirt.io", "v1", api_kubevirt_subresources_v1_resources());
+        gv!("storage.k8s.io", "v1", api_storage_v1_resources());
+        gv!("resource.k8s.io", "v1", api_resource_v1_resources());
+        gv!("certificates.k8s.io", "v1", api_certificates_v1_resources());
+        gv!("rustkube.io", "v1alpha1", api_rustkube_v1alpha1_resources());
+        gv!("rbac.authorization.k8s.io", "v1", api_rbac_v1_resources());
+        gv!("apiextensions.k8s.io", "v1", api_apiextensions_v1_resources());
+        gv!("autoscaling", "v1", api_autoscaling_v1_resources());
+        gv!("autoscaling", "v2", api_autoscaling_v2_resources());
+        gv!("networking.k8s.io", "v1", api_networking_v1_resources());
+        gv!("route.openshift.io", "v1", api_route_v1_resources());
+        gv!("scheduling.k8s.io", "v1", api_scheduling_v1_resources());
+        gv!("authentication.k8s.io", "v1", api_authentication_v1_resources());
+        gv!("project.openshift.io", "v1", api_project_v1_resources());
+        gv!("admissionregistration.k8s.io", "v1", api_admissionregistration_v1_resources());
+        gv!("node.k8s.io", "v1", api_node_v1_resources());
+        gv!("flowcontrol.apiserver.k8s.io", "v1", api_flowcontrol_v1_resources());
+        gv!("gateway.networking.k8s.io", "v1", api_gateway_v1_resources());
+        gv!("apiregistration.k8s.io", "v1", api_apiregistration_v1_resources());
+        m
+    }).await;
+    table.get(&(group.to_string(), version.to_string()))
+}
+
 /// GET /openapi/v2 — Swagger 2.0 document.
 ///
 /// `kubectl apply` downloads this to validate manifests client-side; a 404
@@ -1674,6 +1727,31 @@ mod tests {
     /// never asks for its resource list, so the resources exist and nothing
     /// finds them. That is exactly how the Route group first shipped —
     /// `/apis/route.openshift.io/v1` answered and `/apis` did not mention it.
+    /// What the generic handlers serve has a list kind of its own, never the
+    /// `{plural}List` fallback (#110), and the apply table names nothing
+    /// discovery does not advertise.
+    #[tokio::test]
+    async fn every_advertised_generic_resource_has_its_list_kind() {
+        let generic = [("", "v1"), ("apps", "v1"), ("batch", "v1"), ("coordination.k8s.io", "v1"),
+            ("discovery.k8s.io", "v1"), ("policy", "v1"), ("storage.k8s.io", "v1"), ("resource.k8s.io", "v1"),
+            ("certificates.k8s.io", "v1"), ("rbac.authorization.k8s.io", "v1"), ("autoscaling", "v2"),
+            ("networking.k8s.io", "v1"), ("scheduling.k8s.io", "v1"), ("admissionregistration.k8s.io", "v1"),
+            ("node.k8s.io", "v1"), ("flowcontrol.apiserver.k8s.io", "v1"), ("gateway.networking.k8s.io", "v1")];
+        for (g, v) in generic {
+            let served = advertised(g, v).await.unwrap_or_else(|| panic!("{g}/{v} not in the table"));
+            for r in served {
+                let kind = crate::handlers::resource::resource_to_kind(r);
+                assert!(kind.chars().next().is_some_and(|c| c.is_ascii_uppercase()), "{g}/{v} {r}: list kind {kind}List");
+            }
+            for (plural, _, _) in resources_for(g, v) {
+                assert!(served.contains(plural), "{g}/{v}: {plural} is in the apply table but not advertised");
+            }
+        }
+        assert!(advertised("", "v1").await.unwrap().contains("replicationcontrollers"));
+        assert!(!advertised("", "v1").await.unwrap().contains("replicationcontrollerz"));
+        assert!(advertised("example.com", "v1").await.is_none(), "custom groups are not checked here");
+    }
+
     #[test]
     fn every_served_group_is_discoverable() {
         let names: Vec<String> = builtin_groups()

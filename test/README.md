@@ -274,6 +274,11 @@ one number, PUT keeping allocated values, immutable ClusterIP, the type
 changes (to ClusterIP frees ports, to ExternalName drops the ClusterIP, from
 ExternalName allocates), delete frees.
 
+`e2e/unserved-resource.sh` (#110, suite `rigs`): GET/POST/PUT of unserved
+resources in core, apps and rbac are 404 and store nothing; RC, quota and
+pod-template lists carry their kinds; namespace and pods/log paths still
+reach their handlers; a CRD in a built-in group is served.
+
 `e2e/watch-timeout.sh` (#165, suite `rigs`): built-in, WatchList and
 custom-resource watches end cleanly at `timeoutSeconds`, an event before the
 deadline arrives first, no `timeoutSeconds` stays open, a non-integer is 400.
