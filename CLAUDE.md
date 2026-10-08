@@ -358,12 +358,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 - [ ] node-proxy rig (stormcentral#512); close (node-logs itself needs
       rustkube-node#198)
 
-### CSR controller and external signers (#199, P2) — WRITTEN 2026-10-08
+### CSR controller and external signers (#199, P2) — BUILT 2026-10-08
 - [x] `--csr-external-signer-names` → `CsrController::with_external_signers`;
       sign only upstream's kubernetes.io/* signers; unit;
       `test/e2e/csr-signers.sh`; README/certificates.md
-- [ ] Build VM; golden; rig (stormcentral#512); stormcos passes the flag
-      when stormcert's csr-signer is on (stormcert's session files it)
+- [x] Build VM at fb741a6: 610 passed / 4 ignored (controller-manager 104);
+      golden-rustkube-504ec94ee5c9 (stormcos#366)
+- [ ] csr-signers rig (stormcentral#512); stormcos passes the flag when
+      stormcert's csr-signer is on (stormcert's session files it)
 
 ### Remove the GitHub workflow (#114) — COMPLETE 2026-10-08
 - [x] `.github/workflows/images.yml` removed (458f598); Actions confirmed
