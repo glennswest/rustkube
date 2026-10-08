@@ -352,7 +352,9 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 - [x] `openapi_crd.rs` (v2 definitions, v3 index + documents), handlers take
       state; `CrdRegistry::all_versions`; register drops stale versions;
       units; `test/e2e/crd-openapi.sh` (rigs, kubectl explain); docs
-- [ ] Build VM (when builds are back on); golden; rig (stormcentral#512)
+- [ ] Build VM: not built — build VMs drained for the 11.95 retest (sc-build
+      gave up after an hour twice, 2026-10-07). One build at 8ea98d6 covers
+      #158 (a9f3fff) too. Then golden; rig (stormcentral#512)
 
 ### Startup manifests through admission (#158, P3) — WRITTEN 2026-10-07
 - [x] `apply_one`: create → admit_create / CRD on_create; Reconcile →
