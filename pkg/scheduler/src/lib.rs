@@ -2,8 +2,8 @@
 //!
 //! Watch events enqueue placement of pods with an empty `spec.nodeName` (and unplaced
 //! VirtualMachineInstances), runs the fixed filter and score functions in
-//! [`filter`] and [`score`], and binds each to the best node. It does not
-//! preempt ([`preemption`] is not called, #84). A Pod with
+//! [`filter`] and [`score`], and binds each to the best node; a Pod that fits
+//! nowhere preempts lower-priority Pods ([`preemption`], #84). A Pod with
 //! `schedulingGates` waits, `PodScheduled=False/SchedulingGated` (#87).
 
 pub mod affinity;

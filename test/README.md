@@ -274,6 +274,11 @@ one number, PUT keeping allocated values, immutable ClusterIP, the type
 changes (to ClusterIP frees ports, to ExternalName drops the ClusterIP, from
 ExternalName allocates), delete frees.
 
+`e2e/scheduler-preemption.sh` (#84, suite `rigs`): a high-priority Pod on a
+full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
+loses its nominatedNodeName; Never and equal priority preempt nothing; a
+PDB-protected Pod is spared for an unprotected victim.
+
 `e2e/unserved-resource.sh` (#110, suite `rigs`): GET/POST/PUT of unserved
 resources in core, apps and rbac are 404 and store nothing; RC, quota and
 pod-template lists carry their kinds; namespace and pods/log paths still

@@ -89,6 +89,8 @@ pub fn scheduler_role() -> Value {
             rule(&[""], &["pods"], &["update"]),
             rule(&[""], &["pods/status"], &["patch", "update"]),
             rule(&[""], &["pods/binding", "bindings"], &["create"]),
+            // Preemption evicts its victims through the Eviction API (#84).
+            rule(&[""], &["pods/eviction"], &["create"]),
             rule(&[""], &["persistentvolumeclaims"], &["patch", "update"]),
             rule(&["kubevirt.io"], &["virtualmachineinstances/status", "virtualmachineinstancemigrations/status"],
                  &["patch", "update"]),
@@ -155,7 +157,8 @@ mod tests {
             ("patch", "", "persistentvolumeclaims", None), ("watch", "storage.k8s.io", "csistoragecapacities", None),
             ("patch", "kubevirt.io", "virtualmachineinstances", Some("status")), ("create", "", "events", None),
             ("update", "coordination.k8s.io", "leases", None), ("list", "apiextensions.k8s.io", "customresourcedefinitions", None),
-            ("create", "authentication.k8s.io", "tokenreviews", None), ("create", "authorization.k8s.io", "subjectaccessreviews", None)] {
+            ("create", "authentication.k8s.io", "tokenreviews", None), ("create", "authorization.k8s.io", "subjectaccessreviews", None),
+            ("create", "", "pods", Some("eviction"))] {
             assert!(allows(&s, verb, group, res, sub, None), "{verb} {group}/{res}{sub:?}");
         }
         for (verb, group, res) in [("get", "", "secrets"), ("create", "", "pods"), ("delete", "", "pods"),

@@ -669,8 +669,17 @@ exists.
   retry). A bind records a `Scheduled` Event, "Successfully assigned
   ns/pod to node". Both come from `default-scheduler` (#138).
 
-It **does not preempt**: `preemption.rs` computes victims but nothing calls it
-(#84). A Pod with a non-empty `spec.schedulingGates` is not placed: it reads
+**Preemption** (#84), as upstream's DefaultPreemption: a Pod that fits on no
+node (and has no `preemptionPolicy: Never`) looks for the node where removing
+lower-priority Pods would let it pass every filter; victims are reprieved,
+PodDisruptionBudget-protected ones first and highest priority first, while it
+still fits; the node chosen breaks the fewest budgets, then has the lowest
+highest-victim priority, lowest priority sum and fewest victims. The Pod is
+nominated there (`status.nominatedNodeName`, which holds the room against
+Pods of no higher priority), the victims are evicted through the Eviction API
+(so a budget can still refuse one) with a `Preempted` Event, and the Pod binds
+once they are gone. A nominated Pod whose victims are still terminating waits
+rather than preempting again. A Pod with a non-empty `spec.schedulingGates` is not placed: it reads
 `PodScheduled=False/SchedulingGated` ("Scheduling is blocked due to
 non-empty scheduling gates", no Event) and is placed once the last gate is
 removed; the apiserver refuses an update that adds a gate (422, "only

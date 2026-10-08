@@ -74,7 +74,7 @@ pkg/
 Objects are `serde_json::Value` throughout; no k8s-openapi types are used.
 
 **Built but not wired** — modules whose docs used to read as features:
-`scheduler::preemption` (#84), `scheduler::plugins` (unused traits),
+`scheduler::plugins` (unused traits),
 `apimachinery::{rbac, meta}` (unused types/helpers).
 
 ## Version Locations
@@ -347,6 +347,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 - [x] 73589ce on a build VM (sc-build-dc10dbc8b3): workspace 547 passed /
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
+
+### Scheduler preemption (#84, P2) — WRITTEN 2026-10-07
+- [x] `preemption.rs` rewritten (on_node/select/waiting_for_victims over
+      ClusterState + filters, PDB-aware reprieve); `Scheduler::preempt`
+      (nominate, Eviction API, Preempted Event); nominated room held in
+      snapshot; bind clears nominatedNodeName; scheduler role pods/eviction;
+      units; `test/e2e/scheduler-preemption.sh`; docs
+- [ ] Build VM; golden; rig (stormcentral#512)
 
 ### Unserved resources → 404 (#110, P3) — BUILT 2026-10-07
 - [x] `served.rs` middleware from `discovery::advertised` (the discovery
@@ -1107,7 +1115,7 @@ when each piece landed.
 ### Findings from the docs pass (#80)
 - [x] Admission webhooks are never called (#82) — wired 2026-10-06
 - [ ] Aggregation proxies nothing (#83)
-- [ ] Scheduler never preempts (#84)
+- [x] Scheduler never preempts (#84) — preemption wired 2026-10-07
 - [x] `schedulingGates` honoured (#87, 2026-10-07): SchedulingGated, add
       refused; build blocked on stormcentral#544
 - [x] PriorityClass / TokenReview missing from `/apis` (#85) — fixed in

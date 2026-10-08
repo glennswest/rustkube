@@ -1079,6 +1079,68 @@ impl Scheduler {
         }
     }
 
+    /// A Pod that fits nowhere: preempt lower-priority Pods for it (#84),
+    /// as upstream's DefaultPreemption — `preemption::select` picks the node
+    /// and victims; the Pod is nominated there (`status.nominatedNodeName`)
+    /// and the victims are evicted through the Eviction API, so a
+    /// PodDisruptionBudget can still refuse one (the selection avoids that
+    /// when it can). The Pod binds on a later pass, once they are gone: their
+    /// deletion requeues it. Returns the message for the Pod's condition.
+    async fn preempt(
+        &self,
+        namespace: &str,
+        pod: &Value,
+        nodes: &[Value],
+        state: &ClusterState,
+        volumes: &volumebinding::VolumeState,
+        why: String,
+    ) -> String {
+        if !crate::preemption::may_preempt(pod) {
+            return why;
+        }
+        if crate::preemption::waiting_for_victims(pod, state) {
+            return format!("{why} Waiting for preempted pods to terminate.");
+        }
+        let prio = pod_priority(pod);
+        if !state.placed.iter().any(|(_, p)| pod_priority(p) < prio) {
+            return why;
+        }
+        // Storage does not change with victims gone: only nodes it allows.
+        let candidates: Vec<&Value> =
+            nodes.iter().filter(|n| volumebinding::filter_node(pod, namespace, n, volumes).is_ok()).collect();
+        let pdbs = match self.api.list("/apis/policy/v1/poddisruptionbudgets").await {
+            Ok(l) => l["items"].as_array().cloned().unwrap_or_default(),
+            Err(e) => return format!("{why} Preemption: cannot read PodDisruptionBudgets: {e}"),
+        };
+        let Some(c) = crate::preemption::select(pod, &candidates, nodes, state, &pdbs) else {
+            return format!("{why} Preemption: no lower-priority pods whose removal would make room.");
+        };
+        let name = pod["metadata"]["name"].as_str().unwrap_or("");
+        let status = json!({"metadata": {"uid": pod["metadata"]["uid"]}, "status": {"nominatedNodeName": c.node}});
+        if let Err(e) = self.api.patch_merge(&format!("/api/v1/namespaces/{namespace}/pods/{name}/status"), &status).await {
+            return format!("{why} Preemption: could not nominate node {}: {e}", c.node);
+        }
+        let mut evicted = 0;
+        for v in &c.victims {
+            let (vns, vname) = (v["metadata"]["namespace"].as_str().unwrap_or("default"), v["metadata"]["name"].as_str().unwrap_or(""));
+            let eviction = json!({"apiVersion": "policy/v1", "kind": "Eviction", "metadata": {"name": vname, "namespace": vns},
+                                  "deleteOptions": {"preconditions": {"uid": v["metadata"]["uid"]}}});
+            match self.api.create(&format!("/api/v1/namespaces/{vns}/pods/{vname}/eviction"), &eviction).await {
+                Ok(_) => {
+                    evicted += 1;
+                    info!("Preempted {vns}/{vname} on {} for {namespace}/{name}", c.node);
+                    let ev = crate::events::event(v, "Normal", "Preempted", "Preempting",
+                        &format!("Preempted by pod {} on node {}", pod["metadata"]["uid"].as_str().unwrap_or(""), c.node));
+                    let _ = self.api.create(&format!("/api/v1/namespaces/{vns}/events"), &ev).await;
+                }
+                Err(e) => {
+                    return format!("{why} Preemption: evicting {vns}/{vname} on {} was refused: {e}", c.node);
+                }
+            }
+        }
+        format!("{why} Preemption: {evicted} pod(s) evicted on node {}.", c.node)
+    }
+
     async fn schedule_pod(
         &self,
         namespace: &str,
@@ -1136,10 +1198,8 @@ impl Scheduler {
             .collect();
 
         if feasible.is_empty() {
-            return Ok(Placement::Unschedulable(unschedulable_message(
-                nodes.len(),
-                &refused,
-            )));
+            let why = unschedulable_message(nodes.len(), &refused);
+            return Ok(Placement::Unschedulable(self.preempt(namespace, pod, nodes, state, volumes, why).await));
         }
 
         // Phase 2: Score — rank feasible nodes
@@ -1224,6 +1284,10 @@ impl Scheduler {
         bound_pod["metadata"]["annotations"][SCHEDULED_AT] =
             json!(now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
         bound_pod["status"]["phase"] = json!("Pending");
+        // Bound: no longer waiting on a nominated node (#84).
+        if let Some(status) = bound_pod["status"].as_object_mut() {
+            status.remove("nominatedNodeName");
+        }
         bound_pod["status"]["conditions"] = json!([
             {
                 "type": "PodScheduled",
@@ -1510,6 +1574,22 @@ impl SchedulingState {
             pod["spec"]["nodeName"] = json!(reserved.node);
             charge(&mut state.usage, key.0, reserved.node.clone(), &pod);
             state.placed.push((reserved.node.clone(), pod));
+        }
+        // A Pod nominated to a node after preempting there holds that room
+        // against Pods of no higher priority, as upstream does (#84).
+        let prio = self.pending.get(current).map(pod_priority);
+        for (key, pending) in &self.pending {
+            if key == current || key.0 || self.assumptions.contains_key(key) {
+                continue;
+            }
+            let Some(node) = pending["status"]["nominatedNodeName"].as_str().filter(|n| !n.is_empty()) else { continue };
+            if prio.is_some_and(|p| pod_priority(pending) < p) {
+                continue;
+            }
+            let mut held = pending.clone();
+            held["spec"]["nodeName"] = json!(node);
+            charge(&mut state.usage, false, node.to_string(), &held);
+            state.placed.push((node.to_string(), held));
         }
         (state, self.assumptions.get(current).map(|a| a.node.clone()))
     }

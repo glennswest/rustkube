@@ -197,9 +197,6 @@ Metric names follow upstream's: `docs/metrics.md`.
 
 ## Planned — not in the code yet
 
-Built as modules but **not wired**:
-- scheduler preemption (`preemption.rs`, #84)
-
 Missing:
 - pod metrics on stormcos: cadvisor attributing stormpump cgroups (cadvisor#3)
 - generic ephemeral volumes (#94); expansion and snapshot API integration

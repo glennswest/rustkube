@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** The scheduler preempts (#84), as upstream's DefaultPreemption. `preemption.rs` was rewritten on the scheduler's own filters and cluster state, and is called when a Pod fits on no node.
+  - **Choice:** a candidate node is one where removing all lower-priority Pods (not already terminating) lets the Pod pass every filter, storage included. Victims are reprieved while the Pod still fits: PodDisruptionBudget-protected first, highest priority first. The node with the fewest budget violations, then the lowest highest-victim priority, priority sum and victim count wins. `preemptionPolicy: Never` preempts nothing.
+  - **Action:** the Pod gets `status.nominatedNodeName`, and the victims are evicted through the Eviction API (a budget can still refuse), each with a `Preempted` Event. The Pod binds once they are gone, and the bind clears `nominatedNodeName`.
+  - **Waiting:** a nominated Pod holds its node's room against Pods of no higher priority, and does not preempt again while its victims terminate.
+  - The scheduler's bootstrap role gains `create pods/eviction`.
+- **test:** preemption units (victim choice and node ranking, Never/equal/no-help/terminating cases, the budget-protected reprieve); RBAC unit. New `test/e2e/scheduler-preemption.sh` (suite `rigs`).
 - **fix:** A resource no built-in group-version serves is 404 `the server could not find the requested resource`, for every method (#110). The generic handlers sit behind catch-all routes, so `GET /api/v1/replicationcontrollerz` answered 200 with an empty `replicationcontrollerzList`, and a write to it was stored. The check (`served.rs`, inside authorization) reads each built-in group-version's own discovery list (`discovery::advertised`), so it cannot drift from what clients are told. Custom resources, aggregated APIs, events and metrics are left to their handlers. A registered CRD's resource in a built-in group still passes.
 - **test:** path parsing unit; a discovery unit that every advertised generic resource has its own list kind and the apply table names nothing unadvertised. New `test/e2e/unserved-resource.sh` (suite `rigs`).
 - **fix:** The GC retries an orphan deletion that could not cut every dependent's owner reference (#159). A lost resourceVersion race or a refused patch used to leave the owner's `orphan` finalizer in place until some later event woke it. It now fails the pass, which is retried with backoff.
