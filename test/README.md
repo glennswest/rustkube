@@ -233,6 +233,11 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/resource-quota.sh` (#124, suite `rigs`): quota status computed,
+Pods charged at once, exceeded / must-specify 403s, counts for services,
+secrets and replicasets, usage lowered on delete, BestEffort scope, six
+concurrent creates against pods=3 admitting three.
+
 `e2e/runtime-class.sh` (#135, suite `rigs`): RuntimeClass API operations,
 admission (missing/deleted class 403, overhead and scheduling from the
 class, mismatched or classless overhead 403), and the scheduler counting

@@ -3,6 +3,11 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** ResourceQuota (#124). Usage and scope rules live in `apimachinery::quota`, shared by both halves so they count alike.
+  - **Controller** (`resourcequota.rs`): each quota's `status.hard` and `status.used`, from its namespace's Pods (compute requests/limits plus overhead, counts; finished Pods excluded), Services (node ports, load balancers), Secrets, ConfigMaps, PVCs (storage, per StorageClass), RCs, ResourceQuotas, ReplicaSets and any other `count/<resource>.<group>` (by LIST). Scopes `Terminating`, `NotTerminating`, `BestEffort`, `NotBestEffort` and `PriorityClass` are honoured. It wakes on changes to the watched kinds and resyncs every 5 minutes.
+  - **Admission** (`quota_admission.rs`, last stage of create admission): every covering quota is checked. The refusals are 403, in upstream's words: `exceeded quota: …`, `failed quota: …: must specify …`, `status unknown for quota`. The create is then charged to `status.used` by compare-and-swap, with rollback if a later quota refuses, so concurrent creates cannot overrun a quota. The controller waits 5 s after a charge before lowering a usage.
+  - Not done: updates (a PVC resize, a Pod resize) are not charged; `CrossNamespacePodAffinity` scope.
+- **test:** quota units (Pod compute, counts, Service/PVC extras, scopes, formatting), admission refusal wording, controller units. New `test/e2e/resource-quota.sh` (suite `rigs`).
 - **feat:** RuntimeClass (#135). `node.k8s.io/v1` `runtimeclasses` is served: cluster-scoped, generic handlers, `/apis`, discovery, apply table, protobuf (the schema was already vendored).
   - **Admission:** a Pod with `runtimeClassName` is admitted against its class, as upstream's plugin. A missing class is 403 `pod rejected: RuntimeClass "x" not found`. The class's `overhead.podFixed` becomes `spec.overhead`; a different overhead, or overhead without a class that defines one, is 403. The class's `scheduling.nodeSelector` is merged (a conflicting value is 403) and its tolerations added.
   - **Scheduler:** `spec.overhead` is added to a Pod's requests in resource fit and node accounting.

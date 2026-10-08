@@ -396,7 +396,11 @@ label, CronJob schedule validation, PVC access-mode validation
 (`ReadWriteOncePod` may not be combined with another mode), ConfigMap and
 Secret data-key validation, pod sysctl-name validation, a pod's
 `status.qosClass` (a container with a limit and no request gets the limit as
-its request first, as upstream defaults it), LimitRanger (#131: a
+its request first, as upstream defaults it), ResourceQuota (#124: a create checked against every quota of its namespace
+whose scopes cover it — 403 `exceeded quota`, `must specify <resource>`, or
+`status unknown` before the controller's first pass — and charged to
+`status.used` by compare-and-swap, so concurrent creates cannot overrun it),
+LimitRanger (#131: a
 namespace's LimitRanges fill `defaultRequest`/`default` into containers that
 set none and annotate `kubernetes.io/limit-ranger`, then refuse — 403 in
 upstream's words — a Container, Pod or PersistentVolumeClaim outside
@@ -510,7 +514,10 @@ Deployment (rolling updates), ReplicaSet, ReplicationController (the
 ReplicaSet reconcile over core/v1, Pods owned by kind `ReplicationController`;
 create defaults selector, labels and replicas from the template; `/scale`
 served, #125), StatefulSet, DaemonSet (every
-eligible node, Ready or not; places pods itself), Job, CronJob, Service (Endpoints and EndpointSlices; for a Service with no
+eligible node, Ready or not; places pods itself), Job, CronJob, ResourceQuota (`status.hard` and `status.used` per quota from
+its namespace's objects — Pods' compute and counts, Services, Secrets,
+ConfigMaps, PVCs and per-class storage, RCs, quotas, `count/<resource>` —
+honouring scopes; recomputed on change and every 5 minutes, #124), Service (Endpoints and EndpointSlices; for a Service with no
 selector, EndpointSlices mirrored from its hand-written Endpoints, as
 upstream's EndpointSliceMirroring does — one per address type and port set,
 owned by the Endpoints, `managed-by: endpointslicemirroring-controller.k8s.io`,
@@ -612,8 +619,7 @@ classes, Gateways and route entries are left alone (#91). Its Gateways are
 `Accepted` and `Programmed=False` (`Pending`) with no `status.addresses`,
 since nothing listens.
 
-It has no ResourceQuota,
-ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or
+It has no ServiceAccount-token, generic ephemeral-volume, TTL-after-finished or
 node-IPAM controller. Serving a resource object does not implement its controller.
 
 ## What the scheduler does

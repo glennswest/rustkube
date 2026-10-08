@@ -16,6 +16,7 @@ pub mod taint;
 pub mod metrics;
 pub mod protobuf;
 pub mod quantity;
+pub mod quota;
 pub mod selector;
 pub mod startup;
 pub mod tls_reload;

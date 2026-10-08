@@ -695,6 +695,12 @@ impl ControllerManager {
             replicaset::ReplicaSetController::new(api).run().await;
         });
 
+        // ResourceQuota status (#124).
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::resourcequota::ResourceQuotaController::new(api).run().await;
+        });
+
         // ReplicationController: the same reconcile over core/v1 (#125).
         let api = self.api.clone();
         tasks.spawn(async move {

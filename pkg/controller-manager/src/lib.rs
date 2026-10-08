@@ -24,6 +24,7 @@ pub mod persistentvolume;
 pub mod pdb;
 pub mod node;
 pub mod replicaset;
+pub mod resourcequota;
 pub mod rollout;
 pub mod owned;
 pub mod rootca;

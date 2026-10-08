@@ -136,6 +136,12 @@ pub async fn admit_create(
     if resource == "persistentvolumeclaims" || resource == "persistentvolumes" {
         initial_phase(obj);
     }
+
+    // ResourceQuota (#124), last: what is charged is the object as it will
+    // be written, after every default above.
+    if let Some(ns) = namespace {
+        crate::quota_admission::admit(storage, resource, ns, obj).await?;
+    }
     Ok(())
 }
 

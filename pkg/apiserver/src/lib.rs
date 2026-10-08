@@ -33,6 +33,7 @@ pub mod schema;
 pub mod selector;
 pub mod node_port;
 pub mod openapi_crd;
+pub mod quota_admission;
 pub mod service_ip;
 pub mod server;
 pub mod storage;
