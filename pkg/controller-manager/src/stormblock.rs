@@ -44,6 +44,20 @@ const PROVISIONED_BY: &str = "pv.kubernetes.io/provisioned-by";
 /// The provisioner name in that annotation.
 const PROVISIONER: &str = "stormblock.storm.io/in-kubelet";
 
+/// The class's `provisioner` values that name this path (#92): stormcos's
+/// manifest says `stormblock.storm.io`; the PV annotation's spelling is
+/// accepted too. A class named `stormblock` with any other provisioner —
+/// a CSI driver's — is not this path's, and its claims are left to it.
+pub const CLASS_PROVISIONERS: [&str; 2] = ["stormblock.storm.io", PROVISIONER];
+
+/// Is `class` (the StorageClass named `stormblock`, if there is one) this
+/// path's? A claim of a class that does not exist is not provisioned.
+pub fn class_is_ours(class: Option<&Value>) -> bool {
+    class
+        .and_then(|c| c["provisioner"].as_str())
+        .is_some_and(|p| CLASS_PROVISIONERS.contains(&p))
+}
+
 /// Where the volume lives, when it is known. The scheduler writes the same
 /// annotation on the claim for `WaitForFirstConsumer`, and a local volume is
 /// only reachable from the node holding it.
@@ -71,7 +85,7 @@ impl StormblockProvisioner {
         );
     }
 
-    async fn provision_claim(&self, pvc: &Value) -> anyhow::Result<()> {
+    async fn provision_claim(&self, pvc: &Value, class: Option<&Value>) -> anyhow::Result<()> {
         let namespace = pvc["metadata"]["namespace"].as_str().unwrap_or("default");
         let name = pvc["metadata"]["name"].as_str().unwrap_or("");
         if name.is_empty()
@@ -81,6 +95,12 @@ impl StormblockProvisioner {
                 .as_str()
                 .is_some_and(|v| !v.is_empty())
         {
+            return Ok(());
+        }
+        // The class's provisioner, not only its name (#92).
+        if !class_is_ours(class) {
+            tracing::debug!("stormblock: claim {namespace}/{name}: class {STORAGE_CLASS} is not provisioned by {}",
+                CLASS_PROVISIONERS.join(" or "));
             return Ok(());
         }
         self.ensure_volume(namespace, name, pvc).await
@@ -262,6 +282,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_a_class_this_path_provisions_is_acted_on() {
+        assert!(class_is_ours(Some(&json!({"provisioner": "stormblock.storm.io"}))));
+        assert!(class_is_ours(Some(&json!({"provisioner": "stormblock.storm.io/in-kubelet"}))));
+        assert!(!class_is_ours(Some(&json!({"provisioner": "csi.stormblock.io"}))), "a CSI class named stormblock");
+        assert!(!class_is_ours(Some(&json!({}))));
+        assert!(!class_is_ours(None), "no class: nothing to provision for");
+    }
+
+    #[test]
     fn the_volume_name_is_the_one_the_kubelet_derives() {
         // Written out rather than computed, because the point of the test is
         // that this string matches a rule in another repository. If the node's
@@ -283,13 +312,25 @@ impl Controller for Claims<'_> {
         "/api/v1/persistentvolumeclaims"
     }
     fn dependencies(&self) -> Vec<Dependency> {
-        vec![Dependency {
-            path: "/api/v1/persistentvolumes".into(),
-            route: Arc::new(owned::volume_claims),
-        }]
+        vec![
+            Dependency {
+                path: "/api/v1/persistentvolumes".into(),
+                route: Arc::new(owned::volume_claims),
+            },
+            // The class's provisioner decides (#92); a change wakes its claims.
+            Dependency {
+                path: "/apis/storage.k8s.io/v1/storageclasses".into(),
+                route: Arc::new(owned::storage_class_claims),
+            },
+        ]
     }
-    async fn reconcile(&self, pvc: &Value, _: &[Value], _: &Deps) -> anyhow::Result<()> {
-        self.0.provision_claim(pvc).await
+    async fn reconcile(&self, pvc: &Value, _: &[Value], deps: &Deps) -> anyhow::Result<()> {
+        let class = deps
+            .feed(1)
+            .select(&apimachinery::informer::Index::Name(String::new(), STORAGE_CLASS.into()))?
+            .into_iter()
+            .next();
+        self.0.provision_claim(pvc, class.as_ref()).await
     }
 }
 #[async_trait::async_trait]

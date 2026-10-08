@@ -1418,9 +1418,8 @@ Continue live acceptance in #147/#149; do not claim those gates passed.
       kubelet's mount refusal is rustkube-node#42
 - [x] In-kubelet `stormblock` class: `stormblock.rs` writes the PV once the
       scheduler picks a node (#71, v0.13.0–v0.14.1)
-- [ ] `stormblock.rs` matches the class by name and never reads its
-      provisioner (#92); stormblock-csi's class is now `stormblock-csi`, so
-      no shipped manifest collides
+- [x] `stormblock.rs` checks the class's provisioner (#92, 2026-10-08):
+      `stormblock.storm.io` (or `/in-kubelet`); StorageClass feed wakes claims
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
   sbregistry and stormblock-csi. rustkube creates no volume bytes itself.
 

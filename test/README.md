@@ -284,6 +284,10 @@ full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
 loses its nominatedNodeName; Never and equal priority preempt nothing; a
 PDB-protected Pod is spared for an unprotected victim.
 
+`e2e/stormblock-class.sh` (#92, suite `rigs`): a `stormblock` class with a
+CSI provisioner gets no in-kubelet PV; recreated with `stormblock.storm.io`,
+the claim gets its PV.
+
 `e2e/node-proxy.sh` (#108, suite `rigs`): nodes/n1/proxy against a stub
 kubelet — path, query, bearer, POST body, 404 passthrough, kubectl get --raw,
 nodes/proxy RBAC (403 without, 200 with), unknown node 404.
