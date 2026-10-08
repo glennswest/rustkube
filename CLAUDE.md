@@ -355,8 +355,9 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       now fails the pass (retry with backoff). `test/e2e/gc-orphan-load.sh`
       (20 concurrent runs under churn, per-run uid/RV/owners/timings);
       docs/conformance.md
-- [ ] Build VM; golden; rig (stormcentral#512); conformance rerun with
-      concurrent chunks after #140 (goldens to conform.g8.lo)
+- [x] Build VM at 9bff762: 606 passed / 4 ignored; golden-rustkube-0036569fb42a
+- [ ] gc-orphan-load rig (stormcentral#512); conformance rerun with
+      concurrent chunks after #140 (goldens to conform.g8.lo); then close
 
 ### ResourceQuota controller + admission (#124, P2) — BUILT 2026-10-07
 - [x] `apimachinery::quota` (usage, scopes, formatting); apiserver
