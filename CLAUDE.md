@@ -348,12 +348,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### ResourceQuota controller + admission (#124, P2) — WRITTEN 2026-10-07
+### ResourceQuota controller + admission (#124, P2) — BUILT 2026-10-07
 - [x] `apimachinery::quota` (usage, scopes, formatting); apiserver
       `quota_admission.rs` (check all, CAS charge, rollback, charged-at);
       controller-manager `resourcequota.rs` (feeds + LIST for other count/,
       5 s settle, 5 min resync); units; `test/e2e/resource-quota.sh`; docs
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at 46cd67b: 606 passed / 4 ignored (apimachinery 123,
+      apiserver 302, controller-manager 101); golden-rustkube-4ecdc374808d
+- [ ] resource-quota rig (stormcentral#512); close
 
 ### RuntimeClass (#135, P3) — BUILT 2026-10-07
 - [x] node.k8s.io/v1 served; `builtin_admission::runtime_class`; scheduler
