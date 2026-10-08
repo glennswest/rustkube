@@ -348,6 +348,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Remove the GitHub workflow (#114) — COMPLETE 2026-10-08
+- [x] `.github/workflows/images.yml` removed (458f598); Actions confirmed
+      disabled (`actions/permissions` → enabled false); releasing.md, audit
+      table, plan updated; workspace on a build VM 606 passed / 4 ignored
+
 ### SelfSubjectReview (#116, P3) — BUILT 2026-10-08
 - [x] handler + route + discovery; system:basic-user gains the rule and is
       reconciled at boot; unit; `test/e2e/whoami.sh` (kubectl auth whoami)
