@@ -155,7 +155,11 @@ matching is ADDED);
 list pagination with `continue`
 tokens (every page reports the first page's `resourceVersion`, with
 `remainingItemCount`; items carry their own `resourceVersion`); label and
-field selectors; `/openapi/v2` and `/openapi/v3`.
+field selectors; `/openapi/v2` and `/openapi/v3` (built-in types as GVK paths
+without schemas; every served CRD version published from its schema as
+`{reversed group}.{version}.{Kind}` with `apiVersion`/`kind`/`metadata` and
+its GVK — v2 without what Swagger 2.0 cannot say — and its group-version in
+the v3 index, so `kubectl explain` works on custom resources, #120).
 
 **Bodies and field validation** (#122). A write's body may be JSON,
 protobuf or YAML (`application/yaml`, converted to JSON before any handler);

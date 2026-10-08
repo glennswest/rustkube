@@ -348,6 +348,12 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### CRD schemas in /openapi (#120, P2) — WRITTEN 2026-10-07
+- [x] `openapi_crd.rs` (v2 definitions, v3 index + documents), handlers take
+      state; `CrdRegistry::all_versions`; register drops stale versions;
+      units; `test/e2e/crd-openapi.sh` (rigs, kubectl explain); docs
+- [ ] Build VM (when builds are back on); golden; rig (stormcentral#512)
+
 ### Startup manifests through admission (#158, P3) — WRITTEN 2026-10-07
 - [x] `apply_one`: create → admit_create / CRD on_create; Reconcile →
       `resource::builtin_update` (now shared with PUT and guaranteed_update)

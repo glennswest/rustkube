@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** CRD schemas are published in `/openapi/v2` and `/openapi/v3` (#120, `openapi_crd.rs`), built from the CRD registry on each request.
+  - **Shape:** every served version of every CRD becomes a definition `{reversed group}.{version}.{Kind}`: its `openAPIV3Schema` (or an object keeping unknown fields when it has none), with `apiVersion`, `kind` and `metadata` properties (upstream's descriptions) and `x-kubernetes-group-version-kind`.
+  - **v2** drops what Swagger 2.0 cannot express (`nullable`, `oneOf`, `anyOf`, `not`, the `type` of an int-or-string).
+  - **v3** lists each CRD group-version in its index; that document carries the schemas and the resource paths, with `fieldValidation`. `kubectl explain` works on custom resources.
+- **fix:** Re-registering a changed CRD drops the versions it no longer serves. A renamed version, or one set `served: false`, stayed served alongside the new state until the apiserver restarted.
+- **test:** openapi_crd units (the conformance equality, v2/v3 differences, schema-less, v3 paths). New `test/e2e/crd-openapi.sh` (suite `rigs`).
 - **fix:** Startup manifests are admitted as the same object would be through the API (#158). A create from `--manifest-dir` runs `builtin_admission::admit_create`, or for a custom resource its CRD's create strategy (schema defaults and pruning, status, `generation: 1`). A `Reconcile` update runs the update checks PUT and PATCH run, now one function (`resource::builtin_update`): Secret stringData, Service defaults and allocations with commit/abort, immutable ConfigMap/Secret/PriorityClass fields, PVC update rules, Pod scheduling gates. Custom resources get their CRD's update strategy.
   - **Effect:** a Pod from a manifest now gets its ServiceAccount, token volume, tolerations, priority, LimitRange defaults, QoS and phase; a Service without a clusterIP gets one, and node ports; an invalid object is refused and logged instead of stored. Before, only the Namespace and Secret defaults and the Service claims were applied, case by case.
   - **Ordering unchanged:** filename order, EnsureExists by default.

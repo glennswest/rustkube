@@ -233,6 +233,10 @@ memory metric and behavior read as v1 with upstream's annotations; a v1
 PATCH of the CPU target keeping the rest; a v1 GET + PUT leaving v2 as it
 was; v1 list and watch carrying v1 objects; delete through v1.
 
+`e2e/crd-openapi.sh` (#120, suite `rigs`): CRD schemas in `/openapi/v2`
+(the conformance equality check) and `/openapi/v3`, a schema-less CRD,
+`kubectl explain`, a renamed and an unserved version, a deleted CRD.
+
 `e2e/manifest-admission.sh` (#158, suite `rigs`): objects from
 `--manifest-dir` get the API's admission — a Pod's defaults, LimitRange,
 QoS; a NodePort Service's allocations; Secret stringData; an invalid

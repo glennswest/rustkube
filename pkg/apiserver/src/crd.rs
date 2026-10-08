@@ -152,6 +152,15 @@ impl CrdRegistry {
         }
 
         let mut crds = self.crds.write().await;
+        // What the CRD served before goes first: a version renamed or no
+        // longer served must stop being served (and published, #120), not
+        // linger beside the new one.
+        if let Some(by_version) = crds.get_mut(&group) {
+            for resources in by_version.values_mut() {
+                resources.remove(&plural);
+            }
+            by_version.retain(|_, r| !r.is_empty());
+        }
         for (version, printer_columns, status_subresource, schema, scale) in versions {
             let def = CrdDefinition {
                 group: group.clone(),
@@ -220,6 +229,19 @@ impl CrdRegistry {
                 crds.remove(group);
             }
         }
+    }
+
+    /// Every served version of every CRD, in a stable order (#120).
+    pub async fn all_versions(&self) -> Vec<CrdDefinition> {
+        let crds = self.crds.read().await;
+        let mut out: Vec<CrdDefinition> = crds
+            .values()
+            .flat_map(|versions| versions.values())
+            .flat_map(|resources| resources.values())
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| (&a.group, &a.version, &a.plural).cmp(&(&b.group, &b.version, &b.plural)));
+        out
     }
 
     /// One definition per `(group, plural)`, whichever version it came from.

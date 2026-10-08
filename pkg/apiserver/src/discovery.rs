@@ -643,7 +643,13 @@ pub async fn api_discovery_v1_resources() -> impl IntoResponse {
 /// We serve a valid document with no per-type definitions: kubectl finds no
 /// schema for the GVK and proceeds without client-side validation (the server
 /// is still the authority), instead of failing outright.
-pub async fn openapi_v2() -> impl IntoResponse {
+///
+/// Custom resources are published: one definition per served CRD version,
+/// from its schema (#120, `openapi_crd.rs`).
+pub async fn openapi_v2(
+    axum::extract::State(state): axum::extract::State<crate::handlers::AppState>,
+) -> impl IntoResponse {
+    let defs = state.crd_registry.all_versions().await;
     Json(json!({
         "swagger": "2.0",
         "info": {
@@ -651,15 +657,17 @@ pub async fn openapi_v2() -> impl IntoResponse {
             "version": format!("v1.36.0-rustkube+{}", apimachinery::VERSION)
         },
         "paths": {},
-        "definitions": {}
+        "definitions": crate::openapi_crd::v2_definitions(&defs)
     }))
 }
 
 /// GET /openapi/v3 — the OpenAPI v3 group-version index kubectl fetches first.
-pub async fn openapi_v3() -> impl IntoResponse {
+pub async fn openapi_v3(
+    axum::extract::State(state): axum::extract::State<crate::handlers::AppState>,
+) -> impl IntoResponse {
     // Each entry points at a per-group-version document below.
     let gv = |p: &str| json!({ "serverRelativeURL": format!("/openapi/v3/{p}") });
-    Json(json!({
+    let mut index = json!({
         "paths": {
             "api/v1": gv("api/v1"),
             "apis/apps/v1": gv("apis/apps/v1"),
@@ -671,11 +679,17 @@ pub async fn openapi_v3() -> impl IntoResponse {
             "apis/certificates.k8s.io/v1": gv("apis/certificates.k8s.io/v1"),
             "apis/apiextensions.k8s.io/v1": gv("apis/apiextensions.k8s.io/v1")
         }
-    }))
+    });
+    // Every CRD group-version (#120).
+    for p in crate::openapi_crd::v3_group_versions(&state.crd_registry.all_versions().await) {
+        index["paths"][&p] = gv(&p);
+    }
+    Json(index)
 }
 
 /// GET /openapi/v3/{*path} — per-group-version OpenAPI v3 document.
 pub async fn openapi_v3_group(
+    axum::extract::State(state): axum::extract::State<crate::handlers::AppState>,
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> impl IntoResponse {
     // `path` is the group-version as it appears in the index: "api/v1" for the
@@ -721,6 +735,10 @@ pub async fn openapi_v3_group(
         );
     }
 
+    // A CRD group-version's resources and schemas (#120).
+    let (crd_paths, schemas) = crate::openapi_crd::v3_parts(&state.crd_registry.all_versions().await, &group, &version);
+    paths.extend(crd_paths);
+
     Json(json!({
         "openapi": "3.0.0",
         "info": {
@@ -728,12 +746,12 @@ pub async fn openapi_v3_group(
             "version": format!("v1.36.0-rustkube+{}", apimachinery::VERSION)
         },
         "paths": paths,
-        "components": { "schemas": {} }
+        "components": { "schemas": schemas }
     }))
 }
 
 /// One OpenAPI operation carrying its GVK and the `fieldValidation` parameter.
-fn operation(gvk: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn operation(gvk: &serde_json::Value) -> serde_json::Value {
     json!({
         "x-kubernetes-group-version-kind": gvk,
         "parameters": [{

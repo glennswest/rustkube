@@ -62,7 +62,7 @@ reports the 1.36 API posture. Status: ✅ implemented surface · 🟡 partial ·
 | Admission: built-ins | core | 🟡 | NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds, PodSecurity (subset), Priority, Service ClusterIP + NodePort allocation (type changes on update, #132), CronJob, PVC access-mode/expansion, ConfigMap/Secret key/immutability and sysctl validation; projected SA token volume; Pending phases and QoS; LimitRanger (#131, create only). 🔴 ResourceQuota (#124); DefaultStorageClass is applied by the PV controller instead |
 | Aggregation layer | core | 🔴 | not wired (#83) |
 | API Priority & Fairness, audit logging | optional | 🔴 | |
-| Discovery, `/openapi/v2`, `/openapi/v3` | core | 🟡 | served with GVK paths but **empty schemas**, so `kubectl explain` has nothing to show |
+| Discovery, `/openapi/v2`, `/openapi/v3` | core | 🟡 | CRD schemas published per served version (#120, `kubectl explain` on CRs works); built-in types have GVK paths but **empty schemas**, so `kubectl explain` on them has nothing to show |
 
 ## 3. kube-controller-manager controllers
 
