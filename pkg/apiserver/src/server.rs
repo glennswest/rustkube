@@ -2546,13 +2546,13 @@ mod metrics_label_tests {
     #[test]
     fn slow_request_log_leaves_out_long_running() {
         let get = axum::http::Method::GET;
-        assert!(attrs_long_running("/api/v1/pods", "watch=true", &get));
-        assert!(attrs_long_running("/api/v1/watch/pods", "", &get));
-        assert!(attrs_long_running("/api/v1/namespaces/d/pods/p/log", "follow=true", &get));
-        assert!(attrs_long_running("/api/v1/namespaces/d/pods/p/exec", "", &axum::http::Method::POST));
-        assert!(attrs_long_running("/api/v1/nodes/n/proxy/stats", "", &get));
-        assert!(!attrs_long_running("/api/v1/namespaces/d/pods/p/status", "", &axum::http::Method::PUT));
-        assert!(!attrs_long_running("/api/v1/namespaces/d/pods", "", &get));
+        assert!(super::attrs_long_running("/api/v1/pods", "watch=true", &get));
+        assert!(super::attrs_long_running("/api/v1/watch/pods", "", &get));
+        assert!(super::attrs_long_running("/api/v1/namespaces/d/pods/p/log", "follow=true", &get));
+        assert!(super::attrs_long_running("/api/v1/namespaces/d/pods/p/exec", "", &axum::http::Method::POST));
+        assert!(super::attrs_long_running("/api/v1/nodes/n/proxy/stats", "", &get));
+        assert!(!super::attrs_long_running("/api/v1/namespaces/d/pods/p/status", "", &axum::http::Method::PUT));
+        assert!(!super::attrs_long_running("/api/v1/namespaces/d/pods", "", &get));
     }
 
     #[test]
