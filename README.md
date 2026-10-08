@@ -164,7 +164,12 @@ matching is ADDED);
 list pagination with `continue`
 tokens (every page reports the first page's `resourceVersion`, with
 `remainingItemCount`; items carry their own `resourceVersion`); label and
-field selectors; a resource no built-in group-version advertises is 404 `the
+field selectors; aggregated discovery (#107: `/api` and `/apis` answer
+`apidiscovery.k8s.io/v2` — or `v2beta1` — `APIGroupDiscoveryList` when
+`Accept` asks for it in JSON, every group, version and resource with
+subresources folded in, built from the same lists as the legacy documents and
+the CRD registry; protobuf is not offered and clients fall to the JSON form);
+a resource no built-in group-version advertises is 404 `the
 server could not find the requested resource`, not an empty list from a
 catch-all route (#110); `/openapi/v2` and `/openapi/v3` (built-in types as GVK paths
 without schemas; every served CRD version published from its schema as
@@ -270,7 +275,8 @@ kube-aggregator:
   bodies and protobuf are passed as they are. Not `Available`: 503.
   Connection upgrades are refused (501);
 - aggregated groups are in `/apis` and `/apis/{group}`; `/apis/{group}/{version}`
-  is the backend's own answer. Aggregated discovery (#107) is not served;
+  is the backend's own answer; in aggregated discovery their versions are
+  listed without resources, `freshness: Stale` (#107);
 - a built-in group is never proxied, whatever an APIService says;
 - `kube-system/extension-apiserver-authentication` publishes `client-ca-file`,
   `requestheader-client-ca-file` (`--requestheader-client-ca-file`),

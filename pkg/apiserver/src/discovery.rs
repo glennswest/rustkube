@@ -52,7 +52,13 @@ pub async fn readyz(State(state): State<AppState>) -> axum::response::Response {
 }
 
 /// GET /api — list core API versions.
-pub async fn api_versions() -> impl IntoResponse {
+pub async fn api_versions(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    if let Some(v) = wants_aggregated(&headers) {
+        return aggregated(&state, true, v).await;
+    }
     Json(json!({
         "kind": "APIVersions",
         "versions": ["v1"],
@@ -61,6 +67,7 @@ pub async fn api_versions() -> impl IntoResponse {
             "serverAddress": ""
         }]
     }))
+    .into_response()
 }
 
 /// GET /apis — list API groups (includes dynamic CRD groups).
@@ -255,7 +262,13 @@ fn builtin_groups() -> Vec<Value> {
     ]
 }
 
-pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn api_groups_dynamic(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    if let Some(v) = wants_aggregated(&headers) {
+        return aggregated(&state, false, v).await;
+    }
     let groups = all_groups(&state).await;
 
     Json(json!({
@@ -263,6 +276,133 @@ pub async fn api_groups_dynamic(State(state): State<AppState>) -> impl IntoRespo
         "apiVersion": "v1",
         "groups": groups
     }))
+    .into_response()
+}
+
+/// Does `Accept` ask for aggregated discovery (#107)? The version
+/// (`v2`, or `v2beta1` for older clients) of the first JSON
+/// `as=APIGroupDiscoveryList` entry, unless a plain media type comes first.
+/// Protobuf entries are passed over: there is no protobuf schema for it
+/// here, and every client lists the JSON form after.
+pub(crate) fn wants_aggregated(headers: &axum::http::HeaderMap) -> Option<&'static str> {
+    let accept = headers.get(axum::http::header::ACCEPT)?.to_str().ok()?;
+    for entry in accept.split(',') {
+        let mut parts = entry.split(';').map(str::trim);
+        let media = parts.next().unwrap_or("");
+        let params: Vec<&str> = parts.collect();
+        let has = |p: &str| params.iter().any(|x| *x == p);
+        if media.contains("protobuf") {
+            continue;
+        }
+        if !has("as=APIGroupDiscoveryList") {
+            return None;
+        }
+        if media == "application/json" && has("g=apidiscovery.k8s.io") {
+            if has("v=v2") {
+                return Some("v2");
+            }
+            if has("v=v2beta1") {
+                return Some("v2beta1");
+            }
+        }
+    }
+    None
+}
+
+/// One group-version's discovery `resources` list in aggregated form: each
+/// resource with its subresources folded in, `responseKind` and `scope`.
+pub(crate) fn to_v2_resources(group: &str, version: &str, list: &[Value]) -> Vec<Value> {
+    let kind_of = |e: &Value| json!({
+        "group": e["group"].as_str().unwrap_or(group),
+        "version": e["version"].as_str().unwrap_or(version),
+        "kind": e["kind"],
+    });
+    let mut out: Vec<Value> = Vec::new();
+    for e in list.iter().filter(|e| e["name"].as_str().is_some_and(|n| !n.contains('/'))) {
+        let mut r = json!({
+            "resource": e["name"],
+            "responseKind": kind_of(e),
+            "scope": if e["namespaced"].as_bool() == Some(true) { "Namespaced" } else { "Cluster" },
+            "singularResource": e["singularName"].as_str().unwrap_or(""),
+            "verbs": e["verbs"].clone(),
+        });
+        for k in ["shortNames", "categories"] {
+            if e[k].is_array() {
+                r[k] = e[k].clone();
+            }
+        }
+        out.push(r);
+    }
+    for e in list {
+        let Some((parent, sub)) = e["name"].as_str().and_then(|n| n.split_once('/')) else { continue };
+        let entry = json!({"subresource": sub, "responseKind": kind_of(e), "verbs": e["verbs"].clone()});
+        match out.iter_mut().find(|r| r["resource"] == parent) {
+            Some(r) => {
+                if !r["subresources"].is_array() {
+                    r["subresources"] = json!([]);
+                }
+                r["subresources"].as_array_mut().unwrap().push(entry);
+            }
+            // A subresource served without its parent (the KubeVirt doors).
+            None => out.push(json!({
+                "resource": parent,
+                "responseKind": kind_of(e),
+                "scope": if e["namespaced"].as_bool() == Some(true) { "Namespaced" } else { "Cluster" },
+                "singularResource": "",
+                "verbs": [],
+                "subresources": [entry],
+            })),
+        }
+    }
+    out
+}
+
+/// The aggregated discovery document (`apidiscovery.k8s.io` `version`,
+/// #107): `/api`'s core group, or every group `/apis` lists — built-in,
+/// CRD and aggregated — with every version's resources, from the same
+/// lists as `/api/v1`, `/apis/<g>/<v>` and the CRD registry. An aggregated
+/// API's versions are listed without resources, `freshness: Stale`, so a
+/// client asks the backend's own discovery.
+async fn aggregated(state: &AppState, core: bool, version: &str) -> axum::response::Response {
+    let lists = builtin_lists().await;
+    let mut items = Vec::new();
+    if core {
+        let list = lists.get(&(String::new(), "v1".into())).and_then(Value::as_array).cloned().unwrap_or_default();
+        items.push(json!({"metadata": {"creationTimestamp": null}, "versions": [
+            {"version": "v1", "resources": to_v2_resources("", "v1", &list), "freshness": "Current"}]}));
+    } else {
+        let aggregated_groups: Vec<String> =
+            state.aggregator.groups().iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect();
+        for g in all_groups(state).await {
+            let name = g["name"].as_str().unwrap_or("").to_string();
+            let preferred = g["preferredVersion"]["version"].as_str().unwrap_or("").to_string();
+            let mut versions: Vec<String> =
+                g["versions"].as_array().into_iter().flatten().filter_map(|v| v["version"].as_str().map(str::to_string)).collect();
+            versions.sort_by_key(|v| *v != preferred);
+            let mut out = Vec::new();
+            for v in versions {
+                let mut list = lists.get(&(name.clone(), v.clone())).and_then(Value::as_array).cloned().unwrap_or_default();
+                let builtin = !list.is_empty();
+                for crd in state.crd_registry.api_resources(&name, &v).await {
+                    if !list.iter().any(|e| e["name"] == crd["name"]) {
+                        list.push(crd);
+                    }
+                }
+                let stale = list.is_empty() && !builtin && aggregated_groups.contains(&name);
+                out.push(json!({"version": v, "resources": to_v2_resources(&name, &v, &list),
+                                "freshness": if stale { "Stale" } else { "Current" }}));
+            }
+            items.push(json!({"metadata": {"name": name, "creationTimestamp": null}, "versions": out}));
+        }
+    }
+    let media = format!("application/json;g=apidiscovery.k8s.io;v={version};as=APIGroupDiscoveryList");
+    let body = json!({"kind": "APIGroupDiscoveryList", "apiVersion": format!("apidiscovery.k8s.io/{version}"),
+                      "metadata": {}, "items": items});
+    (
+        [(axum::http::header::CONTENT_TYPE, media), (axum::http::header::VARY, "Accept".to_string())],
+        serde_json::to_vec(&body).unwrap_or_default(),
+    )
+        .into_response()
 }
 
 /// GET /apis/{group} — one group's `APIGroup` document.
@@ -655,16 +795,33 @@ pub async fn api_discovery_v1_resources() -> impl IntoResponse {
 /// The served-resource check (#110, `served.rs`) reads it.
 pub async fn advertised(group: &str, version: &str) -> Option<&'static std::collections::HashSet<String>> {
     use std::collections::{HashMap, HashSet};
-    static TABLE: tokio::sync::OnceCell<HashMap<(String, String), HashSet<String>>> = tokio::sync::OnceCell::const_new();
-    async fn names(r: axum::response::Response) -> HashSet<String> {
+    static NAMES: tokio::sync::OnceCell<HashMap<(String, String), HashSet<String>>> = tokio::sync::OnceCell::const_new();
+    let names = NAMES.get_or_init(|| async {
+        let mut m = HashMap::new();
+        for ((g, v), list) in builtin_lists().await {
+            let n: HashSet<String> = list.as_array().into_iter().flatten()
+                .filter_map(|r| r["name"].as_str().map(|n| n.split('/').next().unwrap_or("").to_string()))
+                .collect();
+            m.insert((g.clone(), v.clone()), n);
+        }
+        m
+    }).await;
+    names.get(&(group.to_string(), version.to_string()))
+}
+
+/// Every built-in group-version's discovery `resources` list, read from its
+/// handler once: the source of [`advertised`] and of aggregated discovery
+/// (#107), so neither can disagree with `/apis/<g>/<v>`.
+pub(crate) async fn builtin_lists() -> &'static std::collections::BTreeMap<(String, String), Value> {
+    use std::collections::BTreeMap;
+    static TABLE: tokio::sync::OnceCell<BTreeMap<(String, String), Value>> = tokio::sync::OnceCell::const_new();
+    async fn names(r: axum::response::Response) -> Value {
         let b = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap_or_default();
         let v: serde_json::Value = serde_json::from_slice(&b).unwrap_or_default();
-        v["resources"].as_array().into_iter().flatten()
-            .filter_map(|r| r["name"].as_str().map(|n| n.split('/').next().unwrap_or("").to_string()))
-            .collect()
+        v["resources"].clone()
     }
-    let table = TABLE.get_or_init(|| async {
-        let mut m = HashMap::new();
+    TABLE.get_or_init(|| async {
+        let mut m = BTreeMap::new();
         macro_rules! gv {
             ($g:expr, $v:expr, $f:expr) => {
                 m.insert(($g.to_string(), $v.to_string()), names($f.await.into_response()).await);
@@ -694,12 +851,13 @@ pub async fn advertised(group: &str, version: &str) -> Option<&'static std::coll
         gv!("admissionregistration.k8s.io", "v1", api_admissionregistration_v1_resources());
         gv!("node.k8s.io", "v1", api_node_v1_resources());
         gv!("authorization.openshift.io", "v1", api_openshift_authorization_v1_resources());
+        gv!("events.k8s.io", "v1", crate::events::discovery());
+        gv!("metrics.k8s.io", "v1beta1", crate::resource_metrics::resources());
         gv!("flowcontrol.apiserver.k8s.io", "v1", api_flowcontrol_v1_resources());
         gv!("gateway.networking.k8s.io", "v1", api_gateway_v1_resources());
         gv!("apiregistration.k8s.io", "v1", api_apiregistration_v1_resources());
         m
-    }).await;
-    table.get(&(group.to_string(), version.to_string()))
+    }).await
 }
 
 /// GET /openapi/v2 — Swagger 2.0 document.
@@ -1775,6 +1933,48 @@ mod tests {
         assert!(advertised("", "v1").await.unwrap().contains("replicationcontrollers"));
         assert!(!advertised("", "v1").await.unwrap().contains("replicationcontrollerz"));
         assert!(advertised("example.com", "v1").await.is_none(), "custom groups are not checked here");
+    }
+
+    #[test]
+    fn aggregated_discovery_is_negotiated_as_kubectl_asks() {
+        let h = |a: &str| {
+            let mut m = axum::http::HeaderMap::new();
+            m.insert(axum::http::header::ACCEPT, a.parse().unwrap());
+            wants_aggregated(&m)
+        };
+        let kubectl = "application/vnd.kubernetes.protobuf;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList,\
+                       application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList,\
+                       application/json;g=apidiscovery.k8s.io;v=v2beta1;as=APIGroupDiscoveryList,application/json";
+        assert_eq!(h(kubectl), Some("v2"));
+        assert_eq!(h("application/json;g=apidiscovery.k8s.io;v=v2beta1;as=APIGroupDiscoveryList,application/json"), Some("v2beta1"));
+        assert_eq!(h("application/json"), None);
+        assert_eq!(h("application/json, application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList"), None, "legacy first");
+        assert!(wants_aggregated(&axum::http::HeaderMap::new()).is_none());
+    }
+
+    #[test]
+    fn a_resource_list_folds_into_the_v2_shape() {
+        let list = vec![
+            json!({"name": "deployments", "singularName": "deployment", "namespaced": true, "kind": "Deployment",
+                   "verbs": ["get", "list"], "shortNames": ["deploy"], "categories": ["all"]}),
+            json!({"name": "deployments/scale", "singularName": "", "namespaced": true, "kind": "Scale",
+                   "group": "autoscaling", "version": "v1", "verbs": ["get", "update"]}),
+            json!({"name": "deployments/status", "singularName": "", "namespaced": true, "kind": "Deployment", "verbs": ["get"]}),
+            json!({"name": "virtualmachineinstances/console", "singularName": "", "namespaced": true,
+                   "kind": "VirtualMachineInstance", "verbs": ["get"]}),
+        ];
+        let v2 = to_v2_resources("apps", "v1", &list);
+        assert_eq!(v2.len(), 2);
+        let d = &v2[0];
+        assert_eq!(d["resource"], "deployments");
+        assert_eq!(d["responseKind"], json!({"group": "apps", "version": "v1", "kind": "Deployment"}));
+        assert_eq!(d["scope"], "Namespaced");
+        assert_eq!(d["shortNames"], json!(["deploy"]));
+        assert_eq!(d["subresources"][0]["subresource"], "scale");
+        assert_eq!(d["subresources"][0]["responseKind"], json!({"group": "autoscaling", "version": "v1", "kind": "Scale"}));
+        assert_eq!(d["subresources"][1]["subresource"], "status");
+        assert_eq!(v2[1]["resource"], "virtualmachineinstances", "a parent made for a lone subresource");
+        assert_eq!(v2[1]["subresources"][0]["subresource"], "console");
     }
 
     #[test]

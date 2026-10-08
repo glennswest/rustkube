@@ -3,6 +3,11 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-07
+- **feat:** Aggregated discovery (#107). When `Accept` asks for `application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList` (or `v2beta1`), `/api` and `/apis` answer one `APIGroupDiscoveryList`, with the requested media type and `Vary: Accept`. It carries every group (built-in, CRD, aggregated), each version preferred first, and each resource with `responseKind`, `scope`, verbs, short names, categories, and its subresources folded in.
+  - **Source:** the same lists the legacy `/api/v1` and `/apis/<g>/<v>` documents serve (`discovery::builtin_lists`, which now includes events.k8s.io and metrics.k8s.io), plus the CRD registry, so the two views cannot disagree.
+  - An aggregated API's versions are listed without resources, `freshness: Stale`.
+  - The protobuf form is not offered; clients list the JSON one after it. `oc adm inspect` exits 0.
+- **test:** negotiation and v2-shape units. `test/e2e/oc-adm.sh`: `inspect` → `works`, plus checks of the `/apis` media type and `/api`'s pods.
 - **feat:** `authorization.openshift.io/v1` reviews are served (#106): `subjectaccessreviews`, `namespaces/{ns}/localsubjectaccessreviews`, `resourceaccessreviews` and `namespaces/{ns}/localresourceaccessreviews`, create only, in `/apis` and discovery, governed by ordinary RBAC.
   - **SubjectAccessReview:** the OpenShift body (`verb`, `resource`, `resourceAPIGroup`, `resourceName`, `namespace`, `user`/`groups`, or the caller when neither is set; `isNonResourceURL`/`path`) is answered by `RbacEngine` as `SubjectAccessReviewResponse`.
   - **ResourceAccessReview:** answered as `ResourceAccessReviewResponse` with `users` and `groups` from the new `RbacEngine::who_can`: the subjects of every ClusterRoleBinding, and every RoleBinding in the namespace, whose role permits the request (ServiceAccounts as `system:serviceaccount:…`), plus `system:masters`. `evalutionError` is spelled as OpenShift's API spells it.

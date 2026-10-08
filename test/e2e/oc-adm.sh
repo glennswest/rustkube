@@ -146,9 +146,11 @@ check "its ReplicaSet was never collected as orphaned" bash -c "! grep -q 'Repli
 check "and it is owned by the deployment's uid" test "$(adm get rs -n work -o jsonpath='{.items[0].metadata.ownerReferences[0].uid}')" = "$(adm get deployment web -n work -o jsonpath='{.metadata.uid}')"
 
 # --- inspection ---------------------------------------------------------------
-# Writes its data, then exits 1: /apis has no aggregated discovery (#107).
-verb missing "inspect" adm adm inspect ns/work --dest-dir="$W/inspect"
+# Exits 0 now that /api and /apis answer aggregated discovery (#107).
+verb works "inspect" adm adm inspect ns/work --dest-dir="$W/inspect"
 check "inspect wrote its data" test -d "$W/inspect/namespaces/work"
+check "aggregated discovery: /apis answers APIGroupDiscoveryList" bash -c "curl -sk -H 'Authorization: Bearer $ADMIN' -H 'Accept: application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList,application/json' -D - $API/apis | grep -qi 'content-type: application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList'"
+check "aggregated discovery: /api lists pods" bash -c "curl -sk -H 'Authorization: Bearer $ADMIN' -H 'Accept: application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList' $API/api | grep -q '\"resource\":\"pods\"'"
 verb missing "must-gather" adm adm must-gather --dest-dir="$W/mg" --timeout=30s
 
 # --- the OpenShift platform: out of scope here (#70) ------------------------

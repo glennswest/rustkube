@@ -348,6 +348,12 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Aggregated discovery (#107, P3) — WRITTEN 2026-10-07
+- [x] `wants_aggregated`, `to_v2_resources`, `aggregated` on `/api` + `/apis`
+      from `builtin_lists` (now also events/metrics) + CRD registry; aggregated
+      APIs Stale; units; oc-adm.sh `inspect` → works + curl checks; docs
+- [ ] Build VM; golden; rig (oc-adm, stormcentral#512)
+
 ### authorization.openshift.io reviews (#106, P3) — BUILT 2026-10-07
 - [x] `RbacEngine::who_can`; `handlers/openshift_authorization.rs` (SAR,
       LocalSAR, RAR, LocalRAR; legacy-group mapping); routes, discovery,
@@ -1521,7 +1527,7 @@ Known state on 2026-09-24:
 - [x] `oc adm` — every verb run against a live apiserver
       (`test/e2e/oc-adm.sh`); the checklist is in docs/oc-compatibility.md
       (#69). Open from it: OpenShift authorization reviews for `who-can` and
-      `adm new-project` (#106, served 2026-10-07), aggregated discovery for `inspect` (#107),
+      `adm new-project` (#106, served 2026-10-07), aggregated discovery for `inspect` (#107, served 2026-10-07),
       `nodes/proxy` for `node-logs` (#108); `top` needs #83
 - [x] `oc scale` — `/scale` served (#86), rig `test/e2e/scale.sh`.
 - [x] Projects (#97): `project.openshift.io/v1` Project + ProjectRequest over
