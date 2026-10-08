@@ -348,11 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### ReplicationController controller (#125, P2) — WRITTEN 2026-10-07
+### ReplicationController controller (#125, P2) — BUILT 2026-10-07
 - [x] `replicaset::Kind` (RS / RC), RC instance in runner; fullyLabeledReplicas;
       apiserver RC defaults; `replicationcontrollers/scale` + discovery;
       units; `test/e2e/replication-controller.sh` (rigs); docs
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at 847dd1e: 595 passed / 4 ignored (controller-manager 99);
+      golden-rustkube-04a64e29a29f (stormcos#366)
+- [ ] replication-controller rig (stormcentral#512); close
 
 ### build-release.sh on the private volume (#156) — COMPLETE 2026-10-07
 - [x] OUT under $TMPDIR, cargo's target dir, no root/persistent-mount
