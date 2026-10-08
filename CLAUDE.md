@@ -348,6 +348,15 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### Conformance binaries from goldens (#140, P2) — BLOCKED on stormcentral#557, 2026-10-07
+Owner: "Goldens". Goldens are sealed stormblock volumes on forge; nothing
+reads a golden's files from another machine (`registry/<c>:<tag>` is a
+display name). Filed stormcentral#557 (`component fetch <c> --commit --out`,
+sha256-checked); fastetcd has no golden and no release assets (noted there).
+- [ ] After #557: `vm.sh <sha>` fetches rustkube's golden binaries (+ fastetcd
+      by #557's route), `stage.sh` retired, docs/conformance.md; run the six
+      chunks; #159's concurrent rerun
+
 ### GC orphan failure under concurrent chunks (#159, P3) — ANALYSED 2026-10-07
 - [x] efbea2d's GC (sweep, non-snapshot `live`, unconditional delete, 30 s
       interval) has both a latency and an unsafe-deletion path for the spec;
