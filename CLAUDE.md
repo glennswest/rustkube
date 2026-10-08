@@ -348,11 +348,13 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
-### Ephemeral-volume controller (#94, P2) — WRITTEN 2026-10-08
+### Ephemeral-volume controller (#94, P2) — BUILT 2026-10-08
 - [x] `ephemeral.rs` (pods primary, owned PVC children; create from the
       template; foreign claim → Warning Event, never adopted); CM role
       creates PVCs; unit; `test/e2e/ephemeral-volume.sh`; README/storage.md
-- [ ] Build VM; golden; rig (stormcentral#512)
+- [x] Build VM at 40157d0: 605 passed / 4 ignored (controller-manager 102);
+      golden-rustkube-41c5a5a6ec37 (stormcos#366)
+- [ ] ephemeral-volume rig (stormcentral#512); close
 
 ### Aggregated discovery (#107, P3) — BUILT 2026-10-07
 - [x] `wants_aggregated`, `to_v2_resources`, `aggregated` on `/api` + `/apis`
