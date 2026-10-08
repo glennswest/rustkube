@@ -94,6 +94,9 @@ with `/status` and IPAddress, #134: a `kubernetes` ServiceCIDR holding
 write IPAddress objects or read other ServiceCIDRs), `discovery.k8s.io/v1`, `events.k8s.io/v1` (translated
 to and from stored core/v1 Events), `coordination.k8s.io/v1`,
 `rbac.authorization.k8s.io/v1`, `authorization.k8s.io/v1`,
+`authentication.k8s.io/v1` SelfSubjectReview (`kubectl auth whoami`: the
+caller's username and groups as authenticated, granted to every
+authenticated user by `system:basic-user`, #116),
 `authorization.openshift.io/v1` (Subject/LocalSubject/Resource/LocalResource
 AccessReview — `oc adm policy who-can` and `oc adm new-project`'s check —
 answered by the RBAC engine; a ResourceAccessReview lists the users and groups

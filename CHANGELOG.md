@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-08
+- **feat:** SelfSubjectReview, "who am I" (#116): `POST /apis/authentication.k8s.io/v1/selfsubjectreviews`, in discovery. It answers `status.userInfo` with the caller's username and groups as the apiserver authenticated them, `system:authenticated` included; `kubectl auth whoami` uses it. `system:basic-user` grants it to every authenticated user, and is now reconciled at boot (not create-only), so existing clusters gain the rule.
+- **test:** unit for the response. New `test/e2e/whoami.sh` (suite `rigs`).
 - **feat:** The ephemeral-volume controller (#94, `ephemeral.rs`), as upstream's. A Pod's generic ephemeral volume (`volumes[].ephemeral.volumeClaimTemplate`) gets PVC `<pod>-<volume>` in its namespace, with the template's labels, annotations and spec, owned by the Pod (`controller`, `blockOwnerDeletion`), so the garbage collector deletes it with the Pod. A claim of that name the Pod does not own is not adopted: the Pod gets a Warning `FailedCreate` Event ("… pod is not owner"). A Pod being deleted gets no claims. The controller-manager's bootstrap role gains `create persistentvolumeclaims`.
 - **test:** template-to-claim unit; RBAC assertion. New `test/e2e/ephemeral-volume.sh` (suite `rigs`).
 

@@ -78,6 +78,24 @@ pub async fn create_self_subject_access_review(
     }))
 }
 
+/// `POST /apis/authentication.k8s.io/v1/selfsubjectreviews` — "who am I?"
+/// (#116), what `kubectl auth whoami` asks: the caller's identity as this
+/// apiserver authenticated it — username and groups, `system:authenticated`
+/// included. Nothing is stored. A ServiceAccount token's identity carries
+/// no uid or extra here, so `status.userInfo` has none.
+pub async fn create_self_subject_review(Extension(user): Extension<UserInfo>) -> Response {
+    (StatusCode::CREATED, Json(self_subject_review(&user))).into_response()
+}
+
+pub(crate) fn self_subject_review(user: &UserInfo) -> Value {
+    json!({
+        "kind": "SelfSubjectReview",
+        "apiVersion": "authentication.k8s.io/v1",
+        "metadata": { "creationTimestamp": null },
+        "status": { "userInfo": { "username": user.username, "groups": user.groups } },
+    })
+}
+
 /// `POST /apis/authorization.k8s.io/v1/selfsubjectrulesreviews`
 ///
 /// "What may I do in namespace N?" — one request instead of one per question,
@@ -234,6 +252,15 @@ fn opt_str_at(v: &Value, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn who_am_i_echoes_the_authenticated_identity() {
+        let u = UserInfo { username: "alice".into(), groups: vec!["devs".into(), "system:authenticated".into()] };
+        let r = self_subject_review(&u);
+        assert_eq!(r["kind"], "SelfSubjectReview");
+        assert_eq!(r["apiVersion"], "authentication.k8s.io/v1");
+        assert_eq!(r["status"]["userInfo"], json!({"username": "alice", "groups": ["devs", "system:authenticated"]}));
+    }
 
     #[test]
     fn the_subject_is_the_one_asked_about_not_the_caller() {

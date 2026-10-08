@@ -1637,6 +1637,12 @@ pub async fn api_authentication_v1_resources() -> impl IntoResponse {
         "apiVersion": "v1",
         "groupVersion": "authentication.k8s.io/v1",
         "resources": [{
+            "name": "selfsubjectreviews",
+            "singularName": "selfsubjectreview",
+            "namespaced": false,
+            "kind": "SelfSubjectReview",
+            "verbs": ["create"]
+        }, {
             "name": "tokenreviews",
             "singularName": "tokenreview",
             "namespaced": false,

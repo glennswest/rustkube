@@ -437,6 +437,12 @@ fn build_router(
         // TokenReview — how a component that holds a token but not the signing
         // key asks whether it is valid. The kubelet authenticates every inbound
         // request this way.
+        // SelfSubjectReview — "who am I", `kubectl auth whoami` (#116).
+        .route(
+            "/apis/authentication.k8s.io/v1/selfsubjectreviews",
+            axum::routing::post(crate::handlers::authorization::create_self_subject_review)
+                .layer(axum::middleware::from_fn(crate::table::refuse_table)),
+        )
         .route(
             "/apis/authentication.k8s.io/v1/tokenreviews",
             axum::routing::post(crate::handlers::token::create_token_review)
@@ -2072,15 +2078,16 @@ async fn bootstrap_rbac(
             "apiGroups": ["authorization.k8s.io"],
             "resources": ["selfsubjectaccessreviews", "selfsubjectrulesreviews"],
             "verbs": ["create"]
+        }, {
+            // "Who am I?" (#116): `kubectl auth whoami`.
+            "apiGroups": ["authentication.k8s.io"],
+            "resources": ["selfsubjectreviews"],
+            "verbs": ["create"]
         }]
     });
-    create_bootstrap(
-        storage,
-        &ResourceStorage::cluster_key("clusterroles", "system:basic-user"),
-        basic_user_role,
-        "clusterroles system:basic-user",
-    )
-    .await;
+    // Reconciled, not create-only, so a cluster bootstrapped before
+    // selfsubjectreviews (#116) gains the rule.
+    reconcile_bootstrap_role(storage, basic_user_role).await;
     let basic_user_binding = json!({
         "apiVersion": "rbac.authorization.k8s.io/v1",
         "kind": "ClusterRoleBinding",

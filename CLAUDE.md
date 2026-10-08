@@ -348,6 +348,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       4 ignored (apiserver 270), exit 0
 - [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
 
+### SelfSubjectReview (#116, P3) — WRITTEN 2026-10-08
+- [x] handler + route + discovery; system:basic-user gains the rule and is
+      reconciled at boot; unit; `test/e2e/whoami.sh` (kubectl auth whoami)
+- [ ] Build VM; golden; rig (stormcentral#512)
+
 ### Ephemeral-volume controller (#94, P2) — BUILT 2026-10-08
 - [x] `ephemeral.rs` (pods primary, owned PVC children; create from the
       template; foreign claim → Warning Event, never adopted); CM role

@@ -24,7 +24,8 @@ State on 2026-09-26, from the code and from running oc against it
 - not served: `oc adm top pod` (pod metrics need cadvisor#3 on stormcos; `top node`
   works from cadvisor, #89); `oc adm node-logs` (no `nodes/{name}/proxy`, #108);
   `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
-  `user.openshift.io` or SelfSubjectReview); `clusterversion`, `dc`, `scc` (their groups are not served).
+  `user.openshift.io`; SelfSubjectReview is served, #116, so `kubectl auth
+  whoami` works); `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
 
 # `oc` command reference and compatibility checklist

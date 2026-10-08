@@ -284,6 +284,9 @@ full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
 loses its nominatedNodeName; Never and equal priority preempt nothing; a
 PDB-protected Pod is spared for an unprotected victim.
 
+`e2e/whoami.sh` (#116, suite `rigs`): selfsubjectreviews in discovery;
+`kubectl auth whoami` as a plain user and the admin; a raw POST's 201.
+
 `e2e/unserved-resource.sh` (#110, suite `rigs`): GET/POST/PUT of unserved
 resources in core, apps and rbac are 404 and store nothing; RC, quota and
 pod-template lists carry their kinds; namespace and pods/log paths still
