@@ -1575,8 +1575,10 @@ results are in docs/conformance.md.
     staged there.
 - [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) —
       2026-10-08: aarch64 musl builds through sc-build (8e82cca: 16M/11M/8.7M,
-      static, start under qemu, arm64 images). Device RSS/startup and what
-      "minimal" means: owner's (device access), asked on #68
+      static, start under qemu, arm64 images). Owner 2026-10-09: "minimal"
+      = A first (the three binaries as built, measured; B/C from the
+      numbers). NEEDS OWNER: which MikroTik (not a DNS/DHCP one) and how to
+      reach it — asked on #68, `wait-owner`; no ARM64 test host registered
 
 ### `oc` compatibility — the surface that drives completeness
 
