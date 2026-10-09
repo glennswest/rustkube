@@ -34,6 +34,8 @@ separate containers (Rust, rustkube-API clients).
    job, never the host's). Reuse rustkube-node's kubelet skeleton; the
    CRI/youki/VM runtimes are irrelevant on rose.
 2. **ARM64 / MikroTik build verification** (rustkube Phase 4 checkbox).
+   *2026-10-09: MikroTik dropped by the owner; ARM64 is measured on a
+   dedicated host instead (rustkube#68).*
 3. **fastetcd soak on rose-class hardware** — durability under power loss,
    crash recovery, watch fan-out (mkube TODO #14's checklist).
 4. **Aux moves** (each its own small container, portable one at a time

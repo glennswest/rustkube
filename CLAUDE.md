@@ -1594,12 +1594,13 @@ results are in docs/conformance.md.
     Owner answered **Goldens**: binaries reach conform.g8.lo as the
     component's golden; run.sh/vm.sh not yet changed. efbea2d is still
     staged there.
-- [ ] ARM64 cross-compile verification + MikroTik minimal build (#68) —
-      2026-10-08: aarch64 musl builds through sc-build (8e82cca: 16M/11M/8.7M,
-      static, start under qemu, arm64 images). Owner 2026-10-09: "minimal"
-      = A first (the three binaries as built, measured; B/C from the
-      numbers). NEEDS OWNER: which MikroTik (not a DNS/DHCP one) and how to
-      reach it — asked on #68, `wait-owner`; no ARM64 test host registered
+- [ ] ARM64 verification (#68) — PARKED 2026-10-09 until the owner's ARM64
+      host is set up. aarch64 musl builds through sc-build (8e82cca:
+      16M/11M/8.7M, static, start under qemu, arm64 images). Owner
+      2026-10-09: measure A first (the three binaries as built; B/C from the
+      numbers); "Microtik is not compatible with what we are building … no
+      mikrotik, and this issue parked till hardware available." Next: on the
+      host, boot apiserver against fastetcd, record RSS and startup
 
 ### `oc` compatibility — the surface that drives completeness
 

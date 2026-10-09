@@ -96,9 +96,10 @@ provisioning that installed it were removed (#157, docs/terragrunt-deploy.md).
 
 The component golden is x86_64 musl. `deploy/build-release.sh` builds aarch64
 musl too (above; 8e82cca), and the binaries start under qemu, but nothing has
-run on an ARM64 device: device memory, startup and what a "minimal" MikroTik
-build means stay with the owner on #68. Static linking and a qemu start do not
-prove runtime support on the device.
+run on an ARM64 device. MikroTik is not a target (owner, 2026-10-09); memory
+and startup are to be measured on an ARM64 host the owner is setting up, the
+binaries as built first (#68, parked until then). Static linking and a qemu
+start do not prove runtime support on a device.
 
 Historical v0.8.0 measurements were approximately 14 MB for the apiserver,
 10 MB for controller-manager and 8.1 MB for scheduler; they are not sizes for
