@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# Generate the rustkube control-plane PKI (OpenShift/kubeadm style) for the
-# masters, into an output dir that terragrunt injects via cloud-init write_files.
-# Idempotent: existing files are kept, so re-running an apply reuses the CA.
+# Generate a standalone rustkube control-plane PKI (OpenShift/kubeadm style)
+# for a set of masters, into OUTDIR. On StormCOS stormcert issues these files
+# instead (docs/certificates.md). Idempotent: existing files are kept, so a
+# re-run reuses the CA.
 #
-#   ./gen-pki.sh [OUTDIR]   (default: deploy/terragrunt/masters/pki)
+#   ./gen-pki.sh [OUTDIR]   (default: deploy/pki, gitignored)
 #
 # Produces:
 #   ca.crt/ca.key                       cluster CA (kubernetes-ca)
@@ -19,10 +20,10 @@
 set -euo pipefail
 
 SCRIPTDIR="$(cd "$(dirname "$0")" && pwd)"
-OUT="${1:-$SCRIPTDIR/terragrunt/masters/pki}"
+OUT="${1:-$SCRIPTDIR/pki}"
 mkdir -p "$OUT"; cd "$OUT"
 
-# Masters (keep in sync with terragrunt masters `nodes`).
+# Masters and their addresses — edit for the cluster being issued.
 declare -A MASTERS=( [master1]=192.168.8.51 [master2]=192.168.8.52 [master3]=192.168.8.53 )
 # Every node that runs a kubelet: the 3 masters (schedulable) + 3 workers. Each
 # gets a long-lived SA-signed bearer token (sub=system:node:<name>).

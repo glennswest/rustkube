@@ -89,9 +89,8 @@ Outputs, on the job's volume, when the script runs successfully:
 `/usr/local/bin/rustkube-component` and sets that entrypoint. It supplies no
 user directive, shell, init, CA files or runtime configuration. This scratch
 image is different from stormcos's stormd-supervised runtime golden. GHCR is
-not used. `deploy/packaging/nfpm.yaml` remains an RPM/deb description without
-an active packaging path; legacy Terragrunt provisioning still requires that
-RPM (#157).
+not used. No RPM or deb is built; the RPM packaging and the Terragrunt
+provisioning that installed it were removed (#157, docs/terragrunt-deploy.md).
 
 ## Architecture and evidence
 

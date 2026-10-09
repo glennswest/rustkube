@@ -5,10 +5,8 @@
 # The apiserver picks up a new serving certificate **without a restart** — it
 # resolves the certificate per handshake and watches the file (rustkube#20) —
 # so renewing it is writing two files. The client components (controller
-# manager, scheduler) build their TLS identity once at startup and do need a
-# restart; that is cheap and safe, because they are stateless, leader-elected,
-# and since #58 they wait for a credential file rather than exiting when one is
-# briefly missing.
+# manager, scheduler) follow their client certificate on disk the same way
+# (#105), so they need no restart either.
 #
 #   ./renew-certs.sh                 # renew what expires within 30 days
 #   DAYS_LEFT=90 ./renew-certs.sh    # widen the window
@@ -184,10 +182,8 @@ fi
 
 if [ -n "$RESTART_NEEDED" ]; then
     echo
-    echo "A client certificate changed. Those components read their identity once"
-    echo "at startup, so restart them to pick it up:"
-    echo "    systemctl restart kube-controller-manager kube-scheduler"
-    echo "  (or, under stormd, restart the processes it supervises)"
+    echo "A client certificate changed. The controller-manager and scheduler"
+    echo "follow it on disk and load it within 30s — no restart (#105)."
 fi
 
 exit $((FAILED > 0 ? 1 : 0))
