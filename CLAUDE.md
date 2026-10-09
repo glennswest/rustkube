@@ -1213,9 +1213,12 @@ when each piece landed.
       6fd2722; discovery was exercised by the efbea2d conformance run.
 - [x] `/scale` subresource (#86, 2026-10-07): apps + CRDs; build blocked on
       stormcentral#544
-- [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88) — NEEDS OWNER
-      (2026-10-08): B give them a job (SANs; self-signed cert in the data dir),
-      recommended / A remove (stormblock-csi e2e passes --data-dir) / C warn
+- [ ] `--data-dir`, `--cluster-domain` (#88) — IN PROGRESS 2026-10-09.
+      Owner: B. `--tls` cert kept in `<data-dir>/apiserver.crt|key` (reused
+      while valid, matching, > 30 d left and carrying
+      `kubernetes.default.svc.<cluster-domain>`; else regenerated; unwritable
+      dir → warn, in memory), files followed like `--tls-cert-file`. Units;
+      rig `tls-data-dir.sh`; README/certificates.md/CHANGELOG
 - [x] HPA placeholder (#89) — real HPA on cadvisor metrics 2026-10-07 (rig waits)
 - [x] Metrics: reconcile metrics, buckets, authenticated `/metrics` (#90)
       — 2026-10-07 (rig waits)
