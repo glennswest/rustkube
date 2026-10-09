@@ -115,6 +115,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — IN PROGRESS 2026-10-09
+- [ ] `rollout::plan_rolling` old-RS scale-down as upstream's
+      reconcileOldReplicaSets (maxScaledDown from spec totals; unhealthy
+      first; healthy down to available - minAvailable); units incl. the
+      issue's case; rig `rollout-unschedulable.sh`; docs; golden
+
 ### Bootstrap tokens + forge-node CSR rules (#264, P0, stormcert#78) — BUILT 2026-10-09
 - [x] `bootstrap_token.rs` (upstream's: Secret kube-system/bootstrap-token-<id>,
       type, usage, expiration, extra groups) in `SigningKeys::authenticate`
