@@ -261,7 +261,13 @@ kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
    constant time; the file is re-read every 5 s, so it may appear late,
    change, or be removed to revoke — a malformed rewrite keeps the last good
    set; #188). stormcos writes install-config's `apiToken` there as
-   `system:admin` in `system:masters` (stormpump#78). Otherwise a JWT signed
+   `system:admin` in `system:masters` (stormpump#78). Then a **bootstrap
+   token** `<id>.<secret>` (#264, upstream's): the Secret
+   `kube-system/bootstrap-token-<id>`, `type: bootstrap.kubernetes.io/token`,
+   `usage-bootstrap-authentication: "true"`, not past its `expiration`,
+   makes it `system:bootstrap:<id>` in `system:bootstrappers` (+ any
+   `auth-extra-groups` under `system:bootstrappers:`); deleting the Secret
+   revokes it; TokenReview answers it too. Otherwise a JWT signed
    with the ServiceAccount key (RS256 with `--service-account-*-file`,
    otherwise an ephemeral HS256 key). A ServiceAccount's groups come from its
    name. What an offline-minted token must carry is in
@@ -489,7 +495,16 @@ what its controllers create, and holds no token requests, RBAC creates,
 and writes Pods (the bind), `pods/status`, claims, VMI and migration status,
 its Lease and Events. `pods/exec`, `attach` and `portforward` are authorized
 as `create` whatever the method (upstream ≥ 1.31);
-`system:node-bootstrapper` (CSR create) for `system:bootstrappers`;
+`system:node-bootstrapper` (CSR create) for `system:bootstrappers` —
+narrowed by CSR admission (#264) to `storm.io/forge-node` CSRs and reading
+only its own (GET, or a WATCH of its name); `system:storm:forge-node-signer`
+(reconciled, **unbound**: stormcos binds stormcert to it) — CSRs read,
+`/approval` and `/status`, `approve`/`sign` on `storm.io/forge-node`,
+`machines.storm.io`, `enrollmentpolicies.storm.io` and creating those CRDs.
+A CSR's `spec.username`/`groups` are the requester's on create, whatever the
+body says, and `spec` never changes after; `/approval` needs `approve` and
+writing `status.certificate` needs `sign` on `signers/<signerName>` (or
+`<domain>/*`), as upstream;
 `system:basic-user` (self-reviews) for `system:authenticated`;
 `system:discovery` for `system:anonymous`; the project roles `admin`,
 `edit`, `view`, `basic-user` (list one's projects) and `self-provisioner`,

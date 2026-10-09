@@ -231,6 +231,40 @@ signature alone, so it cannot be revoked by deleting its ServiceAccount. Deletin
 standing until the next apiserver boot re-creates it; revoking for good means
 rotating the signing key (below).
 
+## Machines enrolling with a forge (#264, stormcert#78)
+
+A machine joins through the forge it boots from by filing a
+`certificates.k8s.io/v1` CSR, `signerName: storm.io/forge-node`,
+`CN=system:node:<name>`, on the forge's apiserver; stormcert approves and
+signs it (stormcos docs/ENROLLMENT.md). What rustkube does for it:
+
+- **Bootstrap tokens**, the first time: `<id>.<secret>` against the Secret
+  `kube-system/bootstrap-token-<id>` (`type: bootstrap.kubernetes.io/token`,
+  `token-id`, `token-secret`, `usage-bootstrap-authentication: "true"`,
+  optional `expiration` in RFC 3339 and `auth-extra-groups`). User
+  `system:bootstrap:<id>`, groups `system:bootstrappers` (+ extras) and
+  `system:authenticated`. Read from the watch cache, else the store: deleting
+  the Secret, or its expiration passing, refuses the next request.
+- **Who filed it** is the apiserver's word: `spec.username` and
+  `spec.groups` are set from the authenticated requester on create, and
+  `spec` is kept as stored on every update. stormcert tells a renewal
+  (`system:node:<name>`) from a bootstrap by them.
+- **A bootstrapper** may create only `storm.io/forge-node` CSRs, and read
+  only CSRs it filed (GET by name, or a WATCH with `fieldSelector=
+  metadata.name=<its CSR>`); no LIST. An enrollment token therefore cannot
+  get a kubelet client certificate, which the controller-manager would
+  auto-approve.
+- **Renewal** with the machine's own certificate (`system:nodes`) is not
+  narrowed (the group is bound to cluster-admin until #228).
+- **Approving and signing** follow upstream: `/approval` needs `approve`,
+  and a `/status` write that changes `status.certificate` needs `sign`, on
+  `signers` named the signerName or `<domain>/*`. The controller-manager
+  holds `approve` for the kubelet-client signer and `sign` for the four it
+  signs (#199); stormcert gets `system:storm:forge-node-signer`, which
+  stormcos binds to its identity.
+
+`test/e2e/bootstrap-token.sh` checks each of these against an apiserver.
+
 ## What is still missing
 
 - **CA rotation** (#20 phase 2). Replacing the CA is a dual-CA trust-bundle

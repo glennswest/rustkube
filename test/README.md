@@ -553,6 +553,17 @@ their watches ended and resumed (the apiserver saw new WATCHes) with no
 `reflector WATCH reconnecting` warning, no LIST, and — when the fixed metrics
 port 10257 is the rig's own — no change in `rustkube_watch_reconnects_total`.
 
+`e2e/bootstrap-token.sh` (#264, suite `rigs`): Secrets for a live and an
+expired bootstrap token; the live one creates a `storm.io/forge-node` CSR
+stamped `system:bootstrap:<id>` (the body's forged `spec.username` replaced)
+and is refused three other signers; reads its own CSR by GET and by a watch
+of its name, and is refused another's, a LIST and a watch of another's;
+expired, wrong-secret and deleted-Secret tokens are 401; `system:node:n1`
+files a forge-node CSR; a user with only the CSR subresources is refused
+`/approval` and a certificate write, `stormcert` bound to
+`system:storm:forge-node-signer` approves and signs a forge-node CSR and is
+refused a kubelet one; TokenReview answers the bootstrap token.
+
 `e2e/client-crl.sh` (#260, suite `rigs`) runs the apiserver with two client
 CAs and a CRL each (PEM and DER, from `openssl ca`): two certificates are
 accepted (by SelfSubjectReview); one is revoked and its CRL re-signed, and the

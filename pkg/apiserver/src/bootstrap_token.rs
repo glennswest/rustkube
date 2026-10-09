@@ -173,7 +173,7 @@ mod tests {
         let now = chrono::Utc::now();
         let ok = |s: &Value, sec: &str| validate(s, "abcdef", sec, now).is_some();
         assert!(!ok(&secret(&[]), "0123456789abcdee"), "wrong secret");
-        assert!(!validate(&secret(&[]), "zzzzzz", "0123456789abcdef", now).is_some(), "wrong id");
+        assert!(validate(&secret(&[]), "zzzzzz", "0123456789abcdef", now).is_none(), "wrong id");
         let mut wrong_type = secret(&[]);
         wrong_type["type"] = json!("Opaque");
         assert!(!ok(&wrong_type, "0123456789abcdef"));
