@@ -122,7 +122,9 @@ clone requests. README's configuration tables come from the three CLI sources.
       `client-crl.sh`; README/certificates.md/CHANGELOG (6a4e0bd)
 - [x] Build VM at 6a4e0bd: 620 passed / 4 ignored (apiserver 318); 0 rustc
       warnings, changed files clippy-clean
-- [ ] golden; client-crl rig (stormcentral#512); stormcos passes the flag
+- [x] bf1bb67 DER-completeness unit; golden-rustkube-5ac87c053591
+      (stormcos#424); wiring notes on stormcos#481
+- [ ] client-crl rig (stormcentral#512, proposed after it); then close #260
 
 ### Docs refresh from the code (since 2026-10-02) — COMPLETE 2026-10-09
 - [x] README (date, How it ships at stormcos 73091eac, rig suites, build
