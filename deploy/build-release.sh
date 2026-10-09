@@ -103,9 +103,9 @@ for target in ${TARGETS//,/ }; do
             "$OUT/$comp-v$VERSION-$arch-linux-musl.tar.gz" "$c"
 
         if [ -z "${NO_IMAGES:-}" ]; then
-            # podman, not docker (project rule), and OCI is a build-time input
-            # only: what ships is the tarball, which stormcos preloads into the
-            # node image store.
+            # podman, not docker (project rule). A build check only: nothing
+            # here outlives the job, and nothing in stormcos consumes these
+            # images or tarballs — delivery is the component golden.
             cp "$bin" "./$c"
             podman build --quiet --platform "linux/${arch/x86_64/amd64}" \
                 -f deploy/images/Dockerfile \

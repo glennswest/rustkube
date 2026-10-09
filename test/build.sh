@@ -2,6 +2,8 @@
 # Build rustkube's test image context for the commit checked out (#96).
 #
 #   test/build.sh [target]        default x86_64-unknown-linux-musl
+#   (the rustkube binaries follow [target]; oc, kubectl and the CSI tools
+#   staged below are x86_64/amd64 whatever it is)
 #
 # Per stormcentral docs/test-standard.md this runs first, in the checkout on
 # the build box, with cargo: it builds the static test binary and stages it

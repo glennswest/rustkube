@@ -4,6 +4,14 @@ The owner switched work back to stormcentral. This is unfinished engineering,
 not a validated release. All implementation and harness changes are committed
 and pushed; rustkube was integrated into main under #163. No live scale test has run.
 
+**Since (2026-10-09):** turbomode is in every rustkube golden built after the
+merge; #143–#146 are closed. Single-node runs of stormcos_qa's turbomode
+harness on pvetest1 found and verified the `allocatable.pods` limit
+(#194/#197) and the one-worker PV binder (#147, now eight workers). The API
+rigs no longer run in build slots: they are the test image's `rigs` /
+`rigs-night` suites (#173). Live latency and multi-master acceptance stay
+#147/#149, waiting for hardware (owner on #162).
+
 ## Updated rustkube checkpoint — 2026-09-29
 
 The owner subsequently authorized #146 implementation and dev unit/e2e
@@ -14,7 +22,8 @@ API/store regression rigs pass. See [the current verification record](event-driv
 fastetcd#50 is fixed in v1.6.1. Rustkube's pinned rig now passes concurrent
 complete/paginated LIST consistency and exact WATCH replay, plus the indexed
 controller/scheduler matrix and 418 workspace tests. Twenty fresh short runs
-pass; the original #153/#154 incidents remain open without a proven cause.
+pass; the original #153/#154 incidents were later closed (#153: fastetcd#50
+as its mechanism; #154: not reproducible), neither with a proven cause.
 The original inventory and resume order below are historical; rustkube steps
 2–3 are complete within the owner's dev acceptance boundary. Live scale and
 multi-master acceptance remain #147/#149. WATCH timeoutSeconds is honoured since

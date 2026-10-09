@@ -14,9 +14,12 @@ sc-build                       # cargo build && cargo test at the pushed commit
 
 sc-build fetches the commit onto a private drive as the unprivileged build
 user, runs the command and deletes the drive, pass or fail. Checkout, target,
-HOME and TMPDIR are temporary. There is no persistent checkout on dev and no
-output directory that survives merely because it is outside the checkout.
-A failed build is recorded as a GitHub build-failure issue.
+HOME and TMPDIR are temporary. There is no persistent checkout on the build
+host and no output directory that survives merely because it is outside the
+checkout. A failed build is recorded as a GitHub build-failure issue. Since
+dev.g8.lo was retired (stormcentral#521), `SC_BUILD_VM=1 sc-build '…'` runs the
+same job on a fresh build VM. Tests of a running control plane (the e2e rigs,
+conformance) never run in a build slot: see test/README.md.
 
 For completed, verified work approved for delivery, request the component
 golden once:
@@ -34,8 +37,9 @@ records the commit. See README's **How it ships** for the checked stormcos
 source and runtime flags. A component build or source commit is not proof
 that a node has installed the resulting release.
 
-Turbomode is on main (#163); its datastore dependency fastetcd#50 is fixed in
-fastetcd v1.6.1, and runtime acceptance remains #147/#149.
+Turbomode is on main (#163) and in every golden built since; its datastore
+dependency fastetcd#50 is fixed in fastetcd v1.6.1, and latency and
+multi-master acceptance remain #147/#149.
 
 ## Release build check (`deploy/build-release.sh`)
 
@@ -71,7 +75,8 @@ and images and prints their sizes and sha256s; it does not deliver them.
 Delivery is the component golden above. There is no persistent output
 directory, and none may be made with root, a persistent dev mount or a HOME
 override. Conformance staging had the same class of issue in its own script;
-the owner's answer there is goldens (#140), not yet implemented.
+the owner's answer there is goldens (#140), waiting for
+stormcentral#557 (reading a golden's binaries from another machine).
 
 Outputs, on the job's volume, when the script runs successfully:
 
@@ -90,10 +95,11 @@ RPM (#157).
 
 ## Architecture and evidence
 
-The retained GitHub workflow describes only x86_64 musl. The standalone script
-accepts aarch64 musl through `cross`, but no successful ARM64 build and runtime
-acceptance has been recorded here (#68). Static linking alone does not prove
-cross-architecture runtime support.
+The component golden is x86_64 musl. `deploy/build-release.sh` builds aarch64
+musl too (above; 8e82cca), and the binaries start under qemu, but nothing has
+run on an ARM64 device: device memory, startup and what a "minimal" MikroTik
+build means stay with the owner on #68. Static linking and a qemu start do not
+prove runtime support on the device.
 
 Historical v0.8.0 measurements were approximately 14 MB for the apiserver,
 10 MB for controller-manager and 8.1 MB for scheduler; they are not sizes for

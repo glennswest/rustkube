@@ -16,7 +16,8 @@
 //!   up by the larger of 100 % or 4 Pods per 15 s, at once; down by up to
 //!   100 % per 15 s, but only to the highest count recommended in the last
 //!   300 s) and `minReplicas`/`maxReplicas` bound it;
-//! - the target's `spec.replicas` is written (there is no `/scale`, #86).
+//! - the target's `spec.replicas` is written directly: Deployments,
+//!   ReplicaSets and StatefulSets only, not through `/scale` (#258).
 //!
 //! Status carries `currentMetrics` and upstream's conditions: `AbleToScale`,
 //! `ScalingActive` (`False`/`FailedGetResourceMetric` when there are no

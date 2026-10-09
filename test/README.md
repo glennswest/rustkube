@@ -10,8 +10,10 @@ or stress tests of the system in the qa"; #35).
 ## How it runs
 
 stormcentral builds the image from this repo at a commit (`test/build.sh`
-stages a static musl binary, `test/Containerfile` packages it `FROM scratch`),
-pushes it to the test machine's registry, and runs it as a Job:
+stages a static musl binary, and for the rigs the commit's control plane,
+fastetcd and tools; `test/Containerfile` packages them on `fedora-minimal`,
+because the rigs are bash with python3, curl and openssl), pushes it to the
+test machine's registry, and runs it as a Job:
 
 ```bash
 stormcentral test run rustkube short     # or medium, long; --tag <machine>
@@ -95,8 +97,8 @@ pods, and should live on forge." They are now two suites of this image, run
 like the others:
 
 ```bash
-stormcentral test run rustkube rigs --tag <machine>        # day: ≤ 30 min
-stormcentral test run rustkube rigs-night --tag <pve VM>   # night window, ≤ 2 h
+stormcentral test run rustkube rigs --tag <machine> --commit <sha>          # day: ≤ 30 min
+stormcentral test run rustkube rigs-night --tag <pve VM> --commit <sha>     # night window, ≤ 2 h
 ```
 
 - `test/build.sh` also stages the commit's release (static musl)
@@ -115,9 +117,16 @@ stormcentral test run rustkube rigs-night --tag <pve VM>   # night window, ≤ 2
   100) is a fail with "could not start"; if none could, the suite exits 2.
   Rigs not started before the budget runs out are skips.
 - Which rig is in which suite is in `test/rigs.sh`: `rigs` the functional
-  ones (a minute or two each), `rigs-night` the idle windows, latency under
-  load, failover and cert-reload ticks. `test-container.sh` is in neither: it
-  is this image's own short/medium against a rig, and runs by hand.
+  ones (a minute or two each; 59 of them), `rigs-night` the idle windows,
+  latency under load, failover and cert-reload ticks (10: multi-master,
+  list-snapshot-race, crd-restart, deadlines, scheduler-failover,
+  schedule-latency, get-latency, watch-deadline, serving-cert,
+  client-cert-reload). Every other `test/e2e/*.sh` rig is in `rigs`;
+  `test-container.sh` is in neither: it is this image's own short/medium
+  against a rig, and runs by hand. A new rig goes in one of the two lists.
+  59 rigs of a minute or two do not fit the day budget of 30 minutes; the
+  ones not started in time are skips, and rebalancing the lists by measured
+  times waits for a first completed run (#173).
 - A rig's output ends with its failures (#181): `lib.sh` keeps a copy of
   everything the rig prints (`$W/rig.out`), and `report()` prints, after the
   apiserver/datastore/controller-manager log tails, `---- failed checks (N):`
@@ -128,13 +137,17 @@ stormcentral test run rustkube rigs-night --tag <pve VM>   # night window, ≤ 2
   host path or cluster read: the rigs listen on the pod's loopback.
 
 `sc-build` keeps `cargo build && cargo test`. A rig may still be run by hand
-on a workstation-like box, but not in a build slot.
+on a workstation-like box, but not in a build slot. Run outside the image
+(no `RK_BIN`), `lib.sh` builds the binaries and fastetcd from source.
 
 ## Requirements
 
-Nothing about the machine: no devices, sizes or node names. It needs the
-node's apiserver, a scheduler with a Ready node to bind to, and (for the last
-four medium checks and long's pods) a kubelet. `requires: []`.
+Nothing about the machine: no devices, sizes or node names. short, medium
+and long need the node's apiserver, a scheduler with a Ready node to bind to,
+and (for the last four medium checks and long's pods) a kubelet:
+`requires: []` (`test/rustkube-test.yaml`). `rigs` and `rigs-night` need none
+of the node's cluster; `test/requires.toml` gives them their budgets (1800 s,
+7200 s).
 
 ## By hand
 
@@ -148,7 +161,17 @@ pass there. Outside a pod, `STORM_SA_DIR` names a directory holding `token`,
 `ca.crt` and `namespace`, and `RUSTKUBE_TEST_IMAGE` the image for workload
 pods.
 
-## Latest acceptance attempt — 2026-09-29
+## Latest acceptance attempts
+
+2026-10-07: no suite has completed on a test machine yet. `short` run
+cf99131f71 (C2NR0Q2, 566403b) and `rigs` runs 465e6c4490 / ccc3315c35
+built and pushed the image, then stopped at "the registry did not list it"
+(stormcentral#512); `rigs` runs 1591bc1258 (pvetest1) and dcb98cb338
+(pvetest2) at f3cea50 errored "node did not settle within 45 min"; test-image
+builds still went to the retired dev.g8.lo (stormcentral#526). #96 and #173
+stay open until a real run passes.
+
+2026-09-29:
 
 `sc-build 'cargo build --locked -p rustkube-test && cargo test --locked -p rustkube-test'`
 at a4dba9c compiled the test program and passed all nine unit tests.
@@ -170,20 +193,21 @@ isolation, negative selectors, idle writes and UID replacement against the
 API/store rig (suite `rigs`); it does not need a kubelet. The shared rig
 keeps its store and scratch under `$TMPDIR`.
 
-`e2e/indexed-safety.sh` checks GC propagation, Event expiry, namespace
+`e2e/indexed-safety.sh` (suite `rigs`) checks GC propagation, Event expiry, namespace
 finalization and scheduler burst/reservation accounting on the same disposable
 rig. It uses stand-in Nodes and does not claim real-node performance.
 
-`e2e/schedule-latency.sh` times Pod creation to binding on one stand-in
+`e2e/schedule-latency.sh` (suite `rigs-night`) times Pod creation to binding on one stand-in
 Node, from the Pod's ADDED event to the first event carrying `nodeName` on
 the same watch. It creates five pods 4 s apart, a burst of 20 and ten more
 1 s apart. Bounds: p50 < 20 ms, the scheduler's own share (ADDED →
 `storm.io/scheduled-at`) p99 < 10 ms, and no growth. Each pod's split (create
 POST, scheduler, bind write → seen) is printed. End-to-end p99 is bounded only
-with `RK_SCHED_P99_MS`, because on the shared build box the bind write's
-datastore time stalls under other jobs' I/O. Run with `RK_RELEASE=1` (#190).
+with `RK_SCHED_P99_MS`, because on a shared machine the bind write's
+datastore time stalls under other jobs' I/O. Outside the test image (which
+stages release binaries) run it with `RK_RELEASE=1` (#190).
 
-`e2e/cr-status.sh` (#128, the flowsdn audit's C12) creates four CRDs —
+`e2e/cr-status.sh` (#128, suite `rigs`, the flowsdn audit's C12) creates four CRDs —
 namespaced and cluster-scoped, with and without `subresources.status` — and
 over HTTP checks that, with the subresource, main POST drops status and main
 PUT, merge PATCH, JSON PATCH and server-side apply change spec but keep the
@@ -194,7 +218,7 @@ PATCH store status as an ordinary field. It also follows
 subresource, per write outside metadata), untouched by `/status`, by
 metadata-only writes and by a client-sent value.
 
-`e2e/requester.sh` (#210) creates `storage.storm.io` CRDs (cluster and
+`e2e/requester.sh` (#210, suite `rigs`) creates `storage.storm.io` CRDs (cluster and
 namespaced) and checks that a create by alice, with forged
 `storage.storm.io/requester[-groups]`, is stamped alice and her groups; that
 bob's PUT, merge PATCH, JSON PATCH remove, server-side apply and `/status`
@@ -428,6 +452,66 @@ rest (including an object created after the first page) at one newer
 revision; an `Exact` LIST at the old revision and a WATCH from below the
 compaction are 410 `Expired`; `apiserver_storage_compacted_revision` moves.
 
+`e2e/status-rv.sh` (#78, suite `rigs`): `PUT …/status` for a Node, a PVC,
+a custom resource and CSR `/approval` lands with the current resourceVersion,
+is a 409 and changes nothing one version behind, and lands with none.
+
+`e2e/watch-deleted.sh` (#100, suite `rigs`): DELETED for a namespaced and a
+cluster-scoped custom resource and a built-in names the object where it lived
+and carries its last state; a label-selected watch hears only what it
+selected.
+
+`e2e/projects.sh` (#97, #98, suite `rigs`): Projects driven by `oc` as two
+ordinary users and an administrator, and RBAC escalation prevention.
+
+`e2e/oc-adm.sh` (#69, suite `rigs`): `oc adm`, verb by verb; each is expected
+to work or to fail for the reason docs/oc-compatibility.md records, and a
+verb doing the other thing is a failure.
+
+`e2e/vm-runstrategy.sh` (#104, #209, suite `rigs`): the VirtualMachine
+controller's `runStrategy` on a failed VMI (Always replaced after backoff,
+Once left), `ready` following the VMI, and `CrashLoopBackOff` while the
+kubelet retries a failed start; the rig plays the kubelet.
+
+`e2e/vmi-launcher.sh` (#203, suite `rigs`): one `virt-launcher-<vmi>-<5>`
+Pod per placed pod-network VMI, owned by it, on its node; none for a host
+bridge; a migration target's own launcher.
+
+`e2e/daemonset-nodes.sh` (#146, suite `rigs`): a Node added, relabelled or
+deleted is acted on for exactly the DaemonSets whose nodeSelector matches it,
+within `RK_DS_LIMIT_MS` (3000); a heartbeat changes nothing.
+
+`e2e/volume-expansion.sh` (#63, suite `rigs`): the real CSI hostpath driver,
+external-provisioner and external-resizer; a larger request is admitted only
+for a Bound claim in a class that allows expansion, and with no kubelet the
+claim stops at `FileSystemResizePending` with its old capacity.
+
+`e2e/snapshot-controller.sh` (#64, suite `rigs`): external-snapshotter's six
+CRDs and its real snapshot-controller as its ServiceAccount; the CRDs
+establish, and with the rig playing the csi-snapshotter sidecar a PVC's
+snapshot gets its content bound, source protection added and released, the
+VolumeSnapshot ready, and a delete takes the content with it.
+
+`e2e/bound-token.sh` (#182, suite `rigs`): TokenRequest audiences,
+expirationSeconds and boundObjectRef; a bound token authenticates only while
+its pod and ServiceAccount are the ones it was issued for; TokenReview checks
+audiences and reports the pod and its node.
+
+`e2e/secret-stringdata.sh` (#101, suite `rigs`): a Secret's stringData is
+folded into data on create, merge PATCH and PUT (stringData winning a shared
+key), and GET and LIST return no stringData.
+
+`e2e/cache-reads.sh` (#171, suite `rigs`): LIST and GET with
+`resourceVersion=0` answer what the datastore answers; `N` after a write sees
+it; a paged cache LIST returns every object once at one revision; `Exact`
+reads the store; a non-numeric resourceVersion is 400; a relist storm of 50
+LISTs and 50 GETs at `0` adds no datastore Range.
+
+`e2e/metadata-watch.sh` (#180, suite `rigs`): three CRD watches with cilium's
+`as=PartialObjectMetadata` Accept (plain, WatchList, and from revision 1,
+below the cache) through creates, an update, a delete and a quiet heartbeat
+window; every frame must decode as client-go's metadata informer decodes it.
+
 `e2e/cr-schema.sh` (#121, suite `rigs`) replays the conformance suite's
 FieldValidation and CRD-defaulting bodies over HTTP: Strict server-side apply
 refused for an undeclared field, unknown root/embedded metadata and a
@@ -442,40 +526,41 @@ Every rig that starts kube-controller-manager or kube-scheduler (through
 bootstrap ClusterRoles (#176), so a missing permission fails a rig;
 `RK_CONTROL_PLANE_ADMIN=1` runs them as `system:masters` to compare.
 
-`e2e/pod-limit.sh` holds the scheduler to a node's `allocatable.pods`
+`e2e/pod-limit.sh` (suite `rigs`) holds the scheduler to a node's `allocatable.pods`
 (#194): on a 2-pod stand-in Node, 3 BestEffort Pods bind 2 and the third
 reports `PodScheduled=False/Unschedulable` "0/1 nodes are available: 1 Too
 many pods." until one bound Pod is Succeeded; a burst of 30 onto a 5-pod Node
 binds exactly 5, and deleting one lets exactly one more bind.
 
-`e2e/scheduler-failover.sh` runs two electing schedulers: the leader is
+`e2e/scheduler-failover.sh` (suite `rigs-night`) runs two electing schedulers: the leader is
 paused past its lease, the standby takes over, the resumed old leader binds
 nothing, the standby is killed and the old leader takes over again — a
 one-CPU stand-in Node is never overcommitted. It then checks that a missing
 claim's arrival, and a claim's binding after selected-node, wake the waiting
 Pod onto its volume's node (#145).
 
-`e2e/deadlines.sh` holds each controller deadline to its moment (CronJob
-start, Job `activeDeadlineSeconds`, Event TTL, Lease grace, ReplicaSet
-recreation backoff), checks GC fail-closed for an unserved owner kind, and
-requires an idle control plane to make no API requests for a minute — the
-VirtualMachine controller's 30 s retries of an unserved KubeVirt API are
-listed, not counted (#172).
+`e2e/deadlines.sh` (suite `rigs-night`) holds each controller deadline to
+its moment (CronJob start, Job `activeDeadlineSeconds`, Event TTL, Lease
+grace, ReplicaSet recreation backoff), checks GC fail-closed for an unserved
+owner kind, and requires an idle control plane to make no API requests for a
+minute, with no exception, and no request for the KubeVirt resources over
+the whole run: without KubeVirt CRDs the KubeVirt controllers do not run
+(#172).
 
-`e2e/watch-deadline.sh` (#207) idles the controller-manager and scheduler
+`e2e/watch-deadline.sh` (#207, suite `rigs-night`) idles the controller-manager and scheduler
 for 400 s, past the reflector's own 330 s WATCH deadline, and requires that
 their watches ended and resumed (the apiserver saw new WATCHes) with no
 `reflector WATCH reconnecting` warning, no LIST, and — when the fixed metrics
 port 10257 is the rig's own — no change in `rustkube_watch_reconnects_total`.
 
-`e2e/serving-cert.sh` (#93) serves the rig's openssl RSA pair from files and
+`e2e/serving-cert.sh` (#93, suite `rigs-night`) serves the rig's openssl RSA pair from files and
 checks, a reload tick (30 s) at a time: `deploy/renew-certs.sh` with a signing
 failure exits 1 and changes no file; a key written without its certificate
 leaves the old pair serving verified handshakes, logged once; a real renewal
 (SANs kept) is served without a restart; and an apiserver started on a
 mismatched pair exits with the reason. About three minutes.
 
-`e2e/client-cert-reload.sh` (#105) runs kube-controller-manager and
+`e2e/client-cert-reload.sh` (#105, suite `rigs-night`) runs kube-controller-manager and
 kube-scheduler on x509 client certificates from client CA A, with
 `--client-ca-file`, and rolls them: the CA file becomes A+B (a B certificate
 is accepted without a restart); each component's pair is renewed from B key
@@ -485,17 +570,17 @@ refused); and the apiserver restarts, so every connection is a new handshake —
 the controller-manager still turns a Deployment into a ReplicaSet and the
 scheduler still binds a Pod. About four minutes.
 
-`e2e/get-latency.sh` (#177) times GET against LIST for a ServiceAccount that
+`e2e/get-latency.sh` (#177, suite `rigs-night`) times GET against LIST for a ServiceAccount that
 RBAC must authorize and for system:masters, idle and under 40 clients renewing
 Leases; counts datastore calls per authorized GET (one); checks that a grant
 applies at once and a revocation within the watch's delay; and decodes a
 metadata-only CRD watch. Its idle p99 bound is `RK_GET_P99_MS` (default 50).
-Under load the datastore's linearizable Range sets the pace, so compare with
-`RK_RELEASE=1` (release binaries) and `RK_FASTETCD_REF=v1.9.0` or later
-(fastetcd#71): on the default v1.6.1 a linearizable Range queues behind
-writes, and the load numbers measure that queue.
+Under load the datastore's linearizable Range sets the pace: fastetcd before
+v1.9.0 (fastetcd#71) queues a linearizable Range behind writes, and the load
+numbers then measure that queue. The pinned default (v1.12.0) has the fix;
+outside the test image, compare with `RK_RELEASE=1` (release binaries).
 
-`e2e/token-auth.sh` (#188) starts the apiserver with `--token-auth-file`
+`e2e/token-auth.sh` (#188, suite `rigs`) starts the apiserver with `--token-auth-file`
 pointing at a file that does not exist yet, then writes stormpump#78's line
 (`<token>,system:admin,system:admin,"system:masters"`) and checks the token is
 accepted within the 5 s re-read, can write, and is `system:admin` in
@@ -504,7 +589,7 @@ path still works and the token is never logged; that a rewrite rotates it, a
 malformed rewrite keeps the last good token, and removing the file revokes it.
 `RK_APISERVER_ARGS` (lib.sh) passes the extra flag.
 
-`e2e/admission-webhook.sh` (#82) runs a Python HTTPS webhook (certificate
+`e2e/admission-webhook.sh` (#82, suite `rigs`) runs a Python HTTPS webhook (certificate
 from the rig's CA, sent as `caBundle`) and checks: a validating webhook with
 an `objectSelector` refuses a labelled ConfigMap create with upstream's
 message and code and is never sent an unlabelled one; a mutating webhook
@@ -519,14 +604,14 @@ is passed over under `Ignore`; a Fail webhook on webhook configurations
 cannot block its own removal; and with the configurations deleted, writes
 are no longer refused.
 
-`e2e/crd-restart.sh` (#185) creates two CRDs (two served versions, cluster
+`e2e/crd-restart.sh` (#185, suite `rigs-night`) creates two CRDs (two served versions, cluster
 scope) with a CR each, then checks that `/apis`, each group-version and the CRs
 are served after an apiserver restart, after a "reboot" (datastore and
 apiserver both stopped, the apiserver started 15 s before the datastore), and
 by a second apiserver on the same store, which also must serve a CRD created
 through the other and drop one deleted through it.
 
-`bash test/e2e/list-snapshot-race.sh` checks that concurrent LIST contents
+`e2e/list-snapshot-race.sh` (suite `rigs-night`) checks that concurrent LIST contents
 and resourceVersion agree with acknowledged writes, including pinned continuation
 pages and exact WATCH replay after distinct early, middle and late snapshots. It runs without
 controllers, isolating the datastore/API contract required by informer caches.
@@ -537,7 +622,7 @@ anything from v1.6.1 has the Range snapshot fix, fastetcd#50), and prints its
 source commit. The pin is a test dependency, not a deployed datastore
 upgrade.
 
-The DaemonSet heartbeat regression first waits for both Pod placement and
+The DaemonSet heartbeat regression (`daemonset-nodes.sh`) first waits for both Pod placement and
 status accounting to converge. It then checks that heartbeat-only updates
 leave the DaemonSet revision and placement unchanged; failures print both
 DaemonSet observations.

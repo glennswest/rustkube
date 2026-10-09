@@ -23,7 +23,7 @@ cannot tell, and what it found (#67).
   `RESULT <passed|failed> <seconds> <name>` line per spec, with the failure
   message and where it failed.
 
-### Historical VM procedure — to be replaced by goldens (#140)
+### Historical VM procedure — blocked; goldens replace it (#140, stormcentral#557)
 
 A run compiles nothing: it is a test workload, and it used to hold dev's
 build slots for 45–90 minutes per chunk (four at once took dev to load 48 on
@@ -44,22 +44,26 @@ ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && git checkout -q origin
 # → ~/results/<sha>/<chunk>.log and SUMMARY (passed/failed/skipped per chunk)
 ```
 
-> **Staging is broken since 2026-09-28.** sc-build now gives every job a
-> private drive and keeps nothing, so `stage.sh` can no longer write
-> `/build/assets` (#140). The owner has decided the route: **goldens** —
-> conformance binaries reach the VM as the component's golden artifacts.
-> That is not implemented yet: `run.sh`/`vm.sh` still expect the staged
-> directory, and `stage.sh` still writes `/build/assets`. Until it is, only an
-> already-staged commit can be run; efbea2d is still staged on the VM.
+> **No new conformance run is possible today.** sc-build gives every job a
+> private drive and keeps nothing (since 2026-09-28), so `stage.sh` can no
+> longer write `/build/assets` (#140); and `vm.sh` fetches from
+> `stormbuild@dev.g8.lo`, which is retired (stormcentral#521). The owner has
+> decided the route: **goldens** — conformance binaries reach the VM as the
+> component's golden. Goldens are sealed volumes on forge that nothing reads
+> from another machine yet, so #140 waits for stormcentral#557 (`stormcentral
+> component fetch`). Until then `stage.sh` and `vm.sh` are unchanged and
+> unusable for a new commit; efbea2d is the last commit staged on the VM.
 
 `vm.sh` fetches the staged directory with a read-only rsync key (it can read
 `/build/assets/conformance` on dev and nothing else), checks the binaries
 against their MANIFEST, and runs the chunks side by side:
 
 `RK_PORT_OFFSET` moves each rig's ports so chunks run side by side, and
-`RK_SUITE_TIMEOUT` (default `100m`) cuts off specs that hang; a chunk's real
-work is done in about 20 minutes. `stage.sh` writes a `MANIFEST` with both
-commits and every binary's sha256, so a result names exactly what it tested.
+`RK_SUITE_TIMEOUT` (`run.sh`'s default `100m`, `vm.sh`'s `45m`) cuts off specs
+that hang; a chunk's real work is done in about 20 minutes. `stage.sh` builds
+debug binaries (as the in-slot runs did) and fastetcd at its `main`, not the
+rigs' pinned tag, and writes a `MANIFEST` with both commits and every
+binary's sha256, so a result names exactly what it tested.
 
 To chase one failure, focus on it and set `RK_LOG_GREP` to a regex: the
 matching apiserver and controller-manager log lines are printed at the end.
@@ -73,9 +77,8 @@ places pods and nothing ever runs them. Every spec that needs a running pod —
 most of `sig-node`, `sig-storage` and `sig-network`, the webhook and
 conversion specs that deploy a server pod, anything reading logs or exec'ing —
 fails on its pod-start timeout. Those failures say nothing about the control
-plane; they are the specs a run on real stormcos nodes is for
-(rustkube-node#27, #32 stand in front of that), and they are counted
-separately below.
+plane; they are the specs a run on real stormcos nodes is for, and they are
+counted separately below.
 
 What it does test is everything the control plane answers alone: API
 machinery, RBAC and authentication, discovery, admission, the controllers that
@@ -166,14 +169,14 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | 2 | YAML bodies, fieldValidation for built-ins — #122 | implemented 2026-10-07 (protos re-vendored to release-1.36); not rerun |
 | 2 | ServiceCIDR/IPAddress — #134 | served since 2026-10-07 (CRUD, bootstrap ServiceCIDR); not rerun |
 | 2 | scheduler records no Scheduled/FailedScheduling events — #138 | implemented after this run |
-| 1 each | autoscaling/v1 #123 (served since 2026-10-07, not rerun); Table 406 #126 (since 2026-10-07, not rerun); LimitRanger #131 (enforced since 2026-10-07, not rerun); EndpointSliceMirroring #133 (since 2026-10-07, not rerun); store compaction / continue-token expiry #139 | not implemented |
+| 1 each | autoscaling/v1 #123; Table 406 #126; LimitRanger #131; EndpointSliceMirroring #133; store compaction / continue-token expiry #139 | implemented since 2026-10-07; not rerun |
 | 6 | CSR `/approval` PATCH, Event `source` selector, all invalid sysctls in one error, Pod/PVC/PV `Pending` phase (#102), Ingress `/status` | wrong — fixed in 6d0ed10, after this run |
 | 1 | default ServiceAccount not provisioned in time under six parallel chunks — the poll-and-list controllers (#66) | load |
 
 "Needs a node" is not a pass: 242 specs have said nothing about the control
-plane yet. They are what a run against real stormcos nodes is for
-(rustkube-node#27, #32; test containers #96), and some of them will surface
-control-plane bugs this rig cannot see.
+plane yet. They are what a run against real stormcos nodes is for (test
+containers #96), and some of them will surface control-plane bugs this rig
+cannot see.
 
 ### Found and fixed by the runs
 
@@ -209,7 +212,8 @@ From the 2026-09-27 triage (CHANGELOG has each):
 
 Some fixes after 430b268 were confirmed by the efbea2d run and focused
 reruns above; others have unit/API-rig evidence only. None of these historical
-runs validates current turbomode. Repeating conformance for a new commit
-needs the golden delivery path decided in #140 implemented, then a runtime
+runs validates current turbomode, or the features implemented since
+2026-10-07. Repeating conformance for a new commit needs the golden delivery
+path decided in #140 implemented (after stormcentral#557), then a runtime
 environment appropriate to the tests. Passing API-only tests does not prove
 node, network, storage or multi-master conformance.

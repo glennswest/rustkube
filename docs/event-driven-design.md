@@ -1,20 +1,32 @@
 # Event-driven control plane (turbomode)
 
-Status: all controller families and scheduling use object workers, integrated into main under #163. Unit/doc and disposable API/store rig tests run through
-`sc-build`; the verification record below identifies checked commits and
-cases. Live validation remains #147/#149, awaiting the owner-selected target.
-The snapshot blocker [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50)
-is fixed in v1.6.1 and verified through the pinned rustkube API rig below.
-Historical intermittent incidents #153/#154 remain open. Dev acceptance does
-not establish live runtime acceptance or authorize a golden.
+Status: all controller families and scheduling use object workers, integrated
+into main under #163 and carried by every rustkube golden built since. Unit/doc
+tests run through `sc-build`; the disposable API/store rigs (`test/e2e/`) ran
+in build slots until #173 and now run as the test image's `rigs`/`rigs-night`
+suites on a test machine. The verification record below identifies checked
+commits and cases. One turbomode behaviour has been verified on a published
+release: the scheduler's `allocatable.pods` limit under stormcos_qa's
+turbomode burst on pvetest1 (#197). Latency and multi-master acceptance remain
+#147/#149 (no multi-master hardware; owner on #162). The snapshot blocker
+[fastetcd#50](https://github.com/glennswest/fastetcd/issues/50) is fixed in
+v1.6.1; the rigs pin v1.12.0. The intermittent incidents #153/#154 are closed:
+#153's mechanism was fastetcd#50, #154 was not reproducible (31+ reruns).
 
-Current implementation: Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service, PDB, VM, CSR and root CA
-have indexed per-object workers (eight concurrent keys per controller).
+Current implementation: every controller runs on `owned::run` with indexed
+per-object workers, eight distinct keys at once per controller by default
+(`Controller::workers`, fixed in code, no flag); the GC's per-resource workers
+take two. The VirtualMachine, VMI launcher and VMI migration controllers run
+only while their KubeVirt CRDs are Established, started and stopped from the
+shared CRD feed (#172).
 Collection watches and snapshots are shared; successful writes use local
 acknowledgement overlays until observed or superseded by a consistent LIST
 begun after the write. Deletion uses observed UID/revision preconditions.
-PV binding uses serialized claim workers, storage-class candidate indexes, and
-independent per-volume lifecycle workers. Stormblock provisioning/reclaim
+PV binding uses eight claim workers in parallel, storage-class candidate
+indexes, and independent per-volume lifecycle workers; only choosing an
+unclaimed volume is serialized (a `choosing` lock, with the PV list read
+inside it), and a claim with a pre-bound (provisioned) PV binds without it
+(#147). Stormblock provisioning/reclaim
 and node lifecycle also use object workers; Node expiry and eviction
 deadlines are unchanged, with Lease/Pod events routed by Node name. CSI
 attach/detach workers select claims and attachments by volume, then Pods by
@@ -230,7 +242,8 @@ without KubeVirt nothing retries its unserved API.
 ## Leadership, concurrency and failure
 
 Controller families run concurrently; namespace provisioning is independent
-of namespace teardown. Per-object workers will be bounded and tunable.
+of namespace teardown. Per-object workers are bounded per controller in code
+(eight by default); they are not configurable.
 Scheduling resource reservations remain serialized until reservation/rollback
 is atomic; parallel HTTP binding cannot double-spend node capacity. A leader
 term owns its workers and subscriptions. Loss of renewal cancels them before
@@ -258,8 +271,9 @@ commit-to-bind latency distinguish throughput from artificial wait latency.
    distributions; idle request/CPU rates; burst churn at 250 and 1000 nodes;
    watch interruption, compaction and leader failover. Report sample size,
    p50/p95/p99/max and environment. Do not label unit-test latency a cluster SLO.
-6. Run component tests through the repository's remote build workflow;
-   conformance and real-node tests run outside build slots.
+6. Build and unit-test through the repository's remote build workflow;
+   the API rigs, conformance and real-node tests run outside build slots
+   (rigs as test-machine suites, #173).
 
 Ship on turbomode in reviewable increments: runtime and watch transport;
 controller migration and semantic deadlines; scheduler separation; indexed
@@ -426,7 +440,12 @@ per-release QA discovery. Record image identity, release/machine, exact resource
 UIDs, API acknowledgement and watch-observed lifecycle latency percentiles,
 sample counts, peak observed Running concurrency and per-container integrity
 logs. Missing watch samples cannot establish subsecond performance. Record cold
-image/template work separately from warm runs. No live results exist yet.
+image/template work separately from warm runs. Partial live runs exist on
+pvetest1 (one node): 4bbb76be8f exposed the missing `allocatable.pods` limit
+(#194), 7277704177 verified it (#197) and timed 25 WFFC-claim Pods at
+request→scheduled p50 1.42 / p95 2.54 / max 2.58 s against plain Pods' 0.17 s
+p50, which led to the parallel binder above (#147). The acceptance record
+above (percentiles, integrity, cleanup audit) has not been produced from them.
 
 Both profiles clean their own namespaces with UID preconditions. SQLite
 acceptance additionally requires PVC/PV/VolumeAttachment disappearance and a
@@ -446,7 +465,8 @@ from resurrecting a deleted UID or replacing newer state.
 
 ## Verification on dev — 2026-09-29
 
-All commands ran via `sc-build` after pushing, in disposable build volumes.
+All commands ran via `sc-build` after pushing, in disposable build volumes
+(rigs ran in build slots then; since #173 they are test-machine suites).
 They used this repository's synthetic API/store rig, not a deployed cluster.
 
 | Commit | Command/cases | Result |
@@ -470,10 +490,11 @@ remote command exit and test output.
 These results do not establish latency SLOs, three-master failure recovery,
 real node execution or PVC backing-allocation reclamation. Those remain the
 live acceptance matrix in #147/#149 and the node/QA companion issues. The
-implementation is integrated into main by #163 and remains unreleased;
-version/tag/golden promotion is outside that issue's no-golden scope.
+implementation was integrated into main by #163 (which requested no golden);
+later work built goldens that carry it. The workspace version is still
+v0.18.0, with no tag since.
 
-### Final-validation investigation (still open)
+### Final-validation investigation (#153/#154, since closed)
 
 At `9a24ce9`, all 409 unit tests passed, but the selector rig timed out
 waiting for the first PDB membership update (#153). `1b6f951` adds failure
@@ -515,9 +536,10 @@ probe, five-crate units and all API-rig cases before closing #146.
 
 ### Follow-up after fastetcd v1.6.1 — 2026-09-29
 
-Continue on main under #163. The disposable rig now pins fastetcd v1.6.1
-(`8bb6c625f047b35cf39cb4983fe7598949c33e1c`), with an explicit source-ref
-override for comparisons. No production datastore or controller code was
+Continue on main under #163. The disposable rig then pinned fastetcd v1.6.1
+(`8bb6c625f047b35cf39cb4983fe7598949c33e1c`; v1.12.0 since, in
+`test/e2e/versions.sh`), with an explicit source-ref override for
+comparisons. No production datastore or controller code was
 changed in this acceptance pass. Version remains v0.18.0 plus unreleased
 feature work; test/documentation changes do not cut a release or golden.
 
@@ -525,7 +547,7 @@ feature work; test/documentation changes do not cut a release or golden.
 |---|---|---|
 | `9f622fa` | Handoff five-crate locked unit/doc command | 409 passed, four datastore tests ignored; exit 0, 34 s |
 | `52bbb89` | Original LIST probe, selectors, safety, CSI expansion, then DaemonSet/VM/short | 284/284 snapshots vs 400 creates; selectors 14, safety 11, CSI expansion 14 passed. DaemonSet heartbeat check failed (#164); VM/short were not reached. Exit 1, 262 s |
-| `226d84e` | Extended complete/paginated LIST probe | 185/185 snapshots matched 400 creates, then client timed out waiting for WATCH EOF because timeoutSeconds is ignored (#165); exit 1, 107 s |
+| `226d84e` | Extended complete/paginated LIST probe | 185/185 snapshots matched 400 creates, then client timed out waiting for WATCH EOF because timeoutSeconds was then ignored (#165); exit 1, 107 s |
 | `978b29e` | Replay probe rerun | Datastore peer startup transport error before assertions (#166); exit 100, 63 s |
 | `ec59f74` | LIST/WATCH, DaemonSet, VM, short | 184/184 snapshots, three exact WATCH suffixes (400/400, 400/400, 396/396); DaemonSet 10, VM 10, short 5 passed; exit 0, 206 s |
 | `52188fb` | Distinct early/middle/late LIST/WATCH boundaries, then selector rig | 174/174 snapshots vs 400 creates, three exact WATCH suffixes; selectors 14/14; exit 0, 139 s |
@@ -536,15 +558,17 @@ Commands use `bash test/e2e/{list-snapshot-race,indexed-selectors,indexed-safety
 The strengthened probe samples distinct early, middle and late revisions and
 requires exact name/revision equality between WATCH output and the remaining
 acknowledged writes. Missing, duplicate and unexpected events fail; a client
-deadline ends observation because server timeoutSeconds is not implemented.
+deadline ends observation because server timeoutSeconds was not implemented
+then (it is since #165, 2026-10-07).
 
 The DaemonSet test now waits for both Pod placement and full status accounting
 before asserting heartbeat-only updates leave its revision unchanged. Pod
 creation occurs before its status write; sampling immediately after placement
 was racing convergence. #164 was closed with the corrected 10/10 run.
 Listener selection now occurs after compilation, outside the host's outbound
-ephemeral range. #166 remains open because its log lacks the underlying OS
-error; the mitigation and successful rerun do not prove the original cause.
+ephemeral range. #166 was diagnosed on 2026-10-07 as the peer-port bind
+failing (EADDRINUSE; tonic 0.12.3's serve exits only there) and closed;
+fastetcd#137 asks fastetcd to print the OS error.
 
 For #153, post-fix startup membership, relabelling, negative selectors and UID
 replacement pass. The datastore race supplied a concrete missed-membership
@@ -553,8 +577,12 @@ was its cause. For #154, review of the original log and POST path found no
 informer acknowledgement wait: authorization/admission read the store, then
 create uses an atomic CAS. The original trace cannot distinguish transport,
 store read or transaction delay. Twenty fresh short runs and the separate
-final run did not reproduce the timeout. Both historical incidents remain
-open; neither is described as fixed by these passing runs.
+final run did not reproduce the timeout. Neither is described as fixed by
+these passing runs. Both were closed later: #153 on 2026-10-02 with
+fastetcd#50 as its mechanism (the original run kept too little evidence to
+prove it), #154 on 2026-10-07 as not reproducible (31+ clean reruns;
+fastetcd#71, a plausible cause, fixed in v1.9.0; rig failures now dump
+diagnostics).
 
 These checks establish the implemented single-server dev acceptance boundary
 for #146, including the repaired LIST/WATCH snapshot contract. The live

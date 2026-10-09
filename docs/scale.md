@@ -1,17 +1,20 @@
 # Control-plane scale measurement (#66)
 
-Status, 2026-10-02: measurement plan only. No new scale run has been made.
+Status, 2026-10-09: measurement plan only. No new scale run has been made.
 The issue's earlier synthetic 10/100/250-node results used controller LISTs
 silently truncated at 500 objects. v0.12.0 fixed pagination; those earlier
 CPU numbers do not establish the cost of processing the full population.
 
 ## Execution prerequisite
 
-The owner must select an isolated environment with an unprivileged account
-(#162). Stress workloads run outside build slots. Binaries reach a test
-environment as the component's goldens — the owner's answer to #140 — and
-persistent tests are to be pods living on forge (#173); neither route is
-implemented yet. The #146 implementation is on main (#163) and its datastore
+There is no isolated environment for it: the owner closed #162 with "when
+we have hardware we will have it" (amd64 months away). Stress workloads run
+outside build slots. Binaries reach a test environment as the component's
+goldens — the owner's answer to #140, waiting for stormcentral#557 to make a
+golden's binaries readable elsewhere. Persistent tests are pods on forge:
+the e2e rigs are now the test image's `rigs`/`rigs-night` suites (#173), but
+no suite has completed on a test machine yet and none of them is this
+measurement. The #146 implementation is on main (#163) and its datastore
 snapshot dependency is fixed (fastetcd#50, v1.6.1); runtime scale and
 multi-master evidence remain #147/#149. Do not add fake Nodes to a shared
 live cluster: they could attract unrelated scheduled workloads.
@@ -19,9 +22,10 @@ live cluster: they could attract unrelated scheduled workloads.
 ## Measurement protocol
 
 1. Pin rustkube and fastetcd commits, binary hashes, build profile, hardware,
-   CPU/memory limits and datastore medium. Measure the full-pagination main
-   baseline first; report turbomode separately if selected for comparison.
-   Keep hardware and build profiles identical between comparisons.
+   CPU/memory limits and datastore medium. Measure main, which is turbomode
+   since #163; a pre-turbomode commit (full-pagination poll loops, v0.18.0)
+   is a comparison only if selected, reported separately. Keep hardware and
+   build profiles identical between comparisons.
 2. Use fresh isolated stores at 10, 100 and 1000 synthetic Nodes, with 30
    assigned Pods per Node (300, 3000 and 30000 Pods). Create objects through
    the API, record seeding duration, and renew Node Leases throughout setup
@@ -51,4 +55,5 @@ Publish one row per population and revision, including actual verified object
 counts and sample duration. A result is a measured curve, not a universal
 pass/fail capacity limit. Explain where latency or resource use becomes
 unacceptable and link any follow-up defect. Unit tests cannot substitute for
-these results. Indexed-controller completion remains tracked by #146.
+these results. Indexed controllers are complete (#146, closed); their
+full-population cost is what this measures.
