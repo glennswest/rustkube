@@ -1999,6 +1999,8 @@ async fn bootstrap_rbac(
     for role in [
         crate::control_plane_rbac::controller_manager_role(),
         crate::control_plane_rbac::scheduler_role(),
+        // Not bound here: stormcos binds stormcert's identity (#264).
+        crate::control_plane_rbac::forge_node_signer_role(),
     ] {
         reconcile_bootstrap_role(storage, role).await;
     }
@@ -2024,7 +2026,9 @@ async fn bootstrap_rbac(
     .await;
 
     // Node-join bootstrap: bootstrappers may create CSRs; joined nodes (the
-    // system:nodes group) get broad access (tighten to a node role later).
+    // system:nodes group) get broad access (tighten to a node role later,
+    // #228). A bootstrapper is narrowed further, to forge-node CSRs and its
+    // own (#264, `csr_admission`), which RBAC cannot express.
     let bootstrapper_role = json!({
         "apiVersion": "rbac.authorization.k8s.io/v1",
         "kind": "ClusterRole",

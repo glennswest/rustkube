@@ -319,8 +319,8 @@ pub async fn admit(
 
 /// What the apiserver itself decides about an object once the mutating
 /// webhooks are done with it, before the validating ones: the
-/// `storage.storm.io` requester stamp (#210), then RBAC escalation
-/// prevention (#98).
+/// `storage.storm.io` requester stamp (#210), CSR requester/signer admission
+/// (#264), then RBAC escalation prevention (#98).
 async fn after_mutating(
     request: &RequestAttrs,
     op: Operation,
@@ -333,6 +333,9 @@ async fn after_mutating(
             (Operation::Update, Some(stored)) => crate::requester::on_update(object, stored),
             _ => {}
         }
+    }
+    if request.group == crate::csr_admission::GROUP && request.resource == crate::csr_admission::RESOURCE {
+        crate::csr_admission::admit(request, op, object, old).await?;
     }
     escalation(request, object, old).await
 }

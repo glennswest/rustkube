@@ -64,9 +64,14 @@ pub fn controller_manager_role() -> Value {
             // it may read /metrics (#90), as upstream's delegated auth does.
             rule(&["authentication.k8s.io"], &["tokenreviews"], &["create"]),
             rule(&["authorization.k8s.io"], &["subjectaccessreviews"], &["create"]),
-            // The CSR controller approves kubelet client CSRs and signs them.
+            // The CSR controller approves kubelet client CSRs, and signs
+            // upstream's four signers (#199); both checked on the CSR's
+            // /approval and /status since #264.
             json!({"apiGroups": ["certificates.k8s.io"], "resources": ["signers"],
-                   "resourceNames": ["kubernetes.io/kube-apiserver-client-kubelet"], "verbs": ["approve", "sign"]}),
+                   "resourceNames": ["kubernetes.io/kube-apiserver-client-kubelet"], "verbs": ["approve"]}),
+            json!({"apiGroups": ["certificates.k8s.io"], "resources": ["signers"],
+                   "resourceNames": ["kubernetes.io/kube-apiserver-client", "kubernetes.io/kube-apiserver-client-kubelet",
+                                     "kubernetes.io/kubelet-serving", "kubernetes.io/legacy-unknown"], "verbs": ["sign"]}),
         ],
     )
 }
@@ -100,6 +105,32 @@ pub fn scheduler_role() -> Value {
             // Delegated auth for its metrics port (#90).
             rule(&["authentication.k8s.io"], &["tokenreviews"], &["create"]),
             rule(&["authorization.k8s.io"], &["subjectaccessreviews"], &["create"]),
+        ],
+    )
+}
+
+/// The forge's CSR approver and signer for `storm.io/forge-node` — stormcert
+/// (#264, stormcert#78). Reconciled at boot; **not bound**: whoever runs
+/// stormcert binds its identity to it (stormcos), as for the other platform
+/// services' identities.
+pub const FORGE_NODE_SIGNER: &str = "system:storm:forge-node-signer";
+
+pub fn forge_node_signer_role() -> Value {
+    let csr = "certificates.k8s.io";
+    cluster_role(
+        FORGE_NODE_SIGNER,
+        "stormcert as the forge's approver and signer for storm.io/forge-node (rustkube#264)",
+        vec![
+            rule(&[csr], &["certificatesigningrequests"], &["get", "list", "watch"]),
+            rule(&[csr], &["certificatesigningrequests/approval", "certificatesigningrequests/status"], &["update", "patch"]),
+            json!({"apiGroups": [csr], "resources": ["signers"],
+                   "resourceNames": [crate::csr_admission::FORGE_NODE_SIGNER], "verbs": ["approve", "sign"]}),
+            rule(&["storm.io"], &["machines"], &["get", "list", "watch", "create", "update", "patch"]),
+            rule(&["storm.io"], &["enrollmentpolicies"], &["get", "list", "watch"]),
+            // It installs its two CRDs when they are missing.
+            json!({"apiGroups": ["apiextensions.k8s.io"], "resources": ["customresourcedefinitions"],
+                   "resourceNames": ["machines.storm.io", "enrollmentpolicies.storm.io"], "verbs": ["get"]}),
+            rule(&["apiextensions.k8s.io"], &["customresourcedefinitions"], &["create"]),
         ],
     )
 }
@@ -149,6 +180,32 @@ mod tests {
             assert!(!allows(&cm, verb, group, res, sub, None), "must not {verb} {group}/{res}{sub:?}");
         }
         assert!(!allows(&cm, "approve", "certificates.k8s.io", "signers", None, Some("kubernetes.io/kube-apiserver-client")));
+        // It signs what #199 signs, and nothing of another signer's (#264).
+        for s in ["kubernetes.io/kube-apiserver-client", "kubernetes.io/kubelet-serving", "kubernetes.io/legacy-unknown"] {
+            assert!(allows(&cm, "sign", "certificates.k8s.io", "signers", None, Some(s)), "{s}");
+        }
+        assert!(!allows(&cm, "sign", "certificates.k8s.io", "signers", None, Some("storm.io/forge-node")));
+    }
+
+    #[test]
+    fn the_forge_node_signer_approves_and_signs_its_signer_only() {
+        let r = forge_node_signer_role();
+        let c = "certificates.k8s.io";
+        assert!(allows(&r, "list", c, "certificatesigningrequests", None, None));
+        assert!(allows(&r, "update", c, "certificatesigningrequests", Some("approval"), None));
+        assert!(allows(&r, "update", c, "certificatesigningrequests", Some("status"), None));
+        assert!(allows(&r, "approve", c, "signers", None, Some("storm.io/forge-node")));
+        assert!(allows(&r, "sign", c, "signers", None, Some("storm.io/forge-node")));
+        assert!(!allows(&r, "approve", c, "signers", None, Some("kubernetes.io/kube-apiserver-client-kubelet")));
+        assert!(!allows(&r, "sign", c, "signers", None, Some("kubernetes.io/kube-apiserver-client")));
+        assert!(!allows(&r, "delete", c, "certificatesigningrequests", None, None));
+        assert!(!allows(&r, "update", c, "certificatesigningrequests", None, None));
+        assert!(allows(&r, "create", "storm.io", "machines", None, None));
+        assert!(allows(&r, "get", "storm.io", "enrollmentpolicies", None, Some("default")));
+        assert!(!allows(&r, "update", "storm.io", "enrollmentpolicies", None, Some("default")));
+        assert!(allows(&r, "get", "apiextensions.k8s.io", "customresourcedefinitions", None, Some("machines.storm.io")));
+        assert!(!allows(&r, "get", "apiextensions.k8s.io", "customresourcedefinitions", None, Some("other.example.com")));
+        assert!(!allows(&r, "get", "", "secrets", None, None));
     }
 
     #[test]

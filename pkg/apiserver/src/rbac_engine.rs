@@ -921,6 +921,12 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
                 };
                 return Err(status.into_response());
             }
+            // A bootstrapper reads only its own CSRs (#264).
+            if let Err(e) =
+                crate::csr_admission::guard_read(&rbac.storage, &user, &auth_req, request.uri().query()).await
+            {
+                return Err(e.into_response());
+            }
         }
     }
 

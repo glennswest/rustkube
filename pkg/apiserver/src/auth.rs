@@ -411,7 +411,24 @@ impl SigningKeys {
     /// Authenticate a JWT for `audiences` (the API audiences when empty):
     /// valid, for one of them, and — if it is bound — its ServiceAccount and
     /// bound object still the ones it was issued for.
+    ///
+    /// A token shaped `<id>.<secret>` is a bootstrap token (#264) instead,
+    /// judged by its Secret in `kube-system`; it is good for the API
+    /// audiences only.
     pub async fn authenticate(&self, token: &str, audiences: &[String]) -> Option<TokenUser> {
+        if let Some((id, secret)) = crate::bootstrap_token::parse(token) {
+            let storage = self.bound.as_ref()?;
+            let audiences: Vec<String> = if audiences.is_empty() {
+                self.audiences.to_vec()
+            } else {
+                audiences.iter().filter(|a| self.audiences.contains(a)).cloned().collect()
+            };
+            if audiences.is_empty() {
+                return None;
+            }
+            let (username, groups) = crate::bootstrap_token::authenticate(storage, id, secret).await?;
+            return Some(TokenUser { username, uid: String::new(), groups, extra: Default::default(), audiences });
+        }
         let claims = self.verify(token)?.claims;
         let audiences = self.audiences_for(&claims, audiences);
         if audiences.is_empty() {
@@ -541,7 +558,8 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
             .and_then(bearer_token)
         {
             // 2. Bearer token: a static token from --token-auth-file, else a
-            //    JWT for this apiserver's audiences, its binding still held.
+            //    bootstrap token (#264), else a JWT for this apiserver's
+            //    audiences, its binding still held.
             let ext = request.extensions();
             let static_user = ext
                 .get::<crate::token_file::StaticTokens>()

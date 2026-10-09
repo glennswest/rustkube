@@ -10,12 +10,14 @@
 pub mod admission;
 pub mod aggregation;
 pub mod apply;
+pub mod bootstrap_token;
 pub mod builtin_admission;
 pub mod auth;
 pub mod compactor;
 pub mod config;
 pub mod control_plane_rbac;
 pub mod crd;
+pub mod csr_admission;
 pub mod discovery;
 pub mod error;
 pub mod escalation;
