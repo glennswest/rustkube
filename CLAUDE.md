@@ -115,12 +115,14 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### --client-crl-file (#260, P2, stormcert#61) — IN PROGRESS 2026-10-09
-- [ ] `--client-crl-file` (repeatable, PEM or DER) → WebPkiClientVerifier
+### --client-crl-file (#260, P2, stormcert#61) — BUILT 2026-10-09
+- [x] `--client-crl-file` (repeatable, PEM or DER) → WebPkiClientVerifier
       `with_crls`, end-entity only, unknown status allowed; re-read with the
       client CA (30 s), last good kept on a bad file; units; rig
-      `client-crl.sh`; README/certificates.md/CHANGELOG; golden; stormcos
-      passes the flag (their side)
+      `client-crl.sh`; README/certificates.md/CHANGELOG (6a4e0bd)
+- [x] Build VM at 6a4e0bd: 620 passed / 4 ignored (apiserver 318); 0 rustc
+      warnings, changed files clippy-clean
+- [ ] golden; client-crl rig (stormcentral#512); stormcos passes the flag
 
 ### Docs refresh from the code (since 2026-10-02) — COMPLETE 2026-10-09
 - [x] README (date, How it ships at stormcos 73091eac, rig suites, build

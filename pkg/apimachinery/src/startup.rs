@@ -182,6 +182,20 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    #[test]
+    fn der_is_complete_when_its_length_says() {
+        // Short form: SEQUENCE of 3 bytes.
+        assert!(is_complete_der(&[0x30, 3, 1, 2, 3]));
+        assert!(!is_complete_der(&[0x30, 3, 1, 2]));
+        // Long form, two length bytes: 0x0102 = 258 content bytes.
+        let mut long = vec![0x30, 0x82, 0x01, 0x02];
+        long.extend(vec![0u8; 258]);
+        assert!(is_complete_der(&long));
+        assert!(!is_complete_der(&long[..200]));
+        assert!(!is_complete_der(&[0x30]));
+        assert!(!is_complete_der(&[0x30, 0x80]));
+    }
+
     fn tmpdir() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rk-startup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&d).unwrap();
