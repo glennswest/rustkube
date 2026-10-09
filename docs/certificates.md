@@ -95,6 +95,28 @@ write the bundle with old and new CA, renew the client certificates from the
 new one, then write the new CA alone. `test/e2e/client-cert-reload.sh` does
 exactly that.
 
+### Revoked client certificates (#260)
+
+A node that leaves a cluster has its certificates revoked by stormcert, which
+keeps a CRL per signer (`/data/stormcert/crl/<signer>.crl`, DER, and
+`.crl.pem`; re-signed every few hours, valid 6 h; stormcert#61). Each
+`--client-crl-file` (repeatable, PEM or DER) is loaded into the client
+verifier beside `--client-ca-file`, as rustls's `with_crls`:
+
+- only the client's own certificate is checked, not its chain;
+- a certificate from a CA no CRL covers is not refused for that;
+- a CRL past its nextUpdate is still applied — a stale list beats none.
+
+Every file is followed like the client CA: a re-signed CRL applies to the
+next handshake, no restart; connections already open keep going. A missing,
+unreadable or unparseable file is logged and the last good CRL stays in force,
+so revocation is never dropped by a bad write. At start a CRL is waited for
+like a credential (up to 120 s) and must parse, or the apiserver does not
+start; `--client-crl-file` without `--client-ca-file` is refused.
+`test/e2e/client-crl.sh` revokes a certificate with `openssl ca` and checks
+all of this. On StormCOS the golden passes the flag (stormcos), after which
+stormcert's `[revocation] apiserver-enforces = true` turns revocations on.
+
 ## Renewing
 
 On a master:

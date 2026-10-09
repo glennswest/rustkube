@@ -89,6 +89,12 @@ struct Cli {
     #[arg(long = "client-ca-file")]
     client_ca: Option<PathBuf>,
 
+    /// CRL (PEM or DER) whose revoked client certificates are refused;
+    /// repeatable or comma-separated, one per signer. Re-read every 30 s; a
+    /// bad or missing file keeps the last good one. Needs --client-ca-file
+    #[arg(long = "client-crl-file", value_delimiter = ',')]
+    client_crl: Vec<PathBuf>,
+
     /// Allow anonymous requests. Set false to require authentication (401 for
     /// unauthenticated requests). Even when true, anonymous is bound only to
     /// discovery/health unless --dev-anonymous-admin is also set.
@@ -203,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
         tls_key: cli.tls_key,
         tls_auto: cli.tls,
         client_ca: cli.client_ca,
+        client_crl: cli.client_crl,
         anonymous_auth: cli.anonymous_auth,
         dev_anonymous_admin: cli.dev_anonymous_admin,
         insecure: cli.insecure,

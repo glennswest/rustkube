@@ -156,13 +156,15 @@ pub struct Watched {
     what: &'static str,
     paths: Vec<PathBuf>,
     seen: Vec<Vec<u8>>,
+    /// Whether the files are unreadable, so that is warned about once.
+    unreadable: bool,
 }
 
 impl Watched {
     /// Start from what the files hold now (what the caller loaded).
     pub fn new(what: &'static str, paths: Vec<PathBuf>) -> Self {
         let seen = read_all(&paths).unwrap_or_default();
-        Self { what, paths, seen }
+        Self { what, paths, seen, unreadable: false }
     }
 
     /// Read the files, and hand them to `apply` when any changed. `seen`
@@ -170,9 +172,18 @@ impl Watched {
     /// change is warned about once, not every tick; the next write is looked
     /// at again.
     pub fn tick(&mut self, apply: &mut impl FnMut(&[Vec<u8>]) -> anyhow::Result<()>) -> Reload {
-        let Ok(files) = read_all(&self.paths) else {
-            return Reload::Unreadable;
+        let files = match read_all(&self.paths) {
+            Ok(files) => files,
+            Err(e) => {
+                if !self.unreadable {
+                    let path = self.paths[0].display().to_string();
+                    tracing::warn!(path, "{} is unreadable, keeping the current one: {e}", self.what);
+                    self.unreadable = true;
+                }
+                return Reload::Unreadable;
+            }
         };
+        self.unreadable = false;
         if files == self.seen {
             return Reload::Unchanged;
         }

@@ -16,6 +16,8 @@ pub struct ApiServerConfig {
     pub tls_auto: bool,
     /// CA bundle (PEM) to verify client certificates for x509 authentication.
     pub client_ca: Option<PathBuf>,
+    /// `--client-crl-file`s (#260): revoked client certificates are refused.
+    pub client_crl: Vec<PathBuf>,
     /// External etcd/fastetcd endpoints (e.g. `https://127.0.0.1:2379`).
     /// Required — RustKube uses an external datastore (kube architecture).
     pub etcd_servers: Vec<String>,
@@ -104,6 +106,7 @@ impl Default for ApiServerConfig {
             tls_auto: false,
             manifest_dir: None,
             client_ca: None,
+            client_crl: Vec::new(),
             etcd_servers: Vec::new(),
             etcd_cacert: None,
             etcd_cert: None,

@@ -62,6 +62,30 @@ pub async fn token_file(path: &Path, what: &str, timeout: Duration) -> io::Resul
     Ok(trimmed(&bytes).to_string())
 }
 
+/// Read a CRL file, PEM or DER, waiting for it to appear and be complete: a
+/// PEM with every block closed, or a DER SEQUENCE as long as its header says.
+pub async fn crl_file(path: &Path, what: &str, timeout: Duration) -> io::Result<Vec<u8>> {
+    wait_for_file(path, what, timeout, |b| {
+        if b.first() == Some(&0x30) { is_complete_der(b) } else { is_complete_pem(b) }
+    })
+    .await
+}
+
+/// A DER SEQUENCE whose length header matches the bytes there are.
+fn is_complete_der(b: &[u8]) -> bool {
+    let Some(&first) = b.get(1) else { return false };
+    let (len, header) = if first & 0x80 == 0 {
+        (first as usize, 2)
+    } else {
+        let n = (first & 0x7f) as usize;
+        if n == 0 || n > 4 || b.len() < 2 + n {
+            return false;
+        }
+        (b[2..2 + n].iter().fold(0usize, |acc, &x| (acc << 8) | x as usize), 2 + n)
+    };
+    b.len() == header + len
+}
+
 /// A PEM is complete when it has at least one block and every `BEGIN` has a
 /// closing `END` — the state a file is in only once the writer has finished.
 fn is_complete_pem(bytes: &[u8]) -> bool {

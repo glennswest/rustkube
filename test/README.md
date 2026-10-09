@@ -553,6 +553,14 @@ their watches ended and resumed (the apiserver saw new WATCHes) with no
 `reflector WATCH reconnecting` warning, no LIST, and — when the fixed metrics
 port 10257 is the rig's own — no change in `rustkube_watch_reconnects_total`.
 
+`e2e/client-crl.sh` (#260, suite `rigs`) runs the apiserver with two client
+CAs and a CRL each (PEM and DER, from `openssl ca`): two certificates are
+accepted (by SelfSubjectReview); one is revoked and its CRL re-signed, and the
+next handshake refuses it while the other still works, no restart; the CRL
+file removed, then garbage — both logged, revocation still in force; the DER
+CRL's certificate is refused from the start; `--client-crl-file` without
+`--client-ca-file` does not start. About two minutes.
+
 `e2e/tls-data-dir.sh` (#88, suite `rigs`) starts a second apiserver with
 `--tls --data-dir --cluster-domain example.org` on the rig's store: the pair is
 written (key 0600) with the `kubernetes.default.svc.example.org` SAN and no

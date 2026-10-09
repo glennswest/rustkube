@@ -1224,6 +1224,9 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         .layer(tower_http::catch_panic::CatchPanicLayer::new());
 
     let addr = format!("{}:{}", config.bind_addr, config.secure_port);
+    if !config.client_crl.is_empty() && config.client_ca.is_none() {
+        anyhow::bail!("--client-crl-file needs --client-ca-file: with no client CA no client certificate is accepted, so there is nothing to revoke");
+    }
 
     // Resolve TLS material: explicit cert/key files, else a self-signed cert
     // kept under --data-dir (#88), else plain HTTP. `cert_files` is what the
@@ -1247,6 +1250,15 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             // Install the ring crypto provider once (rustls 0.23 requires one).
             let _ = rustls::crypto::ring::default_provider().install_default();
             let client_ca = config.client_ca.as_ref().map(std::fs::read).transpose()?;
+            // Revocation (#260): each CRL is waited for like a credential —
+            // stormcert may still be writing it — and must parse, or the
+            // apiserver does not start: it is never silently unenforced.
+            let mut crls = Vec::new();
+            for path in &config.client_crl {
+                let wait = apimachinery::startup::DEFAULT_STARTUP_TIMEOUT;
+                crls.push(apimachinery::startup::crl_file(path, "client CRL", wait).await?);
+            }
+            let client = client_ca.as_ref().map(|ca| crate::tls::ClientTrust { ca: ca.clone(), crls });
             if client_ca.is_some() {
                 info!("kube-apiserver serving HTTPS on {addr} (x509 client-cert auth enabled)");
             } else {
@@ -1260,13 +1272,19 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             if let Some(ca) = &client_ca {
                 report_cert_expiry("client-ca", ca);
             }
-            let (cfg, resolver) =
-                crate::tls::server_config(&cert, &key, client_ca.as_deref())?;
+            let (cfg, resolver) = crate::tls::server_config(&cert, &key, client.as_ref())?;
             let cfg: crate::tls::CurrentConfig = Arc::new(std::sync::RwLock::new(Arc::new(cfg)));
-            // A rotated client CA applies to new connections without a
-            // restart (#105).
-            if let Some(ca_path) = &config.client_ca {
-                crate::tls::watch_client_ca(cfg.clone(), resolver.clone(), ca_path.clone());
+            // A rotated client CA (#105) and a re-signed CRL (#260) apply to
+            // new connections without a restart.
+            if let (Some(ca_path), Some(client)) = (&config.client_ca, client) {
+                let auth = crate::tls::ClientAuth::new(cfg.clone(), resolver.clone(), client);
+                crate::tls::watch_client_ca(auth.clone(), ca_path.clone());
+                for (i, path) in config.client_crl.iter().enumerate() {
+                    crate::tls::watch_client_crl(auth.clone(), i, path.clone());
+                }
+                if !config.client_crl.is_empty() {
+                    info!("client certificates checked against {} CRL file(s)", config.client_crl.len());
+                }
             }
             // Renewal takes effect without a restart (#20). Only for a cert
             // that is in a file — the --tls-cert-file pair or the self-signed
