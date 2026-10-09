@@ -115,10 +115,12 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Docs refresh from the code (since 2026-10-02) — IN PROGRESS 2026-10-09
-- [ ] README (date, How it ships at stormcos 73091eac, test suites, build,
-      stale claims), docs/ pages, CLAUDE.md, audit addendum, CHANGELOG
-- [ ] Promises the code does not keep → issues
+### Docs refresh from the code (since 2026-10-02) — COMPLETE 2026-10-09
+- [x] README (date, How it ships at stormcos 73091eac, rig suites, build
+      volume, stale claims), every docs/ page but the research and legacy
+      Terragrunt ones, test/README, CLAUDE.md, audit addendum, CHANGELOG
+- [x] Filed #257 (stormblock PV reclaim from the claim), #258 (HPA not via
+      `/scale`); rig day budget noted on #173. presentation.md not re-rendered
 
 ### Table-only Accept on reviews → 406 (#126, P3) — BUILT 2026-10-07
 - [x] `table::{only_table, refuse_table}` on the five review routes; unit;

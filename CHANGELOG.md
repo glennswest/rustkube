@@ -2,6 +2,10 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-09
+- **docs:** Refresh from the code since 2026-10-02 (`git log --since=2026-10-02`). README checked at 2026-10-09: *How it ships* re-read from stormcos 73091eac (fastetcd mutual TLS, `--token-auth-file`, HTTPS 10257/10259 with their serving pairs, controller-manager/scheduler bound to their own roles rather than cluster-admin, which flags stormcos does not pass); e2e rigs are the test image's `rigs`/`rigs-night` suites, not build-slot jobs; the build volume; the scheduler does set `nominatedNodeName`; the PV binder's parallel claim workers; #153/#154 closed; write-phase timing, NotFound wording, the stormblock provisioner's class check and `volumeMode`. CLI tables re-checked against `cmd/*/src/main.rs` (unchanged). docs/: storage, certificates (SA key rotation, front-proxy pair, ES256), metrics (cache reads, compaction, reconnects, write phases), inventory, oc-compatibility, presentation (not re-rendered), test/README (every rig and its suite), conformance, releasing (aarch64, no workflow), design, handoff, scale; audit addendum in docs/changes-since-2026-09-18.md. Stale comments fixed in aggregation.rs, hpa.rs, build-release.sh, test/build.sh, test/requires.toml.
+- **docs:** Filed from the pass: #257 (stormblock PV reclaim policy read from the claim, so a `Retain` class is ignored), #258 (the HPA scales only apps workloads, not through `/scale`).
+
 ### 2026-10-08
 - **fix:** The in-kubelet stormblock provisioner copies the claim's `volumeMode` onto the PV it writes (#201). It wrote none, so admission defaulted the PV to `Filesystem`, and the binder never paired a `volumeMode: Block` claim with its own pre-bound PV. The field is immutable on a PV, so the node could not correct it. Unset stays `Filesystem`.
 - **test:** PV-shape unit; `test/e2e/stormblock-class.sh` gains a Block claim that must get a Block PV and bind.
