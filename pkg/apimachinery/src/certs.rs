@@ -43,6 +43,27 @@ pub fn cert_not_after_unix(pem_bytes: &[u8]) -> Option<i64> {
     Some(cert.validity().not_after.timestamp())
 }
 
+/// The DNS subjectAltNames of the first certificate in a PEM bundle; `None`
+/// if the PEM can't be parsed. A certificate with no SAN extension has none.
+pub fn cert_dns_sans(pem_bytes: &[u8]) -> Option<Vec<String>> {
+    use x509_parser::prelude::*;
+    let (_, pem) = parse_x509_pem(pem_bytes).ok()?;
+    let (_, cert) = parse_x509_certificate(&pem.contents).ok()?;
+    let Ok(Some(ext)) = cert.subject_alternative_name() else {
+        return Some(Vec::new());
+    };
+    Some(
+        ext.value
+            .general_names
+            .iter()
+            .filter_map(|n| match n {
+                GeneralName::DNSName(d) => Some(d.to_string()),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
 /// A certificate and its private key (PEM-encoded).
 pub struct CertificateAuthority {
     pub cert_pem: String,
@@ -127,5 +148,18 @@ mod expiry_tests {
     #[test]
     fn bad_pem_is_none() {
         assert!(cert_not_after_unix(b"not a pem").is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dns_sans_read_back() {
+        let sans = vec!["kubernetes.default.svc.example.org".to_string(), "localhost".to_string()];
+        let c = generate_server_cert("kube-apiserver", &sans).unwrap();
+        assert_eq!(cert_dns_sans(c.cert_pem.as_bytes()).unwrap(), sans);
+        assert!(cert_dns_sans(b"not a pem").is_none());
     }
 }

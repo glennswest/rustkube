@@ -65,7 +65,12 @@ the key and writing the certificate, or one that wrote only the key, leaves
 the old pair serving; the refusal is logged once per change on disk, and the
 next change is looked at again. The same check runs at startup, where a
 mismatched pair stops the apiserver instead of failing every handshake.
-A `--tls` certificate (generated in memory) is never reloaded.
+A `--tls` certificate is kept in `--data-dir` as `apiserver.crt`/`apiserver.key`
+(#88) and followed there like `--tls-cert-file`; at start a stored pair is
+reused while its key matches, it has more than 30 days left and it carries
+`kubernetes.default.svc.<--cluster-domain>`, and is regenerated otherwise. Only
+when the data dir cannot be written is it held in memory (logged), and then
+never reloaded.
 
 ### The controller-manager's and scheduler's client certificates (#105)
 

@@ -34,6 +34,7 @@ pub mod selector;
 pub mod node_port;
 pub mod openapi_crd;
 pub mod quota_admission;
+pub mod self_signed;
 pub mod served;
 pub mod service_ip;
 pub mod server;

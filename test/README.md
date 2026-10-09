@@ -553,6 +553,14 @@ their watches ended and resumed (the apiserver saw new WATCHes) with no
 `reflector WATCH reconnecting` warning, no LIST, and — when the fixed metrics
 port 10257 is the rig's own — no change in `rustkube_watch_reconnects_total`.
 
+`e2e/tls-data-dir.sh` (#88, suite `rigs`) starts a second apiserver with
+`--tls --data-dir --cluster-domain example.org` on the rig's store: the pair is
+written (key 0600) with the `kubernetes.default.svc.example.org` SAN and no
+`cluster.local`, served, and verifies a handshake trusting the file alone; a
+restart serves the same certificate; `--cluster-domain cluster.local`
+regenerates it; a data dir that is a file still serves, from memory, with the
+warning.
+
 `e2e/serving-cert.sh` (#93, suite `rigs-night`) serves the rig's openssl RSA pair from files and
 checks, a reload tick (30 s) at a time: `deploy/renew-certs.sh` with a signing
 failure exits 1 and changes no file; a key written without its certificate

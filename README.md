@@ -739,7 +739,7 @@ override environment values.
 | `--bind-addr` | | `0.0.0.0` | |
 | `--secure-port` | | `6443` | |
 | `--tls-cert-file`, `--tls-private-key-file` | | — | serving cert; **reloaded when the files change**, no restart; a key that is not the cert's is refused (#93) |
-| `--tls` | | off | serve a self-signed cert generated at start, held in memory only; DNS SANs `kubernetes…` and `localhost`, no IP SANs |
+| `--tls` | | off | serve a self-signed cert kept in `--data-dir` (`apiserver.crt`/`.key`, key 0600): written on first start, reused after a restart while valid (> 30 days left, key matches, SANs current), else regenerated; in memory, with a warning, if the dir cannot be written. DNS SANs `kubernetes`, `kubernetes.default`, `kubernetes.default.svc`, `kubernetes.default.svc.<cluster-domain>`, `localhost`; no IP SANs (#88) |
 | `--insecure` | | `false` | allow plain HTTP when no TLS is configured; without it the server refuses to start |
 | `--client-ca-file` | | — | enables x509 client-certificate authentication; **reloaded when the file changes**, for new connections (#105) |
 | `--cadvisor-scheme`, `--cadvisor-port` | | `http`, `9096` | where each node's cadvisor answers, for `metrics.k8s.io` (#89) |
@@ -759,8 +759,8 @@ override environment values.
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--service-node-port-range` | | `30000-32767` | NodePort range, inclusive (#132) |
 | `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |
-| `--data-dir` | | `/var/lib/kubernetes` | accepted and **unused** (#88) |
-| `--cluster-domain` | | `cluster.local` | accepted and **unused** (#88) |
+| `--data-dir` | | `/var/lib/kubernetes` | where the `--tls` self-signed pair is kept (#88); nothing else |
+| `--cluster-domain` | | `cluster.local` | the `--tls` certificate's `kubernetes.default.svc.<domain>` SAN (#88); nothing else |
 
 ### kube-controller-manager and kube-scheduler
 

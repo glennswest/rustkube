@@ -72,7 +72,8 @@ struct Cli {
     #[arg(long = "requestheader-allowed-names", value_delimiter = ',')]
     requestheader_allowed_names: Vec<String>,
 
-    /// Serve HTTPS with an auto-generated self-signed cert (dev/bootstrap)
+    /// Serve HTTPS with a self-signed cert (dev/bootstrap), kept under
+    /// --data-dir
     #[arg(long)]
     tls: bool,
 
@@ -153,7 +154,8 @@ struct Cli {
     #[arg(long = "advertise-address")]
     advertise_address: Option<String>,
 
-    /// Data directory (TLS material, misc runtime state)
+    /// Where the --tls self-signed certificate is kept (apiserver.crt,
+    /// apiserver.key): written on first start, reused after a restart (#88)
     #[arg(long, default_value = "/var/lib/kubernetes")]
     data_dir: PathBuf,
 
@@ -165,7 +167,8 @@ struct Cli {
     #[arg(long, default_value = "30000-32767")]
     service_node_port_range: String,
 
-    /// Cluster domain
+    /// Cluster DNS domain: the --tls certificate's
+    /// kubernetes.default.svc.<domain> SAN (#88)
     #[arg(long, default_value = "cluster.local")]
     cluster_domain: String,
 }

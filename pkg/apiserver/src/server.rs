@@ -1225,21 +1225,18 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
 
     let addr = format!("{}:{}", config.bind_addr, config.secure_port);
 
-    // Resolve TLS material: explicit cert/key files, else an auto self-signed
-    // cert (dev), else plain HTTP.
+    // Resolve TLS material: explicit cert/key files, else a self-signed cert
+    // kept under --data-dir (#88), else plain HTTP. `cert_files` is what the
+    // serving pair is followed from on disk.
+    let mut cert_files: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
     let tls_pem: Option<(Vec<u8>, Vec<u8>)> =
         if let (Some(cert), Some(key)) = (&config.tls_cert, &config.tls_key) {
+            cert_files = Some((cert.clone(), key.clone()));
             Some((std::fs::read(cert)?, std::fs::read(key)?))
         } else if config.tls_auto {
-            let sans = vec![
-                "kubernetes".to_string(),
-                "kubernetes.default".to_string(),
-                "kubernetes.default.svc".to_string(),
-                "kubernetes.default.svc.cluster.local".to_string(),
-                "localhost".to_string(),
-            ];
-            let sc = apimachinery::certs::generate_server_cert("kube-apiserver", &sans)?;
-            Some((sc.cert_pem.into_bytes(), sc.key_pem.into_bytes()))
+            let ss = crate::self_signed::load_or_create(&config.data_dir, &config.cluster_domain)?;
+            cert_files = ss.files;
+            Some((ss.cert_pem, ss.key_pem))
         } else {
             None
         };
@@ -1272,11 +1269,11 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
                 crate::tls::watch_client_ca(cfg.clone(), resolver.clone(), ca_path.clone());
             }
             // Renewal takes effect without a restart (#20). Only for a cert
-            // that came from a file: an auto-generated one has nowhere to be
-            // renewed from, and watching a path nobody writes is a task that
-            // does nothing forever.
-            if let (Some(cert_path), Some(key_path)) = (&config.tls_cert, &config.tls_key) {
-                crate::tls::watch_cert_files(resolver, cert_path.clone(), key_path.clone());
+            // that is in a file — the --tls-cert-file pair or the self-signed
+            // one under --data-dir (#88); one held in memory has nowhere to be
+            // renewed from.
+            if let Some((cert_path, key_path)) = cert_files {
+                crate::tls::watch_cert_files(resolver, cert_path, key_path);
             }
             crate::tls::serve(listener, app, cfg).await?;
         }

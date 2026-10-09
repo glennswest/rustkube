@@ -34,7 +34,8 @@ boolean syntax and defaults. No configuration-file loader or `--kubeconfig`
 exists. `ApiServerConfig::default` agrees with the CLI defaults for exposed
 fields. Partial SA key configuration falls back to ephemeral HS256; token
 arguments take precedence over token files. `--data-dir` and `--cluster-domain`
-remain accepted but unused (#88).
+were accepted but unused (#88); since 2026-10-09 they keep and name the
+`--tls` self-signed certificate.
 
 Apiserver serves on `0.0.0.0:6443` by default, refusing plaintext unless
 `--insecure true`; controller-manager and scheduler metrics/health listeners

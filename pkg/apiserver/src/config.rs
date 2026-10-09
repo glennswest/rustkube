@@ -42,13 +42,14 @@ pub struct ApiServerConfig {
     pub cadvisor_token_file: Option<PathBuf>,
     /// How often the datastore is compacted (#139); zero turns it off.
     pub etcd_compaction_interval: std::time::Duration,
-    /// Data directory (TLS material, misc runtime state).
+    /// Where the `--tls` self-signed pair is kept (#88, `self_signed`).
     pub data_dir: PathBuf,
     /// Cluster CIDR for service IPs.
     pub service_cidr: String,
     /// `--service-node-port-range` (#132), inclusive, `FROM-TO`.
     pub service_node_port_range: String,
-    /// Cluster DNS domain.
+    /// Cluster DNS domain; the `--tls` certificate's
+    /// `kubernetes.default.svc.<domain>` SAN (#88).
     pub cluster_domain: String,
     /// A directory of manifests applied once at startup.
     ///
