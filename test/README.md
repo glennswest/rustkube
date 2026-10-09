@@ -553,6 +553,15 @@ their watches ended and resumed (the apiserver saw new WATCHes) with no
 `reflector WATCH reconnecting` warning, no LIST, and — when the fixed metrics
 port 10257 is the rig's own — no change in `rustkube_watch_reconnects_total`.
 
+`e2e/rollout-unschedulable.sh` (#266, suite `rigs`): a real
+controller-manager and scheduler, one stand-in Node (the script plays the
+kubelet: Lease, Ready, finishing deletions). A Deployment shaped like
+cilium-operator — replicas 1, maxSurge 1, maxUnavailable 1, required
+anti-affinity on the hostname — changes its template: the surge pod is
+Unschedulable, the old ReplicaSet goes to 0 anyway, and the rollout
+completes with one pod on the node. Control: maxUnavailable 0 keeps the old
+pod, as upstream.
+
 `e2e/bootstrap-token.sh` (#264, suite `rigs`): Secrets for a live and an
 expired bootstrap token; the live one creates a `storm.io/forge-node` CSR
 stamped `system:bootstrap:<id>` (the body's forged `spec.username` replaced)

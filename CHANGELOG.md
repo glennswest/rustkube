@@ -3,6 +3,12 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-09
+- **fix:** A rolling update no longer stalls when its surge pod cannot schedule (#266, stormcos#482). The old ReplicaSets are scaled down by upstream's `reconcileOldReplicaSets` arithmetic:
+  - The budget is `allPods - minAvailable - newUnavailable`. Unavailable old replicas go first; then available ones, down to `available - minAvailable`.
+  - A pass that scales the new ReplicaSet leaves the old ones until the next pass.
+  - Before, the budget started from *available* pods and subtracted the new ReplicaSet's pending pods again. So with cilium-operator's `replicas: 1, maxUnavailable: 100%` and a required hostname anti-affinity on one node, the old pod never went and the new one never scheduled.
+  - As upstream, an old pod may now go while a new one is pending, whenever the floor holds without it.
+- **test:** rollout units: the issue's case pass by pass, unhealthy-first, the floor (updated to upstream's behaviour), maxUnavailable 0 holding. New `test/e2e/rollout-unschedulable.sh` (suite `rigs`).
 - **feat:** Bootstrap-token authentication (#264, stormcert#78), as upstream: a bearer `<id>.<secret>` is checked against the Secret `kube-system/bootstrap-token-<id>` (`type: bootstrap.kubernetes.io/token`, `usage-bootstrap-authentication: "true"`, not past `expiration`). It authenticates as `system:bootstrap:<id>` in `system:bootstrappers`, plus any `auth-extra-groups` under `system:bootstrappers:`. The Secret is read from the watch cache, else the store, so deleting it revokes the token. TokenReview answers it.
 - **feat:** CSR admission (#264):
   - On create, `spec.username` and `spec.groups` are the authenticated requester's, over whatever the body says. Before, the body's values were stored, so a client could claim to be `system:node:x`. On update, `spec` is kept as stored.

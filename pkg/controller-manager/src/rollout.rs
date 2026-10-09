@@ -11,6 +11,8 @@
 //! - never more than `replicas + maxSurge` pods exist at once
 //! - never fewer than `replicas - maxUnavailable` pods are available
 //!
+//! The scale-down follows upstream's `reconcileOldReplicaSets` (#266).
+//!
 //! Break the first and a cluster with no headroom cannot roll at all. Break
 //! the second and a rollout is an outage. Everything below is in service of
 //! those two lines.
@@ -123,39 +125,73 @@ pub fn plan_rolling(
         new_replicas = desired;
     }
 
+    // Upstream's rolloutRolling: a pass that scales the new ReplicaSet does
+    // nothing else; the old ones are looked at on the next pass, against
+    // what the new one now has.
+    if new_replicas != new.spec_replicas {
+        return Plan { new_replicas, old: Vec::new() };
+    }
+
     // --- scale the old ones down ---------------------------------------
     //
-    // Only as far as the availability floor allows, and counting the new
-    // ReplicaSet's *not yet available* pods against that budget. Skipping
-    // that term is the classic rolling-update bug: the old pods are removed
-    // on the promise of new ones that have not become ready, and the service
-    // goes below its floor while every object still looks correct.
+    // Upstream's reconcileOldReplicaSets (#266). How far the old ones may go
+    // in all is the pods every ReplicaSet runs, less the availability floor,
+    // less the new ReplicaSet's pods that are not available yet:
+    //
+    //   maxScaledDown = allPods - minAvailable - newUnavailable
+    //
+    // Within that, first the old pods that are not available anyway (they
+    // count toward nothing), then available ones — but only as many as
+    // `available - minAvailable`, so what stays available never drops
+    // under the floor. That second bound is on *available* pods alone: an
+    // old pod may go while the new one is still pending, provided the floor
+    // holds without it. With `replicas: 1, maxUnavailable: 1` the floor is
+    // 0, so the old pod goes and a new one that could not schedule beside it
+    // (a required anti-affinity on one node) schedules after it; counting
+    // the pending new pod against the available ones, as this did before,
+    // left that rollout stalled for ever.
     let min_available = desired.saturating_sub(max_unavailable);
-    let total_available: u64 =
-        new.available + olds.iter().map(|r| r.available).sum::<u64>();
-    let new_unavailable = new_replicas.saturating_sub(new.available);
-
-    let mut budget = total_available
-        .saturating_sub(min_available)
-        .saturating_sub(new_unavailable);
+    let all_pods: u64 = new.spec_replicas + olds.iter().map(|r| r.spec_replicas).sum::<u64>();
+    let new_unavailable = new.spec_replicas.saturating_sub(new.available);
+    let max_scaled_down = all_pods.saturating_sub(min_available).saturating_sub(new_unavailable);
+    if max_scaled_down == 0 {
+        return Plan { new_replicas, old: Vec::new() };
+    }
 
     // Oldest revision first: the further behind a ReplicaSet is, the less
     // anyone wants to roll back to it.
-    let mut ordered: Vec<&RsView> = olds.iter().filter(|r| r.spec_replicas > 0).collect();
+    let mut ordered: Vec<RsView> = olds.iter().filter(|r| r.spec_replicas > 0).cloned().collect();
     ordered.sort_by_key(|r| r.revision);
 
-    let mut old = Vec::new();
-    for rs in ordered {
+    // 1. Unhealthy old replicas, up to maxScaledDown.
+    let mut cleaned = 0;
+    for rs in ordered.iter_mut() {
+        if cleaned >= max_scaled_down {
+            break;
+        }
+        let unhealthy = rs.spec_replicas.saturating_sub(rs.available);
+        let down = unhealthy.min(max_scaled_down - cleaned);
+        rs.spec_replicas -= down;
+        cleaned += down;
+    }
+
+    // 2. Healthy ones, down to the floor.
+    let available: u64 = new.available + olds.iter().map(|r| r.available).sum::<u64>();
+    let mut budget = available.saturating_sub(min_available);
+    for rs in ordered.iter_mut() {
         if budget == 0 {
             break;
         }
         let down = rs.spec_replicas.min(budget);
-        if down > 0 {
-            old.push((rs.name.clone(), rs.spec_replicas - down));
-            budget -= down;
-        }
+        rs.spec_replicas -= down;
+        budget -= down;
     }
 
+    let old = ordered
+        .into_iter()
+        .filter(|r| olds.iter().any(|o| o.name == r.name && o.spec_replicas != r.spec_replicas))
+        .map(|r| (r.name, r.spec_replicas))
+        .collect();
     Plan { new_replicas, old }
 }
 
@@ -236,8 +272,9 @@ mod tests {
     }
 
     /// The invariant that matters: a step never drops available capacity
-    /// below `replicas - maxUnavailable`, counting pods the new ReplicaSet
-    /// has been told to run but which are not ready yet.
+    /// below `replicas - maxUnavailable`. As upstream, an old pod may go
+    /// while a new one is still pending, as long as what stays available
+    /// holds the floor without it.
     #[test]
     fn the_availability_floor_is_never_broken() {
         // 3 desired, maxUnavailable 1 -> floor of 2 available.
@@ -245,13 +282,8 @@ mod tests {
         let new = rs("new", 2, 2, 1);
         let olds = vec![rs("old", 1, 2, 2)];
         let plan = plan_rolling(3, 1, 1, &new, &olds);
-        // Available now 3, floor 2, and the new ReplicaSet has 1 pod pending
-        // -> the budget is 0 and nothing may come down.
-        assert!(
-            plan.old.is_empty(),
-            "took an old pod on the promise of a pending one: {:?}",
-            plan.old
-        );
+        // 3 available, floor 2: one old pod may go (upstream's arithmetic).
+        assert_eq!(plan.old, vec![("old".to_string(), 1)]);
 
         // And the floor genuinely holds: what would remain available if every
         // planned scale-down happened at once.
@@ -268,6 +300,52 @@ mod tests {
                 })
                 .sum::<u64>();
         assert!(remaining >= 3 - 1, "dropped to {remaining}, floor is 2");
+
+        // At the floor already: nothing goes.
+        let new = rs("new", 2, 2, 0);
+        let olds = vec![rs("old", 1, 2, 2)];
+        assert!(plan_rolling(3, 1, 1, &new, &olds).old.is_empty());
+    }
+
+    /// #266: one replica, maxUnavailable 1 (100%), the new pod unschedulable
+    /// until the old one is gone (a required anti-affinity on one node).
+    /// The old ReplicaSet goes to 0 and the rollout completes.
+    #[test]
+    fn a_surge_pod_that_cannot_schedule_does_not_stall_the_rollout() {
+        // Pass 1: the surge pod is asked for; nothing else this pass.
+        let mut new = rs("new", 2, 0, 0);
+        let mut old = rs("old", 1, 1, 1);
+        let plan = plan_rolling(1, 1, 1, &new, std::slice::from_ref(&old));
+        assert_eq!(plan, Plan { new_replicas: 1, old: vec![] });
+        new.spec_replicas = 1;
+        // Pass 2: it is Pending; the old one may go anyway (floor 0).
+        let plan = plan_rolling(1, 1, 1, &new, std::slice::from_ref(&old));
+        assert_eq!(plan, Plan { new_replicas: 1, old: vec![("old".into(), 0)] });
+        old.spec_replicas = 0;
+        old.available = 0;
+        // The new pod schedules and becomes available: settled.
+        new.available = 1;
+        let plan = plan_rolling(1, 1, 1, &new, std::slice::from_ref(&old));
+        assert_eq!(plan, Plan { new_replicas: 1, old: vec![] });
+
+        // With maxUnavailable 0 the floor is 1: the old pod stays, as
+        // upstream (that Deployment cannot roll on one node).
+        let new = rs("new", 2, 1, 0);
+        let old = rs("old", 1, 1, 1);
+        assert!(plan_rolling(1, 1, 0, &new, &[old]).old.is_empty());
+    }
+
+    /// Old pods that are not available go first, within maxScaledDown.
+    #[test]
+    fn unhealthy_old_replicas_go_first() {
+        // 4 desired, surge 1, unavailable 1 -> floor 3. Old runs 4, 2 of them
+        // not available; new runs 1, available.
+        let new = rs("new", 3, 1, 1);
+        let olds = vec![rs("old", 1, 4, 2)];
+        let plan = plan_rolling(4, 1, 1, &new, &olds);
+        // allPods 5 - floor 3 - 0 = 2: both unhealthy go; available 3 = floor,
+        // so no healthy one does.
+        assert_eq!(plan.old, vec![("old".to_string(), 2)]);
     }
 
     /// The surge ceiling holds: total told-to-run never exceeds desired+surge.

@@ -555,7 +555,9 @@ concurrent complete/paginated LISTs and exact WATCH replay after them; this
 does not upgrade any deployed datastore. The historical intermittent rig
 failures #153/#154 were closed unreproduced.
 
-Deployment (rolling updates), ReplicaSet, ReplicationController (the
+Deployment (rolling updates; old ReplicaSets scaled down by upstream's
+`reconcileOldReplicaSets` arithmetic, so `maxUnavailable` lets an old pod
+go while the surge pod is still pending, #266), ReplicaSet, ReplicationController (the
 ReplicaSet reconcile over core/v1, Pods owned by kind `ReplicationController`;
 create defaults selector, labels and replicas from the template; `/scale`
 served, #125), StatefulSet, DaemonSet (every
