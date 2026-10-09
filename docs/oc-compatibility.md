@@ -8,13 +8,14 @@ Nothing in it is implemented on the strength of being listed. Where a verb is
 known to be absent, say so against the verb rather than leaving a reader to
 discover it.
 
-State on 2026-09-26, from the code and from running oc against it
+State on 2026-10-09, from the code on main and from running oc against it
 (`test/e2e/projects.sh`, `test/e2e/oc-adm.sh`):
 - works: `oc new-project`, `oc projects`, `oc project`, `oc get/delete
   project` (#97); `oc logs` (#54); `oc get route` (stored only, nothing
-  routes, #70); `oc auth can-i --list`; `oc events`; `oc adm` node
-  lifecycle, `policy` role verbs, `certificate` — see the `oc adm` checklist
-  below (#69).
+  routes, #70); `oc auth can-i --list`; `oc events`; `oc scale` (`/scale`,
+  #86); `oc autoscale` (HPA v1/v2, #123, #89); `oc adm` node lifecycle,
+  `policy` role verbs, `certificate`, `inspect` — see the `oc adm`
+  checklist below (#69).
 - `oc policy who-can` / `oc adm policy who-can` and `oc adm new-project`:
   OpenShift's `authorization.openshift.io` reviews are served (#106,
   2026-10-07).
@@ -24,7 +25,8 @@ State on 2026-09-26, from the code and from running oc against it
 - not served: `oc adm top pod` (pod metrics need cadvisor#3 on stormcos; `top node`
   works from cadvisor, #89); `oc adm node-logs` (`nodes/{name}/proxy` is served, #108, but the kubelet
   serves no `/logs/`, rustkube-node#198);
-  `oc explain` (OpenAPI schemas are empty); `oc whoami` (no
+  `oc explain` on built-in types (their OpenAPI schemas are empty; on
+  custom resources it works, #120); `oc whoami` (no
   `user.openshift.io`; SelfSubjectReview is served, #116, so `kubectl auth
   whoami` works); `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
@@ -32,7 +34,7 @@ State on 2026-09-26, from the code and from running oc against it
 # `oc` command reference and compatibility checklist
 
 This is the upstream command surface, not a list of implemented features.
-The checklist below records tested API obligations. As of 2026-09-29,
+The checklist below records tested API obligations. As of 2026-10-09,
 the kubelet's `/logs/` (rustkube-node#198) and streaming (rustkube-node#56)
 remain gaps. CSR
 approval PATCH exists (6d0ed10); actual signing requires controller-manager
@@ -192,7 +194,7 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `policy who-can` | ✅ | `authorization.openshift.io` (Local)ResourceAccessReview: the users and groups of every binding whose role permits it (#106) |
 | `policy scc-review`, `scc-subject-review` | 🔴 | `security.openshift.io` (#70) |
 | `node-logs` | 🔴 | `nodes/{name}/proxy` is served (#108); the kubelet's `/logs/` is rustkube-node#198 |
-| `top node`, `top pod` | 🟡 | `metrics.k8s.io` served from cadvisor (#89): nodes work; pods need cadvisor to label stormpump containers (cadvisor#3) |
+| `top node`, `top pod` | 🟡 | `metrics.k8s.io` served from cadvisor (#89): nodes work; pods need cadvisor to label stormpump containers (cadvisor#3). The rig has no cadvisor, so both fail there |
 | `copy-to-node`, `restart-kubelet` | 🔴 | a debug pod on the node, so kubelet exec (rustkube-node#56) — not in the script |
 | `must-gather` | 🔴 | the `openshift` imagestreams, then a running pod with exec |
 | `groups new/add-users/remove-users/sync/prune` | 🔴 | `user.openshift.io` Groups (#70) — RBAC `Group` subjects work without them |
@@ -203,9 +205,10 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 Found on the way, and not `oc adm`'s own: NotFound messages named the store
 key (#109, fixed 2026-10-08: `namespaces "x" not found` with `details`); an unserved core resource answered an empty list rather than 404
 (#110, fixed 2026-10-07: 404 for any resource a built-in group-version does
-not advertise); LIST items carry no `resourceVersion` (#111); objects created over
+not advertise); LIST items carried no `resourceVersion` (#111, fixed: per-item
+RVs and pinned continuation pages); objects created over
 protobuf were stored with an empty uid, which is what made the GC delete a
-new Deployment's ReplicaSet (#99, fixed in #69).
+new Deployment's ReplicaSet (#99, fixed in v0.15.3).
 
 ---
 

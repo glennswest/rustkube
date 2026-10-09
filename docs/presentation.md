@@ -13,8 +13,8 @@ style: |
 <!--
 Render: npx @marp-team/marp-cli docs/presentation.md          (HTML)
         npx @marp-team/marp-cli docs/presentation.md --pdf    (PDF)
-Checked 2026-10-07 against main (v0.18.0 plus unreleased work) and README.md;
-all slides rendered to PNG (marp-cli, headless Chrome) and inspected for fit (#160).
+Checked 2026-10-09 against main (v0.18.0 plus unreleased work) and README.md;
+slides last rendered 2026-10-07: all slides rendered to PNG (marp-cli, headless Chrome) and inspected for fit (#160).
 Render on a build VM (no browser there; Puppeteer fetches one into the job's TMPDIR):
   SC_BUILD_VM=1 sc-build 'cd $TMPDIR && npx -y @puppeteer/browsers install
     chrome-headless-shell@stable --path b && cp $OLDPWD/docs/presentation.md . &&
@@ -88,6 +88,7 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 
 - Keys `/registry/{resource}/[{ns}/]{name}`, CRs `/registry/{group}/{plural}/…`
 - `resourceVersion` = fastetcd's `mod_revision`; every write is a CAS
+- LIST/GET with `resourceVersion` 0/N from the watch cache (#171); compaction (#139)
 - Shared informers and indexed object workers drive controllers;
   scheduler placement is serialized. Snapshot safety needs fastetcd ≥ v1.6.1 (fastetcd#50, fixed).
 
@@ -95,32 +96,34 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 
 ## Today: the apiserver (`pkg/apiserver`)
 
-- **Groups:** core, apps, batch, autoscaling, policy, networking,
-  discovery, events, coordination, rbac, authorization, certificates,
-  storage, resource (DRA), flowcontrol, `metrics.k8s.io`, apiextensions
-  (CRDs), gateway, `route.openshift.io`,
-  `project.openshift.io`, kubevirt subresources. Admission webhooks are
-  called on every write (#82); APIServices with a service are proxied (#83).
-- **Wire:** JSON + protobuf, Table output, `PartialObjectMetadata`, watch with
-  bookmarks and `sendInitialEvents`, pagination, label/field selectors.
+- **Groups:** core, apps, batch, autoscaling, policy, networking, discovery,
+  events, coordination, rbac, authorization, certificates, storage, node,
+  scheduling, resource (DRA), flowcontrol, admissionregistration, `metrics.k8s.io`,
+  apiextensions (CRDs), gateway, OpenShift route/project/authorization, kubevirt.
+  Webhooks called on every write (#82); APIServices proxied (#83).
+- **Wire:** JSON, YAML + protobuf, Table, `PartialObjectMetadata`, aggregated
+  discovery, watch with bookmarks, `sendInitialEvents` and DELETED's last
+  state (#100), pagination, label/field selectors, `fieldValidation`.
 - **Writes:** create/update/delete with `DeleteOptions`, JSON / merge /
   strategic-merge patch, server-side apply with `managedFields`, `/status`
   conditional on `resourceVersion` (#78).
-- **Watch:** DELETED carries the last state; selectors apply (#100).
-- **Proxied to the kubelet:** `pods/log`, `exec`, `attach`, `portforward`.
+- **Proxied to the kubelet:** `pods/log`, `exec`, `attach`, `portforward`,
+  `nodes/proxy`, VMI console/vnc and verbs.
 
 ---
 
 ## Today: security and multi-tenancy
 
-- **AuthN:** x509 client certs (`--client-ca-file`), RS256 ServiceAccount
-  JWTs (`--service-account-*-file`), TokenRequest, TokenReview
-  (`pkg/apiserver/src/auth.rs`).
-- **AuthZ:** RBAC, plus Kubernetes access reviews (`oc auth can-i`); OpenShift
-  `oc policy who-can` via OpenShift's reviews (#106) (`rbac_engine.rs`, `handlers/authorization.rs`).
-- **Admission (built-in):** namespace lifecycle, service IP allocation,
-  default ServiceAccount, tolerations, priority, PodSecurity subset,
-  `ReadWriteOncePod` (`builtin_admission.rs`).
+- **AuthN:** x509 client certs (`--client-ca-file`), ServiceAccount JWTs
+  (`--service-account-*-file`), static tokens (`--token-auth-file`),
+  pod-bound TokenRequest, TokenReview (`pkg/apiserver/src/auth.rs`).
+- **AuthZ:** RBAC with escalation prevention (#98), least-privilege
+  controller-manager/scheduler roles (#176), access reviews (`oc auth can-i`,
+  `oc policy who-can`, #106) (`rbac_engine.rs`, `handlers/`).
+- **Admission (built-in):** namespace lifecycle, ClusterIP/NodePort
+  allocation, default ServiceAccount, tolerations, priority, PodSecurity
+  subset, LimitRanger, ResourceQuota, RuntimeClass, `ReadWriteOncePod`
+  (`builtin_admission.rs`).
 - **Projects (#97):** `oc new-project` gives the requester `admin` in a new
   namespace; `oc projects` lists only one's own; `admin`/`edit`/`view` are
   bootstrapped (`handlers/project.rs`).
@@ -130,15 +133,17 @@ kubectl / oc / client-go ──HTTPS :6443──▶ kube-apiserver ──gRPC─
 ## Today: controllers and scheduler
 
 **Controller families** (`pkg/controller-manager/src/runner.rs`): Deployment,
-ReplicaSet, StatefulSet, DaemonSet, Job, CronJob, Service (Endpoints +
-EndpointSlices, mirroring), Namespace cascade, node lifecycle, PDB, garbage
-collector, PersistentVolume binding, attach/detach, the in-kubelet `stormblock`
+ReplicaSet, ReplicationController, StatefulSet, DaemonSet, Job, CronJob,
+Service (Endpoints + EndpointSlices, mirroring), Namespace cascade, node
+lifecycle, PDB, ResourceQuota, ephemeral volumes, garbage collector,
+PersistentVolume binding, attach/detach, the in-kubelet `stormblock`
 provisioner, root CA publisher, CSR, PodMigration, VirtualMachine, VMI
 launcher Pods, VMI migration, HPA\*, Gateway\*.
 
 **Scheduler** (`pkg/scheduler`): filters — readiness, taints, selectors,
-node and pod (anti-)affinity, topology spread, resource fit, volume binding
-incl. `CSIStorageCapacity` and `ReadWriteOncePod`; scores summed; VMIs placed.
+node and pod (anti-)affinity, topology spread, resource fit, pod count,
+volume binding incl. `CSIStorageCapacity` and `ReadWriteOncePod`; scores
+summed; scheduling gates, preemption, Events; VMIs placed.
 
 \* HPA on cpu/memory from cadvisor via `metrics.k8s.io`; pod metrics on stormcos wait for cadvisor#3 (#89); Gateway writes status only, for its own classes, `Programmed=False` (#70, #91).
 
@@ -173,19 +178,19 @@ Metric names follow upstream's: `docs/metrics.md`.
   the apiserver's `/healthz`), rotated logs on a log volume.
 - **At boot** the apiserver waits for fastetcd, creates the default
   namespaces and bootstrap RBAC, registers in `default/kubernetes`, applies
-  the manifests. Serving certs reload without a restart.
+  the manifests. Serving and client certs reload without a restart.
 - **Update** = a new golden, rolled by a stormcos release.
 
 ---
 
 ## How it is tested
 
-- **Unit tests:** 589 passed, 4 ignored at ad439d8 through sc-build (whole
+- **Unit tests:** 612 passed, 4 ignored at 7c859df through sc-build (whole
   workspace); this is not a runtime or conformance pass.
-- **End to end** (`test/e2e/`, 54 rigs): a real apiserver and
+- **End to end** (`test/e2e/`, 70 rigs): a real apiserver and
   controller-manager on a fresh fastetcd, run as the test image's `rigs` /
   `rigs-night` suites on test machines (#173) — earlier, on dev:
-  - `projects.sh` — `oc` 4.22 as two users and an admin (31 checks)
+  - `projects.sh` — `oc` 4.22 as two users and an admin (46 checks)
   - `status-rv.sh` — optimistic concurrency on every status handler (17)
   - `watch-deleted.sh` — DELETED events for CRs and built-ins (7)
 - **Conformance has run:** synthetic nodes, no kubelets; 75/428 passed
