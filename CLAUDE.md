@@ -573,14 +573,16 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
 - [ ] pod-resize rig (stormcentral#512); close when the apiserver half is
       verified (the conformance specs need rustkube-node#192 too)
 
-### Legacy Terragrunt/RPM path (#157) — IN PROGRESS 2026-10-09
+### Legacy Terragrunt/RPM path (#157) — COMPLETE 2026-10-09
 Owner (2026-10-09): A, retire. Delete deploy/terragrunt, deploy/packaging,
 deploy/systemd (only the RPM used it), new-tcluster.sh, replace-master.sh,
 ha-soak-test.sh, verify-cluster.sh; docs/terragrunt-deploy.md → short note.
 Keep gen-pki.sh / gen-node-token.sh / renew-certs.sh (certificates.md, the
 serving-cert rig); gen-pki.sh's default output leaves the terragrunt tree.
-- [ ] delete + docs (releasing, certificates, audit, CHANGELOG), .gitignore
-- [ ] sc-build (nothing compiled changes; workspace still builds); close #157
+- [x] 683f812: deleted; docs (terragrunt-deploy note, releasing, audit,
+      CHANGELOG), .gitignore; renew-certs.sh's stale restart advice (#105)
+- [x] Build VM sc-build-03a0ebb50a at 683f812 exit 0; gen-pki.sh +
+      renew-certs.sh (FORCE) run clean; #157 closed. No golden (no code)
 
 ### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — BUILT 2026-10-07
 - [x] Routes (+ cluster /status), discovery (/apis + APIResourceList),
