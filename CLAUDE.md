@@ -1213,7 +1213,7 @@ when each piece landed.
       6fd2722; discovery was exercised by the efbea2d conformance run.
 - [x] `/scale` subresource (#86, 2026-10-07): apps + CRDs; build blocked on
       stormcentral#544
-- [ ] `--data-dir`, `--cluster-domain` (#88) — IN PROGRESS 2026-10-09.
+- [x] `--data-dir`, `--cluster-domain` (#88) — BUILT 2026-10-09.
       Owner: B. `--tls` cert kept in `<data-dir>/apiserver.crt|key` (reused
       while valid, matching, > 30 d left and carrying
       `kubernetes.default.svc.<cluster-domain>`; else regenerated; unwritable
@@ -1221,7 +1221,11 @@ when each piece landed.
       rig `tls-data-dir.sh`; README/certificates.md/CHANGELOG
   - [x] 0e83609; build VM sc-build-639371ce9d: 609 passed / 4 ignored
         (apiserver 316, apimachinery 124; 6 new units)
-  - [ ] `rigs` run on C2NR0Q2 at 0e83609 (tls-data-dir); golden; close
+  - [x] 8f26005 (clippy type_complexity); 0 rustc warnings, my files
+        clippy-clean; workspace clippy backlog filed #263.
+        golden-rustkube-d633117067d8 (stormcos#424)
+  - [ ] tls-data-dir rig: 32e08fd54b (C2NR0Q2, 0e83609) "registry did not
+        list it" (stormcentral#512); proposed after it; then close #88
 - [x] HPA placeholder (#89) — real HPA on cadvisor metrics 2026-10-07 (rig waits)
 - [x] Metrics: reconcile metrics, buckets, authenticated `/metrics` (#90)
       — 2026-10-07 (rig waits)
