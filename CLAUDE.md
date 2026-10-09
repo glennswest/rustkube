@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Bootstrap tokens + forge-node CSR rules (#264, P0, stormcert#78) — IN PROGRESS 2026-10-09
+### Bootstrap tokens + forge-node CSR rules (#264, P0, stormcert#78) — BUILT 2026-10-09
 - [x] `bootstrap_token.rs` (upstream's: Secret kube-system/bootstrap-token-<id>,
       type, usage, expiration, extra groups) in `SigningKeys::authenticate`
       (requests + TokenReview)
@@ -124,7 +124,12 @@ clone requests. README's configuration tables come from the three CLI sources.
       signer; bootstrappers: forge-node CSRs only, read own only (GET, watch by
       name). CM role signs its four signers. `system:storm:forge-node-signer`
       ClusterRole (reconciled, unbound: stormcos binds stormcert)
-- [ ] units + `test/e2e/bootstrap-token.sh`; docs; build; golden
+- [x] units + `test/e2e/bootstrap-token.sh`; README/certificates/test
+      README/CHANGELOG. Build VMs at ba24d77/098943f: 629 passed / 4
+      ignored, 0 warnings; golden-rustkube-4c916e869ff5 (stormcos#424);
+      stormcert#78 told to bind its identity
+- [ ] bootstrap-token rig: proposed after stormcentral#512 (noted there it
+      blocks this P0); then close #264
 
 ### --client-crl-file (#260, P2, stormcert#61) — BUILT 2026-10-09
 - [x] `--client-crl-file` (repeatable, PEM or DER) → WebPkiClientVerifier
