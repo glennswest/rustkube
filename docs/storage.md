@@ -117,8 +117,9 @@ So the split for that one class is:
 
 `stormblock.rs` writes the PV only once the scheduler has written
 `volume.kubernetes.io/selected-node` (the claim is `WaitForFirstConsumer`),
-with a hostname `nodeAffinity` for that node, `provisioner`
-`stormblock.storm.io/in-kubelet`, CSI driver `stormblock.storm.io`, and the
+with a hostname `nodeAffinity` for that node, `pv.kubernetes.io/provisioned-by:
+stormblock.storm.io/in-kubelet`, CSI driver `stormblock.storm.io`, the
+claim's requested size as capacity (the node writes the real one), and the
 claim's `volumeMode` (#201: a `Block` claim gets a `Block` PV, which the node
 attaches raw at `volumeDevices[].devicePath`, rustkube-node#67). Both
 orders converge: the kubelet may provision before the controller writes the
@@ -162,6 +163,16 @@ deletes it with the Pod. From there it is an ordinary claim — bound by the PV
 binder, placed by the scheduler (which looks it up by that name), mounted by
 the kubelet. A claim of that name the Pod does not own is never adopted: the
 Pod gets a Warning Event and waits.
+
+## Quota and LimitRange
+
+A claim's create is admitted like upstream's (#124, #131): a
+`type: PersistentVolumeClaim` LimitRange item bounds
+`spec.resources.requests.storage` by its `min`/`max` (403), and a
+ResourceQuota charges `persistentvolumeclaims`, `requests.storage` and both
+per class (`<class>.storageclass.storage.k8s.io/…`). Only creates are
+checked; growing a claim (below) is not charged to a quota or held to a
+LimitRange `max` (quota: #242).
 
 ## Volume expansion
 
@@ -250,7 +261,7 @@ These are the places where a change on one side silently breaks the other:
 
 | if this changes | check |
 |---|---|
-| the provisioner name in `stormblock-csi/deploy/02-storageclass.yaml` | nothing in `persistentvolume.rs`, which reads the class; but `stormblock.rs` hard-codes the class name `stormblock`, the provisioner `stormblock.storm.io/in-kubelet` and the driver `stormblock.storm.io` |
+| the provisioner name in `stormblock-csi/deploy/02-storageclass.yaml` | nothing in `persistentvolume.rs`, which reads the class; but `stormblock.rs` hard-codes the class name `stormblock`, the class provisioners it accepts (`stormblock.storm.io`, `stormblock.storm.io/in-kubelet`), the `provisioned-by` value `stormblock.storm.io/in-kubelet` and the driver `stormblock.storm.io` |
 | `attachRequired` on the CSIDriver | `attachdetach.rs` stops creating attachments; the driver must not wait for one |
 | `storageCapacity` on the CSIDriver | the scheduler's capacity filter switches on or off; with it on and nothing published, every node is refused |
 | the `CSIStorageCapacity` topology labels | `volumebinding.rs` matches them as a `LabelSelector` against node labels |

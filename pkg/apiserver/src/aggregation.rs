@@ -26,7 +26,8 @@
 //!   `/apis/{group}/{version}` is the backend's own answer, proxied.
 //!
 //! Not done: connection upgrades (exec-style) to a backend are refused with
-//! 501, and aggregated discovery (#107) is not served.
+//! 501. In aggregated discovery (#107) an aggregated group's versions are
+//! listed without resources, `freshness: Stale`.
 
 use crate::auth::UserInfo;
 use crate::error::ApiError;

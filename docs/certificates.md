@@ -28,16 +28,17 @@ No new issuer or trust-root migration should be inferred from this roadmap.
 |---|---|---|
 | cluster CA | `deploy/gen-pki.sh`, 10 years | manual, and a rollover — see below |
 | apiserver serving cert | `gen-pki.sh` per master, SANs per node | `deploy/renew-certs.sh`, **no restart** |
-| controller-manager / scheduler client certs | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh`, **no restart** (#105) |
+| controller-manager / scheduler client certs | `gen-pki.sh`, subject is the RBAC identity (`system:kube-controller-manager` / `system:kube-scheduler`, bound to their own least-privilege roles, not cluster-admin, #176) | `deploy/renew-certs.sh`, **no restart** (#105) |
 | admin client cert | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh` (the client reads it per run) |
 | kubelet bootstrap client cert (`CN=kubelet-bootstrap`, `O=system:bootstrappers`) | `gen-pki.sh` | `deploy/renew-certs.sh` |
-| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves the `kubernetes.io/kube-apiserver-client-kubelet` signer, and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file`, only upstream's `kubernetes.io/*` signers, and never a signerName in `--csr-external-signer-names` — stormcert as the external signer approves and signs those (#199, stormcert#51) | the kubelet re-requests |
-| service-account signing key | `gen-pki.sh` | not rotatable yet (see below) |
+| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves the `kubernetes.io/kube-apiserver-client-kubelet` signer, and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file`, only upstream's `kubernetes.io/*` signers; a signerName in `--csr-external-signer-names` it neither approves nor signs — stormcert as the external signer does both (#199, stormcert#51) | the kubelet re-requests |
+| service-account signing key (RSA or ECDSA P-256) | `gen-pki.sh` | by overlap, [below](#rotating-the-serviceaccount-key-223) (#223); read at start |
+| front-proxy client cert (`--proxy-client-cert-file`/`--proxy-client-key-file`, CA `--requestheader-client-ca-file`), presented to aggregated API servers (#83) | not issued by `gen-pki.sh` | followed on disk, **no restart** |
 
 ## Certificates reload without a restart
 
-The serving pair, the components' client pairs and the client CA are all
-followed on disk by one mechanism (`apimachinery::tls_reload`): every 30 s,
+The serving pair, the components' client pairs, the front-proxy client pair
+and the client CA are all followed on disk by one mechanism (`apimachinery::tls_reload`): every 30 s,
 by content rather than mtime; a change that does not parse, or a pair whose
 key is not its certificate's, is kept out and logged once.
 
@@ -161,7 +162,7 @@ What such a token must carry:
 
 | Claim | | |
 |---|---|---|
-| header `alg` | required | `RS256` |
+| header `alg` | required | `RS256` or `ES256`, the kind of a `--service-account-key-file` key |
 | `sub` | required | the username — `system:serviceaccount:<ns>:<name>` for a ServiceAccount |
 | `exp` | required | seconds since the epoch. There is no non-expiring token: long-lived means a far `exp` (the scripts here use ten years) |
 | `groups` | optional | a user's groups. **Ignored for a ServiceAccount**, whose groups are always `system:serviceaccounts` and `system:serviceaccounts:<ns>`, as upstream derives them |
@@ -198,8 +199,8 @@ curl --cacert /data/stormcert/ca.crt \
   https://127.0.0.1:6443/api/v1/nodes
 ```
 
-Because verification is by signature alone, a token cannot be revoked by
-deleting its ServiceAccount. Deleting the `node-admin` binding removes its
+A token without the `kubernetes.io` claim (both of these) is verified by
+signature alone, so it cannot be revoked by deleting its ServiceAccount. Deleting the `node-admin` binding removes its
 standing until the next apiserver boot re-creates it; revoking for good means
 rotating the signing key (below).
 
@@ -209,9 +210,6 @@ rotating the signing key (below).
   rollover: every client must trust both the old and the new CA before anything
   is signed by the new one, and the old must stay trusted until the last leaf
   signed by it is gone. A file swap here breaks every component at once.
-- **Service-account signing key rotation.** Every issued token is signed by it,
-  so rotating means validating against both keys for the lifetime of the oldest
-  token first.
 - **Renewal integration.** Standalone `renew-certs.sh` is run by a person or
   timer. StormCOS has stormcert-agent's renewal loop, with deployment tracked
   by stormcos#119. The serving-pair check (#93) and client credential/trust
