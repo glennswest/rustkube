@@ -115,11 +115,15 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — IN PROGRESS 2026-10-09
-- [ ] `rollout::plan_rolling` old-RS scale-down as upstream's
+### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — BUILT 2026-10-09
+- [x] `rollout::plan_rolling` old-RS scale-down as upstream's
       reconcileOldReplicaSets (maxScaledDown from spec totals; unhealthy
       first; healthy down to available - minAvailable); units incl. the
-      issue's case; rig `rollout-unschedulable.sh`; docs; golden
+      issue's case; rig `rollout-unschedulable.sh`; docs (0f8114f, ebcc42b)
+- [x] Build VMs: 631 passed / 4 ignored, 0 warnings;
+      golden-rustkube-31a9a9242129 (stormcos#424); stormcos#482 told
+- [ ] rig (stormcentral#512, proposed after it); Dell cilium-operator
+      rollout after the release; then close #266
 
 ### Bootstrap tokens + forge-node CSR rules (#264, P0, stormcert#78) — BUILT 2026-10-09
 - [x] `bootstrap_token.rs` (upstream's: Secret kube-system/bootstrap-token-<id>,
