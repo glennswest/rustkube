@@ -63,7 +63,7 @@ cmd/
   kube-controller-manager/   binary → controller-manager
   kube-scheduler/            binary → scheduler
 pkg/
-  apimachinery/       errors, KvStore trait, protobuf codec, metrics, quantities, selectors, cron, startup waits
+  apimachinery/       errors, KvStore trait, protobuf codec, metrics, quantities, quota, selectors, cron, startup waits, TLS reload, reflector/informers/work queues, leases
   storage/            etcd v3 client (etcd-client) — keys are opaque here
   apiserver/          REST API (axum), auth, RBAC, built-in admission, watch cache, CRDs
   scheduler/          fixed filter/score functions, volume binding, VMI placement
@@ -101,16 +101,24 @@ imported.
 
 ## Current Version: `v0.18.0`
 
-The #163 integration brings unreleased indexed workers/informers to **main**.
-Do not describe branch code as installed or conformant. GitHub Actions is
-disabled by owner decision (#114); use sc-build and the approved component
-golden path, never persistent dev storage. Issue #163 does not authorize
-golden promotion. See docs/releasing.md and docs/changes-since-2026-09-18.md.
+Main carries everything since v0.18.0 (turbomode #163 and the work below)
+without a version bump. Component goldens (`golden-rustkube-<digest>`) are
+built from main per finished issue and named in stormcos release requests
+(stormcos#366); stormcos's stage build still compiles the binaries it runs
+from source (stormcos#62). Do not describe main as installed or conformant.
+There is no GitHub workflow (#114); use sc-build and the component golden
+path, never persistent build storage. See docs/releasing.md and
+docs/changes-since-2026-09-18.md.
 PVCs of class `stormblock` are the kubelet's built-in blank-clone driver;
 CSI is the third-party path. Sbregistry supplies blank templates, not PVC
 clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
+
+### Docs refresh from the code (since 2026-10-02) — IN PROGRESS 2026-10-09
+- [ ] README (date, How it ships at stormcos 73091eac, test suites, build,
+      stale claims), docs/ pages, CLAUDE.md, audit addendum, CHANGELOG
+- [ ] Promises the code does not keep → issues
 
 ### Table-only Accept on reviews → 406 (#126, P3) — BUILT 2026-10-07
 - [x] `table::{only_table, refuse_table}` on the five review routes; unit;
@@ -1191,7 +1199,7 @@ when each piece landed.
 
 ### Findings from the docs pass (#80)
 - [x] Admission webhooks are never called (#82) — wired 2026-10-06
-- [ ] Aggregation proxies nothing (#83)
+- [x] Aggregation proxies nothing (#83) — wired 2026-10-07 (rig waits)
 - [x] Scheduler never preempts (#84) — preemption wired 2026-10-07
 - [x] `schedulingGates` honoured (#87, 2026-10-07): SchedulingGated, add
       refused; build blocked on stormcentral#544
@@ -1202,9 +1210,9 @@ when each piece landed.
 - [ ] `--data-dir`, `--cluster-domain` accepted and unused (#88) — NEEDS OWNER
       (2026-10-08): B give them a job (SANs; self-signed cert in the data dir),
       recommended / A remove (stormblock-csi e2e passes --data-dir) / C warn
-- [ ] HPA placeholder: no metrics, never scales down (#89)
-- [ ] Metrics: reconcile metrics never emitted, no histogram buckets,
-      unauthenticated apiserver `/metrics` (#90)
+- [x] HPA placeholder (#89) — real HPA on cadvisor metrics 2026-10-07 (rig waits)
+- [x] Metrics: reconcile metrics, buckets, authenticated `/metrics` (#90)
+      — 2026-10-07 (rig waits)
 - [x] Gateway controller: hardcoded address, overwrites foreign classes (#91)
       — own classes only, no address, Programmed=False (2026-10-07)
 - [x] Serving-cert reload applies a mismatched key/cert pair (#93) — fixed 2026-10-06
@@ -1223,7 +1231,7 @@ when each piece landed.
       not mean this code is absent; fastetcd snapshot correctness is #50 there.
 - [x] RBAC escalation prevention (#98) — 2026-10-06; Namespace writes stay
       cluster-scoped (#97)
-- [ ] Secrets: `stringData` not folded into `data` (#101)
+- [x] Secrets: `stringData` folded into `data` (#101) — 2026-10-07 (rig waits)
 - [x] PVC `status.phase` not defaulted to `Pending` on create (#102) — Pods,
       PVCs and PVs get `Pending` on create (#67)
 - [x] No generic ephemeral-volume controller (#94) — `ephemeral.rs`, 2026-10-08
