@@ -1219,6 +1219,9 @@ when each piece landed.
       `kubernetes.default.svc.<cluster-domain>`; else regenerated; unwritable
       dir → warn, in memory), files followed like `--tls-cert-file`. Units;
       rig `tls-data-dir.sh`; README/certificates.md/CHANGELOG
+  - [x] 0e83609; build VM sc-build-639371ce9d: 609 passed / 4 ignored
+        (apiserver 316, apimachinery 124; 6 new units)
+  - [ ] `rigs` run on C2NR0Q2 at 0e83609 (tls-data-dir); golden; close
 - [x] HPA placeholder (#89) — real HPA on cadvisor metrics 2026-10-07 (rig waits)
 - [x] Metrics: reconcile metrics, buckets, authenticated `/metrics` (#90)
       — 2026-10-07 (rig waits)
