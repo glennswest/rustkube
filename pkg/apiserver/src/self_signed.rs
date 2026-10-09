@@ -78,8 +78,11 @@ pub fn load_or_create(data_dir: &Path, cluster_domain: &str) -> anyhow::Result<S
     }
 }
 
+/// A certificate and key, PEM.
+type Pair = (Vec<u8>, Vec<u8>);
+
 /// `Ok(None)`: nothing stored. `Err`: stored but not usable, and why.
-fn stored(crt: &Path, key: &Path, want: &[String]) -> Result<Option<(Vec<u8>, Vec<u8>)>, String> {
+fn stored(crt: &Path, key: &Path, want: &[String]) -> Result<Option<Pair>, String> {
     let (c, k) = match (std::fs::read(crt), std::fs::read(key)) {
         (Ok(c), Ok(k)) => (c, k),
         (Err(c), Err(k))
