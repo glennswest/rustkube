@@ -73,13 +73,13 @@ pub struct Plan {
 /// The strategy that accepts downtime in exchange for never running two
 /// versions at once — which is the right trade for anything holding an
 /// exclusive lock or a schema it is migrating.
-pub fn plan_recreate(desired: u64, new: &RsView, olds: &[RsView]) -> Plan {
+pub fn plan_recreate(desired: u64, _new: &RsView, olds: &[RsView]) -> Plan {
     let old_running: u64 = olds.iter().map(|r| r.spec_replicas).sum();
     if old_running > 0 {
         // Take the old ones down first, and do not start the new one yet:
         // "not at the same time" is the entire promise of this strategy.
         return Plan {
-            new_replicas: new.spec_replicas.min(0),
+            new_replicas: 0,
             old: olds
                 .iter()
                 .filter(|r| r.spec_replicas > 0)
