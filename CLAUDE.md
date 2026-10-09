@@ -115,6 +115,13 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### --client-crl-file (#260, P2, stormcert#61) — IN PROGRESS 2026-10-09
+- [ ] `--client-crl-file` (repeatable, PEM or DER) → WebPkiClientVerifier
+      `with_crls`, end-entity only, unknown status allowed; re-read with the
+      client CA (30 s), last good kept on a bad file; units; rig
+      `client-crl.sh`; README/certificates.md/CHANGELOG; golden; stormcos
+      passes the flag (their side)
+
 ### Docs refresh from the code (since 2026-10-02) — COMPLETE 2026-10-09
 - [x] README (date, How it ships at stormcos 73091eac, rig suites, build
       volume, stale claims), every docs/ page but the research and legacy
