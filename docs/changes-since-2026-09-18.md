@@ -106,3 +106,37 @@ Corrections made in this pass, from the code and the linked issues:
 - Gaps that were already filed are now named where the docs describe the
   behavior: unbound TokenRequest tokens (#182), cluster-admin bootstrap
   bindings (#176), the VirtualMachine controller's idle retries (#172).
+
+## Addendum: 2026-10-02 to 2026-10-09
+
+Checked 2026-10-09 with `git log --since=2026-10-02` (main through 7c859df,
+v0.18.0 plus unreleased changes; no version bump). Each row's issue carries
+its build-VM unit run and golden; almost none has had its e2e rig run on a
+test machine yet (test images do not seal, stormcentral#512/#526), so
+"rig waits" is the usual state. CLI flags, ports and defaults are in the
+README tables, checked against `cmd/*/src/main.rs`.
+
+| Area | Current behavior and source | Commits / issues |
+|---|---|---|
+| Served APIs | autoscaling/v1 HPA view, flowcontrol/v1 (not enforced), resource.k8s.io/v1 (nothing allocates), node.k8s.io/v1 RuntimeClass + admission, ServiceCIDR/IPAddress (unused by the allocator), Validating/MutatingAdmissionPolicy (not evaluated), SelfSubjectReview, authorization.openshift.io reviews, metrics.k8s.io from cadvisor, `nodes/proxy`, `/scale`, `pods/resize`, VMI verbs, aggregated discovery, CRD schemas in /openapi | e7ae8b5, 451d783, 6fc3cbf, 1db5ca5, aafcbdf, 08d5974, 5c0e041, 046d2c3, 1452dcb, 76f125d, 5a2bca4, 4142349, 0cf5acd, 5215b7f, 8ea98d6; #123 #118 #137 #135 #134 #119 #116 #106 #89 #108 #86 #136 #141 #107 #120 |
+| Wire and errors | YAML bodies, built-in fieldValidation, CR schema defaulting/pruning/Strict, Table-only reviews 406, unserved resource 404, upstream NotFound with details, WATCH `timeoutSeconds`, LIST/GET from the watch cache, compaction + 410 `Expired` continue | a3bff57, 3ae6a5c, fb08f87, 999f2c0, 44bdd7a, ad439d8, 241ce6a, 73589ce; #122 #121 #126 #110 #109 #165 #171 #139 |
+| Writes and admission | Webhooks on every write, RBAC escalation prevention, Secret `stringData`, LimitRanger, ResourceQuota (admission + controller), NodePort allocation and type changes, ClusterIP from a random free address, startup manifests through admission, Service ports SMP key, CR status isolation and `generation`, storage.storm.io requester stamp | cfb2858, 233fc70, 5246b28, cc19063, 46cd67b, 706a807, fd72fbc, a9f3fff, 1b4658e, f88a92f, d715e20, 212c4d6; #82 #98 #101 #131 #124 #132 #113 #158 #150 #128 #198 #210 |
+| Authentication | `--token-auth-file`, pod-bound TokenRequest tokens (default 1 h again), repeatable SA verify keys, rejected token 401, client cert + client CA reload, serving pair key check, API aggregation proxy with `--proxy-client-*` | ff60e56, 725dfcd, 49ee0f0, b86b522, 446fc84, 0458394, 125c277, 4c294b3; #188 #182 #206 #223 #115 #105 #93 #83 |
+| Bootstrap RBAC | `system:kube-controller-manager` / `system:kube-scheduler` least-privilege roles (no longer cluster-admin); exec/attach/portforward authorized as `create`; `system:monitoring` | c5978ee, 0fcf76b; #176 #90 |
+| Controllers | Real HPA, ResourceQuota, ReplicationController, EndpointSliceMirroring, ephemeral volumes, VMI launcher Pods, VMI migration, VM CrashLoopBackOff for kubelet retries, KubeVirt controllers gated on CRDs, Gateway own classes only, CSR external signers, PV binder parallel (#147), stormblock provisioner checks the class's provisioner and copies `volumeMode`, GC orphan retry, reflector deadline resumes | 1452dcb, 46cd67b, 847dd1e, 44b5ced, 40157d0, 61d980e, 8d998b4, f9de8ac, 6235778, a4670a6, fb741a6, 3d3b099, fe60e97, 7c859df, 9bff762, 4bfa056 |
+| Scheduler | `allocatable.pods`, PodScheduled=False + Events, background binds + `storm.io/scheduled-at`, preemption, scheduling gates, RuntimeClass overhead, migration targets, `addedNodeSelector` | 6957abc, 10d07cb, 163b633, 72fc783, ddcc821, 18f5465, cf83dc4; #194 #138 #190 #84 #87 #184 #208 |
+| Observability | Metrics buckets, reconcile metrics, `/metrics` behind authn/RBAC and delegated auth on 10257/10259 (HTTPS with a pair), write-phase histogram and slow write/request warnings, TCP_NODELAY | 0fcf76b, 519c27b, 97d56d9; #90 #191 #190 |
+| Build and tests | Rigs are test-image suites `rigs`/`rigs-night` (#173), build-release.sh on the private volume and aarch64 (#156, #68), GitHub workflow removed (#114) | 68e3260, f14da25, 8e82cca, 458f598 |
+
+Corrections made in this pass, from the code, stormcos `73091eac` and the
+linked issues:
+
+- How it ships: stormcos now passes fastetcd mutual TLS, `--token-auth-file`,
+  and serving pairs for 10257/10259; the controller-manager and scheduler
+  identities are bound to their own roles, not cluster-admin (#176). No
+  cluster-signing, external-signer, cadvisor or aggregation flags are passed.
+  The component golden is still not mounted (stormcos#62).
+- Rigs no longer run in build slots; README and test docs said they did.
+- The scheduler does set `nominatedNodeName` (#84); the README said it did not.
+- #153/#154 are closed, not under investigation; the PV binder is no longer
+  one claim worker (#147).
