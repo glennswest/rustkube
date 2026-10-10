@@ -2,6 +2,14 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-10
+- **fix:** The node lifecycle controller follows upstream (#267, server8 12.14). Its answer to a dead node is unchanged; the defects were around it:
+  - **New behaviour:** a node whose Lease is stale or missing past 40 s gets every condition `Unknown` ("Kubelet stopped posting node status.") and the `unreachable` NoSchedule/NoExecute taints. A fresh heartbeat with Ready=False gets `not-ready`; Ready=True clears both.
+  - **What it did before:** wrote Ready=`False` with `not-ready` taints, and overwrote `lastHeartbeatTime` with the current time. That time is now kept, so a dead node shows when it was last heard from.
+  - **No Lease:** judged by the newer of its creation and its Ready heartbeat.
+  - **Write errors:** a node write that fails now fails the pass with its reason. The worker retried before, but logged `error=None`, so a node that could not be marked never said why.
+  - A unit test drives the controller against a scripted apiserver: nodes dead 9 days before it started, one with a Lease and one without, are marked and their pod evicted, and a live node is untouched. The same test showed the old controller *did* mark such a node, so server8's stall had another cause, not yet known.
+
 ### 2026-10-09
 - **fix:** A rolling update no longer stalls when its surge pod cannot schedule (#266, stormcos#482). The old ReplicaSets are scaled down by upstream's `reconcileOldReplicaSets` arithmetic:
   - The budget is `allPods - minAvailable - newUnavailable`. Unavailable old replicas go first; then available ones, down to `available - minAvailable`.
