@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Dead node never marked (#267, P0, server8 12.14) — IN PROGRESS 2026-10-10
+### Dead node never marked (#267, P0, server8 12.14) — BUILT, NEEDS server8 LOG 2026-10-10
 - [x] fb27723 fake-apiserver unit: the *existing* controller does mark and
       drain a node dead 9 days before it started (Ready False + not-ready),
       so server8's stall is not "never judged" — cause there unknown (no log
@@ -125,7 +125,9 @@ clone requests. README's configuration tables come from the three CLI sources.
       Ready=False; no Lease → newer of creation and Ready heartbeat; node
       write errors propagated (logged); README/CHANGELOG. Build VMs: 633
       passed / 4 ignored, 0 warnings, node.rs clippy-clean
-- [ ] golden; server8's CM log for the real cause (asked on #267)
+- [x] golden-rustkube-be6ddd9ee998 (stormcos#424)
+- [ ] server8's CM log (asked on #267, `wait-owner`, recommended: grep the
+      12.14 log now); fix the real cause it names; then close #267
 
 ### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — BUILT 2026-10-09
 - [x] `rollout::plan_rolling` old-RS scale-down as upstream's
