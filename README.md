@@ -573,8 +573,12 @@ upstream's EndpointSliceMirroring does — one per address type and port set,
 owned by the Endpoints, `managed-by: endpointslicemirroring-controller.k8s.io`,
 skipped for `endpointslice.kubernetes.io/skip-mirror: "true"`, which the
 controller's own Endpoints carry, #133), Namespace (default
-ServiceAccount, deletion cascade), node lifecycle (Lease heartbeats →
-NotReady → eviction), PodDisruptionBudget status, garbage collection
+ServiceAccount, deletion cascade), node lifecycle (a Lease stale or
+missing past 40 s — also one that died before the controller started; with
+no Lease, the Ready heartbeat — sets every condition `Unknown`, keeping
+`lastHeartbeatTime`, and the `unreachable` NoSchedule/NoExecute taints;
+a fresh heartbeat with Ready=False gets `not-ready`; Ready=True clears both;
+pods are evicted when their toleration, 300 s by default, runs out; #267), PodDisruptionBudget status, garbage collection
 (background, foreground and orphan, driven by discovery), PersistentVolume
 (binding, phases, protection finalizers, reclaim), attach/detach
 (VolumeAttachment), the stormblock provisioner for the in-kubelet blank-clone

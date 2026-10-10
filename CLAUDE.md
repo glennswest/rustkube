@@ -120,10 +120,12 @@ clone requests. README's configuration tables come from the three CLI sources.
       drain a node dead 9 days before it started (Ready False + not-ready),
       so server8's stall is not "never judged" — cause there unknown (no log
       access); a failed node write was retried but its error never logged
-- [ ] upstream semantics: conditions Unknown (lastHeartbeatTime kept),
-      `unreachable` taints, not-ready only for Ready=False; no Lease → newer
-      of creation and Ready heartbeat; node write errors propagated (logged);
-      docs; build; golden; ask for server8's CM log
+- [x] a57833b/4f912cb upstream semantics: conditions Unknown
+      (lastHeartbeatTime kept), `unreachable` taints, not-ready only for
+      Ready=False; no Lease → newer of creation and Ready heartbeat; node
+      write errors propagated (logged); README/CHANGELOG. Build VMs: 633
+      passed / 4 ignored, 0 warnings, node.rs clippy-clean
+- [ ] golden; server8's CM log for the real cause (asked on #267)
 
 ### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — BUILT 2026-10-09
 - [x] `rollout::plan_rolling` old-RS scale-down as upstream's
