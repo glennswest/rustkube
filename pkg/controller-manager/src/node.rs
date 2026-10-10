@@ -338,6 +338,7 @@ mod tests {
         routing::{delete, get},
         Json, Router,
     };
+    use futures::StreamExt;
     use std::collections::HashMap;
     use std::sync::Mutex;
 
