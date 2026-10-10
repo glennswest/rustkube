@@ -250,12 +250,12 @@ impl NodeLifecycleController {
                 continue;
             }
             if let apimachinery::taint::Verdict::EvictIn(seconds, _) =
-                apimachinery::taint::verdict_for(&pod, &taints, age)
+                apimachinery::taint::verdict_for(pod, &taints, age)
             {
                 apimachinery::reactor::requeue_after(Duration::from_secs(seconds.max(1) as u64));
             }
             if let apimachinery::taint::Verdict::Evict(key) =
-                apimachinery::taint::verdict_for(&pod, &taints, age)
+                apimachinery::taint::verdict_for(pod, &taints, age)
             {
                 let ns = pod["metadata"]["namespace"].as_str().unwrap_or("default");
                 let name = pod["metadata"]["name"].as_str().unwrap_or("");
