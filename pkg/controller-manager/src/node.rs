@@ -327,3 +327,140 @@ impl Controller for NodeLifecycleController {
         self.reconcile_node(node, &leases, &pods).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        extract::{Path, Query, State},
+        response::{IntoResponse, Response},
+        routing::{delete, get},
+        Json, Router,
+    };
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// What the fake apiserver was asked to write.
+    #[derive(Default)]
+    struct Seen {
+        node_puts: Vec<Value>,
+        pod_deletes: Vec<String>,
+    }
+    type Shared = Arc<Mutex<Seen>>;
+
+    fn ago(secs: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::seconds(secs)).to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    }
+
+    fn list_or_watch(query: &HashMap<String, String>, items: Value) -> Response {
+        if query.get("watch").is_some_and(|v| v == "true") {
+            let body = Body::from_stream(
+                futures::stream::once(async {
+                    Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(
+                        b"{\"type\":\"BOOKMARK\",\"object\":{\"metadata\":{\"resourceVersion\":\"1\"}}}\n",
+                    ))
+                })
+                .chain(futures::stream::pending()),
+            );
+            Response::new(body)
+        } else {
+            Json(json!({"metadata": {"resourceVersion": "1"}, "items": items})).into_response()
+        }
+    }
+
+    const NINE_DAYS: i64 = 9 * 86_400;
+
+    fn node(name: &str, created_ago: i64, heartbeat_ago: i64) -> Value {
+        json!({"apiVersion": "v1", "kind": "Node",
+            "metadata": {"name": name, "uid": format!("uid-{name}"), "resourceVersion": "1", "creationTimestamp": ago(created_ago)},
+            "spec": {},
+            "status": {"conditions": [{"type": "Ready", "status": "True", "reason": "KubeletReady",
+                "lastHeartbeatTime": ago(heartbeat_ago), "lastTransitionTime": ago(created_ago)}]}})
+    }
+
+    async fn nodes(Query(q): Query<HashMap<String, String>>) -> Response {
+        list_or_watch(&q, json!([node("old", NINE_DAYS, NINE_DAYS - 1_560), node("live", 600, 5)]))
+    }
+    async fn leases(Query(q): Query<HashMap<String, String>>) -> Response {
+        let lease = |name: &str, renew: i64| json!({"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
+            "metadata": {"name": name, "namespace": "kube-node-lease", "uid": format!("l-{name}"), "resourceVersion": "1"},
+            "spec": {"holderIdentity": name, "leaseDurationSeconds": 40, "renewTime": ago(renew)}});
+        list_or_watch(&q, json!([lease("old", NINE_DAYS - 1_560), lease("live", 3)]))
+    }
+    async fn pods(Query(q): Query<HashMap<String, String>>) -> Response {
+        let pod = |name: &str, node: &str| json!({"apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": name, "namespace": "kube-system", "uid": format!("p-{name}"), "resourceVersion": "1"},
+            "spec": {"nodeName": node, "containers": [{"name": "c", "image": "i"}]},
+            "status": {"phase": "Running"}});
+        list_or_watch(&q, json!([pod("coredns-old", "old"), pod("coredns-live", "live")]))
+    }
+    async fn put_node(State(seen): State<Shared>, Path(name): Path<String>, Json(mut body): Json<Value>) -> Response {
+        body["metadata"]["resourceVersion"] = json!("2");
+        let _ = name;
+        seen.lock().unwrap().node_puts.push(body.clone());
+        Json(body).into_response()
+    }
+    async fn delete_pod(State(seen): State<Shared>, Path((ns, name)): Path<(String, String)>) -> Response {
+        seen.lock().unwrap().pod_deletes.push(format!("{ns}/{name}"));
+        Json(json!({"kind": "Status", "status": "Success"})).into_response()
+    }
+
+    /// #267: a Node dead for nine days when the controller starts — a stale
+    /// Lease, Ready=True — is judged on the first pass: Ready Unknown,
+    /// unreachable taints, and its pods (no toleration) evicted. A live Node
+    /// beside it is left alone.
+    #[tokio::test]
+    async fn a_node_dead_before_the_controller_started_is_marked_and_drained() {
+        let seen: Shared = Arc::default();
+        let app = Router::new()
+            .route("/api/v1/nodes", get(nodes))
+            .route("/api/v1/nodes/{name}", axum::routing::put(put_node))
+            .route("/apis/coordination.k8s.io/v1/leases", get(leases))
+            .route("/api/v1/pods", get(pods))
+            .route("/api/v1/namespaces/{ns}/pods/{name}", delete(delete_pod))
+            .with_state(seen.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let api = Arc::new(ApiClient::new(&format!("http://{addr}")));
+        let worker = tokio::spawn(async move { NodeLifecycleController::new(api).run().await });
+
+        let marked = |s: &Seen| {
+            s.node_puts.iter().any(|n| {
+                n["metadata"]["name"] == "old"
+                    && n["status"]["conditions"].as_array().is_some_and(|c| {
+                        c.iter().any(|c| c["type"] == "Ready" && c["status"] == "Unknown")
+                    })
+                    && n["spec"]["taints"].as_array().is_some_and(|t| {
+                        t.iter().any(|t| t["key"] == "node.kubernetes.io/unreachable" && t["effect"] == "NoExecute")
+                    })
+            })
+        };
+        let drained = |s: &Seen| s.pod_deletes.iter().any(|p| p == "kube-system/coredns-old");
+        let ok = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                {
+                    let s = seen.lock().unwrap();
+                    if marked(&s) && drained(&s) {
+                        return;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok();
+        let s = seen.lock().unwrap();
+        assert!(ok, "not marked and drained in 5 s: puts {:#?}, deletes {:?}", s.node_puts, s.pod_deletes);
+        assert!(
+            !s.node_puts.iter().any(|n| n["metadata"]["name"] == "live"),
+            "the live node was written: {:#?}",
+            s.node_puts
+        );
+        assert!(!s.pod_deletes.iter().any(|p| p.ends_with("coredns-live")), "{:?}", s.pod_deletes);
+        drop(s);
+        worker.abort();
+        server.abort();
+    }
+}
