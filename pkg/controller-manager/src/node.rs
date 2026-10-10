@@ -1,7 +1,12 @@
 //! Node lifecycle controller.
 //!
 //! Monitors node heartbeats via Lease objects in kube-node-lease namespace.
-//! Marks nodes as NotReady when lease expires, and taints them for eviction.
+//! A node whose Lease is stale or missing past the 40 s grace period — however
+//! long ago, including before this controller started (#267) — gets every
+//! condition `Unknown` and the `unreachable` NoSchedule/NoExecute taints, as
+//! upstream; its pods are evicted once their toleration runs out (300 s by
+//! DefaultTolerationSeconds). A fresh heartbeat with Ready=False gets
+//! `not-ready` instead; Ready=True clears both.
 
 use crate::owned::{self, Controller, Dependency, Deps};
 use crate::runner::ApiClient;
@@ -64,129 +69,126 @@ impl NodeLifecycleController {
                 }
             }
             None => {
-                // No lease found — check if node was just created
-                // Give new nodes time to register their first lease
-                if let Some(created) = node["metadata"]["creationTimestamp"].as_str() {
-                    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(created) {
+                // No Lease: judged by the newer of the node's creation (time
+                // for its first Lease) and its Ready heartbeat (a kubelet
+                // that posts status but no Lease), as upstream falls back to
+                // the status heartbeat.
+                let heartbeat = node["status"]["conditions"]
+                    .as_array()
+                    .and_then(|c| c.iter().find(|c| c["type"] == "Ready"))
+                    .and_then(|c| c["lastHeartbeatTime"].as_str());
+                let last = [node["metadata"]["creationTimestamp"].as_str(), heartbeat]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                    .map(|t| t.with_timezone(&chrono::Utc))
+                    .max();
+                match last {
+                    Some(t) => {
                         apimachinery::reactor::requeue_at_time(
-                            t.with_timezone(&chrono::Utc)
-                                + chrono::Duration::seconds(
-                                    NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
-                                ),
+                            t + chrono::Duration::seconds(NODE_MONITOR_GRACE_PERIOD.as_secs() as i64),
                         );
-                        let elapsed = now.signed_duration_since(t);
-                        elapsed.num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
-                    } else {
-                        false
+                        now.signed_duration_since(t).num_seconds() < NODE_MONITOR_GRACE_PERIOD.as_secs() as i64
                     }
-                } else {
-                    false
+                    None => false,
                 }
             }
         };
 
-        // Check current Ready condition
-        let conditions = node["status"]["conditions"]
+        // What the node itself last said, and what it should carry now —
+        // upstream's node lifecycle controller (#267):
+        // - heartbeat lost (stale or missing Lease): every condition
+        //   `Unknown` ("Kubelet stopped posting node status."), taints
+        //   `unreachable` NoSchedule + NoExecute;
+        // - heartbeat fresh, kubelet says Ready=False: `not-ready` taints;
+        // - heartbeat fresh and Ready=True: neither taint.
+        // A node already `Unknown` keeps its transition time, and
+        // `lastHeartbeatTime` stays the kubelet's: it is when the node was
+        // last heard from, which is what anyone looking at a dead node needs.
+        let ready = node["status"]["conditions"]
             .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let current_ready = conditions
-            .iter()
-            .any(|c| c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True"));
-
-        if !is_healthy && current_ready {
-            // Node went unhealthy — mark NotReady
-            info!("Node {node_name} is not responding, marking NotReady");
-            let mut updated = node.clone();
-            update_condition(
-                &mut updated,
-                "Ready",
-                "False",
-                "NodeStatusUnknown",
-                "Kubelet stopped posting node status",
-            );
-            // Both effects, as upstream does. NoSchedule keeps new work
-            // off; NoExecute is what moves work that is already there, and
-            // without it a node can be unreachable for an hour with its
-            // pods still nominally running on it.
-            let stamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            apimachinery::taint::add_taint(
-                &mut updated,
-                "node.kubernetes.io/not-ready",
-                "NoSchedule",
-                &stamp,
-            );
-            apimachinery::taint::add_taint(
-                &mut updated,
-                "node.kubernetes.io/not-ready",
-                "NoExecute",
-                &stamp,
-            );
-
-            let _ = self
-                .api
-                .update(&format!("/api/v1/nodes/{node_name}"), &updated)
-                .await;
+            .and_then(|c| c.iter().find(|c| c["type"] == "Ready"))
+            .and_then(|c| c["status"].as_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        let mut updated = node.clone();
+        let stamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let mut changed = false;
+        let (want, drop): (Option<&str>, Option<&str>) = if !is_healthy {
+            if ready != "Unknown" || !has_ready(node) {
+                info!("Node {node_name} stopped posting status (Ready was {ready}), marking it Unknown");
+                mark_unknown(&mut updated, &stamp);
+                changed = true;
+            }
+            (Some(UNREACHABLE), Some(NOT_READY))
+        } else if ready == "False" {
+            (Some(NOT_READY), Some(UNREACHABLE))
+        } else {
+            // Ready=True: both taints come off below. Still Unknown with a
+            // fresh heartbeat: the kubelet posts its status next.
+            (None, None)
+        };
+        for effect in ["NoSchedule", "NoExecute"] {
+            if let Some(key) = want {
+                changed |= apimachinery::taint::add_taint(&mut updated, key, effect, &stamp);
+            }
+            if let Some(key) = drop {
+                changed |= apimachinery::taint::remove_taint(&mut updated, key, effect);
+            }
+            // Healthy and Ready: take both off. A taint left on a node that
+            // recovered keeps it unschedulable — and the reason is in `spec`
+            // while everyone reading a node looks at `status`.
+            if is_healthy && ready == "True" {
+                for key in [NOT_READY, UNREACHABLE] {
+                    changed |= apimachinery::taint::remove_taint(&mut updated, key, effect);
+                }
+            }
         }
-
-        // **And take them off again.** A taint added when a node goes bad
-        // and never removed when it recovers leaves a healthy node
-        // permanently unschedulable — and the reason is in `spec` while
-        // everyone reading a node looks at `status`, so it presents as
-        // "the scheduler is ignoring my node".
-        if is_healthy {
-            let mut updated = node.clone();
-            let mut changed = false;
-            for effect in ["NoSchedule", "NoExecute"] {
-                changed |= apimachinery::taint::remove_taint(
-                    &mut updated,
-                    "node.kubernetes.io/not-ready",
-                    effect,
-                );
-            }
-            if changed {
-                info!("Node {node_name} is responding again, clearing not-ready taints");
-                let _ = self
-                    .api
-                    .update(&format!("/api/v1/nodes/{node_name}"), &updated)
-                    .await;
-            }
+        if changed {
+            // An error goes back to the worker, which retries with backoff and
+            // logs it — a node that cannot be marked says why (#267).
+            self.api
+                .update(&format!("/api/v1/nodes/{node_name}"), &updated)
+                .await
+                .map_err(|e| anyhow::anyhow!("marking node {node_name}: {e:#}"))?;
         }
 
         // NoExecute means "get off", so something has to do the moving.
-        if let Err(e) = self.evict_for_taints(node, node_name, pods).await {
+        if let Err(e) = self.evict_for_taints(&updated, node_name, pods).await {
             debug!("taint eviction on {node_name}: {e}");
         }
         Ok(())
     }
 }
 
-fn update_condition(node: &mut Value, cond_type: &str, status: &str, reason: &str, message: &str) {
-    let conditions = node["status"]["conditions"].as_array_mut();
+const UNREACHABLE: &str = "node.kubernetes.io/unreachable";
+const NOT_READY: &str = "node.kubernetes.io/not-ready";
 
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let new_condition = json!({
-        "type": cond_type,
-        "status": status,
-        "reason": reason,
-        "message": message,
-        "lastHeartbeatTime": now,
-        "lastTransitionTime": now
-    });
+fn has_ready(node: &Value) -> bool {
+    node["status"]["conditions"].as_array().is_some_and(|c| c.iter().any(|c| c["type"] == "Ready"))
+}
 
-    match conditions {
-        Some(conds) => {
-            if let Some(existing) = conds
-                .iter_mut()
-                .find(|c| c["type"].as_str() == Some(cond_type))
-            {
-                *existing = new_condition;
-            } else {
-                conds.push(new_condition);
+/// Every condition `Unknown`, as upstream's controller writes for a node that
+/// stopped posting status; a Ready condition is added if there is none.
+/// `lastHeartbeatTime` is left as the kubelet last wrote it.
+fn mark_unknown(node: &mut Value, now: &str) {
+    if !node["status"].is_object() {
+        node["status"] = json!({});
+    }
+    if !has_ready(node) {
+        let conds = node["status"]["conditions"].as_array().cloned().unwrap_or_default();
+        let mut conds = conds;
+        conds.push(json!({"type": "Ready"}));
+        node["status"]["conditions"] = json!(conds);
+    }
+    if let Some(conds) = node["status"]["conditions"].as_array_mut() {
+        for c in conds.iter_mut() {
+            if c["status"] != "Unknown" {
+                c["status"] = json!("Unknown");
+                c["lastTransitionTime"] = json!(now);
             }
-        }
-        None => {
-            node["status"]["conditions"] = json!([new_condition]);
+            c["reason"] = json!("NodeStatusUnknown");
+            c["message"] = json!("Kubelet stopped posting node status.");
         }
     }
 }
@@ -372,6 +374,28 @@ mod tests {
 
     const NINE_DAYS: i64 = 9 * 86_400;
 
+    #[test]
+    fn unknown_keeps_the_last_heartbeat() {
+        let mut n = json!({"status": {"conditions": [
+            {"type": "Ready", "status": "True", "lastHeartbeatTime": "2026-10-01T19:35:00Z", "lastTransitionTime": "t0"},
+            {"type": "MemoryPressure", "status": "False", "lastHeartbeatTime": "2026-10-01T19:35:00Z", "lastTransitionTime": "t0"}]}});
+        mark_unknown(&mut n, "now");
+        for c in n["status"]["conditions"].as_array().unwrap() {
+            assert_eq!(c["status"], "Unknown");
+            assert_eq!(c["reason"], "NodeStatusUnknown");
+            assert_eq!(c["lastHeartbeatTime"], "2026-10-01T19:35:00Z", "{c}");
+            assert_eq!(c["lastTransitionTime"], "now");
+        }
+        // Already Unknown: the transition time stays.
+        mark_unknown(&mut n, "later");
+        assert_eq!(n["status"]["conditions"][0]["lastTransitionTime"], "now");
+        // No conditions at all: a Ready Unknown is added.
+        let mut bare = json!({});
+        mark_unknown(&mut bare, "now");
+        assert_eq!(bare["status"]["conditions"][0]["type"], "Ready");
+        assert_eq!(bare["status"]["conditions"][0]["status"], "Unknown");
+    }
+
     fn node(name: &str, created_ago: i64, heartbeat_ago: i64) -> Value {
         json!({"apiVersion": "v1", "kind": "Node",
             "metadata": {"name": name, "uid": format!("uid-{name}"), "resourceVersion": "1", "creationTimestamp": ago(created_ago)},
@@ -381,7 +405,8 @@ mod tests {
     }
 
     async fn nodes(Query(q): Query<HashMap<String, String>>) -> Response {
-        list_or_watch(&q, json!([node("old", NINE_DAYS, NINE_DAYS - 1_560), node("live", 600, 5)]))
+        list_or_watch(&q, json!([node("old", NINE_DAYS, NINE_DAYS - 1_560), node("live", 600, 5),
+            node("nolease", NINE_DAYS, NINE_DAYS - 60)]))
     }
     async fn leases(Query(q): Query<HashMap<String, String>>) -> Response {
         let lease = |name: &str, renew: i64| json!({"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
@@ -409,8 +434,9 @@ mod tests {
 
     /// #267: a Node dead for nine days when the controller starts — a stale
     /// Lease, Ready=True — is judged on the first pass: Ready Unknown,
-    /// unreachable taints, and its pods (no toleration) evicted. A live Node
-    /// beside it is left alone.
+    /// unreachable taints, and its pods (no toleration) evicted. So is one
+    /// with no Lease and a nine-day-old heartbeat. A live Node beside them is
+    /// left alone.
     #[tokio::test]
     async fn a_node_dead_before_the_controller_started_is_marked_and_drained() {
         let seen: Shared = Arc::default();
@@ -427,9 +453,9 @@ mod tests {
         let api = Arc::new(ApiClient::new(&format!("http://{addr}")));
         let worker = tokio::spawn(async move { NodeLifecycleController::new(api).run().await });
 
-        let marked = |s: &Seen| {
+        let marked = |s: &Seen, name: &str| {
             s.node_puts.iter().any(|n| {
-                n["metadata"]["name"] == "old"
+                n["metadata"]["name"] == name
                     && n["status"]["conditions"].as_array().is_some_and(|c| {
                         c.iter().any(|c| c["type"] == "Ready" && c["status"] == "Unknown")
                     })
@@ -443,7 +469,7 @@ mod tests {
             loop {
                 {
                     let s = seen.lock().unwrap();
-                    if marked(&s) && drained(&s) {
+                    if marked(&s, "old") && marked(&s, "nolease") && drained(&s) {
                         return;
                     }
                 }

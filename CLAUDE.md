@@ -115,6 +115,16 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Dead node never marked (#267, P0, server8 12.14) — IN PROGRESS 2026-10-10
+- [x] fb27723 fake-apiserver unit: the *existing* controller does mark and
+      drain a node dead 9 days before it started (Ready False + not-ready),
+      so server8's stall is not "never judged" — cause there unknown (no log
+      access); a failed node write was retried but its error never logged
+- [ ] upstream semantics: conditions Unknown (lastHeartbeatTime kept),
+      `unreachable` taints, not-ready only for Ready=False; no Lease → newer
+      of creation and Ready heartbeat; node write errors propagated (logged);
+      docs; build; golden; ask for server8's CM log
+
 ### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — BUILT 2026-10-09
 - [x] `rollout::plan_rolling` old-RS scale-down as upstream's
       reconcileOldReplicaSets (maxScaledDown from spec totals; unhealthy
