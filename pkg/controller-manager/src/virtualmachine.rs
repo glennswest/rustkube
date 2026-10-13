@@ -739,6 +739,22 @@ fn printable_status(want: bool, vmi: Option<&Value>, restarting: bool) -> &'stat
     }
 }
 
+#[async_trait::async_trait]
+impl Controller for VirtualMachineController {
+    fn name(&self) -> &'static str {
+        "virtualmachine"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/kubevirt.io/v1/virtualmachines"
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/apis/kubevirt.io/v1/virtualmachineinstances")
+    }
+    async fn reconcile(&self, vm: &Value, children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
+        self.reconcile_vm(vm, children).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1094,22 +1110,5 @@ mod tests {
         let up = live_update(&vmi["spec"], &vmi);
         assert!(up.spec.is_none());
         assert_eq!(up.restart, vec!["the node refused a live change: add_nic: no spare hot-plug port"]);
-    }
-}
-
-
-#[async_trait::async_trait]
-impl Controller for VirtualMachineController {
-    fn name(&self) -> &'static str {
-        "virtualmachine"
-    }
-    fn primary(&self) -> &'static str {
-        "/apis/kubevirt.io/v1/virtualmachines"
-    }
-    fn children(&self) -> Option<&'static str> {
-        Some("/apis/kubevirt.io/v1/virtualmachineinstances")
-    }
-    async fn reconcile(&self, vm: &Value, children: &[Value], _deps: &Deps) -> anyhow::Result<()> {
-        self.reconcile_vm(vm, children).await
     }
 }
