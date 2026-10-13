@@ -89,15 +89,21 @@ def follow(path, on):
     conn.request("GET", path + "?watch=1&allowWatchBookmarks=false",
                  headers={"Authorization": "Bearer " + os.environ["ADMIN"]})
     r = conn.getresponse()
-    while True:
-        line = r.fp.readline()
-        if not line:
-            return
-        if not line.strip():
-            continue
-        ev = json.loads(line)
-        if ev.get("type") in ("ADDED", "MODIFIED"):
-            on(ev["object"], time.time())
+    # r.readline, not r.fp.readline: the stream is chunked, and the raw
+    # socket file hands back the chunk-size lines (9d7791a's per-step columns
+    # were empty: the first json.loads killed every watcher thread silently).
+    try:
+        while True:
+            line = r.readline()
+            if not line:
+                return
+            if not line.strip():
+                continue
+            ev = json.loads(line)
+            if ev.get("type") in ("ADDED", "MODIFIED"):
+                on(ev["object"], time.time())
+    except Exception as e:
+        print(f"NOTE  watch {path} stopped: {e!r}", flush=True)
 def mark(step, key, t):
     seen[step].setdefault(key, t)
 def on_claim(c, t):
