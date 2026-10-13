@@ -444,7 +444,12 @@ image/template work separately from warm runs. Partial live runs exist on
 pvetest1 (one node): 4bbb76be8f exposed the missing `allocatable.pods` limit
 (#194), 7277704177 verified it (#197) and timed 25 WFFC-claim Pods at
 request→scheduled p50 1.42 / p95 2.54 / max 2.58 s against plain Pods' 0.17 s
-p50, which led to the parallel binder above (#147). The acceptance record
+p50, which led to the parallel binder above (#147). The `wffc-latency` rig
+(#173 suite `rigs`) times each step of that chain: run 874df289d5 on pvetest1
+(84a3539) gave create→bound p99 1.95 s, from create→selected rising 0–1.5 s
+down the queue (the scheduler wrote selected-node inline, ~60 ms a claim)
+and pv→claim-bound ~0.5 s each (a PV write and a second binder pass); both
+were moved off the path. The acceptance record
 above (percentiles, integrity, cleanup audit) has not been produced from them.
 
 Both profiles clean their own namespaces with UID preconditions. SQLite

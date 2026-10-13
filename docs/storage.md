@@ -45,7 +45,10 @@ stays the default; see [class selection](#class-selection-the-name-and-the-provi
    `CSIDriver.spec.storageCapacity: true` is what makes the check apply),
    picks one, and writes `volume.kubernetes.io/selected-node` on the claim.
    (It does this for any unbound claim the pod uses, not only
-   `WaitForFirstConsumer` ones.)
+   `WaitForFirstConsumer` ones.) The node is reserved for the pod at once and
+   the claim writes run in the background, as binds do, so the next pod is
+   placed without waiting for them (#147); a failed write drops the
+   reservation and the pod is tried again with backoff.
    **The pod is not bound yet** — binding a pod before its volume exists is
    how a kubelet ends up waiting on a mount that cannot succeed.
 3. **The hand-off.** With a selected node present, `persistentvolume.rs` sets
@@ -62,8 +65,10 @@ stays the default; see [class selection](#class-selection-the-name-and-the-provi
    `spec.csi.volumeHandle`, `claimRef` pointing back at the claim, and
    `pv.kubernetes.io/provisioned-by`.
 5. **The bind completes.** `persistentvolume.rs` sees the pre-bound PV, fills
-   in `spec.volumeName` on the claim, sets both phases to `Bound`, and copies
-   the real capacity into `status`. Claims are worked on in parallel (8
+   in `spec.volumeName` on the claim, and in the same pass (from that write's
+   answer, as upstream's binder) sets the claim `Bound` with the real
+   capacity in `status`; the PV, already pre-bound to the claim, is not
+   written again (#147). The PV's own phase follows on its worker. Claims are worked on in parallel (8
    workers); only a claim that must *choose* among unclaimed volumes takes the
    binder's lock, reading the volumes inside it so two claims never take one.
    A pre-bound (provisioned) volume is no choice, so a burst of new claims no
