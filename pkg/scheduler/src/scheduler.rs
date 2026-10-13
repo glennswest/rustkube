@@ -562,8 +562,27 @@ impl Scheduler {
                 biased;
                 Some(done) = binds.join_next(), if !binds.is_empty() => {
                     let Ok(done) = done else { continue };
-                    let BindDone { work, node, queued, ok } = done;
+                    let BindDone { work, node, queued, ok, claims } = done;
                     let key = work.key().clone();
+                    if claims {
+                        // The claims' updates wake the Pod (claim index); a
+                        // write that failed leaves no choice behind, as the
+                        // inline write did before (#145's d455412).
+                        if ok {
+                            failures.remove(&key);
+                        } else {
+                            observed.lock().unwrap().assumptions.remove(&key);
+                            let n = failures.entry(key.clone()).or_default();
+                            *n = n.saturating_add(1);
+                            ready.add_at(
+                                key,
+                                tokio::time::Instant::now()
+                                    + Duration::from_millis((100_u64 << (*n).min(8)).min(30_000)),
+                            );
+                        }
+                        drop(work);
+                        continue;
+                    }
                     if ok {
                         failures.remove(&key);
                         let waited = queued.map(|at| at.elapsed());
@@ -659,7 +678,7 @@ impl Scheduler {
                     };
                     let Some(object) = source.map(|feed| feed.get(&key.1)).transpose()?.flatten()
                     else {
-                        return Ok::<Option<Bind>, anyhow::Error>(None);
+                        return Ok::<Option<Write>, anyhow::Error>(None);
                     };
                     observed.lock().unwrap().observe(
                         key.0,
@@ -701,13 +720,18 @@ impl Scheduler {
                             .schedule_pod(ns, &object, &nodes, &state, &volumes, &observed, &key)
                             .await
                         {
-                            Ok(Placement::Bind(bind)) => return Ok(Some(bind)),
-                            Ok(Placement::WaitingForVolumes(node)) => {
+                            Ok(Placement::Bind(bind)) => return Ok(Some(Write::Bind(bind))),
+                            Ok(Placement::WaitingForVolumes(node, patches)) => {
+                                // Reserved before the writes, as a bind is:
+                                // the next Pod is placed while they run.
                                 observed
                                     .lock()
                                     .unwrap()
                                     .reserve(key.clone(), &object, &node, true);
                                 crate::metrics_server::record_attempt("unschedulable");
+                                if !patches.is_empty() {
+                                    return Ok(Some(Write::Claims(node, patches)));
+                                }
                             }
                             Ok(Placement::Unschedulable(why)) => {
                                 crate::metrics_server::record_attempt("unschedulable");
@@ -723,7 +747,44 @@ impl Scheduler {
                 },
             )
             .await;
-            if let (Ok(Some(bind)), false) = (&result, failed) {
+            if let (Ok(Some(Write::Claims(node, patches))), false) = (&result, failed) {
+                // selected-node on each claim, off the loop (#147): written
+                // inline, 25 WaitForFirstConsumer Pods queued ~60 ms each
+                // behind one another's claim writes (create→selected 0–1.5 s
+                // on pvetest1, run 874df289d5), and their binds behind those.
+                let api = self.api.clone();
+                let wake = ready.clone();
+                let retry = key.clone();
+                let (node, patches) = (node.clone(), patches.clone());
+                binds.spawn(async move {
+                    let mut ok = true;
+                    for (path, patch) in &patches {
+                        let wake = wake.clone();
+                        let retry = retry.clone();
+                        let (result, failed) = apimachinery::reactor::scope_object(
+                            move |delay| {
+                                wake.add_at(retry.clone(), tokio::time::Instant::now() + delay);
+                            },
+                            api.patch(path, patch),
+                        )
+                        .await;
+                        match result {
+                            Ok(_) if !failed => {
+                                info!("Claim {path} will be provisioned on {node}");
+                            }
+                            Ok(_) => { ok = false; break; }
+                            Err(error) => {
+                                debug!(%error, %path, "could not select node {node} for the claim");
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    BindDone { work, node, queued: None, ok, claims: true }
+                });
+                continue;
+            }
+            if let (Ok(Some(Write::Bind(bind))), false) = (&result, failed) {
                 let api = self.api.clone();
                 let wake = ready.clone();
                 let retry = key.clone();
@@ -746,6 +807,7 @@ impl Scheduler {
                         node,
                         queued,
                         ok: result.is_ok() && !failed,
+                        claims: false,
                     }
                 });
                 continue;
@@ -1229,6 +1291,7 @@ impl Scheduler {
         // starts a pod whose mount cannot succeed yet. The next pass binds it.
         let unbound = volumebinding::unbound_claims(pod, namespace, volumes);
         if !unbound.is_empty() {
+            let mut patches = Vec::new();
             for claim in &unbound {
                 let path = format!("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{claim}");
                 let already = volumes
@@ -1249,14 +1312,9 @@ impl Scheduler {
                     "annotations": {
                     volumebinding::ANN_SELECTED_NODE: chosen_name
                 }}});
-                if let Err(e) = self.api.patch(&path, &patch).await {
-                    return Err(anyhow::anyhow!(
-                        "could not select node {chosen_name} for claim {namespace}/{claim}: {e}"
-                    ));
-                }
-                info!("Claim {namespace}/{claim} will be provisioned on {chosen_name}");
+                patches.push((path, patch));
             }
-            return Ok(Placement::WaitingForVolumes(chosen_name.to_string()));
+            return Ok(Placement::WaitingForVolumes(chosen_name.to_string(), patches));
         }
 
         // Phase 3b: Bind — update the pod with the chosen node.
@@ -1708,6 +1766,15 @@ struct BindDone {
     node: String,
     queued: Option<std::time::Instant>,
     ok: bool,
+    /// selected-node written on the Pod's claims, not the Pod bound (#147).
+    claims: bool,
+}
+
+/// A write a scheduling pass leaves to the background set.
+enum Write {
+    Bind(Bind),
+    /// selected-node patches for this node's claims (#147).
+    Claims(String, Vec<(String, Value)>),
 }
 
 /// What a scheduling pass decided for one pod.
@@ -1716,9 +1783,10 @@ enum Placement {
     Bind(Bind),
     /// No node will do; the message is for `PodScheduled=False` (#194).
     Unschedulable(String),
-    /// The node is chosen and written onto the pod's claims, but the pod is
+    /// The node is chosen, to be written onto the pod's claims (these
+    /// selected-node patches, the caller's to write), but the pod is
     /// deliberately not bound until those claims are.
-    WaitingForVolumes(String),
+    WaitingForVolumes(String, Vec<(String, Value)>),
 }
 
 /// Pod scheduling priority (`spec.priority`, resolved from PriorityClass by
@@ -1944,6 +2012,36 @@ mod reservation_tests {
         json!({"metadata":{"name":"small"},"status":{
             "allocatable":{"cpu":"4","memory":"8Gi","pods":"2"},
             "conditions":[{"type":"Ready","status":"True"}]}})
+    }
+    /// A WaitForFirstConsumer claim's node choice comes back as patches for
+    /// the background set (#147): the pass itself writes nothing (this
+    /// scheduler's API does not answer), and the patch is conditional on the
+    /// claim's uid and resourceVersion.
+    #[tokio::test]
+    async fn selected_node_is_returned_to_write_not_written_inline() {
+        let sched = Scheduler::new("http://127.0.0.1:1");
+        let mut p = best_effort("p");
+        p["spec"]["volumes"] = json!([{"name": "d", "persistentVolumeClaim": {"claimName": "data"}}]);
+        let mut volumes = volumebinding::VolumeState::default();
+        volumes.classes.insert("wffc".into(), json!({"metadata": {"name": "wffc"},
+            "provisioner": "stormblock.storm.io", "volumeBindingMode": "WaitForFirstConsumer"}));
+        volumes.claims.insert(("ns".into(), "data".into()), json!({"metadata": {"name": "data",
+            "namespace": "ns", "uid": "c1", "resourceVersion": "7"},
+            "spec": {"storageClassName": "wffc", "accessModes": ["ReadWriteOnce"]}}));
+        let key = (false, Key::of(&p).unwrap());
+        let state = SchedulingState::default();
+        let (snapshot, _) = state.snapshot(&key);
+        let placed = sched
+            .schedule_pod("ns", &p, &[two_pod_node()], &snapshot, &volumes, &Mutex::new(state), &key)
+            .await
+            .expect("no API call on this path");
+        let Placement::WaitingForVolumes(node, patches) = placed else { panic!("not waiting for volumes") };
+        assert_eq!(node, "small");
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, "/api/v1/namespaces/ns/persistentvolumeclaims/data");
+        let meta = &patches[0].1["metadata"];
+        assert_eq!((meta["uid"].as_str(), meta["resourceVersion"].as_str()), (Some("c1"), Some("7")));
+        assert_eq!(meta["annotations"][volumebinding::ANN_SELECTED_NODE], "small");
     }
     async fn place(state: &SchedulingState, p: &Value) -> Placement {
         let sched = Scheduler::new("http://127.0.0.1:1");
