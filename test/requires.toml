@@ -8,9 +8,9 @@
 # privilege, no host path, no cluster read. They need CPU more than anything:
 # a rig is three Rust servers and a datastore at once.
 [rigs]
-# The functional rigs, a minute or two each: a day suite. The DAY list in
-# test/rigs.sh has outgrown this budget; what does not start in time is a
-# skip until the lists are rebalanced (#173).
+# The functional rigs, a minute or two each: a day suite. Measured on
+# C2NR0Q2 (run fe841f11a1, 2026-10-13): all 63 in 1048 s. A rig that does
+# not start in time is reported as a skip.
 budget_secs = 1800
 
 [rigs-night]

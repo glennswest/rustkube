@@ -109,24 +109,28 @@ stormcentral test run rustkube rigs-night --tag <pve VM> --commit <sha>     # ni
   `test/fetch-image-file.py`, no podman) and the snapshot CRDs/RBAC. The
   versions are `test/e2e/versions.sh`, which the rigs read too. So the pod
   needs neither cargo, podman nor the internet.
-- `/test rigs|rigs-night` execs `test/rigs.sh` (`/rigs/run.sh` in the image):
+- `/test rigs|rigs-night` runs `test/rigs.sh` (`/rigs/run.sh` in the image)
+  as a child and exits with its status. It is not an `exec`: stormcentral's
+  results reader waits while a process named `test` runs, so an exec would
+  have `/results` read at the start (#173):
   each rig, in turn, in a scratch copy under `$TMPDIR`, with `RK_BIN`,
   `RK_FASTETCD` and `RK_TOOLS` pointing at the staged files. One JSON line
-  per rig, `rig:<name>`, pass/fail with its time and its first `FAIL` lines;
+  per rig, `rig:<name>`, pass/fail with its time and its first `FAIL` lines
+  (with no `FAIL` line, the log's last `…Error:` lines, e.g. a traceback);
   the whole output in `/results/<name>.log`. A rig that cannot start (exit
   100) is a fail with "could not start"; if none could, the suite exits 2.
   Rigs not started before the budget runs out are skips.
 - Which rig is in which suite is in `test/rigs.sh`: `rigs` the functional
-  ones (a minute or two each; 59 of them), `rigs-night` the idle windows,
+  ones (a minute or two each; 63 of them), `rigs-night` the idle windows,
   latency under load, failover and cert-reload ticks (10: multi-master,
   list-snapshot-race, crd-restart, deadlines, scheduler-failover,
   schedule-latency, get-latency, watch-deadline, serving-cert,
   client-cert-reload). Every other `test/e2e/*.sh` rig is in `rigs`;
   `test-container.sh` is in neither: it is this image's own short/medium
   against a rig, and runs by hand. A new rig goes in one of the two lists.
-  59 rigs of a minute or two do not fit the day budget of 30 minutes; the
-  ones not started in time are skips, and rebalancing the lists by measured
-  times waits for a first completed run (#173).
+  The first completed day run (fe841f11a1, C2NR0Q2, 2026-10-13) ran all 63
+  in 1048 s of the 1800 s budget; the longest were client-crl (112 s) and
+  oc-adm (108 s). Rigs not started in time would be skips.
 - A rig's output ends with its failures (#181): `lib.sh` keeps a copy of
   everything the rig prints (`$W/rig.out`), and `report()` prints, after the
   apiserver/datastore/controller-manager log tails, `---- failed checks (N):`

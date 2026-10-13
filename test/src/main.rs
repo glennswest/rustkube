@@ -26,11 +26,18 @@ async fn main() {
         std::process::exit(workload::idle(args.next().and_then(|s| s.parse().ok())).await);
     }
     if matches!(suite.as_str(), "rigs" | "rigs-night") {
-        // The e2e rigs are bash; the image carries their runner (#173).
-        use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new("/rigs/run.sh").arg(&suite).exec();
-        let mut rep = Report::default();
-        std::process::exit(rep.abort(&anyhow::anyhow!("cannot run /rigs/run.sh: {err}")));
+        // The e2e rigs are bash; the image carries their runner (#173). A
+        // child, not exec: stormcentral's results reader waits while a
+        // process named `test` runs (`pgrep -x test`), and an exec renames
+        // this one, so `/results` was read before the first rig had ended.
+        use std::os::unix::process::ExitStatusExt;
+        match std::process::Command::new("/rigs/run.sh").arg(&suite).status() {
+            Ok(s) => std::process::exit(s.code().unwrap_or_else(|| 128 + s.signal().unwrap_or(0))),
+            Err(err) => {
+                let mut rep = Report::default();
+                std::process::exit(rep.abort(&anyhow::anyhow!("cannot run /rigs/run.sh: {err}")));
+            }
+        }
     }
     std::process::exit(run(&suite).await);
 }

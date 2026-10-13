@@ -78,7 +78,11 @@ for rig in $list; do
     case $rc in
       100) why="could not start: $(grep -v '^\s*$' "$results/$rig.log" | tail -3 | tr '\n' ' ')"; broken=$((broken + 1)) ;;
       124|137) why="timed out after ${limit}s; $(grep '^FAIL' "$results/$rig.log" | head -3 | tr '\n' ' ')" ;;
-      *) why="$rc failed, $passed passed: $(grep '^FAIL' "$results/$rig.log" | head -3 | tr '\n' ' ')" ;;
+      *) why="$rc failed, $passed passed: $(grep '^FAIL' "$results/$rig.log" | head -3 | tr '\n' ' ')"
+         # No FAIL line: the rig's Python stopped outside its checks (a
+         # traceback), and its error line is the only clue in the result.
+         grep -q '^FAIL' "$results/$rig.log" ||
+           why="$why$(grep -aE '^[A-Za-z_.]*(Error|Exception)(:|$)' "$results/$rig.log" | tail -2 | tr '\n' ' ')" ;;
     esac
     json "rig:$rig" fail "$ms" "${why:0:1500}"
     fail=$((fail + 1))

@@ -2,6 +2,11 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-13
+- **fix:** `/test rigs|rigs-night` runs `/rigs/run.sh` as a child instead of exec'ing it (#173). stormcentral's results reader waits only while a process named `test` runs, so the exec had it archive `/results` before the first rig finished. Run fe841f11a1 kept one 64-byte log out of 63.
+- **fix:** `test/rigs.sh`: a failed rig with no `FAIL` line (its Python stopped on an exception) now names the error line in its result instead of an empty detail.
+- **test:** First completed `rigs` run on a test machine (fe841f11a1, C2NR0Q2, at 1414947): 63 rigs in 1048 s of the 1800 s budget, 51 passed, 12 failed. The lists need no rebalancing.
+
 ### 2026-10-10
 - **fix:** The node lifecycle controller follows upstream (#267, server8 12.14). Its answer to a dead node is unchanged; the defects were around it:
   - **New behaviour:** a node whose Lease is stale or missing past 40 s gets every condition `Unknown` ("Kubelet stopped posting node status.") and the `unreachable` NoSchedule/NoExecute taints. A fresh heartbeat with Ready=False gets `not-ready`; Ready=True clears both.
