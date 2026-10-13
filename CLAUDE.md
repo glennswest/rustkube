@@ -723,7 +723,7 @@ PodScheduled=False/Unschedulable landed with #194; the Events were missing.
 - [ ] COMPILED + unit tests pass on a build VM at b677499 (534 passed / 4 ignored); rigs + golden still wait — (stormcentral#521: no build host). Then workspace
       build+test, `rigs` run (pod-limit), golden, close #138
 
-### resource.k8s.io/v1 (DRA) served (#137, P2) — IN PROGRESS 2026-10-07
+### resource.k8s.io/v1 (DRA) served (#137, P2) — COMPLETE 2026-10-13
 Owner (#137): "Please make sure there added, … after our turbomode merge"
 (merged, #163). Conformance's 4 DRA specs are CRUD only.
 - [x] 6fc3cbf: routes, discovery (+ manifest table), kinds/apiVersions,
@@ -731,9 +731,9 @@ Owner (#137): "Please make sure there added, … after our turbomode merge"
       protobuf round-trip unit; discovery test
 - [x] 9939bcb: `test/e2e/dra-crud.sh` (suite `rigs`); README/conformance/
       test README/CHANGELOG. Allocation filed as #225
-- [ ] COMPILED + unit tests pass on a build VM at b677499 (534 passed / 4 ignored); rigs + golden still wait —: sc-build and test runs need a build host —
-      stormcentral#521 (dev.g8.lo retired). Then: workspace build+test, the
-      `rigs` run, golden, close #137
+- [x] Build VM at b677499 (534 passed / 4 ignored); dra-crud 41/41 in
+      rigs fe841f11a1, 1c81036901, 3c6585e0ea (C2NR0Q2), 7cac9d5177
+      (pvetest1); in every golden since 10-07 (latest 8227afb87508); closed
 
 ### #147: WFFC claims bind one at a time (PVC row) — PAUSED for #267 2026-10-13
 #147's scale/multi-node acceptance waits for hardware (owner on #162: "when
