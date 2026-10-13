@@ -769,27 +769,18 @@ at N; Exact → store at N; continuation → store pinned to the token's rev.
 - [ ] README/design doc/CHANGELOG; golden; close #171 (server1 GET p99 < 20
       ms acceptance after the release, per #187)
 
-### e2e rigs as pods on the test machines (#173, P2) — IMPLEMENTED, awaiting a test-machine run 2026-10-07
+### e2e rigs as pods on the test machines (#173, P2) — FIRST RUN DONE 2026-10-13
 Owner (#162): "Persistent tests should be pods, and should live on forge."
-Every `test/e2e/*.sh` rig ran inside an sc-build slot (this session's #98,
-#105, #128, #209, #210, #198 runs too). The test standard already has the
-path: `test/Containerfile` (fedora-minimal + microdnf), `test/build.sh` on
-the build box, extra suites declared in `test/requires.toml` (#247).
-- [x] 68e3260/f3cea50: `test/build.sh` stages the commit's release (musl)
-      kube-* binaries, fastetcd (`test/e2e/versions.sh`, v1.12.0), `oc`,
-      `kubectl`, CSI hostpath/provisioner/resizer, snapshot-controller
-      (`test/fetch-image-file.py`, registry API, no podman) and snapshot
-      CRDs/RBAC; rigs prefer them via `RK_TOOLS`. sc-build `STAGE_ONLY=1`
-      at f3cea50: all staged (static, oc glibc), rustkube-test 9 units pass
-- [x] `/test rigs` (18 functional rigs, 1800 s) and `/test rigs-night`
-      (9 slow ones, 7200 s) exec `test/rigs.sh`: JSON line per rig, logs in
-      /results; `test/requires.toml` declares both
-- [x] Docs: test/README, CLAUDE.md Build & Test, CHANGELOG; memory
-- [ ] Runs 1591bc1258 (pvetest1) and dcb98cb338 (pvetest2) queued at
-      f3cea50 since 02:4x/03:2x UTC; both VMs' runs keep erroring "node did
-      not settle within 45 min", blades are off 00:00–11:00 UTC. Read the
-      result (`stormcentral test show <id>`); fix what fails; rebalance the
-      lists by the rigs' times; then run rigs-night at night; close #173
+- [x] 68e3260/f3cea50: test/build.sh stages binaries + upstream tools;
+      `/test rigs` / `/test rigs-night` exec `test/rigs.sh`; requires.toml
+- [x] First completed day run fe841f11a1 (C2NR0Q2, 1414947): 63 rigs in
+      1048 s of 1800 s, 51 pass / 12 fail. No rebalancing needed
+- [x] d9777b2: `/test` waits for run.sh (results reader `pgrep -x test`
+      archived /results at the start: 1 of 63 logs kept); no-FAIL-line
+      failures name the error line. Build VM: rustkube-test 9 pass, clippy 0
+- [ ] Run 1c81036901 at d9777b2: archive has every rig log; triage the
+      failures onto their feature issues (rig vs pod-environment)
+- [ ] rigs-night at night on a pve VM; then close #173
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
