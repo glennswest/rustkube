@@ -331,6 +331,20 @@ impl PersistentVolumeController {
         // capacity onto a Bound claim — and replacing its whole status to do
         // it — claimed space the filesystem did not have and wiped the
         // resizer's conditions, so the node never grew it.
+        self.set_bound_status(namespace, name, pvc, &pv).await
+    }
+
+    /// The claim's status once it names its volume: Bound, the volume's
+    /// access modes, and its capacity when it becomes Bound.
+    async fn set_bound_status(
+        &self,
+        namespace: &str,
+        name: &str,
+        pvc: &Value,
+        pv: &Value,
+    ) -> anyhow::Result<()> {
+        let path = format!("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}");
+        let volume_name = pv["metadata"]["name"].as_str().unwrap_or("");
         let capacity = pv["spec"]["capacity"]["storage"].as_str().unwrap_or("");
         let want_phase = "Bound";
         let phase_now = pvc["status"]["phase"].as_str().unwrap_or("");
@@ -384,6 +398,14 @@ impl PersistentVolumeController {
             .ok_or_else(|| anyhow::anyhow!("volume has no name"))?;
         let uid = pvc["metadata"]["uid"].as_str().unwrap_or("");
 
+        // Pre-bound to this claim already (a provisioner's PV, stormblock's
+        // included): nothing to write on the volume, as upstream's
+        // bindVolumeToClaim. The PUT was one more serialized write in every
+        // provisioned claim's path to Bound (#147).
+        let pre_bound = pv["spec"]["claimRef"]["namespace"].as_str() == Some(namespace)
+            && pv["spec"]["claimRef"]["name"].as_str() == Some(name)
+            && !uid.is_empty()
+            && pv["spec"]["claimRef"]["uid"].as_str() == Some(uid);
         let mut volume = pv.clone();
         volume["spec"]["claimRef"] = json!({
             "kind": "PersistentVolumeClaim",
@@ -403,9 +425,11 @@ impl PersistentVolumeController {
                 volume["metadata"]["annotations"] = json!({ ANN_BOUND_BY_CONTROLLER: "yes" });
             }
         }
-        self.api
-            .update(&format!("/api/v1/persistentvolumes/{pv_name}"), &volume)
-            .await?;
+        if !pre_bound {
+            self.api
+                .update(&format!("/api/v1/persistentvolumes/{pv_name}"), &volume)
+                .await?;
+        }
 
         let claim_path = format!("/api/v1/namespaces/{namespace}/persistentvolumeclaims/{name}");
         let patch = json!({
@@ -415,9 +439,19 @@ impl PersistentVolumeController {
             }},
             "spec": {"volumeName": pv_name},
         });
-        self.api.patch(&claim_path, &patch).await?;
-
+        let bound = self.api.patch(&claim_path, &patch).await?;
+        if bound["kind"] == "Status" {
+            anyhow::bail!(
+                "claim {namespace}/{name} not bound to {pv_name}: {}",
+                bound["message"].as_str().unwrap_or("")
+            );
+        }
         info!("Bound PVC {namespace}/{name} to PV {pv_name}");
+        // Its status in the same pass, from the claim just written, as
+        // upstream's bind does: waiting for the claim's own update to come
+        // back round (a queue pass and a GET of the volume) cost every
+        // provisioned claim ~0.5 s under 25 at once (#147, run 874df289d5).
+        self.set_bound_status(namespace, name, &bound, pv).await?;
         self.events
             .event(
                 pvc,
@@ -1069,6 +1103,53 @@ impl Controller for Volumes<'_> {
 #[cfg(test)]
 mod observation_tests {
     use super::*;
+
+    /// A provisioned (pre-bound) volume binds in one pass with no volume write:
+    /// the claim's volumeName, then its Bound status from that response
+    /// (#147). The fake apiserver records every write and echoes the body.
+    #[tokio::test]
+    async fn a_pre_bound_volume_binds_in_one_pass_without_a_volume_write() {
+        use axum::{body::Bytes, extract::Request, http::Method, routing::any, Json, Router};
+        let writes = Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let seen = writes.clone();
+        let app = Router::new().fallback(any(move |req: Request| {
+            let seen = seen.clone();
+            async move {
+                let (method, path) = (req.method().clone(), req.uri().path().to_string());
+                let body: Bytes = axum::body::to_bytes(req.into_body(), 1 << 20).await.unwrap();
+                if method != Method::GET {
+                    seen.lock().unwrap().push((method.to_string(), path.clone()));
+                }
+                let mut v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+                if method == Method::PATCH {
+                    // The stored claim with the patch applied, as the
+                    // apiserver answers.
+                    v = json!({"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+                        "metadata": {"name": "data", "namespace": "ns", "uid": "c1", "resourceVersion": "8"},
+                        "spec": {"volumeName": "pvc-ns-data"}, "status": {"phase": "Pending"}});
+                }
+                Json(v)
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let controller = PersistentVolumeController::new(Arc::new(ApiClient::new(&format!("http://{addr}"))));
+        let pvc = json!({"metadata": {"name": "data", "namespace": "ns", "uid": "c1", "resourceVersion": "7"},
+            "spec": {}, "status": {"phase": "Pending"}});
+        let pv = json!({"metadata": {"name": "pvc-ns-data"},
+            "spec": {"capacity": {"storage": "1Gi"}, "accessModes": ["ReadWriteOnce"],
+                "claimRef": {"kind": "PersistentVolumeClaim", "namespace": "ns", "name": "data", "uid": "c1"}}});
+        controller.bind("ns", "data", &pvc, &pv).await.unwrap();
+        let writes: Vec<_> = writes.lock().unwrap().iter()
+            .filter(|(_, p)| !p.ends_with("/events")).cloned().collect();
+        assert_eq!(writes, vec![
+            ("PATCH".to_string(), "/api/v1/namespaces/ns/persistentvolumeclaims/data".to_string()),
+            ("PUT".to_string(), "/api/v1/namespaces/ns/persistentvolumeclaims/data/status".to_string()),
+        ]);
+        task.abort();
+    }
+
     #[tokio::test]
     async fn only_not_found_can_release_a_claim() {
         use axum::{http::StatusCode, routing::get, Router};
