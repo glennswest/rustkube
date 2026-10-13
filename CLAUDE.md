@@ -735,7 +735,7 @@ Owner (#137): "Please make sure there added, … after our turbomode merge"
       rigs fe841f11a1, 1c81036901, 3c6585e0ea (C2NR0Q2), 7cac9d5177
       (pvetest1); in every golden since 10-07 (latest 8227afb87508); closed
 
-### #147: WFFC claims bind one at a time (PVC row) — PAUSED for #267 2026-10-13
+### #147: WFFC claims bind one at a time (PVC row) — IN PROGRESS 2026-10-13
 #147's scale/multi-node acceptance waits for hardware (owner on #162: "when
 we have hardware we will have it"). What the test machine measures today:
 turbomode 7277704177 (pvetest1), 25 Pods each with a fresh WFFC claim:
@@ -753,10 +753,19 @@ bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
       with 8 workers — still over 1 s. 9d7791a: the rig prints per-step
       percentiles (create→selected, selected→pv, pv→claim-bound,
       claim-bound→pod-bound) as `NOTE  ` lines, copied to the pod log
-- [ ] PAUSED 2026-10-13 for P0 #267: read run e3aa273d2c (rigs at 9d7791a,
-      C2NR0Q2) — `stormcentral test show e3aa273d2c`, lines
-      `rig:wffc-latency NOTE` — find the slow step (suspect: conflicting
-      claim writes retried with 100 ms<<n backoff), fix, rerun
+- [x] e3aa273d2c errored (C2NR0Q2 apiserver down). 84a3539: watchers read
+      decoded lines (r.fp gave chunk sizes). 874df289d5 (pvetest1, 84a3539):
+      p99 1.952 s; create→selected 0–1.47 s down the queue (scheduler's inline
+      selected-node patch ~60 ms each), pv→claim-bound ~0.5 s (PV PUT + a
+      second binder pass), Pods bound in a batch at ~1.6 s
+- [x] 343b5b5 + earlier: scheduler `Write::Claims` — reserve, patches in the bind set;
+      binder: pre-bound PV not rewritten, Bound status in the same pass.
+      Units (scheduler 65, c-m 118); workspace 643 passed / 4 ignored, 0 warnings
+- [x] 5bdcbdac41 (pvetest1, 343b5b5): p99 0.928 s, create→selected max
+      0.16, pv→claim-bound p50 0.455, pod bound at claim-bound
+- [ ] Repeats 756f2f6c20 (pvetest1), 94da6b412d (pvetest2) at 5f25dfa
+      (same-code variance on pvetest1 was 0.53 vs 1.95 s); post on #147;
+      golden. Scale/multi-node acceptance stays for hardware (#162)
 - [ ] (old) Test-machine runs — BLOCKED on stormcentral#521 (dev.g8.lo retired;
       the runner's build step: "No route to host", 8e8fbe4a61). Earlier:
       pvetest1 seals nothing (stormcentral#512), server3 flow-over (2 runs).
