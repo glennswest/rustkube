@@ -769,7 +769,7 @@ at N; Exact → store at N; continuation → store pinned to the token's rev.
 - [ ] README/design doc/CHANGELOG; golden; close #171 (server1 GET p99 < 20
       ms acceptance after the release, per #187)
 
-### e2e rigs as pods on the test machines (#173, P2) — FIRST RUN DONE 2026-10-13
+### e2e rigs as pods on the test machines (#173, P2) — DAY SUITE RUNS; night BLOCKED on stormcos#554, 2026-10-13
 Owner (#162): "Persistent tests should be pods, and should live on forge."
 - [x] 68e3260/f3cea50: test/build.sh stages binaries + upstream tools;
       `/test rigs` / `/test rigs-night` exec `test/rigs.sh`; requires.toml
@@ -778,9 +778,14 @@ Owner (#162): "Persistent tests should be pods, and should live on forge."
 - [x] d9777b2: `/test` waits for run.sh (results reader `pgrep -x test`
       archived /results at the start: 1 of 63 logs kept); no-FAIL-line
       failures name the error line. Build VM: rustkube-test 9 pass, clippy 0
-- [ ] Run 1c81036901 at d9777b2: archive has every rig log; triage the
-      failures onto their feature issues (rig vs pod-environment)
-- [ ] rigs-night at night on a pve VM; then close #173
+- [x] 1c81036901 still archived 1 file: the reader's `pgrep -x test` never
+      sees the test (every component) — stormcentral#804; no /dev/fd in
+      containers — stormpump#153. 183e8b9: failed rigs' tails in the pod log
+- [x] 3c6585e0ea at 183e8b9: 51 pass / 12 fail, tails in the pod log; each
+      failing rig's result posted on its issue (#83 #89 #107 #118 #123 #133
+      #135 #139 #147 #158 #165 #191; #266 flaky 1/3)
+- [ ] rigs-night: refused on C2NR0Q2 (>30 min = pve VM at night); both pve
+      VMs failed 12.18 on stormcos#554 — proposed after it. Then close #173
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
