@@ -115,6 +115,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### VM template changes reach the running VMI (#269, P1, stormvm#23/#24) — IN PROGRESS 2026-10-13
+Kubelet half on rustkube-node main (#246 cpu/memory/NICs, #247 disks): it
+diffs the VMI spec once per generation, reports hot-added disks in
+`status.volumeStatus[].hotplugVolume`, refusals as `HotplugSynchronized`
+False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
+- [ ] Live: cpu.sockets ≤ the VMI's maxSockets, memory.guest ≤ maxGuest,
+      bridge-bound non-pod interface (+ network) added/removed, disk (+
+      volume; virtio/scsi, no cloud-init seed) added, a hot-added disk
+      removed. Everything else, no maxima, past the maxima, a boot disk
+      removed, or the kubelet's refusal → VM condition `RestartRequired`
+- [ ] Units; rig case in vm-runstrategy.sh; README/CHANGELOG
+- [ ] Build VM; rigs run; golden; close
+
 ### Dead node never marked (#267, P0, server8 12.14) — SHIPPED 2026-10-13
 - [x] fb27723 fake-apiserver unit: the *existing* controller does mark and
       drain a node dead 9 days before it started (Ready False + not-ready),
