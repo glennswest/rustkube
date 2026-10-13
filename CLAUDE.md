@@ -120,13 +120,17 @@ Kubelet half on rustkube-node main (#246 cpu/memory/NICs, #247 disks): it
 diffs the VMI spec once per generation, reports hot-added disks in
 `status.volumeStatus[].hotplugVolume`, refusals as `HotplugSynchronized`
 False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
-- [ ] Live: cpu.sockets ≤ the VMI's maxSockets, memory.guest ≤ maxGuest,
+- [x] a69b5f7 `live_update` (+ `paired` for interfaces/networks and
+      disks/volumes, `first_difference` for the rest). Live: cpu.sockets ≤ the VMI's maxSockets, memory.guest ≤ maxGuest,
       bridge-bound non-pod interface (+ network) added/removed, disk (+
       volume; virtio/scsi, no cloud-init seed) added, a hot-added disk
       removed. Everything else, no maxima, past the maxima, a boot disk
       removed, or the kubelet's refusal → VM condition `RestartRequired`
-- [ ] Units; rig case in vm-runstrategy.sh; README/CHANGELOG
-- [ ] Build VM; rigs run; golden; close
+- [x] 8 units; b169719 vm-runstrategy.sh live cases; README/CHANGELOG
+- [x] Build VM at b169719: workspace 641 passed / 4 ignored, 0 rustc
+      warnings; clippy-clean virtualmachine.rs (impl moved, c-m 16 VM units)
+- [ ] rigs 7cac9d5177 (pvetest1), 93bb6fc112 (pvetest2) at b169719
+      (C2NR0Q2/server3 refused: no known release installed); golden; close
 
 ### Dead node never marked (#267, P0, server8 12.14) — SHIPPED 2026-10-13
 - [x] fb27723 fake-apiserver unit: the *existing* controller does mark and
