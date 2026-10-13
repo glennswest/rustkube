@@ -750,7 +750,7 @@ stream" on its `as=PartialObjectMetadata` CRD watch; the rest of the message
 - [ ] On server1 (blade, on after 11:00 UTC): grep the cilium agent log;
       absent → close; present → the full error, reproduce
 
-### LIST/GET from the watch cache (#171, P2) — IMPLEMENTED, awaiting a test-machine run 2026-10-07
+### LIST/GET from the watch cache (#171, P2) — SHIPPED 2026-10-13
 Every LIST and GET is a linearizable fastetcd Range, `resourceVersion=0`
 included; #5's cached LIST was switched off and never back on. Upstream's
 cacher rules: RV "" → store; RV 0 → cache; RV N (NotOlderThan) → cache once
@@ -762,12 +762,10 @@ at N; Exact → store at N; continuation → store pinned to the token's rev.
       `apiserver_watch_cache_reads_total`. Units: apiserver 253; workspace at
       91c82b1 527 passed / 4 ignored. #222 (my type error) closed
 - [x] `test/e2e/cache-reads.sh` (suite `rigs`)
-- [ ] Test-machine run of `rigs` (has cache-reads): 03a09c82aa at c82ef9e
-      ended "no VM 3101" (pvetest1 lost its VM; pvetest2 too); blades off
-      00–11 UTC. Rerun on a blade or a reinstalled VM; then golden, close
-      #171 (server1 GET p99 < 20 ms after the release, #187)
-- [ ] README/design doc/CHANGELOG; golden; close #171 (server1 GET p99 < 20
-      ms acceptance after the release, per #187)
+- [x] `cache-reads` 14/14 in all three `rigs` runs on C2NR0Q2 2026-10-13
+      (fe841f11a1, 1c81036901, 3c6585e0ea); README/metrics.md/CHANGELOG
+- [x] In every golden since 2026-10-07 (latest be6ddd9ee998); marked
+      `shipped` — server1 GET p99 < 20 ms (#187) after a release has it
 
 ### e2e rigs as pods on the test machines (#173, P2) — DAY SUITE RUNS; night BLOCKED on stormcos#554, 2026-10-13
 Owner (#162): "Persistent tests should be pods, and should live on forge."
