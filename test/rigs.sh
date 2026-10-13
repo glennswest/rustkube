@@ -70,6 +70,9 @@ for rig in $list; do
   rc=$?
   ms=$(( $(now_ms) - t0 ))
   ran=$((ran + 1))
+  # A rig's measurements (`NOTE  …` lines) go to the pod log, pass or fail:
+  # the record a run keeps whole.
+  grep -a '^NOTE  ' "$results/$rig.log" | sed "s/^/rig:$rig /" >&2
   passed=$(grep -c '^PASS' "$results/$rig.log")
   if [ "$rc" = 0 ]; then
     json "rig:$rig" pass "$ms" "$passed checks"

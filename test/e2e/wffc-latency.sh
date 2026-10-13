@@ -79,6 +79,45 @@ for i in range(N):
         "spec": {"storageClassName": "stormblock", "accessModes": ["ReadWriteOnce"],
                  "resources": {"requests": {"storage": "1Gi"}}}}), f"claim {i}")
 time.sleep(2)  # protection finalizers, Pending: not part of the Pod's time
+
+# Each step of the chain, as this client first sees it on a watch (the same
+# clock as `created`): selected-node on the claim, the PV, the claim Bound,
+# the Pod's nodeName. Where the time goes, not only how much.
+seen = {"selected": {}, "pv": {}, "claim-bound": {}, "pod-bound": {}}
+def follow(path, on):
+    conn = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=120)
+    conn.request("GET", path + "?watch=1&allowWatchBookmarks=false",
+                 headers={"Authorization": "Bearer " + os.environ["ADMIN"]})
+    r = conn.getresponse()
+    while True:
+        line = r.fp.readline()
+        if not line:
+            return
+        if not line.strip():
+            continue
+        ev = json.loads(line)
+        if ev.get("type") in ("ADDED", "MODIFIED"):
+            on(ev["object"], time.time())
+def mark(step, key, t):
+    seen[step].setdefault(key, t)
+def on_claim(c, t):
+    i = c["metadata"]["name"].removeprefix("data-")
+    if c["metadata"].get("annotations", {}).get("volume.kubernetes.io/selected-node"):
+        mark("selected", i, t)
+    if c.get("status", {}).get("phase") == "Bound":
+        mark("claim-bound", i, t)
+def on_pv(v, t):
+    ref = v.get("spec", {}).get("claimRef") or {}
+    if ref.get("namespace") == NS:
+        mark("pv", ref.get("name", "").removeprefix("data-"), t)
+def on_pod(p, t):
+    if p.get("spec", {}).get("nodeName"):
+        mark("pod-bound", p["metadata"]["name"].removeprefix("p"), t)
+for path, on in ((f"/api/v1/namespaces/{NS}/persistentvolumeclaims", on_claim),
+                 ("/api/v1/persistentvolumes", on_pv),
+                 (f"/api/v1/namespaces/{NS}/pods", on_pod)):
+    threading.Thread(target=follow, args=(path, on), daemon=True).start()
+time.sleep(1)
 created = {}
 def make(i):
     t0 = time.time()
@@ -113,7 +152,22 @@ check(len(ok) == N, f"claims Bound to their pvc-<ns>-<claim> volume ({len(ok)}/{
 lat = sorted(bound[n] - created[n] for n in bound if n in created)
 if lat:
     pct = lambda q: lat[min(len(lat) - 1, int(round(q * (len(lat) - 1))))]
-    print(f"create→bound s: p50 {pct(.5):.3f} p95 {pct(.95):.3f} p99 {pct(.99):.3f} max {lat[-1]:.3f} (n={len(lat)})", flush=True)
+    print(f"NOTE  create→bound s: p50 {pct(.5):.3f} p95 {pct(.95):.3f} p99 {pct(.99):.3f} max {lat[-1]:.3f} (n={len(lat)})", flush=True)
+    # The chain, step by step (watch-seen, this client's clock).
+    steps = [("create→selected", None, "selected"), ("selected→pv", "selected", "pv"),
+             ("pv→claim-bound", "pv", "claim-bound"), ("claim-bound→pod-bound", "claim-bound", "pod-bound")]
+    for label, a, b in steps:
+        d = sorted(seen[b][i] - (created[f"p{i}"] if a is None else seen[a][i])
+                   for i in map(str, range(N))
+                   if i in seen[b] and (a is None and f"p{i}" in created or a is not None and i in seen[a]))
+        if d:
+            q = lambda x: d[min(len(d) - 1, int(round(x * (len(d) - 1))))]
+            print(f"NOTE  step {label} s: p50 {q(.5):.3f} p95 {q(.95):.3f} max {d[-1]:.3f} (n={len(d)})", flush=True)
+    order = sorted(range(N), key=lambda i: created.get(f"p{i}", 0))
+    print("NOTE  per pod (s from its create, selected/pv/claim-bound/pod-bound): " + " ".join(
+        f"p{i}:" + "/".join(f"{seen[k][str(i)] - created[f'p{i}']:.2f}" if str(i) in seen[k] else "-"
+                            for k in ("selected", "pv", "claim-bound", "pod-bound"))
+        for i in order if f"p{i}" in created), flush=True)
     check(pct(.99) < 1.0, f"control-plane p99 < 1 s (#147): {pct(.99):.3f} s")
 sys.exit(failed)
 PY
