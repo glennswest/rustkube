@@ -592,7 +592,12 @@ path (claims whose StorageClass's provisioner is `stormblock.storm.io` or
 the VM reading `CrashLoopBackOff` or `Failed` with the VMI's message on a
 `Failure` condition, #104; a start the kubelet is retrying itself — VMI
 `Pending` with `reason: FailedStart` — reads `CrashLoopBackOff` with that
-attempt's message, and the VMI is left to the kubelet, #209), VMI launcher Pods (#203, below), and
+attempt's message, and the VMI is left to the kubelet, #209; a template
+edit on a running VM is written into its VMI when the node can apply it —
+`cpu.sockets` up to the VMI's `maxSockets`, `memory.guest` up to `maxGuest`,
+a `bridge` NIC on a non-pod network added or removed, a virtio/SCSI disk
+added, a hot-added one removed — and anything else, or a change the kubelet
+refused, is the condition `RestartRequired` naming the fields, #269), VMI launcher Pods (#203, below), and
 VirtualMachineInstanceMigration (#184, below).
 Events are emitted for creates, deletes and scaling, and expired ones are
 deleted.

@@ -16,6 +16,11 @@
 #   VMI stays Pending with reason FailedStart; the VM reads CrashLoopBackOff,
 #   not Starting, with the attempt's message on its Failure condition, the
 #   VMI is not replaced, and Running clears it
+# - template edits on a running VM (#269): sockets and memory.guest within
+#   the VMI's maxSockets/maxGuest, a bridge NIC and a disk added, a hot-added
+#   disk removed — all reach the VMI's spec, same uid; cores changed or the
+#   boot disk removed → RestartRequired with the field, the VMI untouched;
+#   putting the template back clears it
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
@@ -72,9 +77,16 @@ wait_for() { # <seconds> <path> <python expr on d> — true once it holds
 vm always Always
 vm once Once
 vm retrying Always
+req POST $VM '{"apiVersion":"kubevirt.io/v1","kind":"VirtualMachine","metadata":{"name":"live"},
+  "spec":{"runStrategy":"Always","template":{"spec":{
+    "domain":{"cpu":{"cores":2,"sockets":1,"maxSockets":4},"memory":{"guest":"2Gi","maxGuest":"8Gi"},
+      "devices":{"disks":[{"name":"root","disk":{"bus":"virtio"}}],
+                 "interfaces":[{"name":"default","masquerade":{}}]}},
+    "networks":[{"name":"default","pod":{}}],
+    "volumes":[{"name":"root","persistentVolumeClaim":{"claimName":"root"}}]}}}}' >/dev/null
 start_controller_manager
 
-for n in always once retrying; do
+for n in always once retrying live; do
   wait_for 60 "$VMI/$n" "d['metadata']['uid'] != ''" && pass "$n: VMI created" \
     || { fail "$n: no VMI"; report; }
 done
@@ -130,5 +142,65 @@ req GET "$VMI/retrying" >/dev/null
 vmi_status retrying Running >/dev/null
 wait_for 10 "$VM/retrying" "d['status']['printableStatus'] == 'Running' and not [c for c in d['status']['conditions'] if c['type']=='Failure']" \
   && pass "retrying: Running clears it" || fail "retrying: $(cat "$W/out")"
+
+
+# Template edits on a running VM (#269). The kubelet's report: Running, the
+# boot disk Ready.
+vm_edit() { # <python statements on t, the template spec> — PUT the VM
+  req GET "$VM/live" >/dev/null
+  python3 - "$W/out" "$1" >"$W/body" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+t = d["spec"]["template"]["spec"]
+exec(sys.argv[2])
+print(json.dumps(d))
+PY
+  local code; code=$(req PUT "$VM/live" "$(cat "$W/body")")
+  [ "$code" = 200 ] || fail "VM edit: $code $(cat "$W/out")"
+}
+vmi_report() { # <volumeStatus json>
+  req GET "$VMI/live" >/dev/null
+  python3 - "$W/out" "$1" >"$W/body" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["status"] = {"phase": "Running", "volumeStatus": json.loads(sys.argv[2])}
+print(json.dumps(d))
+PY
+  req PUT "$VMI/live/status" "$(cat "$W/body")" >/dev/null
+}
+req GET "$VMI/live" >/dev/null; uid4=$(jq_ "d['metadata']['uid']")
+vmi_report '[{"name":"root","phase":"Ready"}]'
+vm_edit 't["domain"]["cpu"]["sockets"] = 3; t["domain"]["memory"]["guest"] = "6Gi"'
+wait_for 15 "$VMI/live" "d['spec']['domain']['cpu']['sockets'] == 3 and d['spec']['domain']['memory']['guest'] == '6Gi'" \
+  && pass "live: sockets and memory.guest reach the running VMI" || fail "live: cpu/memory: $(jq_ "d['spec']['domain']")"
+[ "$(jq_ "d['metadata']['uid']")" = "$uid4" ] && pass "live: same VMI (not restarted)" || fail "live: VMI replaced"
+vm_edit 't["domain"]["devices"]["interfaces"].append({"name": "lan", "bridge": {}})
+t["networks"].append({"name": "lan", "multus": {"networkName": "lan"}})
+t["domain"]["devices"]["disks"].append({"name": "data", "disk": {"bus": "scsi"}})
+t["volumes"].append({"name": "data", "emptyDisk": {"capacity": "1Gi"}})'
+wait_for 15 "$VMI/live" "[i['name'] for i in d['spec']['domain']['devices']['interfaces']] == ['default', 'lan'] and [x['name'] for x in d['spec']['volumes']] == ['root', 'data']" \
+  && pass "live: a bridge NIC and a disk reach the running VMI" || fail "live: NIC/disk: $(jq_ "d['spec']")"
+req GET "$VM/live" >/dev/null
+[ "$(jq_ "[c for c in d['status'].get('conditions', []) if c['type'] == 'RestartRequired']")" = "[]" ] \
+  && pass "live: no RestartRequired for live changes" || fail "live: $(jq_ "d['status']['conditions']")"
+# The kubelet hot-added the disk: removing it is live.
+vmi_report '[{"name":"root","phase":"Ready"},{"name":"data","phase":"Ready","target":"hp1","hotplugVolume":{}}]'
+vm_edit 't["domain"]["devices"]["disks"] = [x for x in t["domain"]["devices"]["disks"] if x["name"] != "data"]
+t["volumes"] = [x for x in t["volumes"] if x["name"] != "data"]'
+wait_for 15 "$VMI/live" "[x['name'] for x in d['spec']['volumes']] == ['root']" \
+  && pass "live: the hot-added disk leaves the running VMI" || fail "live: disk removal: $(jq_ "d['spec']['volumes']")"
+# Not live: cores, and the disk it booted with.
+vm_edit 't["domain"]["cpu"]["cores"] = 4
+t["domain"]["devices"]["disks"] = []; t["volumes"] = []'
+wait_for 15 "$VM/live" "any(c['type'] == 'RestartRequired' and c['status'] == 'True' and 'domain.cpu.cores' in c['message'] and 'root removed' in c['message'] for c in d['status']['conditions'])" \
+  && pass "live: cores and a boot disk removed → RestartRequired naming them" || fail "live: $(jq_ "d['status'].get('conditions')")"
+req GET "$VMI/live" >/dev/null
+[ "$(jq_ "(d['spec']['domain']['cpu']['cores'], [x['name'] for x in d['spec']['volumes']], d['metadata']['uid'])")" = "(2, ['root'], '$uid4')" ] \
+  && pass "live: the running VMI keeps its cores and boot disk" || fail "live: VMI: $(jq_ "d['spec']")"
+vm_edit 't["domain"]["cpu"]["cores"] = 2
+t["domain"]["devices"]["disks"] = [{"name": "root", "disk": {"bus": "virtio"}}]
+t["volumes"] = [{"name": "root", "persistentVolumeClaim": {"claimName": "root"}}]'
+wait_for 15 "$VM/live" "not [c for c in d['status']['conditions'] if c['type'] == 'RestartRequired']" \
+  && pass "live: template put back → RestartRequired gone" || fail "live: $(jq_ "d['status'].get('conditions')")"
 
 report
