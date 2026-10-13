@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **test:** New suite `/test node-logs` (#180). It reads the node's pod logs (`/var/log/pods`, read-only host path) for client-go's watch-stream decode errors and reports the full text of any match. It asks #180's question of a machine's current release with no ssh.
 - **fix:** `/test rigs|rigs-night` runs `/rigs/run.sh` as a child instead of exec'ing it (#173). stormcentral's results reader waits only while a process named `test` runs, so the exec had it archive `/results` before the first rig finished. Run fe841f11a1 kept one 64-byte log out of 63.
 - **fix:** `test/rigs.sh`: a failed rig with no `FAIL` line (its Python stopped on an exception) now names the error line in its result instead of an empty detail.
 - **test:** `test/rigs.sh` prints a failed rig's last 150 lines to the pod log. stormcentral's results reader archives `/results` at the test's start on every component (stormcentral#804; my exec fix above was not the cause), so the pod log is the only full record. Filed stormpump#153: containers have no `/dev/fd`, so `lib.sh`'s `exec > >(tee …)` fails in the pod.

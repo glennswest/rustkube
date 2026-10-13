@@ -23,6 +23,7 @@ LABEL storm.io/test-of="rustkube" storm.io/test-commit="${COMMIT}"
 COPY test/.stage/rustkube-test /test
 COPY test/.stage/rigs /rigs
 COPY test/rigs.sh /rigs/run.sh
+COPY test/node-logs.sh /rigs/node-logs.sh
 COPY test/fetch-image-file.py /rigs/tree/test/fetch-image-file.py
 COPY test/e2e /rigs/tree/test/e2e
 COPY deploy /rigs/tree/deploy

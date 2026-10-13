@@ -5,8 +5,9 @@
 //! and exits 0 if everything passed, 1 if a test failed, and 2 if the suite
 //! could not run. `/test idle [seconds]` is what the pods the suites create
 //! run. `/test rigs` and `/test rigs-night` run the e2e rigs inside the pod
-//! (test/rigs.sh, #173). See test/README.md for what each suite covers and
-//! what it needs.
+//! (test/rigs.sh, #173); `/test node-logs` reads the node's pod logs for
+//! watch-stream errors (test/node-logs.sh, #180). See test/README.md for
+//! what each suite covers and what it needs.
 
 mod env;
 mod kube;
@@ -24,6 +25,14 @@ async fn main() {
     let suite = args.next().or_else(|| std::env::var("STORM_SUITE").ok()).unwrap_or_else(|| "short".into());
     if suite == "idle" {
         std::process::exit(workload::idle(args.next().and_then(|s| s.parse().ok())).await);
+    }
+    if suite == "node-logs" {
+        // The node's pod logs read for watch-stream errors (#180).
+        let status = std::process::Command::new("/rigs/node-logs.sh").status();
+        std::process::exit(match status {
+            Ok(s) => s.code().unwrap_or(2),
+            Err(err) => Report::default().abort(&anyhow::anyhow!("cannot run /rigs/node-logs.sh: {err}")),
+        });
     }
     if matches!(suite.as_str(), "rigs" | "rigs-night") {
         // The e2e rigs are bash; the image carries their runner (#173). A
@@ -46,7 +55,7 @@ async fn run(suite: &str) -> i32 {
     let mut rep = Report::default();
     if !matches!(suite, "short" | "medium" | "long") {
         return rep.abort(&anyhow::anyhow!(
-            "unknown suite {suite:?}: use short, medium, long, rigs or rigs-night"
+            "unknown suite {suite:?}: use short, medium, long, rigs, rigs-night or node-logs"
         ));
     }
     let env = match env::Env::discover(suite) {

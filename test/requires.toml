@@ -17,3 +17,10 @@ budget_secs = 1800
 # Idle-watch windows (400 s), latency under 40-client load, scheduler
 # failover, the cert reload ticks: over 30 minutes, so night only, on a VM.
 budget_secs = 7200
+
+[node-logs]
+# The node's pod logs, read-only, grepped for client-go's watch-stream
+# decode errors (#180): whether any client on the node fails to read this
+# apiserver's watches. Seconds of grep.
+budget_secs = 300
+host_paths_read_only = ["/var/log/pods"]

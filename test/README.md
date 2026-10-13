@@ -147,6 +147,24 @@ stormcentral test run rustkube rigs-night --tag <pve VM> --commit <sha>     # ni
 on a workstation-like box, but not in a build slot. Run outside the image
 (no `RK_BIN`), `lib.sh` builds the binaries and fastetcd from source.
 
+## The node's pod logs: `node-logs` (#180)
+
+`/test node-logs` runs `test/node-logs.sh` (`/rigs/node-logs.sh` in the
+image). It reads the host's `/var/log/pods`, mounted read-only at
+`/host/var/log/pods` (`host_paths_read_only` in `requires.toml`), and greps
+every pod log for client-go's errors on a watch stream it could not read
+(`unable to decode an event from the watch stream`, `unable to decode watch
+event`, `watch of … ended with: an error on the server`). Three checks:
+`pod-logs` (what was read), `cilium-agent-logs` (the agent's log is there;
+a skip on a flowsdn node) and `watch-decode-errors` (none, or a fail naming
+the pods, with the first and last 20 lines in the pod log). It is #180's
+question, "does any client on the node fail to read this apiserver's
+watches", asked of the machine's current release without ssh.
+
+```bash
+stormcentral test run rustkube node-logs --tag <machine> --commit <sha>
+```
+
 ## Requirements
 
 Nothing about the machine: no devices, sizes or node names. short, medium
