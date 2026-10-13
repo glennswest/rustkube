@@ -85,6 +85,11 @@ for rig in $list; do
            why="$why$(grep -aE '^[A-Za-z_.]*(Error|Exception)(:|$)' "$results/$rig.log" | tail -2 | tr '\n' ' ')" ;;
     esac
     json "rig:$rig" fail "$ms" "${why:0:1500}"
+    # The pod log is what the run keeps whole; /results may be archived
+    # early (stormcentral#804). lib.sh's report() ends with the log tails
+    # and the failed checks, so the tail is the evidence.
+    { echo "---- rig:$rig log (last ${RIGS_FAIL_TAIL:-150} lines)"
+      tail -n "${RIGS_FAIL_TAIL:-150}" "$results/$rig.log"; } >&2
     fail=$((fail + 1))
   fi
 done

@@ -117,7 +117,10 @@ stormcentral test run rustkube rigs-night --tag <pve VM> --commit <sha>     # ni
   `RK_FASTETCD` and `RK_TOOLS` pointing at the staged files. One JSON line
   per rig, `rig:<name>`, pass/fail with its time and its first `FAIL` lines
   (with no `FAIL` line, the log's last `…Error:` lines, e.g. a traceback);
-  the whole output in `/results/<name>.log`. A rig that cannot start (exit
+  the whole output in `/results/<name>.log`, and a failed rig's last 150
+  lines (`RIGS_FAIL_TAIL`) on stderr, in the pod log, which the run keeps
+  whole (`/results` is archived at the test's start until
+  stormcentral#804). A rig that cannot start (exit
   100) is a fail with "could not start"; if none could, the suite exits 2.
   Rigs not started before the budget runs out are skips.
 - Which rig is in which suite is in `test/rigs.sh`: `rigs` the functional

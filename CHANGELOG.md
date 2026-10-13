@@ -5,6 +5,7 @@
 ### 2026-10-13
 - **fix:** `/test rigs|rigs-night` runs `/rigs/run.sh` as a child instead of exec'ing it (#173). stormcentral's results reader waits only while a process named `test` runs, so the exec had it archive `/results` before the first rig finished. Run fe841f11a1 kept one 64-byte log out of 63.
 - **fix:** `test/rigs.sh`: a failed rig with no `FAIL` line (its Python stopped on an exception) now names the error line in its result instead of an empty detail.
+- **test:** `test/rigs.sh` prints a failed rig's last 150 lines to the pod log. stormcentral's results reader archives `/results` at the test's start on every component (stormcentral#804; my exec fix above was not the cause), so the pod log is the only full record. Filed stormpump#153: containers have no `/dev/fd`, so `lib.sh`'s `exec > >(tee …)` fails in the pod.
 - **test:** First completed `rigs` run on a test machine (fe841f11a1, C2NR0Q2, at 1414947): 63 rigs in 1048 s of the 1800 s budget, 51 passed, 12 failed. The lists need no rebalancing.
 
 ### 2026-10-10
