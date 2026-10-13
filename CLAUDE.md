@@ -714,7 +714,7 @@ Owner (#137): "Please make sure there added, … after our turbomode merge"
       stormcentral#521 (dev.g8.lo retired). Then: workspace build+test, the
       `rigs` run, golden, close #137
 
-### #147: WFFC claims bind one at a time (PVC row) — IN PROGRESS 2026-10-07
+### #147: WFFC claims bind one at a time (PVC row) — PAUSED for #267 2026-10-13
 #147's scale/multi-node acceptance waits for hardware (owner on #162: "when
 we have hardware we will have it"). What the test machine measures today:
 turbomode 7277704177 (pvetest1), 25 Pods each with a fresh WFFC claim:
@@ -728,7 +728,15 @@ bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
 - [x] `test/e2e/wffc-latency.sh` (suite `rigs`); control branch
       `control/147-binder-1-worker` (ceaae45: 1 worker, rigs = wffc only)
 - [x] Docs (storage.md, test/README, CHANGELOG) at 98f3624
-- [ ] Test-machine runs — BLOCKED on stormcentral#521 (dev.g8.lo retired;
+- [x] 2026-10-13 rigs on C2NR0Q2: wffc-latency p99 2.195 / 2.269 / 1.871 s
+      with 8 workers — still over 1 s. 9d7791a: the rig prints per-step
+      percentiles (create→selected, selected→pv, pv→claim-bound,
+      claim-bound→pod-bound) as `NOTE  ` lines, copied to the pod log
+- [ ] PAUSED 2026-10-13 for P0 #267: read run e3aa273d2c (rigs at 9d7791a,
+      C2NR0Q2) — `stormcentral test show e3aa273d2c`, lines
+      `rig:wffc-latency NOTE` — find the slow step (suspect: conflicting
+      claim writes retried with 100 ms<<n backoff), fix, rerun
+- [ ] (old) Test-machine runs — BLOCKED on stormcentral#521 (dev.g8.lo retired;
       the runner's build step: "No route to host", 8e8fbe4a61). Earlier:
       pvetest1 seals nothing (stormcentral#512), server3 flow-over (2 runs).
       Then: `rigs` at main + control e80e04fefd-style rerun at ceaae45,
