@@ -126,8 +126,10 @@ clone requests. README's configuration tables come from the three CLI sources.
       write errors propagated (logged); README/CHANGELOG. Build VMs: 633
       passed / 4 ignored, 0 warnings, node.rs clippy-clean
 - [x] golden-rustkube-be6ddd9ee998 (stormcos#424)
-- [ ] server8's CM log (asked on #267, `wait-owner`, recommended: grep the
-      12.14 log now); fix the real cause it names; then close #267
+- [ ] server8's CM log — the master's step (2026-10-13: not an owner
+      decision). server8 :6443 refused, no syslog from it: parked with
+      `--probe tcp://192.168.11.17:6443`. Fix the real cause the log names;
+      then close #267
 
 ### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — BUILT 2026-10-09
 - [x] `rollout::plan_rolling` old-RS scale-down as upstream's
