@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **test:** #180 closed: on C2NR0Q2 (12.14, cilium), `node-logs` run a1e677f99d read 244 pod logs from 2026-10-10 on, including the cilium agent's, and found no watch-stream decode error. The `metadata-watch` rig passed 14/14 in three runs.
 - **test:** New suite `/test node-logs` (#180). It reads the node's pod logs (`/var/log/pods`, read-only host path) for client-go's watch-stream decode errors and reports the full text of any match. It asks #180's question of a machine's current release with no ssh.
 - **fix:** `/test rigs|rigs-night` runs `/rigs/run.sh` as a child instead of exec'ing it (#173). stormcentral's results reader waits only while a process named `test` runs, so the exec had it archive `/results` before the first rig finished. Run fe841f11a1 kept one 64-byte log out of 63.
 - **fix:** `test/rigs.sh`: a failed rig with no `FAIL` line (its Python stopped on an exception) now names the error line in its result instead of an empty detail.

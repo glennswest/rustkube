@@ -734,7 +734,7 @@ bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
       Then: `rigs` at main + control e80e04fefd-style rerun at ceaae45,
       distributions on #147, golden. #147 proposed after stormcentral#521
 
-### Metadata-only CRD watch decode error (#180, P2) — IN PROGRESS 2026-10-07
+### Metadata-only CRD watch decode error (#180, P2) — COMPLETE 2026-10-13
 server1 (0.15.1) cilium agent: "unable to decode an event from the watch
 stream" on its `as=PartialObjectMetadata` CRD watch; the rest of the message
 (cut stream vs malformed frame) was never captured.
@@ -747,8 +747,12 @@ stream" on its `as=PartialObjectMetadata` CRD watch; the rest of the message
       state, BOOKMARK heartbeat/initial-end, initial ADDED, ERROR) decodes under
       Go's ObjectMeta types — pass (apiserver 255 at 0644141).
       `test/e2e/metadata-watch.sh` (suite `rigs`) written; needs a test machine
-- [ ] On server1 (blade, on after 11:00 UTC): grep the cilium agent log;
-      absent → close; present → the full error, reproduce
+- [x] metadata-watch rig 14/14 in all three `rigs` runs on C2NR0Q2
+      (fe841f11a1, 1c81036901, 3c6585e0ea)
+- [x] b30eb37 `/test node-logs` (host /var/log/pods read-only): run
+      a1e677f99d on C2NR0Q2 (12.14, cilium) — 244 pod logs from 10-10, 3
+      cilium-agent logs, no watch-stream decode error; positive control
+      flags cilium's format. Absent on the current release → #180 closed
 
 ### LIST/GET from the watch cache (#171, P2) — SHIPPED 2026-10-13
 Every LIST and GET is a linearizable fastetcd Range, `resourceVersion=0`
