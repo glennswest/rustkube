@@ -131,8 +131,12 @@ classified, #118),
 `apiextensions.k8s.io/v1` (CRDs, served dynamically; a version's structural
 schema defaults custom resources on write and on read, prunes undeclared
 fields, and `fieldValidation=Strict` refuses them (`Warn`, the default,
-returns warnings) — #121; types, patterns and other validation are not
-checked, and there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated APIs, below),
+returns warnings) — #121; the schema's value validations (type, required,
+enum, pattern, lengths, bounds, item/property counts, list-type set/map
+uniqueness) refuse a write with upstream's 422 field errors, ratcheting an
+unchanged value — #240; `format`, `allOf`/`anyOf`/`oneOf`/`not`, CEL
+`x-kubernetes-validations` and `/status` validation are not checked, and
+there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated APIs, below),
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `rustkube.io/v1alpha1` (PodMigration) and

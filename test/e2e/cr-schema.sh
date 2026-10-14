@@ -16,6 +16,14 @@
 #   'duplicate field "spec.foo"'
 # - defaulting: a default fills an absent field on create; a default added to
 #   the CRD afterwards shows on a GET and a LIST of the stored object
+# - validation (the flowsdn audit's C3/C4/C6), on a Namespaced and a Cluster
+#   CRD: a missing required spec / field (C3) is 422 and not stored; an
+#   omitted enum field is defaulted (C4); a repeated key in an
+#   x-kubernetes-list-type=map list (C6) is 422 through create, PUT, merge
+#   and JSON patch and apply, the stored object unchanged; bounds and enum
+#   422 likewise; a valid patch is stored. Ratcheting: after the CRD
+#   tightens, an object keeps its old value through an update of something
+#   else, and cannot change it to another invalid one
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -41,15 +49,16 @@ PORTS = {"type": "array", "x-kubernetes-list-map-keys": ["containerPort", "proto
          "items": {"type": "object", "required": ["containerPort", "protocol"], "properties": {
              "containerPort": {"type": "integer", "format": "int32"}, "hostIP": {"type": "string"},
              "hostPort": {"type": "integer", "format": "int32"}, "name": {"type": "string"}, "protocol": {"type": "string"}}}}
-def crd(plural, spec_schema):
+def crd(plural, spec_schema, scope="Cluster", required=None):
     kind = plural.capitalize()[:-1]
     code, out, _ = req("POST", "/apis/apiextensions.k8s.io/v1/customresourcedefinitions", {
         "apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
         "metadata": {"name": f"{plural}.schema.example.com"},
-        "spec": {"group": "schema.example.com", "scope": "Cluster",
+        "spec": {"group": "schema.example.com", "scope": scope,
                  "names": {"plural": plural, "singular": plural[:-1], "kind": kind, "listKind": kind + "List"},
                  "versions": [{"name": "v1", "served": True, "storage": True,
-                               "schema": {"openAPIV3Schema": {"type": "object", "properties": {"spec": spec_schema}}}}]}})
+                               "schema": {"openAPIV3Schema": dict({"type": "object", "properties": {"spec": spec_schema}},
+                                                                  **({"required": required} if required else {}))}}]}})
     if code >= 300: print(f"setup {plural}: {code} {out}"); sys.exit(100)
     for _ in range(40):
         if req("GET", f"/apis/schema.example.com/v1/{plural}")[0] == 200: break
@@ -147,6 +156,71 @@ for _ in range(40):
 check(got["spec"].get("b") == "B" and got["spec"].get("a") == "A", f"a default added to the CRD later shows on GET ({got['spec']})")
 _, lst, _ = req("GET", "/apis/schema.example.com/v1/defs")
 check(lst["items"][0]["spec"].get("b") == "B", "…and on LIST")
+
+# --- validation: the flowsdn audit's C3 (required), C4 (default), C6 (keyed list)
+POLICY = {"type": "object", "required": ["selector"], "properties": {
+    "selector": {"type": "string", "pattern": "^[a-z]+$"},
+    "family": {"type": "string", "enum": ["IPv4", "IPv6"], "default": "IPv4"},
+    "priority": {"type": "integer", "minimum": 1, "maximum": 10},
+    "rules": {"type": "array", "x-kubernetes-list-type": "map", "x-kubernetes-list-map-keys": ["name", "protocol"],
+              "items": {"type": "object", "required": ["name"],
+                        "properties": {"name": {"type": "string"}, "protocol": {"type": "string", "default": "TCP"}}}}}}
+MERGE, JSONP, APPLY = "application/merge-patch+json", "application/json-patch+json", "application/apply-patch+yaml"
+for scope, plural in (("Namespaced", "nspolicies"), ("Cluster", "policies")):
+    kind = crd(plural, POLICY, scope, required=["spec"])
+    base = f"/apis/schema.example.com/v1/namespaces/default/{plural}" if scope == "Namespaced" else f"/apis/schema.example.com/v1/{plural}"
+    obj = lambda name, spec=None: dict({"apiVersion": "schema.example.com/v1", "kind": kind, "metadata": {"name": name}},
+                                       **({"spec": spec} if spec is not None else {}))
+    invalid = lambda code, out, field: code == 422 and f'{kind}.schema.example.com' in json.dumps(out) and field in json.dumps(out)
+    gone = lambda name: req("GET", f"{base}/{name}")[0] == 404
+    code, out, _ = req("POST", base, obj("nospec"))
+    check(invalid(code, out, "spec: Required value") and gone("nospec"), f"{scope} C3: no spec → 422 'spec: Required value', not stored ({code} {out})")
+    code, out, _ = req("POST", base, obj("nosel", {"family": "IPv6"}))
+    check(invalid(code, out, "spec.selector: Required value") and gone("nosel"), f"{scope} C3: no spec.selector → 422, not stored ({code} {out})")
+    code, out, _ = req("POST", base, obj("p", {"selector": "web", "rules": [{"name": "a"}]}))
+    check(code == 201 and out["spec"].get("family") == "IPv4" and out["spec"]["rules"] == [{"name": "a", "protocol": "TCP"}],
+          f"{scope} C4: the omitted family and protocol are defaulted ({code} {out.get('spec') if isinstance(out, dict) else out})")
+    code, out, _ = req("POST", base, obj("dup", {"selector": "web", "rules": [{"name": "a"}, {"name": "a", "protocol": "TCP"}]}))
+    check(invalid(code, out, "spec.rules[1]: Duplicate value") and gone("dup"), f"{scope} C6: a repeated rule key on create → 422, not stored ({code} {out})")
+    _, stored, _ = req("GET", f"{base}/p")
+    rv = stored["metadata"]["resourceVersion"]
+    put = json.loads(json.dumps(stored)); put["spec"]["rules"].append({"name": "a", "protocol": "TCP"})
+    code, out, _ = req("PUT", f"{base}/p", put)
+    check(invalid(code, out, "spec.rules[1]: Duplicate value"), f"{scope} C6: through PUT → 422 ({code} {out})")
+    code, out, _ = req("PATCH", f"{base}/p", {"spec": {"rules": [{"name": "a"}, {"name": "a"}]}}, MERGE)
+    check(invalid(code, out, "spec.rules[1]: Duplicate value"), f"{scope} C6: through a merge patch → 422 ({code} {out})")
+    code, out, _ = req("PATCH", f"{base}/p", [{"op": "add", "path": "/spec/rules/-", "value": {"name": "a"}}], JSONP)
+    check(invalid(code, out, "spec.rules[1]: Duplicate value"), f"{scope} C6: through a JSON patch → 422 ({code} {out})")
+    ns = "\n  namespace: default" if scope == "Namespaced" else ""
+    yaml = f"apiVersion: schema.example.com/v1\nkind: {kind}\nmetadata:\n  name: p{ns}\nspec:\n  selector: web\n  rules:\n  - name: a\n  - name: a\n"
+    code, out, _ = req("PATCH", f"{base}/p?fieldManager=rig&force=true", yaml, APPLY)
+    check(invalid(code, out, "Duplicate value"), f"{scope} C6: through server-side apply → 422 ({code} {out})")
+    code, out, _ = req("PATCH", f"{base}/p", {"spec": {"priority": 11, "family": "IPX"}}, MERGE)
+    check(invalid(code, out, "spec.priority: Invalid value: 11") and "spec.family: Unsupported value" in json.dumps(out),
+          f"{scope}: bounds and enum → 422 with both errors ({code} {out})")
+    _, now, _ = req("GET", f"{base}/p")
+    check(now["metadata"]["resourceVersion"] == rv and now["spec"] == stored["spec"],
+          f"{scope}: every refused update left the stored object as it was ({now['spec']})")
+    code, out, _ = req("PATCH", f"{base}/p", {"spec": {"priority": 3, "rules": [{"name": "a"}, {"name": "a", "protocol": "UDP"}]}}, MERGE)
+    check(code == 200 and out["spec"]["priority"] == 3 and len(out["spec"]["rules"]) == 2,
+          f"{scope}: a valid patch (same name, other protocol) is stored ({code} {out.get('spec') if isinstance(out, dict) else out})")
+
+# --- ratcheting: the CRD tightens under a stored object -------------------------
+_, c, _ = req("GET", "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/policies.schema.example.com")
+c["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]["selector"]["maxLength"] = 2
+code, _, _ = req("PUT", "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/policies.schema.example.com", c)
+# In effect once a fresh create with a 3-letter selector is refused.
+for i in range(40):
+    code, out, _ = req("POST", "/apis/schema.example.com/v1/policies",
+                       {"apiVersion": "schema.example.com/v1", "kind": "Policie", "metadata": {"name": f"probe{i}"}, "spec": {"selector": "abc"}})
+    if code == 422: break
+    time.sleep(0.5)
+check(code == 422 and "spec.selector: Too long" in json.dumps(out), f"the tightened CRD (maxLength 2) refuses a new 3-letter selector ({code} {out})")
+code, out, _ = req("PATCH", "/apis/schema.example.com/v1/policies/p", {"spec": {"selector": "longer"}}, MERGE)
+check(code == 422 and "spec.selector: Too long" in json.dumps(out), f"ratcheting: changing it to another over-long value is 422 ({code} {out})")
+code, out, _ = req("PATCH", "/apis/schema.example.com/v1/policies/p", {"spec": {"priority": 4}}, MERGE)
+check(code == 200 and out["spec"]["selector"] == "web" and out["spec"]["priority"] == 4,
+      f"ratcheting: an update of another field keeps the now-too-long 'web' ({code} {out.get('spec') if isinstance(out, dict) else out})")
 sys.exit(failed)
 PY
 report

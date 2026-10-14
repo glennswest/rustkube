@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **feat:** Custom resources are validated against their CRD version's structural schema (#240, the flowsdn audit on #121): `type` (with `x-kubernetes-int-or-string`), `required`, `enum`, `pattern`, `min/maxLength`, `minimum`/`maximum` (exclusive), `multipleOf`, `min/maxItems`, `min/maxProperties`, and `x-kubernetes-list-type` `set`/`map` uniqueness, on create, PUT, PATCH and apply: 422 `Kind.group "name" is invalid: spec.x: …` with upstream's field errors, nothing stored. An update keeps a value the stored object already had (upstream's ratcheting). A `null` the schema does not allow is pruned before defaulting, as upstream does. Not checked: `format`, `allOf`/`anyOf`/`oneOf`/`not`, CEL rules, `/status`.
+- **test:** `cr-schema.sh` gains the audit's C3/C4/C6 over HTTP, Namespaced and Cluster CRDs, every write path, and ratcheting.
 - **docs:** #150 verified: `service-ports-patch` 10/10 on pvetest2; closed.
 - **test:** `test/e2e/service-ports-patch.sh` (#150, suite `rigs`): Service ports by strategic merge patch against a real apiserver (in place, add, 53/UDP beside 53/TCP, `$patch: delete`, `$setElementOrder/ports`; container ports by containerPort).
 - **docs:** #149: the one-host multi-master failure matrix passes 25/25 on pvetest2 (takeovers 15.8–17.7 s against a 15 s lease); README, test README, event-driven design.

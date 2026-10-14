@@ -677,7 +677,15 @@ serving-cert rig); gen-pki.sh's default output leaves the terragrunt tree.
 - [x] Workspace on a build VM at b9a59d0: 541 passed / 4 ignored (apiserver
       264). #226, #227 (my intermediate failures) closed
 - [x] `test/e2e/cr-schema.sh` (rigs, the conformance bodies); docs
-- [ ] rigs run — test images still build on dev (stormcentral#526); golden
+- [x] cr-schema 9/9 in rigs 756f2f6c20 (pvetest1), a031a5d3fd (pvetest2) and
+      every pvetest/C2NR0Q2 run since 10-13
+- [x] Audit's C3/C4/C6 (flowsdn): validation is #240's — 88a0641
+      `schema::validate` (type, required, enum, pattern, lengths, bounds,
+      counts, list-type set/map; 422 field errors; ratcheting; nulls pruned
+      where not nullable), 6 units (apiserver 333); cr-schema validation
+      cases, Namespaced + Cluster. CEL, /status, watch defaults, format stay
+      #240; SSA keyed-list ownership filed separately
+- [ ] rigs run at the rig commit; close #121, progress on #240
 
 ### Service ports in strategic merge patch (#150, P2) — COMPLETE 2026-10-14
 - [x] `ports` keyed by content: `containerPort` when entries carry it, else

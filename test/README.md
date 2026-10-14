@@ -559,7 +559,14 @@ refused for an undeclared field, unknown root/embedded metadata and a
 repeated YAML key, with upstream's messages; a valid CR created; without
 Strict the CR created, pruned and warned about; a Strict JSON create with a
 repeated key refused; a default filled on create, and a default added to the
-CRD later shown on GET and LIST.
+CRD later shown on GET and LIST. Validation (#240, the flowsdn audit's
+C3/C4/C6) on a Namespaced and a Cluster CRD: a missing required spec or
+field is 422 and not stored; an omitted enum field defaulted; a repeated key
+in an `x-kubernetes-list-type: map` list 422 through create, PUT, merge and
+JSON patch and server-side apply; bounds + enum 422 with both errors; the
+stored object unchanged by every refusal; a valid patch stored. Ratcheting:
+after the CRD tightens a field, a new value of it is 422 while an update of
+another field keeps the old one.
 
 Every rig that starts kube-controller-manager or kube-scheduler (through
 `lib.sh`, `scheduler-failover.sh`, `multi-master.sh`) runs them as
