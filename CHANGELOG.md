@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-14
+- **docs:** #147 shipped: the WFFC binder and scheduler fixes (p99 0.928 / 0.591 / 0.279 s on pvetest1/pvetest2) are in golden-rustkube-*-9184c2d39ee2; the hardware scale/multi-node acceptance moves to #281.
 - **docs:** #68 still parked: no ARM64 test machine registered; the item waits behind stormcentral#847 (the wait-owner loop) rather than being re-labelled.
 
 ### 2026-10-13

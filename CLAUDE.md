@@ -789,7 +789,7 @@ Owner (#137): "Please make sure there added, … after our turbomode merge"
       rigs fe841f11a1, 1c81036901, 3c6585e0ea (C2NR0Q2), 7cac9d5177
       (pvetest1); in every golden since 10-07 (latest 8227afb87508); closed
 
-### #147: WFFC claims bind one at a time (PVC row) — IN PROGRESS 2026-10-13
+### #147: WFFC claims bind one at a time (PVC row) — SHIPPED 2026-10-14
 #147's scale/multi-node acceptance waits for hardware (owner on #162: "when
 we have hardware we will have it"). What the test machine measures today:
 turbomode 7277704177 (pvetest1), 25 Pods each with a fresh WFFC claim:
@@ -822,15 +822,11 @@ bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
       94da6b412d (pvetest2) still queued. Distributions posted on #147
 - [x] pvetest2 repeat 94da6b412d (5f25dfa): p99 0.279 s — three passes
       on two machines (0.928 / 0.591 / 0.279 s)
-- [ ] Golden: stormcentral#827 closed 2026-10-14, but every golden build
-      now fails at sc-build-out and forge lost most inputs
-      (stormcentral#841, open); proposed after it. Then request again.
-      Scale/multi-node acceptance stays for hardware (#162); #147 stays open
-- [ ] (old) Test-machine runs — BLOCKED on stormcentral#521 (dev.g8.lo retired;
-      the runner's build step: "No route to host", 8e8fbe4a61). Earlier:
-      pvetest1 seals nothing (stormcentral#512), server3 flow-over (2 runs).
-      Then: `rigs` at main + control e80e04fefd-style rerun at ceaae45,
-      distributions on #147, golden. #147 proposed after stormcentral#521
+- [x] Golden: stormcentral#841 closed 2026-10-14; golden-rustkube-*-9184c2d39ee2
+      (stage at stormcos f77591d, built 13:47Z after the last code commit;
+      `component build rustkube` → unchanged), stormcos#421–423
+- [x] Scale/multi-node acceptance split to #281 (hardware, #162); #147
+      marked `shipped` 2026-10-14 (closes with the release)
 
 ### Metadata-only CRD watch decode error (#180, P2) — COMPLETE 2026-10-13
 server1 (0.15.1) cilium agent: "unable to decode an event from the watch
