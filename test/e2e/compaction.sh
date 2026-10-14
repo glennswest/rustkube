@@ -86,7 +86,9 @@ c = conn()
 c.request("GET", f"/api/v1/namespaces/default/podtemplates?watch=1&resourceVersion={first_rv}",
           headers={"Authorization": "Bearer " + os.environ["ADMIN"]})
 r = c.getresponse()
-line = r.fp.readline() if r.status == 200 else r.read()
+# r.readline, not r.fp.readline: the stream is chunked, and the raw socket
+# file hands back chunk-size lines.
+line = r.readline() if r.status == 200 else r.read()
 c.close()
 try: ev = json.loads(line)
 except ValueError: ev = {}

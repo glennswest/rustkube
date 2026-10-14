@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **fix:** A continue token or `Exact` LIST whose revision is compacted is 410 `Expired` against fastetcd before v1.14.0 too (#139): its compacted error reads `required revision N has been compacted (…)`, which rustkube did not recognise, so the answer was 500. A WATCH from a compacted revision gets its ERROR 410 instead of hanging: etcd-client keeps only the id of the create response, and a store that refuses a compacted start in that response (fastetcd before v1.14.0) left a silent stream; the adapter now reads at the start revision once the watch is made.
+- **fix:** `compaction.sh` reads its watch through the response decoder.
 - **docs:** #121 verified (`cr-schema` 34/34 on pvetest2), closed; SSA keyed-list ownership filed as #275.
 - **feat:** Custom resources are validated against their CRD version's structural schema (#240, the flowsdn audit on #121): `type` (with `x-kubernetes-int-or-string`), `required`, `enum`, `pattern`, `min/maxLength`, `minimum`/`maximum` (exclusive), `multipleOf`, `min/maxItems`, `min/maxProperties`, and `x-kubernetes-list-type` `set`/`map` uniqueness, on create, PUT, PATCH and apply: 422 `Kind.group "name" is invalid: spec.x: …` with upstream's field errors, nothing stored. An update keeps a value the stored object already had (upstream's ratcheting). A `null` the schema does not allow is pruned before defaulting, as upstream does. Not checked: `format`, `allOf`/`anyOf`/`oneOf`/`not`, CEL rules, `/status`.
 - **test:** `cr-schema.sh` gains the audit's C3/C4/C6 over HTTP, Namespaced and Cluster CRDs, every write path, and ratcheting.

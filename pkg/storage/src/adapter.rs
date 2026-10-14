@@ -83,6 +83,15 @@ impl EtcdStore {
 /// `DeadlineExceeded` and `ResourceExhausted` — and any transport or IO
 /// failure — mean the store cannot serve *right now*; everything else is a
 /// real error from a store that is working.
+/// A read or watch below the store's compaction. etcd says `mvcc: required
+/// revision has been compacted`; fastetcd before v1.14.0 said `required
+/// revision 68 has been compacted (compact_rev = 70)` (#139: the 410 a
+/// compacted continue token needs was a 500 against it).
+fn is_compacted(e: &etcd_client::Error) -> bool {
+    let s = e.to_string();
+    s.contains("required revision") && s.contains("has been compacted")
+}
+
 fn etcd_err(e: etcd_client::Error) -> Error {
     use etcd_client::Error as E;
     match &e {
@@ -207,10 +216,7 @@ impl KvStore for EtcdStore {
         }
         let resp = client.get(start_key, Some(opts)).await.map_err(|error| {
             if let Some(revision) = pinned {
-                if error
-                    .to_string()
-                    .contains("required revision has been compacted")
-                {
+                if is_compacted(&error) {
                     return Error::Gone(revision);
                 }
             }
@@ -258,6 +264,35 @@ impl KvStore for EtcdStore {
             .watch(prefix.as_bytes().to_vec(), Some(opts))
             .await
             .map_err(etcd_err)?;
+        // etcd-client's `watch` keeps only the id of the create response. A
+        // store that refuses a compacted start in that same response
+        // (`created` + `canceled` + `compact_revision`, as fastetcd before
+        // v1.14.0 does) leaves a stream that never says anything, and the
+        // client's WATCH hangs where it needs a 410 (#139). Compaction only
+        // moves forward, so a read at the start revision now tells: one
+        // refused for compaction is compacted now too; one compacted after
+        // the create is cancelled on the stream, which the loop below reads.
+        if start_revision > 1 {
+            let probe = GetOptions::new()
+                .with_range(prefix_range_end(prefix))
+                .with_count_only()
+                .with_revision(start_revision as i64);
+            if let Err(e) = client.get(prefix.as_bytes().to_vec(), Some(probe)).await {
+                if is_compacted(&e) {
+                    drop(watcher);
+                    let _ = tx
+                        .send(WatchEvent::Error {
+                            code: 410,
+                            message: "watch history compacted".into(),
+                            revision: start_revision,
+                        })
+                        .await;
+                    return Ok(rx);
+                }
+                // A start ahead of the store ("from now" is current + 1)
+                // is a future revision: nothing missed, the watch stands.
+            }
+        }
 
         tokio::spawn(async move {
             // Hold the watcher for the task's lifetime — dropping it cancels the
@@ -361,7 +396,7 @@ impl KvStore for EtcdStore {
             Ok(_) => Ok(()),
             // Already compacted past it — by another apiserver, or by
             // fastetcd's own space reclaim (#139). Nothing left to do.
-            Err(e) if e.to_string().contains("required revision has been compacted") => Ok(()),
+            Err(e) if is_compacted(&e) => Ok(()),
             Err(e) => Err(etcd_err(e)),
         }
     }

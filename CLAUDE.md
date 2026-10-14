@@ -448,7 +448,12 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       (rigs, with #127's watch check); README/test README/CHANGELOG
 - [x] 73589ce on a build VM (sc-build-dc10dbc8b3): workspace 547 passed /
       4 ignored (apiserver 270), exit 0
-- [ ] `rigs` run (compaction.sh) waits for stormcentral#526; golden; close
+- [x] compaction rig failed every run (500 for a compacted token, WATCH
+      hang): rigs' fastetcd v1.12.0 words its compacted error `required
+      revision N has been compacted`, and returns a compacted watch's cancel
+      in the create response etcd-client drops. Adapter: `is_compacted`
+      (both wordings), a read at a watch's start revision after create
+- [ ] rigs run; golden (with the next component build); close
 
 ### nodes/{name}/proxy (#108, P3) — BUILT 2026-10-08
 - [x] `handlers/node_proxy.rs` (every method → kubelet :10250, apiserver
