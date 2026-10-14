@@ -125,7 +125,7 @@ stormcentral test run rustkube rigs-night --tag <pve VM> --commit <sha>     # ni
   100) is a fail with "could not start"; if none could, the suite exits 2.
   Rigs not started before the budget runs out are skips.
 - Which rig is in which suite is in `test/rigs.sh`: `rigs` the functional
-  ones (a minute or two each; 63 of them), `rigs-night` the idle windows,
+  ones (a minute or two each; 64 of them), `rigs-night` the idle windows,
   latency under load, failover and cert-reload ticks (10: multi-master,
   list-snapshot-race, crd-restart, deadlines, scheduler-failover,
   schedule-latency, get-latency, watch-deadline, serving-cert,
@@ -285,6 +285,12 @@ process stands in for an unreachable one. 25/25 on pvetest2 (2026-10-14,
 runs 7d4962ed39, f39953a31e, a833054561): takeovers 17.7 s (paused CM
 leader), 15.8 s (killed scheduler leader), 15.9 s (partitioned CM leader),
 lease 15 s. Separate machines' clocks and disks need hardware (#162).
+
+`e2e/service-ports-patch.sh` (#150, suite `rigs`): strategic merge patches
+of a Service's ports, the bodies `kubectl patch` sends — one port of two
+changed in place, a new one added, 53/UDP patched beside 53/TCP, `$patch:
+delete` by port + protocol, `$setElementOrder/ports`; a Deployment
+template's container ports still merge by containerPort.
 
 `e2e/hpa-v1.sh` (#123, suite `rigs`): autoscaling v2 (preferred) and v1
 in discovery; a v1 create stored as v2's cpu metric; a v2 object with a
