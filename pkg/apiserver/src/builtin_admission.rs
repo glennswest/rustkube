@@ -367,9 +367,20 @@ async fn namespace_lifecycle(
     match storage.get(&key).await {
         Ok(nsobj) => {
             if nsobj["status"]["phase"].as_str() == Some("Terminating") {
-                return Err(ApiError::forbidden(&format!(
+                // Upstream's NamespaceLifecycle adds the `NamespaceTerminating`
+                // cause, and client-go's event recorder reads it: an event for
+                // a pod whose namespace is going away is dropped quietly, not
+                // logged as a rejection (#282: a kubelet's events after a test
+                // namespace was deleted read as a node permission problem).
+                let mut e = ApiError::forbidden(&format!(
                     "unable to create new content in namespace {ns} because it is being terminated"
-                )));
+                ));
+                e.details = Some(json!({"causes": [{
+                    "reason": "NamespaceTerminating",
+                    "message": format!("namespace {ns} is being terminated"),
+                    "field": "metadata.namespace"
+                }]}));
+                return Err(e);
             }
             Ok(nsobj)
         }
@@ -1040,6 +1051,26 @@ mod namespace_lifecycle_tests {
         store.set_unavailable(true);
         let e = namespace_lifecycle(&s, "ns").await.unwrap_err();
         assert_eq!(e.status, axum::http::StatusCode::SERVICE_UNAVAILABLE, "{e:?}");
+    }
+
+    /// A terminating namespace is upstream's 403 with the
+    /// `NamespaceTerminating` cause, which client-go's event recorder treats
+    /// as expected (#282).
+    #[tokio::test]
+    async fn a_terminating_namespace_names_its_cause() {
+        let s = ResourceStorage::new(Arc::new(MemStore::default()));
+        s.create(&ResourceStorage::cluster_key("namespaces", "t"),
+                 json!({"metadata": {"name": "t"}, "status": {"phase": "Terminating"}}))
+            .await
+            .unwrap();
+        let e = namespace_lifecycle(&s, "t").await.unwrap_err();
+        assert_eq!((e.status, e.reason.as_str()), (axum::http::StatusCode::FORBIDDEN, "Forbidden"));
+        assert_eq!(e.message, "unable to create new content in namespace t because it is being terminated");
+        assert_eq!(e.details, Some(json!({"causes": [{
+            "reason": "NamespaceTerminating",
+            "message": "namespace t is being terminated",
+            "field": "metadata.namespace"
+        }]})));
     }
 }
 

@@ -409,7 +409,9 @@ same-named key) on create, PUT, PATCH and from startup manifests, and never
 stored or returned, as upstream; Secrets stored with it before are folded at
 boot (#101).
 
-**Admission**, on create: NamespaceLifecycle, namespace defaults (`Active`,
+**Admission**, on create: NamespaceLifecycle (a missing namespace is 404;
+a Terminating one is 403 with upstream's `NamespaceTerminating` cause, which
+client-go's event recorder drops quietly, #282), namespace defaults (`Active`,
 the `kubernetes` finalizer), Service port defaults and ClusterIP allocation
 from `--service-cidr` (each address an atomic claim key; a dynamic one is a
 random free address from the watch cache's view of the claims, above the

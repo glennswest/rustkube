@@ -115,6 +115,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Kubelet events 403 in a test namespace (#282, P1) — IN PROGRESS 2026-10-14
+Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.
+The namespace (stormcos_qa turbomode 543727dbc0) was deleted by the run's
+cleanup before the Dell rebooted; the 403 is NamespaceLifecycle (Terminating,
+or missing before 776a392). Upstream also 403s, but with the
+`NamespaceTerminating` cause client-go's recorder drops quietly.
+- [x] `namespace_lifecycle`: the cause on the 403; unit; rig
+      `node-events.sh` (rigs); README/test README/CHANGELOG
+- [ ] build VM; rig run; kubelet quiet on the cause (rustkube-node issue);
+      golden; close
+
 ### VM template changes reach the running VMI (#269, P1, stormvm#23/#24) — COMPLETE 2026-10-13
 Kubelet half on rustkube-node main (#246 cpu/memory/NICs, #247 disks): it
 diffs the VMI spec once per generation, reports hot-added disks in
