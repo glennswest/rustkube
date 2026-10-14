@@ -109,6 +109,10 @@ def check(ok, what):
     global failed
     print(("PASS  " if ok else "FAIL  ") + what, flush=True)
     failed += 0 if ok else 1
+    # A timed check (takeovers, C's first answer) is a measurement too: as a
+    # NOTE line it reaches the pod log when the rig passes as well.
+    if re.search(r"\d\.\d s", what):
+        print("NOTE  " + what, flush=True)
     return ok
 
 def diag(app):
