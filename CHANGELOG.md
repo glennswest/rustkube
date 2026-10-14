@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **docs:** #176 verified: every `rigs` rig runs the controller-manager and scheduler under their least-privilege roles, 51/63 passing on pvetest1 with no 403 for either; closed (the Node authorizer stays #228).
 - **docs:** #138 verified: `pod-limit` 12/12 with its Scheduled/FailedScheduling checks in three `rigs` runs on pvetest1; closed.
 - **perf:** The scheduler writes a WaitForFirstConsumer claim's `selected-node` in the background, with the node reserved first, the way binds already are (#147). Inline, 25 such Pods queued behind one another's claim writes, ~60 ms each: create→selected went 0–1.5 s down the queue and their binds waited behind it (`wffc-latency`, run 874df289d5 on pvetest1: create→bound p99 1.95 s). If a claim write fails, the reservation is dropped and the Pod is retried with backoff, as before.
 - **perf:** The PV binder binds a provisioner's pre-bound volume in one pass (#147), as upstream's binder does. It writes no PUT on the already pre-bound PV, then the claim's `volumeName`, then the claim's Bound status from that answer. Before, the Bound status waited for the claim's own update to come back round (a queue pass plus a store GET of the PV), ~0.5 s a claim under 25 at once.

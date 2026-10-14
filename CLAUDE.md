@@ -696,7 +696,7 @@ paged snapshots (list-snapshot-race).
 - [ ] Run it (rigs-night, a pve VM at night): no build host until
       stormcentral#521. Then fix what it finds; real hardware stays #162's
 
-### Least-privilege bootstrap RBAC (#176, P2) — BUILT, rigs wait for test runs 2026-10-07
+### Least-privilege bootstrap RBAC (#176, P2) — COMPLETE 2026-10-13
 Owner (2026-10-07): A now — one controller-manager role written from real
 calls; C — the Node authorizer — as its own issue. Scheduler: upstream's
 role + KubeVirt status writes.
@@ -712,8 +712,12 @@ role + KubeVirt status writes.
       roles; units; docs; C filed as #228
 - [x] 4088060 on a build VM (job sc-build-c644eb2f68): workspace 543 passed
       / 4 ignored (apiserver 266), exit 0
-- [ ] The rigs (every one exercises the roles) need a test run —
-      stormcentral#526; then golden, close #176
+- [x] rigs under the roles (lib.sh tokens for system:kube-controller-manager
+      / system:kube-scheduler): 51/63 pass in 7cac9d5177, 5bdcbdac41,
+      756f2f6c20 (pvetest1) and the C2NR0Q2 runs; no 403 for either identity
+      (only aggregation's intended one); the 12 failures are each rig's own
+      issue. rigs-night not run (stormcos#554). In every golden since 10-07;
+      #176 closed, nodes stay #228
 
 ### Scheduler Events (#138, P2) — COMPLETE 2026-10-13
 PodScheduled=False/Unschedulable landed with #194; the Events were missing.
