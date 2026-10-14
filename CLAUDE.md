@@ -679,13 +679,14 @@ serving-cert rig); gen-pki.sh's default output leaves the terragrunt tree.
 - [x] `test/e2e/cr-schema.sh` (rigs, the conformance bodies); docs
 - [ ] rigs run — test images still build on dev (stormcentral#526); golden
 
-### Service ports in strategic merge patch (#150, P2) — rig 2026-10-14
+### Service ports in strategic merge patch (#150, P2) — COMPLETE 2026-10-14
 - [x] `ports` keyed by content: `containerPort` when entries carry it, else
       port + protocol (default TCP); `merge_id` used by merge, `$patch:
       delete` and `$setElementOrder`; unit test; README/CHANGELOG
 - [x] Compiled + unit tests on a build VM at b677499 (534 passed); in every
       golden since 10-07
-- [ ] `test/e2e/service-ports-patch.sh` (suite `rigs`) on pvetest2; close
+- [x] `test/e2e/service-ports-patch.sh` (suite `rigs`) 10/10 in a031a5d3fd
+      (pvetest2, 399c4c0; the other 12 failures as before); #150 closed
 
 ### Multi-master safety and failover (#149, P2) — COMPLETE 2026-10-14
 Real three-master hardware: none (owner on #162). The matrix that fits one
