@@ -686,7 +686,7 @@ serving-cert rig); gen-pki.sh's default output leaves the terragrunt tree.
 - [ ] COMPILED + unit tests pass on a build VM at b677499; rigs + golden wait for (stormcentral#521); golden;
       close #150
 
-### Multi-master safety and failover (#149, P2) — rig written, not run 2026-10-07
+### Multi-master safety and failover (#149, P2) — COMPLETE 2026-10-14
 Real three-master hardware: none (owner on #162). The matrix that fits one
 host is a rig: `test/e2e/multi-master.sh` (rigs-night) with lib.sh
 `RK_ETCD_MEMBERS=3` / `RK_APISERVERS=3`. Existing coverage: scheduler
@@ -704,8 +704,16 @@ paged snapshots (list-snapshot-race).
       found`, other read errors pass through (503); unit + MemStore
       unavailable switch; rig wants 5xx, retries C's LIST (timed). Build VM:
       644 passed / 4 ignored; 8619eaf clippy alias, changed files clean
-- [ ] 9fda2733bf (pvetest2, 776a392); the e-Pods failure if it recurs (diag);
-      report on #149. Real network partition, clocks, disks stay #162's
+- [x] 9fda2733bf, 2adaca0d28, 961df54f69 (776a392/ff88c93): 16/16 each. The
+      e-Pods failure: deploy() ignored its create's answer while C was
+      still catching up after quorum (f2b3e0f checks it; 76966b548e 18/18)
+- [x] f782522 master partition (C → fastetcd via a userspace proxy the rig
+      closes) + one member paused; bc5e494 waits for the proxy's cut (first
+      run's 201 rode a live connection); b749b49 timings as NOTE lines.
+      25/25 in 7d4962ed39, f39953a31e, a833054561 (pvetest2): takeovers
+      17.7 s (paused CM), 15.8 s (killed scheduler), 15.9 s (partitioned CM)
+- [x] #149 closed. Golden for 776a392 rides #147's request (after
+      stormcentral#827). Separate machines' clocks/disks: hardware (#162)
 
 ### Least-privilege bootstrap RBAC (#176, P2) — COMPLETE 2026-10-13
 Owner (2026-10-07): A now — one controller-manager role written from real

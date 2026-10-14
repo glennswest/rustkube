@@ -265,7 +265,7 @@ get, list (and across namespaces), a watch's ADDED, merge patch, update,
 protobuf GET and delete; a ResourceClaim allocation written through
 `/status` with spec untouched; deletecollection by label.
 
-`e2e/multi-master.sh` (#149, suite `rigs-night`) is three masters on one
+`e2e/multi-master.sh` (#149, suites `rigs-night` and `multi-master`) is three masters on one
 host: a 3-member fastetcd Raft cluster (`RK_ETCD_MEMBERS=3` in `lib.sh`),
 three apiservers (`RK_APISERVERS=3`, `start_apiserver n`), two electing
 controller-managers and two electing schedulers on different apiservers, a
@@ -274,9 +274,17 @@ others; a LIST paged across three apiservers is one snapshot; a watch moved
 to another apiserver at its last revision loses and repeats nothing; the
 controller-manager leader paused past its lease (standby scales, resumed
 leader creates nothing extra); the scheduler leader killed (no node
-overcommitted); an apiserver killed (GC still works); quorum loss (writes
-refused, nothing acknowledged lost); a fresh controller-manager rebuilds.
-Takeover times are printed. A stopped process stands in for a partition.
+overcommitted); an apiserver killed (GC still works); one member paused
+(writes go on); quorum loss (writes refused with a 5xx, nothing acknowledged
+lost); a fresh controller-manager rebuilds; a master partitioned — apiserver
+C reaches fastetcd through a userspace TCP proxy the rig closes, so C
+refuses writes with a 5xx, its controller-manager leader's renewals fail and
+the standby on B takes over and acts, and healed, C reads current and the old
+leader adds nothing. Takeover times are `NOTE` lines. Elsewhere a stopped
+process stands in for an unreachable one. 25/25 on pvetest2 (2026-10-14,
+runs 7d4962ed39, f39953a31e, a833054561): takeovers 17.7 s (paused CM
+leader), 15.8 s (killed scheduler leader), 15.9 s (partitioned CM leader),
+lease 15 s. Separate machines' clocks and disks need hardware (#162).
 
 `e2e/hpa-v1.sh` (#123, suite `rigs`): autoscaling v2 (preferred) and v1
 in discovery; a v1 create stored as v2's cpu metric; a v2 object with a

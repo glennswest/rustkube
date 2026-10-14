@@ -546,8 +546,11 @@ Every controller/scheduler mutation checks a monotonic leadership deadline;
 controller-manager renewal follows the same 10 s retry deadline as the
 scheduler's.
 See [the event-driven design](docs/event-driven-design.md) for the execution
-model and verified unit/API-rig cases. Live scale, latency, multi-master and
-runtime/storage acceptance remain tracked in #147/#149. Safe snapshots require
+model and verified unit/API-rig cases. The multi-master failure matrix that
+fits on one host passes (`test/e2e/multi-master.sh`, #149: three members,
+three apiservers, paused/killed/partitioned leaders, quorum loss); live scale,
+latency, separate-machine multi-master and runtime/storage acceptance remain
+tracked in #147 and with the hardware (#162). Safe snapshots require
 the datastore correction in **fastetcd v1.6.1**
 ([fastetcd#50](https://github.com/glennswest/fastetcd/issues/50)), or an
 equivalent correct etcd implementation. The pinned API rig verifies

@@ -7,8 +7,9 @@ in build slots until #173 and now run as the test image's `rigs`/`rigs-night`
 suites on a test machine. The verification record below identifies checked
 commits and cases. One turbomode behaviour has been verified on a published
 release: the scheduler's `allocatable.pods` limit under stormcos_qa's
-turbomode burst on pvetest1 (#197). Latency and multi-master acceptance remain
-#147/#149 (no multi-master hardware; owner on #162). The snapshot blocker
+turbomode burst on pvetest1 (#197). The one-host multi-master failure matrix
+passes on pvetest2 (`multi-master.sh`, #149, 2026-10-14); latency at scale
+is #147, and separate-machine multi-master waits for hardware (#162). The snapshot blocker
 [fastetcd#50](https://github.com/glennswest/fastetcd/issues/50) is fixed in
 v1.6.1; the rigs pin v1.12.0. The intermittent incidents #153/#154 are closed:
 #153's mechanism was fastetcd#50, #154 was not reproducible (31+ reruns).
@@ -591,5 +592,6 @@ diagnostics).
 
 These checks establish the implemented single-server dev acceptance boundary
 for #146, including the repaired LIST/WATCH snapshot contract. The live
-scale/runtime and multi-master failure matrix remain #147/#149 under the
-owner's existing direction, and cannot be inferred from this evidence.
+scale/runtime acceptance remains #147; the one-host multi-master failure
+matrix is `multi-master.sh` (#149, passing on pvetest2 2026-10-14), and
+separate-machine multi-master waits for hardware (#162).

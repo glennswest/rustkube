@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **docs:** #149: the one-host multi-master failure matrix passes 25/25 on pvetest2 (takeovers 15.8–17.7 s against a 15 s lease); README, test README, event-driven design.
 - **test:** `multi-master` (#149) adds a master partition (apiserver C reaches fastetcd through a userspace proxy the rig closes: C refuses writes with a 5xx, the standby controller-manager on B takes over and acts, healed C reads current and the old leader adds nothing) and one member paused (writes go on).
 - **fix:** A create in a namespace whose read fails for any reason but absence now gets that failure, e.g. 503 when the datastore has no quorum, not 403 "namespace … not found" (#149, found by the multi-master rig). A missing namespace is upstream's 404 NotFound `namespaces "x" not found`.
 - **test:** `multi-master` (#149) requires a 5xx for a write during quorum loss, retries (timed) the first LIST through C after quorum returns, and prints failover diagnostics as `NOTE` lines.
