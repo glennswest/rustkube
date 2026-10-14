@@ -1738,7 +1738,9 @@ results are in docs/conformance.md.
       mikrotik, and this issue parked till hardware available." Next: on the
       host, boot apiserver against fastetcd, record RSS and startup.
       2026-10-14: no ARM64 machine registered; `wait-owner --until` the
-      host is set up (recommend A, approved)
+      host is set up (recommend A, approved). Came back the same day when
+      needs-owner was removed (wait-owner labels it); re-parked, the loop
+      filed as stormcentral#847
 
 ### `oc` compatibility — the surface that drives completeness
 
