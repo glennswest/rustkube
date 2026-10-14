@@ -667,7 +667,7 @@ serving-cert rig); gen-pki.sh's default output leaves the terragrunt tree.
       golden-rustkube-f52d8fa2f47f (stormcos#366)
 - [ ] flowcontrol rig after stormcentral#512; then close
 
-### CR schema defaulting/pruning/fieldValidation (#121, P2) — BUILT, rig waits for test runs 2026-10-07
+### CR schema defaulting/pruning/fieldValidation (#121, P2) — COMPLETE 2026-10-14
 - [x] 3ae6a5c `schema.rs` (defaults, prune, unknown paths; preserve-unknown,
       additionalProperties, embedded-resource, ObjectMeta), CrdDefinition
       .schema, Strategy::Custom{schema, validation}; create/PUT/PATCH/apply
@@ -685,7 +685,9 @@ serving-cert rig); gen-pki.sh's default output leaves the terragrunt tree.
       where not nullable), 6 units (apiserver 333); cr-schema validation
       cases, Namespaced + Cluster. CEL, /status, watch defaults, format stay
       #240; SSA keyed-list ownership filed separately
-- [ ] rigs run at the rig commit; close #121, progress on #240
+- [x] cr-schema 34/34 in 1a879717b9 (pvetest2, e0778bf); #121 closed;
+      progress on #240; #275 filed (SSA keyed lists). Golden for 88a0641
+      with the next component build (after stormcentral#827)
 
 ### Service ports in strategic merge patch (#150, P2) — COMPLETE 2026-10-14
 - [x] `ports` keyed by content: `containerPort` when entries carry it, else
