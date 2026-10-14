@@ -433,7 +433,7 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 - [ ] rigs run (stormcentral#526), stormcos issue for proxy-client certs,
       golden
 
-### Store compaction / continue-token expiry (#139, P2) — BUILT, rig waits for test runs 2026-10-07
+### Store compaction / continue-token expiry (#139, P2) — COMPLETE 2026-10-14
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
       0`, revisions); space reclaim above 80% keeps 1000 revisions anyway;
       stormcos passes none of these flags — no routine compaction today, and
@@ -453,7 +453,9 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       revision N has been compacted`, and returns a compacted watch's cancel
       in the create response etcd-client drops. Adapter: `is_compacted`
       (both wordings), a read at a watch's start revision after create
-- [ ] rigs run; golden (with the next component build); close
+- [x] compaction 10/10 in rigs 51ef481a0b (pvetest2, 15a4de7; 11 failures
+      left, as before); #139 closed. Golden with the next component build
+      (after stormcentral#827)
 
 ### nodes/{name}/proxy (#108, P3) — BUILT 2026-10-08
 - [x] `handlers/node_proxy.rs` (every method → kubelet :10250, apiserver
