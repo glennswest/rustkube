@@ -436,7 +436,9 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       then read the availability probe), watch read chunk sizes (rig). Fix:
       `set_available` from the check before the status write; rig r.readline
 - [x] stormcos#405 (front-proxy pair + requestheader CA) filed 10-08
-- [ ] rigs run 3dd6f3f469; golden (next component build); close
+- [x] Build VM at fc180f3: tests pass (apiserver 334), aggregation.rs clippy-clean
+- [ ] rigs: 3dd6f3f469, b29fc80675 errored (pvetest2 down; pvetest1 no
+      release) → stormcentral#846, #83 proposed after it. Then rig, golden, close
 
 ### Store compaction / continue-token expiry (#139, P2) — COMPLETE 2026-10-14
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
