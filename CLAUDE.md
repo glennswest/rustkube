@@ -356,7 +356,7 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
       not list it" (stormcentral#512; 275 MB image, small ones pass); golden
       (stormcentral#541). On stormcos pod metrics wait for cadvisor#3
 
-### Rejected bearer token → 401, not anonymous (#115, P2) — BUILT, rig waits for test runs 2026-10-07
+### Rejected bearer token → 401, not anonymous (#115, P2) — COMPLETE 2026-10-14
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401
       Status (reason Unauthorized) whatever `--anonymous-auth`; anonymous only
       without credentials (no header, empty `Bearer `, other scheme); scheme
@@ -364,7 +364,8 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
       (rigs, `RK_ANONYMOUS_AUTH=true`); README/test README/CHANGELOG
 - [x] 7bebbaf on a build VM (sc-build-e80aa11f7e): workspace 548 passed /
       4 ignored (apiserver 271), exit 0. #229 (my test closure) closed
-- [ ] `rigs` run (bad-token.sh) waits for stormcentral#526; golden; close
+- [x] bad-token 9/9 in rigs 756f2f6c20 (pvetest1), 1a879717b9, 51ef481a0b
+      (pvetest2); in every golden since 10-07; #115 closed
 
 ### Metrics (#90, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] Reconcile metrics recorded per object pass (`owned::run`)
