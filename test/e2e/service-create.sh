@@ -41,7 +41,7 @@ def svc(name, ip=None):
 
 t = time.monotonic(); code, _ = req("POST", "/api/v1/namespaces/default/configmaps",
     {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "scale"}}); cm = time.monotonic() - t
-print(f"INFO  ConfigMap create {cm*1000:.1f} ms", flush=True)
+print(f"NOTE  ConfigMap create {cm*1000:.1f} ms", flush=True)
 
 seq = []
 for i in range(100):
@@ -50,7 +50,7 @@ for i in range(100):
     seq.append(dt)
 if len(seq) == 100:
     first, last = statistics.mean(seq[:20]), statistics.mean(seq[-20:])
-    print(f"INFO  sequential: p50 {statistics.median(seq)*1000:.1f} ms, max {max(seq)*1000:.1f} ms, "
+    print(f"NOTE  sequential: p50 {statistics.median(seq)*1000:.1f} ms, max {max(seq)*1000:.1f} ms, "
           f"first 20 mean {first*1000:.1f} ms, last 20 {last*1000:.1f} ms", flush=True)
     check(max(seq) < 1.0, f"100 sequential creates each under 1 s (max {max(seq):.3f} s)")
     check(last <= 2 * first + 0.01, f"no growth with the count: last 20 {last*1000:.1f} ms vs first 20 {first*1000:.1f} ms")
@@ -59,7 +59,7 @@ t0 = time.monotonic()
 with concurrent.futures.ThreadPoolExecutor(25) as pool:
     results = list(pool.map(lambda i: svc(f"burst-{i}"), range(25)))
 wall = time.monotonic() - t0
-print(f"INFO  25 concurrent: wall {wall:.2f} s, slowest {max(r[2] for r in results):.2f} s", flush=True)
+print(f"NOTE  25 concurrent: wall {wall:.2f} s, slowest {max(r[2] for r in results):.2f} s", flush=True)
 check(all(r[0] == 201 for r in results), f"25 concurrent creates all 201 ({[r[0] for r in results if r[0] != 201]})")
 check(wall < 10, f"25 concurrent creates done within 10 s ({wall:.2f} s)")
 

@@ -388,7 +388,7 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
       (stormcentral restarted), ccc3315c35 image built + pushed, then "the
       registry did not list it" (stormcentral#512). Then golden
 
-### Service create cost (#113, P2) — BUILT, rig waits for test runs 2026-10-07
+### Service create cost (#113, P2) — COMPLETE 2026-10-14
 Cause (from the code): `service_ip::allocate` walked the range from offset
 1, one store create-if-absent per address, so N Services = N+1 writes per
 create, and concurrent creates raced for the same lowest address.
@@ -399,7 +399,9 @@ create, and concurrent creates raced for the same lowest address.
 - [x] fd72fbc broke main (E0373, #230; #231 auto-filed); 566403b fixed it.
       Workspace on a build VM at 566403b (job 3cc07c33b9): 553 passed / 4
       ignored (apiserver 271, controller-manager 89), exit 0
-- [ ] rigs run (stormcentral#526) for the timings, golden, close #113
+- [x] service-create 8/8 in rigs 756f2f6c20 (pvetest1, 4.3 s whole rig),
+      1a879717b9 and 51ef481a0b (pvetest2, 3.4–3.5 s); timings now NOTE
+      lines; in every golden since 10-07; #113 closed
 
 ### Gateway controller: own classes only (#91, P2) — SHIPPED (golden-rustkube-4f7661e44994) 2026-10-07
 - [x] a4670a6 `gateway.rs`: acts only on GatewayClasses with controllerName
