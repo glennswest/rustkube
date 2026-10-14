@@ -715,13 +715,16 @@ role + KubeVirt status writes.
 - [ ] The rigs (every one exercises the roles) need a test run —
       stormcentral#526; then golden, close #176
 
-### Scheduler Events (#138, P2) — WRITTEN, not yet built 2026-10-07
+### Scheduler Events (#138, P2) — COMPLETE 2026-10-13
 PodScheduled=False/Unschedulable landed with #194; the Events were missing.
 - [x] `scheduler::events`: `Scheduled` on an acknowledged bind (spawned off
       the loop), `FailedScheduling` inside `report_pod_unschedulable` after
       its message-change check; unit for the shape; pod-limit.sh checks
-- [ ] COMPILED + unit tests pass on a build VM at b677499 (534 passed / 4 ignored); rigs + golden still wait — (stormcentral#521: no build host). Then workspace
-      build+test, `rigs` run (pod-limit), golden, close #138
+- [x] Build VM at b677499 (534 passed / 4 ignored), at 343b5b5 (643 / 4,
+      0 warnings) incl. `events_are_shaped_as_upstreams`
+- [x] pod-limit 12/12 (Event checks included) in rigs 7cac9d5177,
+      5bdcbdac41, 756f2f6c20 (pvetest1); 10d07cb in every golden since
+      10-07 (latest be6ddd9ee998); #138 closed
 
 ### resource.k8s.io/v1 (DRA) served (#137, P2) — COMPLETE 2026-10-13
 Owner (#137): "Please make sure there added, … after our turbomode merge"

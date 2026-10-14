@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **docs:** #138 verified: `pod-limit` 12/12 with its Scheduled/FailedScheduling checks in three `rigs` runs on pvetest1; closed.
 - **perf:** The scheduler writes a WaitForFirstConsumer claim's `selected-node` in the background, with the node reserved first, the way binds already are (#147). Inline, 25 such Pods queued behind one another's claim writes, ~60 ms each: create→selected went 0–1.5 s down the queue and their binds waited behind it (`wffc-latency`, run 874df289d5 on pvetest1: create→bound p99 1.95 s). If a claim write fails, the reservation is dropped and the Pod is retried with backoff, as before.
 - **perf:** The PV binder binds a provisioner's pre-bound volume in one pass (#147), as upstream's binder does. It writes no PUT on the already pre-bound PV, then the claim's `volumeName`, then the claim's Bound status from that answer. Before, the Bound status waited for the claim's own update to come back round (a queue pass plus a store GET of the PV), ~0.5 s a claim under 25 at once.
 - **docs:** #147 results with both changes, `wffc-latency` on pvetest1: create→bound p99 0.928 s (5bdcbdac41) and 0.591 s (756f2f6c20), against 1.95–2.27 s before. pv→claim-bound (p50 0.34 s) is the largest step left. The golden waits for stormcentral#827.
