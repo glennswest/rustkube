@@ -696,8 +696,16 @@ paged snapshots (list-snapshot-race).
 - [x] cb30463 suite `multi-master` (the rig alone, 900 s budget, day):
       rigs-night only takes 22:00–07:00 and C2NR0Q2/server3/pvetest1 are
       refused (no release). Build VM: rustkube-test build/test/clippy clean
-- [ ] Run 83c1270bd5 (pvetest2, cb30463); fix what it finds; report on
-      #149. Real network partition, clocks, disks stay #162's hardware
+- [x] 83c1270bd5 (pvetest2, cb30463): 15/16, the fresh controller-manager
+      on C made no Pods for e (no log in the pod tail) → bc181d8 diag NOTE
+      lines. 74bc069ff0 (bc181d8): 14 passed, then LIST via C right after
+      quorum returned errored (rig crashed); the no-quorum write was **403**
+- [x] 776a392 namespace admission: only NotFound → 404 `namespaces "x" not
+      found`, other read errors pass through (503); unit + MemStore
+      unavailable switch; rig wants 5xx, retries C's LIST (timed). Build VM:
+      644 passed / 4 ignored; 8619eaf clippy alias, changed files clean
+- [ ] 9fda2733bf (pvetest2, 776a392); the e-Pods failure if it recurs (diag);
+      report on #149. Real network partition, clocks, disks stay #162's
 
 ### Least-privilege bootstrap RBAC (#176, P2) — COMPLETE 2026-10-13
 Owner (2026-10-07): A now — one controller-manager role written from real
