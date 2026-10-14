@@ -1736,7 +1736,9 @@ results are in docs/conformance.md.
       2026-10-09: measure A first (the three binaries as built; B/C from the
       numbers); "Microtik is not compatible with what we are building … no
       mikrotik, and this issue parked till hardware available." Next: on the
-      host, boot apiserver against fastetcd, record RSS and startup
+      host, boot apiserver against fastetcd, record RSS and startup.
+      2026-10-14: no ARM64 machine registered; `wait-owner --until` the
+      host is set up (recommend A, approved)
 
 ### `oc` compatibility — the surface that drives completeness
 
