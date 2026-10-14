@@ -51,6 +51,29 @@ def check(ok, what):
     global failed
     print(("PASS  " if ok else "FAIL  ") + what, flush=True)
     failed += 0 if ok else 1
+    return ok
+
+def diag(app):
+    """Why a failover check failed, as NOTE lines: rigs.sh copies those to
+    the pod log whole, where a failed rig's tail is mostly report()'s dumps of
+    apiserver A and member 0, not the processes this rig started."""
+    note = lambda m: print("NOTE  " + m[:600], flush=True)
+    note(f"diag {app}: controller-manager lease {holder('kube-controller-manager')}, "
+         f"scheduler lease {holder('kube-scheduler')}, procs alive "
+         f"{sorted(k for k, p in procs.items() if p.poll() is None)}")
+    for n in (1, 2):
+        _, d = req(n, "GET", f"/apis/apps/v1/namespaces/mm/deployments/{app}")
+        rs = req(n, "GET", f"/apis/apps/v1/namespaces/mm/replicasets?labelSelector=app%3D{app}")[1]
+        ps = req(n, "GET", f"/api/v1/namespaces/mm/pods?labelSelector=app%3D{app}")[1]
+        note(f"diag {app} via {'ABC'[n]}: deployment status {(d or {}).get('status') if isinstance(d, dict) else d}; "
+             f"replicasets {[(r['metadata']['name'], r['spec'].get('replicas'), r.get('status', {}).get('replicas')) for r in rs['items']] if isinstance(rs, dict) else rs}; "
+             f"pods {len(ps['items']) if isinstance(ps, dict) else ps}")
+    for f in sorted(os.listdir(W)):
+        if re.fullmatch(r"(controller-manager-.|scheduler-.|apiserver[12]|fastetcd[12])\.log", f):
+            lines = [l.rstrip() for l in open(f"{W}/{f}", errors="replace")
+                     if (" WARN " in l or " ERROR " in l) and "404 Not Found" not in l]
+            for l in lines[-12:]:
+                note(f"diag {f}: {l}")
 
 def req(n, method, path, body=None, ctype="application/json", timeout=15):
     """(status, body) from apiserver n; (0, error) when it cannot answer."""
@@ -184,7 +207,8 @@ try:
     new = until(lambda: (h := holder("kube-controller-manager")) not in (None, cm_leader) and h, 60)
     took = time.monotonic() - t0
     check(bool(new), f"standby controller-manager takes over from the paused leader ({took:.1f} s; lease 15 s)")
-    check(bool(until(lambda: (p := pods("d")) is not None and len(p) == 7, 60)), "the new leader scales d to 7")
+    if not check(bool(until(lambda: (p := pods("d")) is not None and len(p) == 7, 60)), "the new leader scales d to 7"):
+        diag("d")
     leader.send_signal(signal.SIGCONT)
     time.sleep(20)
     p, r = pods("d"), rsets("d")
@@ -205,8 +229,9 @@ try:
     # --- an apiserver killed ------------------------------------------------
     os.kill(API_PIDS[0], signal.SIGKILL)
     check(req(1, "DELETE", f"{D}/d")[0] in (200, 202), "Deployment d deleted through B with A dead")
-    check(bool(until(lambda: (p := pods("d", 2)) is not None and not p, 120)),
-          "its ReplicaSet's Pods are collected with A dead (a controller-manager on B or C)")
+    if not check(bool(until(lambda: (p := pods("d", 2)) is not None and not p, 120)),
+                 "its ReplicaSet's Pods are collected with A dead (a controller-manager on B or C)"):
+        diag("d")
 
     # --- datastore quorum loss ----------------------------------------------
     before = names(1)
@@ -235,8 +260,9 @@ try:
         procs[k].kill()
     launch("controller-manager", "c", 2)
     deploy("e", 2)
-    check(bool(until(lambda: (p := pods("e", 2)) is not None and len(p) == 2, 120)),
-          "a fresh controller-manager on C rebuilds its queues and creates e's 2 Pods")
+    if not check(bool(until(lambda: (p := pods("e", 2)) is not None and len(p) == 2, 120)),
+                 "a fresh controller-manager on C rebuilds its queues and creates e's 2 Pods"):
+        diag("e")
 finally:
     for p in procs.values():
         try: p.send_signal(signal.SIGCONT); p.kill()
