@@ -14,9 +14,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+/// The store's revision, and key → (value, the revision that last wrote it).
+type Data = (u64, BTreeMap<String, (Vec<u8>, u64)>);
+
 #[derive(Default)]
 pub struct MemStore {
-    inner: Mutex<(u64, BTreeMap<String, (Vec<u8>, u64)>)>,
+    inner: Mutex<Data>,
     /// Every read fails as a datastore without quorum does.
     unavailable: AtomicBool,
 }
