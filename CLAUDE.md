@@ -1740,7 +1740,8 @@ results are in docs/conformance.md.
       2026-10-14: no ARM64 machine registered; `wait-owner --until` the
       host is set up (recommend A, approved). Came back the same day when
       needs-owner was removed (wait-owner labels it); re-parked, the loop
-      filed as stormcentral#847
+      filed as stormcentral#847. Came back again 10-14 (no ARM64 test host):
+      proposed `--after stormcentral#847` instead of another wait-owner
 
 ### `oc` compatibility — the surface that drives completeness
 
