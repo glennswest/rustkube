@@ -820,10 +820,12 @@ bind is several writes (~100 ms), 25 in a line → 0–2.6 s.
 - [x] Repeat 756f2f6c20 (pvetest1, 5f25dfa): p99 0.591 s (p50 0.458),
       create→selected max 0.09, pv→claim-bound p50 0.339 (largest left);
       94da6b412d (pvetest2) still queued. Distributions posted on #147
-- [ ] Golden: `component build rustkube` aborts twice, POST /exports 404
-      (stormd input golden-stormd-13e688ca601e gone, stormcentral#827);
-      proposed after it. Then request again. Scale/multi-node acceptance
-      stays for hardware (#162); #147 stays open
+- [x] pvetest2 repeat 94da6b412d (5f25dfa): p99 0.279 s — three passes
+      on two machines (0.928 / 0.591 / 0.279 s)
+- [ ] Golden: stormcentral#827 closed 2026-10-14, but every golden build
+      now fails at sc-build-out and forge lost most inputs
+      (stormcentral#841, open); proposed after it. Then request again.
+      Scale/multi-node acceptance stays for hardware (#162); #147 stays open
 - [ ] (old) Test-machine runs — BLOCKED on stormcentral#521 (dev.g8.lo retired;
       the runner's build step: "No route to host", 8e8fbe4a61). Earlier:
       pvetest1 seals nothing (stormcentral#512), server3 flow-over (2 runs).
