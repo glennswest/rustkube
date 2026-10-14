@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **docs:** #101 verified: `secret-stringdata` 5/5 in three rigs runs (pvetest1, pvetest2); closed.
 - **docs:** #115 verified: `bad-token` 9/9 in three rigs runs (pvetest1, pvetest2); closed.
 - **docs:** #139 verified: `compaction` 10/10 on pvetest2; closed.
 - **fix:** A continue token or `Exact` LIST whose revision is compacted is 410 `Expired` against fastetcd before v1.14.0 too (#139): its compacted error reads `required revision N has been compacted (…)`, which rustkube did not recognise, so the answer was 500. A WATCH from a compacted revision gets its ERROR 410 instead of hanging: etcd-client keeps only the id of the create response, and a store that refuses a compacted start in that response (fastetcd before v1.14.0) left a silent stream; the adapter now reads at the start revision once the watch is made.

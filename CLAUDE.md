@@ -229,14 +229,14 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
 - [ ] status-put-latency rig (stormcentral#512); real acceptance: the next
       slow PUT on pvetest1 logs its breakdown after the release
 
-### Secret stringData folded into data (#101, P2) — IN PROGRESS 2026-10-07
+### Secret stringData folded into data (#101, P2) — COMPLETE 2026-10-14
 - [x] `builtin_admission::fold_string_data` on create, PUT, PATCH (before
       the immutability check, again after webhooks), startup manifests; boot
       backfill for stored Secrets; unit; README/CHANGELOG
 - [x] b677499 on a build VM (`SC_BUILD_VM=1 sc-build`, job 414c3ccedc):
       workspace 534 passed / 4 ignored; `test/e2e/secret-stringdata.sh`
-- [ ] rigs run + golden: test images still build on dev (c47ec57c27
-      errored there) — stormcentral#521
+- [x] secret-stringdata 5/5 in rigs 756f2f6c20 (pvetest1), 1a879717b9,
+      51ef481a0b (pvetest2); in every golden since 10-07; #101 closed
 
 ### autoscaling/v1 served (#123, P3) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
 - [x] `handlers/hpa_v1.rs` (to_v1/to_v2 with upstream's annotations; v1
