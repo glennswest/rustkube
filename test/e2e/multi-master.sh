@@ -16,19 +16,73 @@
 #     Pods is never given more than 10
 #   - an apiserver killed: the control plane keeps working through the others
 #     (a deleted Deployment's Pods are collected)
+#   - one datastore member paused: writes still succeed (a minority)
 #   - datastore quorum loss (two of three members killed): writes fail, and
 #     nothing acknowledged is lost when the members return
 #   - a fresh controller-manager rebuilds its queues and acts
+#   - a master partitioned: apiserver C, whose controller-manager leads, cut
+#     off from the datastore (C reaches fastetcd through a userspace proxy the
+#     rig closes). C refuses writes with a 5xx; the leader's renewals fail and
+#     the standby on B takes over and acts; healed, C serves current reads
+#     and the old leader adds nothing
 #
 # Takeover times are printed; they are the intended lease-expiry failover,
-# not request latency. A real network partition needs privileges a test pod
-# lacks; a stopped (SIGSTOP) process stands in for one that cannot be
-# reached. Exit status is the number of failed checks.
+# not request latency. A test pod has no privilege for netns or iptables, so
+# the master partition is a TCP proxy between apiserver C and the datastore,
+# and a stopped (SIGSTOP) process stands in for an unreachable one elsewhere.
+# Separate machines' clocks and disks need hardware (#162). Exit status is the
+# number of failed checks.
 export RK_ETCD_MEMBERS=3 RK_APISERVERS=3
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 start_apiserver 1
+# Apiserver C reaches the datastore through a proxy (one kernel-chosen
+# loopback port per member) that drops every connection, and refuses new
+# ones, while $W/partition exists: the master partition, without privilege.
+cat >"$W/partition.py" <<'PROXY'
+import asyncio, os, sys
+flag, targets = sys.argv[1], [int(p) for p in sys.argv[2:]]
+live = set()
+async def pipe(r, w):
+    try:
+        while data := await r.read(65536):
+            w.write(data); await w.drain()
+    except Exception:
+        pass
+    finally:
+        w.close()
+def serve(target):
+    async def handle(cr, cw):
+        if os.path.exists(flag):
+            cw.close(); return
+        try:
+            ur, uw = await asyncio.open_connection("127.0.0.1", target)
+        except OSError:
+            cw.close(); return
+        pair = (cw, uw); live.add(pair)
+        await asyncio.gather(pipe(cr, uw), pipe(ur, cw))
+        live.discard(pair)
+    return handle
+async def main():
+    servers = [await asyncio.start_server(serve(t), "127.0.0.1", 0) for t in targets]
+    print(",".join(str(s.sockets[0].getsockname()[1]) for s in servers), flush=True)
+    while True:
+        await asyncio.sleep(0.2)
+        if os.path.exists(flag):
+            for pair in list(live):
+                for w in pair: w.close()
+asyncio.run(main())
+PROXY
+python3 -I "$W/partition.py" "$W/partition" $(for i in $(seq 0 $((MEMBERS - 1))); do printf '%d ' $((ETCD + 3 * i)); done) >"$W/proxy.ports" 2>"$W/proxy.log" &
+PROXY_PID=$!
+for _ in $(seq 50); do [ -s "$W/proxy.ports" ] && break; sleep 0.1; done
+[ -s "$W/proxy.ports" ] || { echo "partition proxy did not start"; cat "$W/proxy.log"; exit 100; }
+DIRECT_ETCD_SERVERS=$ETCD_SERVERS
+proxied=$(<"$W/proxy.ports")
+ETCD_SERVERS=$(printf 'http://127.0.0.1:%s,' ${proxied//,/ })
+ETCD_SERVERS=${ETCD_SERVERS%,}
 start_apiserver 2
+ETCD_SERVERS=$DIRECT_ETCD_SERVERS
 for n in 1 2; do
   for _ in $(seq 120); do
     curl -sfk -H "Authorization: Bearer $ADMIN" "https://127.0.0.1:$((PORT + n))/readyz" >/dev/null && break
@@ -236,6 +290,13 @@ try:
                  "its ReplicaSet's Pods are collected with A dead (a controller-manager on B or C)"):
         diag("d")
 
+    # --- one datastore member paused: a minority, writes go on --------------
+    os.kill(STORE_PIDS[2], signal.SIGSTOP)
+    ok = until(lambda: req(1, "POST", "/api/v1/namespaces/mm/configmaps",
+                           {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "minority"}})[0] == 201, 60)
+    check(bool(ok), "one of three members paused: a write through B still succeeds")
+    os.kill(STORE_PIDS[2], signal.SIGCONT)
+
     # --- datastore quorum loss ----------------------------------------------
     before = names(1)
     for i in (1, 2):
@@ -276,6 +337,33 @@ try:
     if not check(bool(until(lambda: (p := pods("e", 2)) is not None and len(p) == 2, 120)),
                  "a fresh controller-manager on C rebuilds its queues and creates e's 2 Pods"):
         diag("e")
+
+    # --- a master partitioned from the datastore ----------------------------
+    # C's controller-manager leads (it is the only one); a standby joins on B,
+    # then C loses the datastore while it still answers its clients.
+    c_id = identity("controller-manager", "c")
+    until(lambda: holder("kube-controller-manager") == c_id, 60)
+    launch("controller-manager", "d", 1)
+    d_id = identity("controller-manager", "d")
+    open(f"{W}/partition", "w").close(); t0 = time.monotonic()
+    code, _ = req(2, "POST", "/api/v1/namespaces/mm/configmaps",
+                  {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "partitioned"}}, timeout=30)
+    check(500 <= code < 600, f"partitioned C refuses a write with a 5xx ({code})")
+    new = until(lambda: holder("kube-controller-manager") == d_id, 90)
+    check(bool(new), f"the standby on B takes over from the partitioned leader on C "
+                     f"({time.monotonic() - t0:.1f} s; lease 15 s)")
+    scale(1, "e", 4)
+    if not check(bool(until(lambda: (p := pods("e")) is not None and len(p) == 4, 60)),
+                 "the new leader on B scales e to 4 while C is partitioned"):
+        diag("e")
+    os.remove(f"{W}/partition")
+    fresh = until(lambda: (p := pods("e", 2)) is not None and len(p) == 4, 60)
+    check(bool(fresh), "healed: C serves e's 4 Pods (its watch cache caught up)")
+    time.sleep(20)
+    p, r = pods("e"), rsets("e")
+    check(p is not None and len(p) == 4 and len(r) == 1 and holder("kube-controller-manager") == d_id,
+          f"healed: the old leader adds nothing ({len(p or [])} Pods, {len(r)} ReplicaSet(s), "
+          f"lease {holder('kube-controller-manager')})")
 finally:
     for p in procs.values():
         try: p.send_signal(signal.SIGCONT); p.kill()
