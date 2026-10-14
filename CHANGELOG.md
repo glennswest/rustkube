@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **fix:** An aggregated APIService is proxied as soon as this apiserver's own check passes (#83): the proxy's table followed the stored status a second behind, so a client that saw `Available` True was answered 503 for up to that second.
+- **fix:** `aggregation.sh` reads its proxied watch through the response decoder.
 - **docs:** #101 verified: `secret-stringdata` 5/5 in three rigs runs (pvetest1, pvetest2); closed.
 - **docs:** #115 verified: `bad-token` 9/9 in three rigs runs (pvetest1, pvetest2); closed.
 - **docs:** #139 verified: `compaction` 10/10 on pvetest2; closed.

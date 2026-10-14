@@ -143,6 +143,22 @@ impl Aggregator {
         self.services.read().unwrap().clone()
     }
 
+    /// This apiserver's own check of `name`'s backend, into the table at once.
+    /// The table otherwise follows the stored status a second behind, so a
+    /// client that saw `Available` True (written by this apiserver) was
+    /// answered 503 for up to that second (#83). Another replica's verdict
+    /// arrives with the stored status, as before.
+    pub fn set_available(&self, name: &str, available: bool) {
+        let mut services = self.services.write().unwrap();
+        if services.iter().any(|a| a.name == name && a.available != available) {
+            let mut next = (**services).clone();
+            for a in next.iter_mut().filter(|a| a.name == name) {
+                a.available = available;
+            }
+            *services = Arc::new(next);
+        }
+    }
+
     /// The APIService that serves `path`: one with a service, for the group
     /// and version the path is under (`/apis/{group}/{version}` or below), in
     /// a group that is not built in.
@@ -290,6 +306,8 @@ pub async fn keep_available(storage: Arc<ResourceStorage>, aggregator: Arc<Aggre
         tick.tick().await;
         for api in aggregator.services().iter() {
             let (ok, reason, message) = check(&storage, &aggregator, api).await;
+            // Proxied (or refused) here before anyone can read the status.
+            aggregator.set_available(&api.name, ok);
             write_available(&storage, &api.name, ok, reason, &message).await;
         }
     }
@@ -492,6 +510,28 @@ mod tests {
         agg.set(vec![ApiService::parse(&api("metrics.k8s.io", "v1beta1", true, 100, 100)).unwrap()]);
         assert!(agg.claims("/apis/metrics.k8s.io/v1beta1/nodes").is_none());
         assert!(agg.claims("/api/v1/pods").is_none());
+    }
+
+    /// A check's own verdict is in the table before its status is stored,
+    /// and only for that APIService (#83: 503s right after Available).
+    #[test]
+    fn a_check_sets_availability_at_once() {
+        let agg = Aggregator::new(None);
+        let mut pending = api("stub.example.com", "v1", true, 100, 100);
+        pending["status"] = json!({});
+        agg.set(vec![
+            ApiService::parse(&pending).unwrap(),
+            ApiService::parse(&api("other.example.com", "v1", true, 100, 100)).unwrap(),
+        ]);
+        let available = |p: &str| agg.claims(p).unwrap().available;
+        assert!(!available("/apis/stub.example.com/v1"));
+        agg.set_available("v1.stub.example.com", true);
+        assert!(available("/apis/stub.example.com/v1"));
+        agg.set_available("v1.stub.example.com", false);
+        assert!(!available("/apis/stub.example.com/v1"));
+        assert!(available("/apis/other.example.com/v1"), "another APIService is untouched");
+        agg.set_available("v1.gone.example.com", true);
+        assert_eq!(agg.services().len(), 2, "an unknown name adds nothing");
     }
 
     #[test]

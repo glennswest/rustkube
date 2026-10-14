@@ -431,8 +431,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       README/inventory/presentation/oc-compat/test README/CHANGELOG
 - [x] Compiled + units at 566403b (3cc07c33b9; after four cancelled
       jobs, stormcentral#535): apiserver 271, workspace 553 / 4 ignored
-- [ ] rigs run (stormcentral#526), stormcos issue for proxy-client certs,
-      golden
+- [x] aggregation rig 17/21 every run: discovery/LIST 503 right after
+      Available (the table followed status 1 s behind; the identity check
+      then read the availability probe), watch read chunk sizes (rig). Fix:
+      `set_available` from the check before the status write; rig r.readline
+- [ ] rigs run; stormcos issue for proxy-client certs; golden; close
 
 ### Store compaction / continue-token expiry (#139, P2) — COMPLETE 2026-10-14
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention

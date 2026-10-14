@@ -171,7 +171,9 @@ u = urllib.parse.urlparse(sys.argv[1])
 c = http.client.HTTPSConnection(u.hostname, u.port, context=ssl._create_unverified_context(), timeout=20)
 t0 = time.time()
 c.request("GET", "/apis/stub.example.com/v1/namespaces/default/widgets?watch=1", headers={"Authorization": "Bearer " + sys.argv[2]})
-r = c.getresponse(); first = r.fp.readline(); t1 = time.time(); second = r.fp.readline(); t2 = time.time()
+# r.readline, not r.fp.readline: the stream is chunked, and the raw socket
+# file hands back chunk-size lines.
+r = c.getresponse(); first = r.readline(); t1 = time.time(); second = r.readline(); t2 = time.time()
 ok = r.status == 200 and b"w1" in first and b"w2" in second and t1 - t0 < 2 and t2 - t0 >= 2.5
 print(r.status, first[:80], second[:80], round(t1 - t0, 2), round(t2 - t0, 2))
 sys.exit(0 if ok else 1)
