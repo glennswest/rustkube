@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-13
+- **fix:** A create in a namespace whose read fails for any reason but absence now gets that failure, e.g. 503 when the datastore has no quorum, not 403 "namespace … not found" (#149, found by the multi-master rig). A missing namespace is upstream's 404 NotFound `namespaces "x" not found`.
+- **test:** `multi-master` (#149) requires a 5xx for a write during quorum loss, retries (timed) the first LIST through C after quorum returns, and prints failover diagnostics as `NOTE` lines.
 - **test:** Suite `multi-master` (#149): rigs-night's multi-master rig on its own, day-sized (15 min budget), so the failure matrix runs outside the night window.
 - **docs:** #176 verified: every `rigs` rig runs the controller-manager and scheduler under their least-privilege roles, 51/63 passing on pvetest1 with no 403 for either; closed (the Node authorizer stays #228).
 - **docs:** #138 verified: `pod-limit` 12/12 with its Scheduled/FailedScheduling checks in three `rigs` runs on pvetest1; closed.

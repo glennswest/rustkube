@@ -240,7 +240,9 @@ try:
     time.sleep(3)
     code, _ = req(1, "POST", "/api/v1/namespaces/mm/configmaps",
                   {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "during-loss"}}, timeout=30)
-    check(code not in (200, 201), f"no quorum: a write is refused, not acknowledged ({code})")
+    # 5xx: the datastore's failure, not a 403 that reads as a permission
+    # problem (namespace admission turned every read error into one).
+    check(500 <= code < 600, f"no quorum: a write is refused with a 5xx, not acknowledged ({code})")
     for i in (1, 2):
         procs[f"fastetcd-{i}"] = subprocess.Popen([FASTETCD, "--name", f"m{i}", "--data-dir", f"{W}/etcd{i}",
             "--listen-client-urls", f"http://127.0.0.1:{ETCD + 3 * i}",
@@ -252,8 +254,16 @@ try:
     ok = until(lambda: req(1, "POST", "/api/v1/namespaces/mm/configmaps",
                            {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "after-loss"}})[0] == 201, 120)
     check(bool(ok), "quorum back: writes succeed again")
-    after = names(2)
-    check(before <= after, f"nothing acknowledged was lost ({len(before - after)} missing)")
+    # C's first reads may still find its store connection catching up: a
+    # client retries those, and so does this, timed.
+    t0 = time.monotonic()
+    listed = until(lambda: (r := req(2, "GET", "/api/v1/namespaces/mm/configmaps"))[0] == 200 and r[1], 60)
+    if listed:
+        after = {c["metadata"]["name"] for c in listed["items"]}
+        check(before <= after, f"nothing acknowledged was lost ({len(before - after)} missing; "
+                               f"C answered a LIST {time.monotonic() - t0:.1f} s after B's write)")
+    else:
+        check(False, f"C answers a LIST within 60 s of quorum ({req(2, 'GET', '/api/v1/namespaces/mm/configmaps')})")
 
     # --- a fresh controller-manager rebuilds and acts -----------------------
     for k in [k for k in procs if k.startswith("controller-manager")]:

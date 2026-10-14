@@ -10,17 +10,29 @@ use apimachinery::store::{KvStore, LeaseId, ListResult, WatchStream};
 use apimachinery::{Error, Result};
 use async_trait::async_trait;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 #[derive(Default)]
 pub struct MemStore {
     inner: Mutex<(u64, BTreeMap<String, (Vec<u8>, u64)>)>,
+    /// Every read fails as a datastore without quorum does.
+    unavailable: AtomicBool,
+}
+
+impl MemStore {
+    pub fn set_unavailable(&self, on: bool) {
+        self.unavailable.store(on, Ordering::SeqCst);
+    }
 }
 
 #[async_trait]
 impl KvStore for MemStore {
     async fn get(&self, key: &str) -> Result<Option<(Vec<u8>, u64)>> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(Error::Unavailable("no quorum".into()));
+        }
         Ok(self.inner.lock().unwrap().1.get(key).cloned())
     }
 

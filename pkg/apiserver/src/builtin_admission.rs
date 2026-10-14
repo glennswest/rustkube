@@ -373,7 +373,12 @@ async fn namespace_lifecycle(
             }
             Ok(nsobj)
         }
-        Err(_) => Err(ApiError::forbidden(&format!("namespace {ns} not found"))),
+        // Upstream's NamespaceLifecycle: a missing namespace is NotFound
+        // (404, `namespaces "x" not found`); any other read failure is that
+        // failure. Every error used to be a 403 "namespace … not found", so a
+        // datastore without quorum read as a permission problem (#149).
+        Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => Err(ApiError::not_found("namespaces", ns)),
+        Err(e) => Err(e),
     }
 }
 
@@ -1006,6 +1011,35 @@ mod namespace_tests {
         assert!(!namespace_defaults(&mut ns));
         assert_eq!(ns["status"]["phase"], "Terminating");
         assert_eq!(ns["spec"]["finalizers"], json!([]));
+    }
+}
+
+#[cfg(test)]
+mod namespace_lifecycle_tests {
+    use super::*;
+    use crate::test_store::MemStore;
+    use std::sync::Arc;
+
+    /// A missing namespace is upstream's 404 NotFound; a datastore that cannot
+    /// answer is its own error (503), not a 403 that reads as a permission
+    /// problem (#149: the multi-master rig's write during quorum loss).
+    #[tokio::test]
+    async fn only_a_missing_namespace_is_not_found() {
+        let store = Arc::new(MemStore::default());
+        let s = ResourceStorage::new(store.clone());
+        let e = namespace_lifecycle(&s, "gone").await.unwrap_err();
+        assert_eq!((e.status, e.reason.as_str(), e.message.as_str()),
+                   (axum::http::StatusCode::NOT_FOUND, "NotFound", "namespaces \"gone\" not found"));
+
+        s.create(&ResourceStorage::cluster_key("namespaces", "ns"),
+                 json!({"metadata": {"name": "ns"}, "status": {"phase": "Active"}}))
+            .await
+            .unwrap();
+        assert!(namespace_lifecycle(&s, "ns").await.is_ok());
+
+        store.set_unavailable(true);
+        let e = namespace_lifecycle(&s, "ns").await.unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::SERVICE_UNAVAILABLE, "{e:?}");
     }
 }
 
