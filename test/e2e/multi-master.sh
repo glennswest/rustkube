@@ -71,6 +71,10 @@ async def main():
         if os.path.exists(flag):
             for pair in list(live):
                 for w in pair: w.close()
+            # Said once every connection is gone: the rig's next request
+            # cannot ride one opened before the cut.
+            if not live and not os.path.exists(flag + ".closed"):
+                open(flag + ".closed", "w").close()
 asyncio.run(main())
 PROXY
 python3 -I "$W/partition.py" "$W/partition" $(for i in $(seq 0 $((MEMBERS - 1))); do printf '%d ' $((ETCD + 3 * i)); done) >"$W/proxy.ports" 2>"$W/proxy.log" &
@@ -346,6 +350,8 @@ try:
     launch("controller-manager", "d", 1)
     d_id = identity("controller-manager", "d")
     open(f"{W}/partition", "w").close(); t0 = time.monotonic()
+    check(bool(until(lambda: os.path.exists(f"{W}/partition.closed"), 10)),
+          "the proxy has dropped C's datastore connections")
     code, _ = req(2, "POST", "/api/v1/namespaces/mm/configmaps",
                   {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "partitioned"}}, timeout=30)
     check(500 <= code < 600, f"partitioned C refuses a write with a 5xx ({code})")
@@ -356,7 +362,7 @@ try:
     if not check(bool(until(lambda: (p := pods("e")) is not None and len(p) == 4, 60)),
                  "the new leader on B scales e to 4 while C is partitioned"):
         diag("e")
-    os.remove(f"{W}/partition")
+    os.remove(f"{W}/partition"); os.remove(f"{W}/partition.closed")
     fresh = until(lambda: (p := pods("e", 2)) is not None and len(p) == 4, 60)
     check(bool(fresh), "healed: C serves e's 4 Pods (its watch cache caught up)")
     time.sleep(20)
