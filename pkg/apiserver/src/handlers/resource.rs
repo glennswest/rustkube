@@ -702,6 +702,18 @@ impl Strategy {
         }
     }
 
+    /// The schema's value validations on the object as it will be stored:
+    /// 422 with upstream's field errors. `old` (an update's stored object)
+    /// lets an unchanged invalid value through, as upstream ratchets.
+    fn validate_schema(&self, obj: &Value, old: Option<&Value>) -> Result<(), ApiError> {
+        let Strategy::Custom { schema: Some(schema), .. } = self else { return Ok(()) };
+        let errs = crate::schema::validate(obj, schema, old);
+        if errs.is_empty() {
+            return Ok(());
+        }
+        Err(ApiError::invalid(&crate::schema::invalid_message(obj, &errs)))
+    }
+
     /// A create through the main resource.
     pub fn on_create(&self, obj: &mut Value) -> Result<(), ApiError> {
         let Strategy::Custom { status_subresource, .. } = self else { return Ok(()) };
@@ -713,7 +725,7 @@ impl Strategy {
         if let Some(meta) = o.get_mut("metadata").and_then(Value::as_object_mut) {
             meta.insert("generation".into(), json!(1));
         }
-        Ok(())
+        self.validate_schema(obj, None)
     }
 
     /// An update through the main resource: `stored` is what is there now.
@@ -750,7 +762,7 @@ impl Strategy {
             o.insert("metadata".into(), json!({}));
         }
         o["metadata"]["generation"] = json!(generation);
-        Ok(())
+        self.validate_schema(obj, Some(stored))
     }
 }
 
