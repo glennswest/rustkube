@@ -435,7 +435,8 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       Available (the table followed status 1 s behind; the identity check
       then read the availability probe), watch read chunk sizes (rig). Fix:
       `set_available` from the check before the status write; rig r.readline
-- [ ] rigs run; stormcos issue for proxy-client certs; golden; close
+- [x] stormcos#405 (front-proxy pair + requestheader CA) filed 10-08
+- [ ] rigs run 3dd6f3f469; golden (next component build); close
 
 ### Store compaction / continue-token expiry (#139, P2) — COMPLETE 2026-10-14
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
