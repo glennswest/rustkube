@@ -693,8 +693,11 @@ host is a rig: `test/e2e/multi-master.sh` (rigs-night) with lib.sh
 leader pause/kill (scheduler-failover), second apiserver (crd-restart),
 paged snapshots (list-snapshot-race).
 - [x] lib.sh multi-member/multi-apiserver; multi-master.sh; docs
-- [ ] Run it (rigs-night, a pve VM at night): no build host until
-      stormcentral#521. Then fix what it finds; real hardware stays #162's
+- [x] cb30463 suite `multi-master` (the rig alone, 900 s budget, day):
+      rigs-night only takes 22:00–07:00 and C2NR0Q2/server3/pvetest1 are
+      refused (no release). Build VM: rustkube-test build/test/clippy clean
+- [ ] Run 83c1270bd5 (pvetest2, cb30463); fix what it finds; report on
+      #149. Real network partition, clocks, disks stay #162's hardware
 
 ### Least-privilege bootstrap RBAC (#176, P2) — COMPLETE 2026-10-13
 Owner (2026-10-07): A now — one controller-manager role written from real
