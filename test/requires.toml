@@ -18,6 +18,13 @@ budget_secs = 1800
 # failover, the cert reload ticks: over 30 minutes, so night only, on a VM.
 budget_secs = 7200
 
+[multi-master]
+# rigs-night's multi-master rig alone (#149): a 3-member fastetcd cluster,
+# three apiservers, two electing controller-managers and schedulers, the
+# failure matrix in a few minutes. Day-sized, so it runs outside the night
+# window.
+budget_secs = 900
+
 [node-logs]
 # The node's pod logs, read-only, grepped for client-go's watch-stream
 # decode errors (#180): whether any client on the node fails to read this

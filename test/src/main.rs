@@ -5,7 +5,8 @@
 //! and exits 0 if everything passed, 1 if a test failed, and 2 if the suite
 //! could not run. `/test idle [seconds]` is what the pods the suites create
 //! run. `/test rigs` and `/test rigs-night` run the e2e rigs inside the pod
-//! (test/rigs.sh, #173); `/test node-logs` reads the node's pod logs for
+//! (test/rigs.sh, #173), and `/test multi-master` rigs-night's multi-master
+//! rig alone (#149); `/test node-logs` reads the node's pod logs for
 //! watch-stream errors (test/node-logs.sh, #180). See test/README.md for
 //! what each suite covers and what it needs.
 
@@ -34,7 +35,7 @@ async fn main() {
             Err(err) => Report::default().abort(&anyhow::anyhow!("cannot run /rigs/node-logs.sh: {err}")),
         });
     }
-    if matches!(suite.as_str(), "rigs" | "rigs-night") {
+    if matches!(suite.as_str(), "rigs" | "rigs-night" | "multi-master") {
         // The e2e rigs are bash; the image carries their runner (#173). A
         // child, not exec: stormcentral's results reader waits while a
         // process named `test` runs (`pgrep -x test`), and an exec renames
@@ -55,7 +56,7 @@ async fn run(suite: &str) -> i32 {
     let mut rep = Report::default();
     if !matches!(suite, "short" | "medium" | "long") {
         return rep.abort(&anyhow::anyhow!(
-            "unknown suite {suite:?}: use short, medium, long, rigs, rigs-night or node-logs"
+            "unknown suite {suite:?}: use short, medium, long, rigs, rigs-night, multi-master or node-logs"
         ));
     }
     let env = match env::Env::discover(suite) {

@@ -129,7 +129,8 @@ stormcentral test run rustkube rigs-night --tag <pve VM> --commit <sha>     # ni
   latency under load, failover and cert-reload ticks (10: multi-master,
   list-snapshot-race, crd-restart, deadlines, scheduler-failover,
   schedule-latency, get-latency, watch-deadline, serving-cert,
-  client-cert-reload). Every other `test/e2e/*.sh` rig is in `rigs`;
+  client-cert-reload). `multi-master` runs that one rig alone, day-sized
+  (≤ 15 min, #149). Every other `test/e2e/*.sh` rig is in `rigs`;
   `test-container.sh` is in neither: it is this image's own short/medium
   against a rig, and runs by hand. A new rig goes in one of the two lists.
   The first completed day run (fe841f11a1, C2NR0Q2, 2026-10-13) ran all 63

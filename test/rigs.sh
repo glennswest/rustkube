@@ -11,6 +11,7 @@
 #   rigs        the functional rigs, sized for the day budget (30 min)
 #   rigs-night  the slow and timing-sensitive ones (idle watches, latency
 #               under load, failover, cert reload ticks), night only
+#   multi-master  rigs-night's multi-master rig alone (#149), ≤ 15 min, day
 #
 # One JSON line per rig — {"test": "rig:<name>", "status", "ms", "detail"} —
 # and a summary; each rig's whole output goes to <results>/<name>.log
@@ -31,6 +32,9 @@ NIGHT="multi-master list-snapshot-race crd-restart deadlines scheduler-failover 
 case "$suite" in
   rigs) list=$DAY ;;
   rigs-night) list=$NIGHT ;;
+  # One rig as its own suite: the multi-master failure matrix (#149) takes
+  # minutes, so it need not wait for the night window with the rest.
+  multi-master) list=multi-master ;;
   *) echo "{\"test\": \"suite\", \"status\": \"fail\", \"ms\": 0, \"detail\": \"unknown suite $suite\"}"
      echo '{"summary": {"pass": 0, "fail": 1, "skip": 0}}'; exit 2 ;;
 esac
