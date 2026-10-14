@@ -185,10 +185,13 @@ try:
 
     D = "/apis/apps/v1/namespaces/mm/deployments"
     def deploy(name, replicas):
-        req(2, "POST", D, {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": name},
+        # The create's own answer is checked: a refused create (C still
+        # catching up after quorum loss) is not "no controller-manager acted".
+        code, body = req(2, "POST", D, {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": name},
             "spec": {"replicas": replicas, "selector": {"matchLabels": {"app": name}},
                      "template": {"metadata": {"labels": {"app": name}},
                                   "spec": {"containers": [{"name": "c", "image": "unused"}]}}}})
+        check(code == 201, f"Deployment {name} created through C ({code} {'' if code == 201 else body})")
     def scale(n, name, replicas):
         return req(n, "PATCH", f"{D}/{name}", {"spec": {"replicas": replicas}}, "application/merge-patch+json")[0]
     def pods(app, n=1):
