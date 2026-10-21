@@ -115,6 +115,20 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### 12.39 apiserver boot +13 s (#286, P1) — IN PROGRESS 2026-10-21
+12.39's apiserver golden carries no rustkube commit: only stormcos f8286e0
+(#572), client trust from `stormcert-forge-trust` (`client-ca.crt`,
+`client.crl`). pvetest2 reboot: the kubelet's first create of the apiserver
+container was refused by stormpump (`VolumeRegister: Invalid argument` on
+its ublk root /dev/ublkb85, 19:46:33, +21.8 s), the retry ~10 s later
+answered (+32.4 s) — stormblock's 12.39 volume path, stormblock#485.
+pvetest1 first boot: same 10 s gap before the first apiserver probe; the
+same refusal (`Bad message`) on that node's scheduler root later.
+- [ ] Wait for `--client-ca-file` like the CRL (a file another process
+      writes at the same start must not crash the apiserver into stormd's
+      back-off); README/CHANGELOG; build VM
+- [ ] Evidence on #286 and stormblock#485; move #286 behind stormblock#485
+
 ### Kubelet events 403 in a test namespace (#282, P1) — BUILT, rig BLOCKED on stormcos#271, 2026-10-21
 Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.
 The namespace (stormcos_qa turbomode 543727dbc0) was deleted by the run's
