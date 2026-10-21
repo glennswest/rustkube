@@ -596,7 +596,8 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
       units
 - [x] Job `spec.managedBy` (1.35 GA): controller skips other managers';
       validated on create, immutable; units; rig job-managed-by.sh
-- [ ] Ordered namespace deletion (1.34 GA): Pods first, the rest after
+- [x] Ordered namespace deletion (1.34 GA): Pods first, the rest after;
+      rig namespace-order.sh (no unit: the controller needs live feeds)
 - [ ] resourceVersions decimal everywhere (KEP-5504, 1.35): check
 - [ ] Separate issues: StructuredAuthenticationConfiguration, external SA
       token signing, AuthorizeWithSelectors, externalIPs warning

@@ -259,10 +259,20 @@ impl Controller for Terminate<'_> {
             return Ok(());
         }
         let name = ns["metadata"]["name"].as_str().unwrap_or("");
+        // Ordered deletion (#285, upstream's OrderedNamespaceDeletion, GA in
+        // 1.34): the Pods go first, and nothing else is deleted while any is
+        // left, so a Pod never outlives the NetworkPolicy, Secret or
+        // ServiceAccount it runs under. A Pod's deletion wakes this
+        // namespace again (`route_namespace`).
+        let is_pods = |r: &(String, String)| r.0 == "/api/v1" && r.1 == "pods";
+        let pods = self.resources.iter().position(is_pods);
+        let order: Vec<usize> = pods.into_iter().chain((0..self.resources.len()).filter(|i| Some(*i) != pods)).collect();
         let mut remaining = 0;
-        for (i, (root, resource)) in self.resources.iter().enumerate() {
+        for i in order {
+            let (root, resource) = &self.resources[i];
             let items = deps.feed(i).select(&Index::Namespace(name.into()))?;
             remaining += items.len();
+            let pods_left = (Some(i) == pods).then_some(items.len()).filter(|n| *n > 0);
             for item in items {
                 if !item["metadata"]["deletionTimestamp"].is_null() {
                     continue;
@@ -275,6 +285,11 @@ impl Controller for Terminate<'_> {
                         &item,
                     )
                     .await?;
+            }
+            if let Some(n) = pods_left {
+                // Pods still there: the rest waits for the next pass.
+                debug!("Namespace {name} terminating: waiting for {n} Pod(s) before the rest");
+                return Ok(());
             }
         }
         if remaining == 0 {

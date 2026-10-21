@@ -499,6 +499,11 @@ and no status in 10 s, while Jobs without it or naming
 `kubernetes.io/job-controller` get theirs; a managedBy that is not a
 domain-prefixed path, or over 63 bytes, is a 422; changing it is a 422.
 
+`e2e/namespace-order.sh` (#285, suite `rigs`): deleting a namespace whose
+Pod is held by a finalizer deletes the Pod first and leaves its ConfigMap
+and Secret untouched (8 s); once the finalizer goes, the ConfigMap, the
+Secret and the namespace follow.
+
 `e2e/node-events.sh` (#282, suite `rigs`): a node identity
 (`system:node:n1`, group `system:nodes`) creates events in a new namespace
 and in kube-system (201); in a namespace held Terminating (no

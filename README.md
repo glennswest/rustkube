@@ -591,7 +591,7 @@ upstream's EndpointSliceMirroring does — one per address type and port set,
 owned by the Endpoints, `managed-by: endpointslicemirroring-controller.k8s.io`,
 skipped for `endpointslice.kubernetes.io/skip-mirror: "true"`, which the
 controller's own Endpoints carry, #133), Namespace (default
-ServiceAccount, deletion cascade), node lifecycle (a Lease stale or
+ServiceAccount, deletion cascade — Pods first, and nothing else while a Pod is left, as upstream's ordered namespace deletion, #285), node lifecycle (a Lease stale or
 missing past 40 s — also one that died before the controller started; with
 no Lease, the Ready heartbeat — sets every condition `Unknown`, keeping
 `lastHeartbeatTime`, and the `unreachable` NoSchedule/NoExecute taints;
