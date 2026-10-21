@@ -612,7 +612,7 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
       job-managed-by 10/10, namespace-order 8/8; builtin-generation 4 failed —
       the Deployment controller's revision annotation PUT bumped generation
       (now on its /status write; /status keeps generation), rig had no Node and
-      a wrong RS expectation. Rerun on the next golden
+      a wrong RS expectation. b52da76 golden: builtin-generation 14/14
 - [ ] Rigs builtin-generation, job-managed-by, namespace-order (+ the rest)
       when stormcos#271 lets test images reach a node; the issue's
       "test suites on pve and the Dell" and a release carrying it; then close
