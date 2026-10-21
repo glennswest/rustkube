@@ -53,6 +53,9 @@ pub async fn admit_create(
     if resource == "namespaces" {
         namespace_defaults(obj);
     }
+    if resource == "jobs" {
+        job_managed_by(None, obj)?;
+    }
 
     // Served (#119) but not evaluated yet (#234): say so, rather than let
     // the policy's author believe it protects anything.
@@ -199,6 +202,46 @@ pub async fn pvc_update(storage: &ResourceStorage, old: &Value, new: &Value) -> 
                 "only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize",
             ));
         }
+    }
+    Ok(())
+}
+
+/// A Job's `spec.managedBy` (#285, GA in 1.35): which controller acts on it.
+/// Upstream's rule — at most 63 bytes, a domain-prefixed path such as
+/// `acme.io/foo` — on create; on update it never changes.
+pub fn job_managed_by(old: Option<&Value>, new: &Value) -> Result<(), ApiError> {
+    let value = &new["spec"]["managedBy"];
+    if let Some(old) = old {
+        let was = &old["spec"]["managedBy"];
+        if was != value {
+            let shown = value.as_str().map(|s| format!("{s:?}")).unwrap_or_else(|| "null".into());
+            return Err(ApiError::invalid(&format!("spec.managedBy: Invalid value: {shown}: field is immutable")));
+        }
+        return Ok(());
+    }
+    let Some(m) = value.as_str() else {
+        return if value.is_null() { Ok(()) } else { Err(ApiError::invalid("spec.managedBy: Invalid value: must be a string")) };
+    };
+    if m.len() > 63 {
+        return Err(ApiError::invalid("spec.managedBy: Too long: may not be more than 63 bytes"));
+    }
+    let subdomain = |h: &str| {
+        !h.is_empty() && h.len() <= 253
+            && h.split('.').all(|l| {
+                !l.is_empty() && l.len() <= 63
+                    && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                    && !l.starts_with('-') && !l.ends_with('-')
+            })
+    };
+    let ok = match m.split_once('/') {
+        Some((host, path)) => subdomain(host) && !path.is_empty()
+            && path.bytes().all(|b| b.is_ascii_alphanumeric() || b"/-._~%!$&'()*+,;=:".contains(&b)),
+        None => false,
+    };
+    if !ok {
+        return Err(ApiError::invalid(&format!(
+            "spec.managedBy: Invalid value: {m:?}: must be a domain-prefixed path (such as \"acme.io/foo\")"
+        )));
     }
     Ok(())
 }
@@ -1308,5 +1351,30 @@ mod scheduling_gate_tests {
         assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
         assert!(e.message.contains("only deletion is allowed, but found new scheduling gate 'b'"));
         assert!(super::pod_gates_update(&json!({"spec": {}}), &pod(&["x"])).is_err(), "none to one");
+    }
+}
+
+#[cfg(test)]
+mod job_managed_by_tests {
+    use super::job_managed_by;
+    use serde_json::json;
+
+    #[test]
+    fn managed_by_is_a_domain_prefixed_path_and_immutable() {
+        let job = |m: serde_json::Value| json!({"spec": {"managedBy": m}});
+        assert!(job_managed_by(None, &json!({"spec": {}})).is_ok());
+        assert!(job_managed_by(None, &job(json!("kubernetes.io/job-controller"))).is_ok());
+        assert!(job_managed_by(None, &job(json!("kueue.x-k8s.io/multikueue"))).is_ok());
+        let e = job_managed_by(None, &job(json!("no-slash"))).unwrap_err();
+        assert_eq!(e.message, r#"spec.managedBy: Invalid value: "no-slash": must be a domain-prefixed path (such as "acme.io/foo")"#);
+        assert!(job_managed_by(None, &job(json!("Upper.io/x"))).is_err());
+        assert!(job_managed_by(None, &job(json!("acme.io/"))).is_err());
+        let long = format!("acme.io/{}", "x".repeat(60));
+        assert_eq!(job_managed_by(None, &job(json!(long))).unwrap_err().message, "spec.managedBy: Too long: may not be more than 63 bytes");
+        let old = job(json!("acme.io/a"));
+        assert!(job_managed_by(Some(&old), &job(json!("acme.io/a"))).is_ok());
+        assert_eq!(job_managed_by(Some(&old), &job(json!("acme.io/b"))).unwrap_err().message,
+                   r#"spec.managedBy: Invalid value: "acme.io/b": field is immutable"#);
+        assert!(job_managed_by(Some(&json!({"spec": {}})), &job(json!("acme.io/a"))).is_err(), "cannot be added later");
     }
 }

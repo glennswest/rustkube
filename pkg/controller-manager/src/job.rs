@@ -42,6 +42,12 @@ impl JobController {
             return Ok(());
         }
 
+        // Another controller's (#285, `spec.managedBy`, GA in 1.35): upstream
+        // touches neither its Pods nor its status.
+        if !managed_here(job) {
+            return Ok(());
+        }
+
         // Skip completed/failed jobs
         if let Some(conditions) = job["status"]["conditions"].as_array() {
             for cond in conditions {
@@ -306,6 +312,15 @@ fn build_job_pod(
 }
 
 #[async_trait::async_trait]
+/// Whether this controller acts on `job`: `spec.managedBy` unset or
+/// upstream's own name for it.
+fn managed_here(job: &Value) -> bool {
+    match job["spec"]["managedBy"].as_str() {
+        None => true,
+        Some(m) => m == "kubernetes.io/job-controller",
+    }
+}
+
 impl crate::owned::Controller for JobController {
     fn name(&self) -> &'static str {
         "job"
@@ -326,5 +341,18 @@ impl crate::owned::Controller for JobController {
             .as_str()
             .unwrap_or("default");
         self.reconcile_job(namespace, object, children).await
+    }
+}
+
+#[cfg(test)]
+mod managed_by_tests {
+    use super::managed_here;
+    use serde_json::json;
+
+    #[test]
+    fn another_managers_job_is_left_alone() {
+        assert!(managed_here(&json!({"spec": {}})));
+        assert!(managed_here(&json!({"spec": {"managedBy": "kubernetes.io/job-controller"}})));
+        assert!(!managed_here(&json!({"spec": {"managedBy": "kueue.x-k8s.io/multikueue"}})));
     }
 }

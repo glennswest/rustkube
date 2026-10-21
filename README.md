@@ -579,7 +579,7 @@ go while the surge pod is still pending, #266), ReplicaSet, ReplicationControlle
 ReplicaSet reconcile over core/v1, Pods owned by kind `ReplicationController`;
 create defaults selector, labels and replicas from the template; `/scale`
 served, #125), StatefulSet, DaemonSet (every
-eligible node, Ready or not; places pods itself), Job, CronJob, ephemeral volumes (a Pod's generic ephemeral volume gets its
+eligible node, Ready or not; places pods itself), Job (one whose `spec.managedBy` names another controller is left to it, #285; the field is validated and immutable), CronJob, ephemeral volumes (a Pod's generic ephemeral volume gets its
 `<pod>-<volume>` PVC from `volumeClaimTemplate`, owned by the Pod; a claim of
 that name the Pod does not own is left alone with a Warning Event, #94),
 ResourceQuota (`status.hard` and `status.used` per quota from

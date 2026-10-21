@@ -603,7 +603,7 @@ pub(crate) async fn put_object(
 /// apply, `/status`) and a reconciled startup manifest (#158): a Secret's
 /// stringData folded (#101), a Service's port and spec defaults, immutable fields (ConfigMap/Secret,
 /// PriorityClass), a PersistentVolumeClaim's update rules (#63), a Pod's
-/// scheduling gates (#87), `metadata.generation` (#285), and a Service's ClusterIP and node ports (#132),
+/// scheduling gates (#87), a Job's `spec.managedBy` and `metadata.generation` (#285), and a Service's ClusterIP and node ports (#132),
 /// whose [`crate::node_port::Plan`] the caller commits once its write lands
 /// or aborts when it fails.
 pub(crate) async fn builtin_update(
@@ -623,6 +623,9 @@ pub(crate) async fn builtin_update(
     }
     if key.starts_with("/registry/pods/") {
         crate::builtin_admission::pod_gates_update(existing, body)?;
+    }
+    if key.starts_with("/registry/jobs/") {
+        crate::builtin_admission::job_managed_by(Some(existing), body)?;
     }
     if key.starts_with("/registry/services/") {
         // Upstream defaults every write, not just a create.

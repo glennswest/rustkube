@@ -594,8 +594,8 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
       (1.33 GA): `apimachinery::pod_resources` for scheduler fit, quota
       usage and LimitRanger's Pod aggregate (which ignored init containers);
       units
-- [ ] Job `spec.managedBy` (1.35 GA): controller skips other managers';
-      immutable
+- [x] Job `spec.managedBy` (1.35 GA): controller skips other managers';
+      validated on create, immutable; units; rig job-managed-by.sh
 - [ ] Ordered namespace deletion (1.34 GA): Pods first, the rest after
 - [ ] resourceVersions decimal everywhere (KEP-5504, 1.35): check
 - [ ] Separate issues: StructuredAuthenticationConfiguration, external SA

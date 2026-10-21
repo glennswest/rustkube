@@ -493,6 +493,12 @@ its ReplicaSet at 1; a Pod at 1, kept by the scheduler's bind, 2 after an
 image change; a ConfigMap with none (a client's refused); a DELETE held by a
 finalizer moves the Deployment to 3.
 
+`e2e/job-managed-by.sh` (#285, suite `rigs`): with the controller-manager
+running, a Job whose `spec.managedBy` names another controller gets no Pods
+and no status in 10 s, while Jobs without it or naming
+`kubernetes.io/job-controller` get theirs; a managedBy that is not a
+domain-prefixed path, or over 63 bytes, is a 422; changing it is a 422.
+
 `e2e/node-events.sh` (#282, suite `rigs`): a node identity
 (`system:node:n1`, group `system:nodes`) creates events in a new namespace
 and in kube-system (201); in a namespace held Terminating (no
