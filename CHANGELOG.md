@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-21
+- **test:** #159 closed: `gc-orphan-load.sh` on conform.g8.lo from goldens — d5f48f5 (13 runs, 260 orphaning deletes) and main (8 runs, 160): 0 unsafe deletions, slowest 4.4 s of the spec's 120 s; the failing commit efbea2d as a control takes 21–34 s (its 30 s GC sweep), the likely cause of the 2026-09-27 failure under six chunks.
 - **fix:** `test/conformance/fetch.sh` refuses a delivery missing any of kube-apiserver, kube-controller-manager, kube-scheduler or fastetcd: `stormcentral component fetch` can answer exit 0 with only some of them (stormcentral#1076).
 - **docs:** #285 (1.36 API) audit: no removed-upstream group/version is served; resourceVersions are already decimal (KEP-5504). Filed for the rest: rustkube-node#286 (Pod `status.observedGeneration`), #287 (`--authentication-config`), #288 (external SA token signing), #289 (externalIPs deprecation warning).
 - **feat:** Ordered namespace deletion (#285, upstream's OrderedNamespaceDeletion, GA in 1.34): a terminating namespace's Pods are deleted first, and nothing else in it is deleted while one is left, so a Pod never outlives the NetworkPolicy, Secret or ServiceAccount it runs under. Rig `namespace-order.sh`.

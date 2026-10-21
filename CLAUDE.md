@@ -638,7 +638,7 @@ reads a golden's files from another machine (`registry/<c>:<tag>` is a
 display name). Filed stormcentral#557 (`component fetch <c> --commit --out`,
 sha256-checked); fastetcd has no golden and no release assets (noted there).
 
-### GC orphan failure under concurrent chunks (#159, P3) — VERIFYING 2026-10-21
+### GC orphan failure under concurrent chunks (#159, P3) — COMPLETE 2026-10-21
 - [x] efbea2d's GC (sweep, non-snapshot `live`, unconditional delete, 30 s
       interval) has both a latency and an unsafe-deletion path for the spec;
       d69e618 (#146) removed both. Remaining gap fixed: a failed owner strip
@@ -648,9 +648,10 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
 - [x] Build VM at 9bff762: 606 passed / 4 ignored; golden-rustkube-0036569fb42a
 - [x] Concurrent conformance rerun at d5f48f5 from goldens (#140,
       2026-10-21): the orphan-RS spec passed with six chunks at once
-- [ ] gc-orphan-load on conform.g8.lo (test machines blocked, stormcos#271;
-      the VM is not a build slot): 10 in a row + 3 at once on d5f48f5's
-      goldens, then on main's golden (generation changes, #285); then close
+- [x] gc-orphan-load on conform.g8.lo (not a build slot): d5f48f5 13 runs /
+      260 orphans, main 1958910 8 runs / 160: 0 unsafe, slowest 4.4 s;
+      control efbea2d slowest 34.4 s (the 30 s sweep). #159 closed 2026-10-21.
+      fetch partial-answer bug → stormcentral#1076, fetch.sh checks (639e0c7)
 
 ### ResourceQuota controller + admission (#124, P2) — BUILT 2026-10-07
 - [x] `apimachinery::quota` (usage, scopes, formatting); apiserver
