@@ -66,7 +66,8 @@ ARM64 (#68): `sc-build 'TARGETS=x86_64-unknown-linux-musl,aarch64-unknown-linux-
 builds both on a build VM. At 8e82cca the aarch64 release binaries were
 kube-apiserver 16M, kube-controller-manager 11M, kube-scheduler 8.7M (x86_64:
 17M, 12M, 9.4M), static, starting under qemu, with arm64 `FROM scratch`
-images. No ARM64 golden is built (the component golden is x86_64), and no
+images. Rebuilt the same way at b52da76 (2026-10-21, build VM
+sc-build-d2fc674379): aarch64 tarballs 6.8M, 4.5M, 3.8M (gzipped). No ARM64 golden is built (the component golden is x86_64), and no
 image is published, so there is no multi-arch manifest to make.
 
 Everything it writes lives on the job's private volume and is deleted with

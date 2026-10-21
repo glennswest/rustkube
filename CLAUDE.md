@@ -1838,7 +1838,10 @@ results are in docs/conformance.md.
       host is set up (recommend A, approved). Came back the same day when
       needs-owner was removed (wait-owner labels it); re-parked, the loop
       filed as stormcentral#847. Came back again 10-14 (no ARM64 test host):
-      proposed `--after stormcentral#847` instead of another wait-owner
+      proposed `--after stormcentral#847` instead of another wait-owner.
+      2026-10-21: #847 closed; still no ARM64 test machine. aarch64 release
+      build still passes at b52da76 (sc-build-d2fc674379). Parked with
+      `wait-owner --until` as the master asked
 
 ### `oc` compatibility — the surface that drives completeness
 
