@@ -86,7 +86,10 @@ refused at startup and kept out on a reload.
 
 ### The apiserver's client CA (#105)
 
-`--client-ca-file` is followed too. A changed bundle builds a new TLS config
+`--client-ca-file` is waited for at start like a credential (absent, empty
+or half-written: polled every 250 ms for up to 120 s, #286), since on stormcos
+it is written by a process that starts beside the apiserver. It is followed
+too. A changed bundle builds a new TLS config
 (same serving resolver, a verifier over the new roots), and each accepted
 connection takes the config current when it arrives; open connections keep
 the one they were authenticated with. A bundle that does not parse or holds

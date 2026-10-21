@@ -1249,7 +1249,17 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         Some((cert, key)) => {
             // Install the ring crypto provider once (rustls 0.23 requires one).
             let _ = rustls::crypto::ring::default_provider().install_default();
-            let client_ca = config.client_ca.as_ref().map(std::fs::read).transpose()?;
+            // The client CA is waited for like the CRLs below (#286): on
+            // stormcos it is written by stormcert-forge-trust, which starts
+            // beside the apiserver, and a missing file would fail the start
+            // into the supervisor's restart back-off.
+            let client_ca = match &config.client_ca {
+                Some(path) => Some(
+                    apimachinery::startup::pem_file(path, "client CA", apimachinery::startup::DEFAULT_STARTUP_TIMEOUT)
+                        .await?,
+                ),
+                None => None,
+            };
             // Revocation (#260): each CRL is waited for like a credential —
             // stormcert may still be writing it — and must parse, or the
             // apiserver does not start: it is never silently unenforced.

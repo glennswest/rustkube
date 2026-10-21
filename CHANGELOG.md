@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-21
+- **fix:** `--client-ca-file` is waited for at start (absent, empty or half-written; 250 ms polls, 120 s) like `--client-crl-file`, instead of read once (#286). On stormcos 12.39 the bundle is written by `stormcert-forge-trust`, which starts beside the apiserver (stormcos#572); a missing file failed the start into stormd's restart back-off. Not the cause of #286's 13 s: that was the kubelet's first create of the apiserver container refused by stormpump on its ublk root (stormblock#485).
+
 ### 2026-10-14
 - **fix:** Creating anything in a Terminating namespace is upstream's 403 with the `NamespaceTerminating` cause on `metadata.namespace` (#282). client-go's event recorder treats that cause as expected and drops the event quietly; without it a kubelet's events for pods of a deleted test namespace read as a node permission problem. Nodes were never refused events by RBAC (`system:nodes` is bound to `cluster-admin`, #228). Rig `node-events.sh`.
 - **docs:** #147 shipped: the WFFC binder and scheduler fixes (p99 0.928 / 0.591 / 0.279 s on pvetest1/pvetest2) are in golden-rustkube-*-9184c2d39ee2; the hardware scale/multi-node acceptance moves to #281.

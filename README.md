@@ -776,7 +776,7 @@ override environment values.
 | `--tls-cert-file`, `--tls-private-key-file` | | — | serving cert; **reloaded when the files change**, no restart; a key that is not the cert's is refused (#93) |
 | `--tls` | | off | serve a self-signed cert kept in `--data-dir` (`apiserver.crt`/`.key`, key 0600): written on first start, reused after a restart while valid (> 30 days left, key matches, SANs current), else regenerated; in memory, with a warning, if the dir cannot be written. DNS SANs `kubernetes`, `kubernetes.default`, `kubernetes.default.svc`, `kubernetes.default.svc.<cluster-domain>`, `localhost`; no IP SANs (#88) |
 | `--insecure` | | `false` | allow plain HTTP when no TLS is configured; without it the server refuses to start |
-| `--client-ca-file` | | — | enables x509 client-certificate authentication; **reloaded when the file changes**, for new connections (#105) |
+| `--client-ca-file` | | — | enables x509 client-certificate authentication; waited for at start (120 s) until it is a complete PEM (#286); **reloaded when the file changes**, for new connections (#105) |
 | `--client-crl-file` | | — | CRL, PEM or DER, one per signer (repeatable or comma-separated); a client certificate whose serial it lists is refused at the handshake. End-entity only; a CA no CRL covers is not refused for that; a CRL past nextUpdate still applies. Waited for at start (120 s) and must parse; re-read every 30 s, a missing or bad file keeps the last good one, logged. Needs `--client-ca-file` (#260, stormcert#61) |
 | `--cadvisor-scheme`, `--cadvisor-port` | | `http`, `9096` | where each node's cadvisor answers, for `metrics.k8s.io` (#89) |
 | `--cadvisor-ca-file`, `--cadvisor-token-file` | | — | CA for an https cadvisor, and the bearer token sent to it |
@@ -909,7 +909,9 @@ not proof of the version installed on any node:
   `/data/stormcert/apiserver.{crt,key}`, `--token-auth-file
   /state/config/token-auth.csv` (install-config's `apiToken`, #188), the
   ServiceAccount pair `/data/stormcert/sa-token.{key,pub}`,
-  `--client-ca-file /data/stormcert/ca.crt`, and
+  `--client-ca-file /data/stormcert/client-ca.crt` and `--client-crl-file
+  /data/stormcert/client.crl` (written by `stormcert-forge-trust`, stormcos
+  #572), and
   `--manifest-dir /etc/kubernetes/manifests.d` (`deploy/manifests` there:
   Cilium or flowsdn — linked into the network plugin's pallet, so only the
   active one's resolve — stormcoredns, the storage class and CSI driver, the
