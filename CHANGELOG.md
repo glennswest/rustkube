@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-21
+- **chore:** The unused `k8s-openapi` 0.24 (`v1_32`) dependency is removed (#285): nothing imported it — rustkube's objects are JSON and its protobuf comes from the vendored release-1.36 `.proto` — but its feature read as rustkube being on the 1.32 API. `serde-value` and `ordered-float` 2.10.1 went with it.
 - **docs:** #284 (cold container start 1.49 s on 12.32-flowsdn, 1.3 s outside the kubelet) did not reproduce: 0.3–0.5 s on pvetest2 in all eight installs since (12.33–12.40), ~0.1 s outside the kubelet as before; closed without a trace.
 - **fix:** Two apiserver tests carried `#[test]` twice (`rbac_engine.rs`, `handlers/resource.rs`): rustc's `duplicated attribute` warnings in the test build are gone.
 - **test:** Conformance binaries come from the commit's goldens (#140, owner: "Goldens"): `test/conformance/fetch.sh <sha>` reads kube-apiserver/-controller-manager/-scheduler from the rustkube-* stage goldens built at `<sha>` and fastetcd from its golden (`stormcentral component fetch`, stormcentral#557, sha256-checked), writes the MANIFEST and copies it to conform.g8.lo; `vm.sh` takes that directory (no rsync from dev). `stage.sh` and its `/build/assets` write are removed. Goldens are release builds.

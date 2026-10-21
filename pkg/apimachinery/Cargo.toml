@@ -8,7 +8,6 @@ license.workspace = true
 
 [dependencies]
 # Kubernetes types
-k8s-openapi = { workspace = true }
 
 # Protobuf codec for the k8s wire format (analog of k8s.io/apimachinery's
 # runtime/serializer/protobuf + the k8s.io/api generated marshalers). Dynamic

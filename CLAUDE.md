@@ -96,8 +96,8 @@ Cargo.lock → versions of all workspace packages (keep in sync)
 
 `[workspace.dependencies]` still lists crates nothing uses — kube-rs is not
 among them, but hickory, nix, rtnetlink, libcontainer, oci-spec, tonic-build
-and others are left from the 10-crate layout; k8s-openapi is declared and never
-imported.
+and others are left from the 10-crate layout. k8s-openapi (0.24 `v1_32`,
+never imported) was removed for #285.
 
 ## Current Version: `v0.18.0`
 
@@ -582,7 +582,8 @@ here) and kube-rs is not used; the wire API is the release-1.36 protos +
 JSON. Served groups already match 1.36: none of the "stop serving" list is
 served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
 `/resize` (#136) are. Behaviour gaps found, in order:
-- [ ] Drop the unused k8s-openapi dependency
+- [x] Drop the unused k8s-openapi dependency (and serde-value, ordered-float
+      2.10.1, which only it used)
 - [ ] `metadata.generation` for built-ins (none today: controllers report
       observedGeneration 1 against no generation): 1 on create, +1 on a
       spec change through the main resource, upstream's per-kind rules;
