@@ -311,7 +311,6 @@ fn build_job_pod(
     Ok(pod)
 }
 
-#[async_trait::async_trait]
 /// Whether this controller acts on `job`: `spec.managedBy` unset or
 /// upstream's own name for it.
 fn managed_here(job: &Value) -> bool {
@@ -321,6 +320,7 @@ fn managed_here(job: &Value) -> bool {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::owned::Controller for JobController {
     fn name(&self) -> &'static str {
         "job"
