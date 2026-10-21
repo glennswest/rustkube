@@ -34,6 +34,11 @@ stormcentral component fetch rustkube --commit "$SHA" --out "$W/bin" \
 stormcentral component fetch fastetcd ${RK_FASTETCD_COMMIT:+--commit "$RK_FASTETCD_COMMIT"} \
   --out "$W/fastetcd.d" --binary fastetcd | tee -a "$W/fetch.log"
 mv "$W/fastetcd.d/fastetcd" "$W/fastetcd" && rmdir "$W/fastetcd.d"
+# `component fetch` can answer exit 0 with only some of the binaries asked
+# for (stormcentral#1076): a run on half a control plane tests nothing.
+for b in bin/kube-apiserver bin/kube-controller-manager bin/kube-scheduler fastetcd; do
+  [ -x "$W/$b" ] || { echo "no $b from the goldens of $SHA: not delivered" >&2; exit 1; }
+done
 
 {
   echo "rustkube $SHA"
