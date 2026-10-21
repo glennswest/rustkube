@@ -6,9 +6,11 @@
 #   a spec change (scale by PATCH) moves it to 2; a label leaves it; a
 #   /status write leaves it; the controller-manager reports
 #   status.observedGeneration 2 (kubectl rollout status compares the two)
-# - its ReplicaSet starts at 1
-# - a Pod starts at 1, the scheduler's bind (a PUT of spec.nodeName) leaves
-#   it, an image change moves it to 2
+# - the controller's revision annotation (on its /status write) leaves the
+#   Deployment's generation; its ReplicaSet reports status.observedGeneration
+#   equal to its own generation
+# - a Pod starts at 1, the scheduler's bind (a PUT of spec.nodeName, to a
+#   Ready Node the rig makes) leaves it, an image change moves it to 2
 # - a ConfigMap has none, and a client cannot give it one
 # - a DELETE that leaves the object on a finalizer moves it on
 #
@@ -46,9 +48,25 @@ for _ in $(seq 30); do
   sleep 1
 done
 check "Deployment status.observedGeneration" 2 "$og"
-rs=$(get "/apis/apps/v1/namespaces/default/replicasets?labelSelector=app%3Dgen" \
-  | python3 -c 'import json,sys; i=json.load(sys.stdin)["items"]; print(i[0]["metadata"].get("generation") if i else "no ReplicaSet")')
-check "ReplicaSet created" 1 "$rs"
+check "Deployment after the controller's revision annotation" 2 "$(get $D/gen | field metadata.generation)"
+rsgen() { get "/apis/apps/v1/namespaces/default/replicasets?labelSelector=app%3Dgen" | python3 -c 'import json,sys
+i=json.load(sys.stdin)["items"]
+print("no ReplicaSet" if not i else "%s/%s" % (i[0]["metadata"].get("generation"), i[0].get("status", {}).get("observedGeneration")))'; }
+for _ in $(seq 30); do
+  rs=$(rsgen); g=${rs%/*}
+  [ "$rs" = "$g/$g" ] && break
+  sleep 1
+done
+[ "$rs" = "$g/$g" ] && [ "$g" != None ] && pass "ReplicaSet observedGeneration = generation ($rs)" || fail "ReplicaSet generation/observedGeneration: $rs"
+
+# A Ready Node for the scheduler to bind to.
+curl -sk -o /dev/null -X POST -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' "$API/api/v1/nodes" \
+  -d '{"apiVersion":"v1","kind":"Node","metadata":{"name":"gen-node","labels":{"kubernetes.io/hostname":"gen-node"}}}'
+get /api/v1/nodes/gen-node | python3 -c 'import json,sys
+n=json.load(sys.stdin); r={"cpu":"8","memory":"16Gi","pods":"110"}
+n["status"]={"capacity":r,"allocatable":r,"conditions":[{"type":"Ready","status":"True"}]}
+print(json.dumps(n))' > "$W/node.json"
+curl -sk -o /dev/null -X PUT -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' "$API/api/v1/nodes/gen-node/status" -d @"$W/node.json"
 
 P=/api/v1/namespaces/default/pods
 send POST $P application/json '{"apiVersion":"v1","kind":"Pod","metadata":{"name":"genpod"},"spec":{"containers":[{"name":"c","image":"pause"}]}}' >/dev/null

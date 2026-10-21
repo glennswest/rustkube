@@ -416,27 +416,18 @@ impl DeploymentController {
         };
 
         // The Deployment's own revision annotation is what `rollout history`
-        // reports as current. It is metadata, so it cannot ride on the status
-        // write — and it is written only when it actually changes, because a
-        // whole-object PUT every two seconds would revert any concurrent
-        // `kubectl scale` or `kubectl set image`.
+        // reports as current. It rides on the status write, as upstream's
+        // controller writes it (UpdateStatus): `/status` keeps the stored spec
+        // and takes labels and annotations, so it neither reverts a concurrent
+        // `kubectl scale` nor counts as a new generation (#285).
+        let mut updated_deploy = deploy.clone();
         let want_rev = new.revision.to_string();
         if deploy["metadata"]["annotations"][REVISION].as_str() != Some(&want_rev) {
-            let mut ann = deploy.clone();
-            if ann["metadata"]["annotations"].is_null() {
-                ann["metadata"]["annotations"] = json!({});
+            if updated_deploy["metadata"]["annotations"].is_null() {
+                updated_deploy["metadata"]["annotations"] = json!({});
             }
-            ann["metadata"]["annotations"][REVISION] = json!(want_rev);
-            let _ = self
-                .api
-                .update(
-                    &format!("/apis/apps/v1/namespaces/{namespace}/deployments/{deploy_name}"),
-                    &ann,
-                )
-                .await;
+            updated_deploy["metadata"]["annotations"][REVISION] = json!(want_rev);
         }
-
-        let mut updated_deploy = deploy.clone();
         updated_deploy["status"] = json!({
             "replicas": replicas,
             "updatedReplicas": updated,

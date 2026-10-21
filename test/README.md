@@ -488,9 +488,10 @@ in lib.sh sets the flag (default false).
 
 `e2e/builtin-generation.sh` (#285, suite `rigs`): a Deployment created at
 generation 1 whatever the client sent, 2 after a scale, kept by a label and
-a `/status` write, `status.observedGeneration` 2 from the controller-manager;
-its ReplicaSet at 1; a Pod at 1, kept by the scheduler's bind, 2 after an
-image change; a ConfigMap with none (a client's refused); a DELETE held by a
+a `/status` write and by the controller's revision annotation (which rides on
+its status write), `status.observedGeneration` 2 from the controller-manager;
+its ReplicaSet's `observedGeneration` equal to its generation; a Pod at 1,
+kept by the scheduler's bind to the rig's Ready Node, 2 after an image change; a ConfigMap with none (a client's refused); a DELETE held by a
 finalizer moves the Deployment to 3.
 
 `e2e/job-managed-by.sh` (#285, suite `rigs`): with the controller-manager

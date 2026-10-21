@@ -246,7 +246,7 @@ and ResourceSlices get `1` on create and +1 when an update through the main
 resource changes `spec` (a Deployment also its annotations; webhook
 configurations their `webhooks`; a Pod's `spec.nodeName` — the scheduler's
 bind — does not count), whether by PUT, PATCH, apply or after a mutating
-webhook. Other kinds keep what is stored and take none from a client. The
+webhook. A `/status` write keeps it, whatever labels or annotations it carries (the Deployment controller's revision annotation rides on its status write, as upstream's). Other kinds keep what is stored and take none from a client. The
 update that starts a deletion moves a positive generation on, as upstream.
 
 **`/scale`** (#86), `autoscaling/v1` Scale, GET/PUT/PATCH, for

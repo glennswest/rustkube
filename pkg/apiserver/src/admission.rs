@@ -67,6 +67,12 @@ tokio::task_local! {
     static REQUEST: Arc<RequestAttrs>;
 }
 
+/// The subresource of the API write this task is serving (`status`,
+/// `scale`, …), or `None` for the main resource or no API request.
+pub fn subresource() -> Option<String> {
+    REQUEST.try_with(|r| r.subresource.clone()).ok().flatten()
+}
+
 /// Who asked for a write, and what for: upstream's admission attributes.
 #[derive(Debug)]
 pub struct RequestAttrs {

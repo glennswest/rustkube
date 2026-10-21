@@ -66,7 +66,25 @@ pub fn on_create(resource: &str, obj: &mut Value) {
 /// An update of the object at `key` from `stored` to `obj`. Idempotent: the
 /// write paths apply it again after admission webhooks.
 pub fn on_update(key: &str, stored: &Value, obj: &mut Value) {
+    on_update_through(crate::admission::subresource().as_deref(), key, stored, obj)
+}
+
+/// [`on_update`] for a write through `subresource`. A `/status` write keeps
+/// the stored generation, as upstream's status strategies: the Deployment
+/// controller's revision annotation rides on its status write and is no new
+/// spec. `/scale`, `/resize` and `/ephemeralcontainers` change the spec and
+/// count.
+fn on_update_through(subresource: Option<&str>, key: &str, stored: &Value, obj: &mut Value) {
     let Some(resource) = resource_of(key) else { return };
+    if subresource == Some("status") {
+        match &stored["metadata"]["generation"] {
+            Value::Null => {
+                obj["metadata"].as_object_mut().map(|m| m.remove("generation"));
+            }
+            g => obj["metadata"]["generation"] = g.clone(),
+        }
+        return;
+    }
     if !obj.get("metadata").is_some_and(Value::is_object) {
         return;
     }
@@ -195,6 +213,19 @@ mod tests {
         let mut kept = json!({"metadata": {"name": "c"}, "data": {"a": "2"}});
         on_update(key, &json!({"metadata": {"name": "c", "generation": 2}}), &mut kept);
         assert_eq!(gen(&kept), Some(2));
+    }
+
+    #[test]
+    fn a_status_write_keeps_it_whatever_it_carries() {
+        let key = "/registry/deployments/default/d";
+        let stored = json!({"metadata": {"name": "d", "generation": 2}, "spec": {"replicas": 1}});
+        let mut revision = json!({"metadata": {"name": "d", "generation": 9,
+            "annotations": {"deployment.kubernetes.io/revision": "1"}}, "spec": {"replicas": 1}, "status": {}});
+        on_update_through(Some("status"), key, &stored, &mut revision);
+        assert_eq!(gen(&revision), Some(2), "the controller's revision annotation on /status");
+        let mut scaled = json!({"metadata": {"name": "d"}, "spec": {"replicas": 3}});
+        on_update_through(Some("scale"), key, &stored, &mut scaled);
+        assert_eq!(gen(&scaled), Some(3), "/scale changes the spec");
     }
 
     #[test]

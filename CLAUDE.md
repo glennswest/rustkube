@@ -608,6 +608,11 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
 - [x] Build VMs per step (f0bb67a745, abd853be45, eaf6080208, 51306b0ea3,
       564fc55498): tests pass, 0 rustc warnings, changed files clippy-clean;
       golden requested 2026-10-21
+- [x] First rig runs on conform.g8.lo (main 1958910 goldens, 2026-10-21):
+      job-managed-by 10/10, namespace-order 8/8; builtin-generation 4 failed —
+      the Deployment controller's revision annotation PUT bumped generation
+      (now on its /status write; /status keeps generation), rig had no Node and
+      a wrong RS expectation. Rerun on the next golden
 - [ ] Rigs builtin-generation, job-managed-by, namespace-order (+ the rest)
       when stormcos#271 lets test images reach a node; the issue's
       "test suites on pve and the Dell" and a release carrying it; then close
