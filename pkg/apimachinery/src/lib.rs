@@ -16,6 +16,7 @@ pub mod taint;
 pub mod metrics;
 pub mod protobuf;
 pub mod quantity;
+pub mod pod_resources;
 pub mod quota;
 pub mod selector;
 pub mod startup;

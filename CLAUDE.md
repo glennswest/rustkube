@@ -590,8 +590,10 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
       Pods (1.35) without nodeName (the scheduler binds by PUT), deletion
       start; wired before and after webhooks on every write path; units;
       rig builtin-generation.sh. Kubelet's Pod observedGeneration: rustkube-node
-- [ ] Scheduler: sidecars (init, restartPolicy Always) add to the pod's
-      requests, as upstream (1.33 GA)
+- [x] Sidecars (init, restartPolicy Always) as upstream's PodRequests
+      (1.33 GA): `apimachinery::pod_resources` for scheduler fit, quota
+      usage and LimitRanger's Pod aggregate (which ignored init containers);
+      units
 - [ ] Job `spec.managedBy` (1.35 GA): controller skips other managers';
       immutable
 - [ ] Ordered namespace deletion (1.34 GA): Pods first, the rest after

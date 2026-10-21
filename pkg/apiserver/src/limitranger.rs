@@ -173,14 +173,11 @@ pub fn validate_pod(pod: &Value, ranges: &[Value]) -> Vec<String> {
             check(&mut errs, "Container", item, r, l);
         }
     }
+    // The pod's aggregate as upstream's LimitRanger adds it: containers,
+    // init containers and sidecars (#285).
     let sum = |list: &str| {
-        let mut out: std::collections::BTreeMap<String, f64> = Default::default();
-        for c in pod["spec"]["containers"].as_array().into_iter().flatten() {
-            for (k, v) in c["resources"][list].as_object().into_iter().flatten() {
-                *out.entry(k.clone()).or_default() += amount(k, v).unwrap_or(0.0);
-            }
-        }
-        out.into_iter()
+        apimachinery::pod_resources::containers_total(pod, list, |k, v| amount(k, v).unwrap_or(0.0))
+            .into_iter()
             .map(|(k, v)| {
                 let s = if k == "cpu" { format!("{}m", v as u64) } else { format!("{}", v as u64) };
                 (k, json!(s))

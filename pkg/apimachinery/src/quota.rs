@@ -63,25 +63,10 @@ fn add(u: &mut Usage, key: &str, n: i128) {
 
 /// The compute a Pod holds: (requests, limits) per resource name.
 fn pod_compute(pod: &Value) -> (Usage, Usage) {
-    let sum = |list: &Value, kind: &str| -> Usage {
-        let mut u = Usage::new();
-        for c in list.as_array().into_iter().flatten() {
-            for (k, v) in c["resources"][kind].as_object().into_iter().flatten() {
-                add(&mut u, k, parse(k, v));
-            }
-        }
-        u
-    };
     let mut out = (Usage::new(), Usage::new());
     for (i, kind) in ["requests", "limits"].iter().enumerate() {
-        let mut total = sum(&pod["spec"]["containers"], kind);
-        for c in pod["spec"]["initContainers"].as_array().into_iter().flatten() {
-            for (k, v) in c["resources"][*kind].as_object().into_iter().flatten() {
-                let n = parse(k, v);
-                let e = total.entry(k.clone()).or_default();
-                *e = (*e).max(n);
-            }
-        }
+        // Containers, init containers and sidecars, as upstream (#285).
+        let mut total: Usage = crate::pod_resources::containers_total(pod, kind, parse);
         for (k, v) in pod["spec"]["overhead"].as_object().into_iter().flatten() {
             add(&mut total, k, parse(k, v));
         }

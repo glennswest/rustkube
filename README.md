@@ -723,7 +723,11 @@ exists.
 - **Filters:** node Ready, not unschedulable, taints/tolerations,
   `nodeSelector`, required node affinity (which is how `kubernetes.io/arch`
   is enforced), `nodeName`, inter-pod affinity and anti-affinity, topology
-  spread (`DoNotSchedule`), resource fit (pod-level requests honoured, #73),
+  spread (`DoNotSchedule`), resource fit (pod-level requests honoured, #73;
+  containers, init containers and sidecars added as upstream's PodRequests,
+  #285 — a `restartPolicy: Always` init container adds to the pod, an
+  ordinary one runs beside the sidecars before it; the same total for
+  ResourceQuota usage and LimitRanger's Pod limits),
   Pod count: at most `allocatable.pods` non-terminal Pods per node, bound or
   with a bind in flight (#194); a VMI takes one through its launcher Pod
   (#203), not itself,

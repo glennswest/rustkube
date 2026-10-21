@@ -279,31 +279,14 @@ fn requests_without_overhead(pod: &Value) -> (u64, u64) {
             return (cpu, mem);
         }
     }
-    let sum = |list: &Value| -> (u64, u64) {
-        let mut cpu = 0u64;
-        let mut mem = 0u64;
-        for c in list.as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
-            let r = &c["resources"]["requests"];
-            if let Some(v) = r["cpu"].as_str() {
-                cpu += parse_cpu_millis(v);
-            }
-            if let Some(v) = r["memory"].as_str() {
-                mem += parse_memory_bytes(v);
-            }
-        }
-        (cpu, mem)
-    };
-    let (mut cpu, mut mem) = sum(&pod["spec"]["containers"]);
-    let mut init_cpu = 0u64;
-    let mut init_mem = 0u64;
-    for c in pod["spec"]["initContainers"].as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
-        let r = &c["resources"]["requests"];
-        init_cpu = init_cpu.max(r["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0));
-        init_mem =
-            init_mem.max(r["memory"].as_str().map(parse_memory_bytes).unwrap_or(0));
-    }
-    cpu = cpu.max(init_cpu);
-    mem = mem.max(init_mem);
+    // Containers, init containers and sidecars (#285): upstream's PodRequests.
+    let total = apimachinery::pod_resources::containers_total(pod, "requests", |k, v| match (k, v.as_str()) {
+        ("cpu", Some(q)) => parse_cpu_millis(q),
+        ("memory", Some(q)) => parse_memory_bytes(q),
+        _ => 0,
+    });
+    let mut cpu = total.get("cpu").copied().unwrap_or(0);
+    let mut mem = total.get("memory").copied().unwrap_or(0);
 
     // What the pod actually holds, which is not always what its spec asks for.
     //
@@ -498,6 +481,35 @@ mod tests {
             resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
             FilterResult::Fail(_)
         ));
+    }
+
+    /// Sidecars (#285, 1.33): upstream's PodRequests. A `restartPolicy:
+    /// Always` init container adds to the pod's total; a later ordinary init
+    /// container runs beside the sidecars started before it.
+    #[test]
+    fn sidecars_add_to_the_pod_and_to_later_init_steps() {
+        let req = |cpu: &str| json!({"requests": {"cpu": cpu}});
+        let pod = json!({"spec": {
+            "initContainers": [
+                {"name": "setup", "resources": req("300m")},
+                {"name": "proxy", "restartPolicy": "Always", "resources": req("200m")},
+                {"name": "migrate", "resources": req("500m")}
+            ],
+            "containers": [{"name": "app", "resources": req("400m")}]
+        }});
+        // Running: app 400 + proxy 200 = 600; busiest init step: migrate 500
+        // beside proxy 200 = 700.
+        assert_eq!(pod_requests(&pod).0, 700);
+        let lighter = json!({"spec": {
+            "initContainers": [{"name": "proxy", "restartPolicy": "Always", "resources": req("200m")}],
+            "containers": [{"name": "app", "resources": req("400m")}]
+        }});
+        assert_eq!(pod_requests(&lighter).0, 600, "a sidecar is summed, not maxed");
+        let plain = json!({"spec": {
+            "initContainers": [{"name": "i", "resources": req("200m")}],
+            "containers": [{"name": "app", "resources": req("400m")}]
+        }});
+        assert_eq!(pod_requests(&plain).0, 400, "an ordinary init container is maxed");
     }
 }
 
