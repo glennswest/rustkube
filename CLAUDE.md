@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Kubelet events 403 in a test namespace (#282, P1) — IN PROGRESS 2026-10-14
+### Kubelet events 403 in a test namespace (#282, P1) — BUILT, rig BLOCKED on stormcos#271, 2026-10-21
 Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.
 The namespace (stormcos_qa turbomode 543727dbc0) was deleted by the run's
 cleanup before the Dell rebooted; the 403 is NamespaceLifecycle (Terminating,
@@ -123,8 +123,12 @@ or missing before 776a392). Upstream also 403s, but with the
 `NamespaceTerminating` cause client-go's recorder drops quietly.
 - [x] `namespace_lifecycle`: the cause on the 403; unit; rig
       `node-events.sh` (rigs); README/test README/CHANGELOG
-- [ ] build VM; rig run; kubelet quiet on the cause (rustkube-node issue);
-      golden; close
+- [x] Build VM sc-build-09c08f291e at d5f48f5: workspace build + tests exit 0
+- [x] Kubelet half filed: rustkube-node#260 (log the cause at debug)
+- [x] Golden requested 2026-10-21 (stage build 143a30c11fc3)
+- [ ] node-events rig: 4c36149c2f (pvetest1) errored, pvetest2 refused,
+      C2NR0Q2 skipped (#791) — nodes' sbregistry has no forge peer
+      (stormcos#271, open). Proposed after it; then close #282
 
 ### VM template changes reach the running VMI (#269, P1, stormvm#23/#24) — COMPLETE 2026-10-13
 Kubelet half on rustkube-node main (#246 cpu/memory/NICs, #247 disks): it
