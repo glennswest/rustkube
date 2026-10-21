@@ -575,6 +575,28 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-dd10785be2ea (stormcos#366)
 - [ ] unserved-resource rig (stormcentral#512); close
 
+### Kubernetes 1.36 API (#285, P2) — IN PROGRESS 2026-10-21
+The issue's crate pair does not apply: nothing imports k8s-openapi (declared
+0.24 `v1_32` in apimachinery/apiserver/cloud, never `use`d — the only "1.32"
+here) and kube-rs is not used; the wire API is the release-1.36 protos +
+JSON. Served groups already match 1.36: none of the "stop serving" list is
+served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
+`/resize` (#136) are. Behaviour gaps found, in order:
+- [ ] Drop the unused k8s-openapi dependency
+- [ ] `metadata.generation` for built-ins (none today: controllers report
+      observedGeneration 1 against no generation): 1 on create, +1 on a
+      spec change through the main resource, upstream's per-kind rules;
+      Pods (1.35 GA) incl. `/resize`
+- [ ] Scheduler: sidecars (init, restartPolicy Always) add to the pod's
+      requests, as upstream (1.33 GA)
+- [ ] Job `spec.managedBy` (1.35 GA): controller skips other managers';
+      immutable
+- [ ] Ordered namespace deletion (1.34 GA): Pods first, the rest after
+- [ ] resourceVersions decimal everywhere (KEP-5504, 1.35): check
+- [ ] Separate issues: StructuredAuthenticationConfiguration, external SA
+      token signing, AuthorizeWithSelectors, externalIPs warning
+- [ ] Build VM per step; rigs when stormcos#271 lets them run; golden
+
 ### Cold container start 1.49 s on 12.32-flowsdn (#284, P2) — CLOSED (not reproduced) 2026-10-21
 The issue: confirm on the next release before tracing. `testhost installs`
 on pvetest2: container_start 1.5 s on 12.32 only; 12.33–12.40 (8 installs)
