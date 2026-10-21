@@ -220,6 +220,9 @@ pub async fn apply_one(
                 return Outcome::Failed(e.message);
             }
             crate::handlers::resource::ensure_metadata_pub(&mut obj, &name, ns);
+            if custom.is_none() {
+                crate::generation::on_create(&resource, &mut obj); // #285
+            }
             let is_service = resource == "services";
             match storage.create(&key, obj.clone()).await {
                 Ok(_) => {

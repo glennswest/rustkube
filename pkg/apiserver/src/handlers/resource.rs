@@ -391,6 +391,7 @@ pub async fn create_cluster_resource(
     .await?;
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
     ensure_metadata(&mut body, &name, None);
+    crate::generation::on_create(&resource, &mut body); // #285
 
     let key = ResourceStorage::cluster_key(&resource, &name);
     let obj = state.storage.create(&key, body).await?;
@@ -420,6 +421,7 @@ pub async fn create_namespaced_resource(
         // Admission webhooks (#82); a patch cannot move the object.
         crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
         ensure_metadata(&mut body, &name, Some(&namespace));
+        crate::generation::on_create(&resource, &mut body); // #285
         let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
         state.storage.create(&key, body).await
     }
@@ -583,6 +585,7 @@ pub(crate) async fn put_object(
         crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut body), Some(&existing)).await?;
         keep_server_fields(&mut body, &existing, name, namespace);
         status.on_update(&mut body, &existing)?;
+        crate::generation::on_update(key, &existing, &mut body); // a webhook may change the spec
         if key.starts_with("/registry/secrets/") {
             crate::builtin_admission::fold_string_data(&mut body); // a webhook may add it
         }
@@ -600,7 +603,7 @@ pub(crate) async fn put_object(
 /// apply, `/status`) and a reconciled startup manifest (#158): a Secret's
 /// stringData folded (#101), a Service's port and spec defaults, immutable fields (ConfigMap/Secret,
 /// PriorityClass), a PersistentVolumeClaim's update rules (#63), a Pod's
-/// scheduling gates (#87), and a Service's ClusterIP and node ports (#132),
+/// scheduling gates (#87), `metadata.generation` (#285), and a Service's ClusterIP and node ports (#132),
 /// whose [`crate::node_port::Plan`] the caller commits once its write lands
 /// or aborts when it fails.
 pub(crate) async fn builtin_update(
@@ -613,6 +616,7 @@ pub(crate) async fn builtin_update(
     if key.starts_with("/registry/secrets/") {
         crate::builtin_admission::fold_string_data(body);
     }
+    crate::generation::on_update(key, existing, body); // #285; again after webhooks
     check_immutable(key, existing, body)?;
     if key.starts_with("/registry/persistentvolumeclaims/") {
         crate::builtin_admission::pvc_update(storage, existing, body).await?;
@@ -1622,6 +1626,7 @@ where
             crate::admission::admit(state, crate::admission::Operation::Update, Some(&mut obj), Some(&before)).await?;
             phases.webhooks += t.elapsed();
             keep_server_fields(&mut obj, &stored_meta, &name, namespace.as_deref());
+            crate::generation::on_update(key, &before, &mut obj); // #285
             // Swap against what was read, whatever the patch did to the field.
             obj["metadata"]["resourceVersion"] = Value::String(read_rv);
             let t = std::time::Instant::now();
@@ -1724,6 +1729,9 @@ pub(crate) async fn patch_stored_object(
                 let created = async {
                     crate::admission::admit(state, crate::admission::Operation::Create, Some(&mut obj), None).await?;
                     ensure_metadata(&mut obj, name, namespace);
+                    if status == Strategy::BuiltIn {
+                        crate::generation::on_create(resource, &mut obj); // #285
+                    }
                     status.on_create(&mut obj)?;
                     state.storage.create(key, obj).await
                 }

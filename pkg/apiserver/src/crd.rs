@@ -780,7 +780,11 @@ pub async fn crd_create_ns(
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
     crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
-    state.crd_registry.strategy_for(&group, &version, &resource, validation).await.on_create(&mut body)?;
+    let strategy = state.crd_registry.strategy_for(&group, &version, &resource, validation).await;
+    if strategy == Strategy::BuiltIn {
+        crate::generation::on_create(&resource, &mut body); // a grouped built-in (#285)
+    }
+    strategy.on_create(&mut body)?;
     let key = ResourceStorage::namespaced_key(&storage_resource(&group, &resource), &namespace, &name);
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
@@ -1140,7 +1144,11 @@ pub async fn crd_create_cluster(
         return Ok((StatusCode::CREATED, Json(obj)));
     }
 
-    state.crd_registry.strategy_for(&group, &version, &resource, validation).await.on_create(&mut body)?;
+    let strategy = state.crd_registry.strategy_for(&group, &version, &resource, validation).await;
+    if strategy == Strategy::BuiltIn {
+        crate::generation::on_create(&resource, &mut body); // a grouped built-in (#285)
+    }
+    strategy.on_create(&mut body)?;
     let obj = state.storage.create(&key, body).await?;
     Ok((StatusCode::CREATED, Json(obj)))
 }

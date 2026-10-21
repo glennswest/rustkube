@@ -237,8 +237,17 @@ main writes still store the status they are sent. A custom resource's
 +1 on each main-resource write that changes `spec` (with the status
 subresource) or anything outside `metadata` (without); `/status` and
 metadata-only writes leave it, and a value the client sends is ignored, so a
-controller can report `status.observedGeneration`. Built-in objects get no
-generation yet.
+controller can report `status.observedGeneration`. Built-in objects follow
+upstream's strategies (#285): Pods (1.35), Deployments, ReplicaSets,
+StatefulSets, DaemonSets, ReplicationControllers, Jobs, CronJobs,
+PodDisruptionBudgets, NetworkPolicies, Ingresses, CRDs, admission policies
+and their bindings, FlowSchemas, PriorityLevelConfigurations, DeviceClasses
+and ResourceSlices get `1` on create and +1 when an update through the main
+resource changes `spec` (a Deployment also its annotations; webhook
+configurations their `webhooks`; a Pod's `spec.nodeName` — the scheduler's
+bind — does not count), whether by PUT, PATCH, apply or after a mutating
+webhook. Other kinds keep what is stored and take none from a client. The
+update that starts a deletion moves a positive generation on, as upstream.
 
 **`/scale`** (#86), `autoscaling/v1` Scale, GET/PUT/PATCH, for
 Deployments, ReplicaSets and StatefulSets (`spec.replicas`,

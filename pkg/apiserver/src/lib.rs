@@ -24,6 +24,7 @@ pub mod escalation;
 pub mod events;
 pub mod eviction;
 pub mod field_validation;
+pub mod generation;
 pub mod handlers;
 pub mod limitranger;
 pub mod manifests;

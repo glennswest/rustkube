@@ -584,10 +584,12 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
 `/resize` (#136) are. Behaviour gaps found, in order:
 - [x] Drop the unused k8s-openapi dependency (and serde-value, ordered-float
       2.10.1, which only it used)
-- [ ] `metadata.generation` for built-ins (none today: controllers report
-      observedGeneration 1 against no generation): 1 on create, +1 on a
-      spec change through the main resource, upstream's per-kind rules;
-      Pods (1.35 GA) incl. `/resize`
+- [x] `metadata.generation` for built-ins (none before: controllers reported
+      observedGeneration 1 against no generation): `generation.rs`, 1 on
+      create, +1 on a main-resource spec change, upstream's per-kind rules,
+      Pods (1.35) without nodeName (the scheduler binds by PUT), deletion
+      start; wired before and after webhooks on every write path; units;
+      rig builtin-generation.sh. Kubelet's Pod observedGeneration: rustkube-node
 - [ ] Scheduler: sidecars (init, restartPolicy Always) add to the pod's
       requests, as upstream (1.33 GA)
 - [ ] Job `spec.managedBy` (1.35 GA): controller skips other managers';
