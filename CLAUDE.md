@@ -575,6 +575,12 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-dd10785be2ea (stormcos#366)
 - [ ] unserved-resource rig (stormcentral#512); close
 
+### Cold container start 1.49 s on 12.32-flowsdn (#284, P2) — CLOSED (not reproduced) 2026-10-21
+The issue: confirm on the next release before tracing. `testhost installs`
+on pvetest2: container_start 1.5 s on 12.32 only; 12.33–12.40 (8 installs)
+0.3–0.5 s with the kubelet's total 0.2–0.5 s (~0.1 s outside it, as on
+12.30/12.31); pvetest1 0.2–0.6 s throughout. One sample, not traced; closed
+
 ### Conformance binaries from goldens (#140, P2) — COMPLETE 2026-10-21
 stormcentral#557 is live: `stormcentral component fetch rustkube --commit
 <sha>` (the three rustkube-* stage goldens, sha256-checked) and `… fastetcd`
