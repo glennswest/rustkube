@@ -85,6 +85,29 @@ EndpointSlices, ResourceQuota), the scheduler's decisions, watch semantics.
 
 ## Results
 
+### From the goldens, 2026-10-21, at d5f48f5 (#140)
+
+The first run from goldens (`fetch.sh` then `vm.sh`; kube-apiserver
+golden-rustkube-apiserver-4e63b7a9fbe4, controller-manager/scheduler
+…-efab8dc99241, fastetcd golden-fastetcd-efab8dc99241 = v1.34.0+2; release
+builds), six chunks side by side on conform.g8.lo: 429 specs reported,
+**123 passed, 306 failed**.
+
+| Chunk | Passed | Failed | |
+|---|---:|---:|---|
+| sig-api-machinery | 49 | 41 | suite timeout (45 m) |
+| sig-apps | 8 | 47 | suite timeout (45 m) |
+| sig-auth, cli, instrumentation, architecture, scheduling | 21 | 22 | |
+| sig-network | 13 | 34 | |
+| sig-node | 20 | 83 | |
+| sig-storage | 12 | 79 | |
+| **Total** | **123** | **306** | |
+
+There is still no kubelet, so the pod-dependent specs fail as before. The
+failures have not been triaged against the table below yet. #159's spec
+(orphan RS created by deployment, PropagationPolicy Orphan) passed with all
+six chunks running at once. Logs: `~/results/d5f48f5…/` on the VM.
+
 ### The first run on the conformance VM, 2026-09-28, at efbea2d
 
 The same six chunks, on conform.g8.lo from staged binaries (`vm.sh`): 428

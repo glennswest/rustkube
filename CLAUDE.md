@@ -575,17 +575,21 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-dd10785be2ea (stormcos#366)
 - [ ] unserved-resource rig (stormcentral#512); close
 
-### Conformance binaries from goldens (#140, P2) — IN PROGRESS 2026-10-21
+### Conformance binaries from goldens (#140, P2) — COMPLETE 2026-10-21
 stormcentral#557 is live: `stormcentral component fetch rustkube --commit
 <sha>` (the three rustkube-* stage goldens, sha256-checked) and `… fastetcd`
 (newest golden, v1.34.0+2). Checked here at d5f48f5; a commit with no golden
 exits 1. conform.g8.lo has no stormcentral CLI or token, so the fetch runs
 where the session's token is and is pushed to the VM:
-- [ ] `test/conformance/fetch.sh <sha>`: fetch + MANIFEST (goldens, sha256s)
-      → rsync to conform@conform.g8.lo:/srv/conformance/<sha>; vm.sh reads
-      that (no dev rsync); stage.sh deleted; run.sh/lib.sh/docs/CHANGELOG
-- [ ] Run the six chunks on conform.g8.lo at d5f48f5; compare with efbea2d
-      (75 passed); #159's concurrent GC spec; close #140
+- [x] c8c7b83 `test/conformance/fetch.sh <sha>`: fetch + MANIFEST (goldens,
+      sha256s) → rsync to conform@conform.g8.lo:/srv/conformance/<sha>; vm.sh
+      reads that (no dev rsync); stage.sh deleted; 7b711d1 vm.sh runs the
+      commit's scripts from a worktree (~/wt/<sha>); docs/CHANGELOG. Build VM
+      sc-build-0049c402d6 exit 0; 3b126d9 two duplicated #[test] (warnings)
+- [x] Six chunks on conform.g8.lo at d5f48f5 from goldens: 123 passed /
+      306 failed of 429 (efbea2d: 75); #159's orphan-RS spec passed
+      concurrently. docs/conformance.md table. #140 closed. Triage of the
+      new run against the failure table not done
 Owner: "Goldens". Goldens are sealed stormblock volumes on forge; nothing
 reads a golden's files from another machine (`registry/<c>:<tag>` is a
 display name). Filed stormcentral#557 (`component fetch <c> --commit --out`,
