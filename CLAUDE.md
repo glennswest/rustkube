@@ -575,14 +575,21 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-dd10785be2ea (stormcos#366)
 - [ ] unserved-resource rig (stormcentral#512); close
 
-### Conformance binaries from goldens (#140, P2) — BLOCKED on stormcentral#557, 2026-10-07
+### Conformance binaries from goldens (#140, P2) — IN PROGRESS 2026-10-21
+stormcentral#557 is live: `stormcentral component fetch rustkube --commit
+<sha>` (the three rustkube-* stage goldens, sha256-checked) and `… fastetcd`
+(newest golden, v1.34.0+2). Checked here at d5f48f5; a commit with no golden
+exits 1. conform.g8.lo has no stormcentral CLI or token, so the fetch runs
+where the session's token is and is pushed to the VM:
+- [ ] `test/conformance/fetch.sh <sha>`: fetch + MANIFEST (goldens, sha256s)
+      → rsync to conform@conform.g8.lo:/srv/conformance/<sha>; vm.sh reads
+      that (no dev rsync); stage.sh deleted; run.sh/lib.sh/docs/CHANGELOG
+- [ ] Run the six chunks on conform.g8.lo at d5f48f5; compare with efbea2d
+      (75 passed); #159's concurrent GC spec; close #140
 Owner: "Goldens". Goldens are sealed stormblock volumes on forge; nothing
 reads a golden's files from another machine (`registry/<c>:<tag>` is a
 display name). Filed stormcentral#557 (`component fetch <c> --commit --out`,
 sha256-checked); fastetcd has no golden and no release assets (noted there).
-- [ ] After #557: `vm.sh <sha>` fetches rustkube's golden binaries (+ fastetcd
-      by #557's route), `stage.sh` retired, docs/conformance.md; run the six
-      chunks; #159's concurrent rerun
 
 ### GC orphan failure under concurrent chunks (#159, P3) — ANALYSED 2026-10-07
 - [x] efbea2d's GC (sweep, non-snapshot `live`, unconditional delete, 30 s
