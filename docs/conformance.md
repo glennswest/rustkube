@@ -23,47 +23,44 @@ cannot tell, and what it found (#67).
   `RESULT <passed|failed> <seconds> <name>` line per spec, with the failure
   message and where it failed.
 
-### Historical VM procedure — blocked; goldens replace it (#140, stormcentral#557)
+### On the conformance VM, from the goldens (#140)
 
 A run compiles nothing: it is a test workload, and it used to hold dev's
 build slots for 45–90 minutes per chunk (four at once took dev to load 48 on
-2026-09-27 and stalled every project's builds). So the binaries are built
-**once per commit** in one ordinary sc-build, and the suite runs on the
-conformance VM, which has no toolchain:
-
-The following records the old procedure, **not a working command sequence
-under today's build-volume contract**:
+2026-09-27 and stalled every project's builds). The binaries are the
+commit's **goldens** (owner, #140), and the suite runs on the conformance VM
+(conform.g8.lo), which has no toolchain:
 
 ```bash
-# Historical only: stage.sh cannot publish this way now; goldens replace it (#140).
-# 1. on the agent VM, from the checkout (pushed first): build and publish
-sc-build test/conformance/stage.sh       # → STAGED /build/assets/conformance/<sha>
+# 1. where the stormcentral CLI and a token are (a stormcentral session):
+#    read the commit's goldens and deliver them to the VM
+test/conformance/fetch.sh <sha>     # → DELIVERED conform@conform.g8.lo:/srv/conformance/<sha>
 
-# 2. on the conformance VM: fetch, check out the same commit, run all six chunks
+# 2. on the conformance VM: check out the same commit, run all six chunks
 ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && git checkout -q origin/main && test/conformance/vm.sh <sha>'
 # → ~/results/<sha>/<chunk>.log and SUMMARY (passed/failed/skipped per chunk)
 ```
 
-> **No new conformance run is possible today.** sc-build gives every job a
-> private drive and keeps nothing (since 2026-09-28), so `stage.sh` can no
-> longer write `/build/assets` (#140); and `vm.sh` fetches from
-> `stormbuild@dev.g8.lo`, which is retired (stormcentral#521). The owner has
-> decided the route: **goldens** — conformance binaries reach the VM as the
-> component's golden. Goldens are sealed volumes on forge that nothing reads
-> from another machine yet, so #140 waits for stormcentral#557 (`stormcentral
-> component fetch`). Until then `stage.sh` and `vm.sh` are unchanged and
-> unusable for a new commit; efbea2d is the last commit staged on the VM.
+`fetch.sh` reads kube-apiserver, kube-controller-manager and
+kube-scheduler from the rustkube-* stage goldens built at `<sha>` with
+`stormcentral component fetch rustkube --commit <sha>` (stormcentral#557),
+each checked against its build's sha256, and fastetcd from its newest golden
+(`RK_FASTETCD_COMMIT` picks another). A commit with no golden is refused —
+`stormcentral component build rustkube` makes one. It writes a `MANIFEST`
+(the commit, the goldens read, every binary's sha256) and copies the
+directory to the VM over ssh. The VM needs no stormcentral token.
+`vm.sh` checks the directory against its MANIFEST and that it names `<sha>`,
+checks the clone out at `<sha>`, and runs the chunks side by side.
 
-`vm.sh` fetches the staged directory with a read-only rsync key (it can read
-`/build/assets/conformance` on dev and nothing else), checks the binaries
-against their MANIFEST, and runs the chunks side by side:
+The goldens are **release** builds; runs before 2026-10-21 used debug
+binaries from the checkout and fastetcd's `main`, so timing-sensitive specs
+may differ from those runs for that reason alone.
 
 `RK_PORT_OFFSET` moves each rig's ports so chunks run side by side, and
 `RK_SUITE_TIMEOUT` (`run.sh`'s default `100m`, `vm.sh`'s `45m`) cuts off specs
-that hang; a chunk's real work is done in about 20 minutes. `stage.sh` builds
-debug binaries (as the in-slot runs did) and fastetcd at its `main`, not the
-rigs' pinned tag, and writes a `MANIFEST` with both commits and every
-binary's sha256, so a result names exactly what it tested.
+that hang; a chunk's real work is done in about 20 minutes. The `MANIFEST`
+names the goldens and every binary's sha256, so a result names exactly what
+it tested.
 
 To chase one failure, focus on it and set `RK_LOG_GREP` to a regex: the
 matching apiserver and controller-manager log lines are printed at the end.

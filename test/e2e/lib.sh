@@ -12,7 +12,7 @@
 # unless it is handed prebuilt binaries, which is how the conformance VM runs
 # it (no toolchain, no build slot):
 #   RK_BIN       directory holding kube-apiserver, kube-controller-manager and
-#                kube-scheduler (test/conformance/stage.sh builds and publishes it)
+#                kube-scheduler (the conformance VM's come from goldens, test/conformance/fetch.sh)
 #   RK_FASTETCD_REF  source tag/branch (default in versions.sh)
 #   RK_TOOLS     directory of prestaged upstream tools (oc, kubectl, CSI and
 #                snapshot binaries, snapshot CRDs/RBAC) — the test image's

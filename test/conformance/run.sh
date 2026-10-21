@@ -16,9 +16,10 @@
 # what a run on real stormcos nodes is for. Specs that only need the API pass
 # or fail on their merits.
 #
-# It runs on the conformance VM, not in a build slot: stage the binaries once
-# with `sc-build test/conformance/stage.sh`, then on the VM
-#   RK_BIN=<staged>/bin RK_FASTETCD=<staged>/fastetcd test/conformance/run.sh
+# It runs on the conformance VM, not in a build slot: deliver the commit's
+# binaries from its goldens with `test/conformance/fetch.sh <sha>`, then on
+# the VM
+#   RK_BIN=<dir>/bin RK_FASTETCD=<dir>/fastetcd test/conformance/run.sh
 # (docs/conformance.md). Run by SIG, chunks side by side with RK_PORT_OFFSET.
 # Without RK_BIN it still builds from the checkout, as it did in sc-build.
 # RK_PORT_OFFSET (test/e2e/lib.sh) lets chunks run side by side;

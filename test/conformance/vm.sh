@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
 # The whole conformance run, on the conformance VM (conform.g8.lo), for one
-# staged commit:
+# delivered commit:
 #
 #   test/conformance/vm.sh <rustkube sha>      # as `conform`, from ~/rustkube
 #
-# 1. fetches /build/assets/conformance/<sha> from the build box (read-only
-#    rsync; stage it first with `sc-build test/conformance/stage.sh`),
+# 1. checks /srv/conformance/<sha> against its MANIFEST: the commit's binaries
+#    from its goldens, delivered by `test/conformance/fetch.sh <sha>` from a
+#    machine with a stormcentral token (#140),
 # 2. checks this clone out at the same commit, so the test scripts match the
 #    binaries,
 # 3. runs the six SIG chunks side by side, each on its own ports,
@@ -15,14 +16,14 @@
 # Nothing is compiled here and no build slot is used.
 set -uo pipefail
 SHA=${1:?usage: vm.sh <rustkube sha>}
-SRC=${RK_STAGE_SRC:-stormbuild@dev.g8.lo:}
 S=/srv/conformance/$SHA
 OUT=$HOME/results/$SHA
 cd "$(dirname "$0")/../.."
 
-mkdir -p "$S" "$OUT"
-rsync -a "$SRC$SHA/" "$S/" || { echo "cannot fetch $SHA: stage it with sc-build test/conformance/stage.sh"; exit 2; }
-(cd "$S" && grep -E '^[0-9a-f]{64}  ' MANIFEST | sha256sum -c --quiet) || { echo "staged binaries fail their MANIFEST"; exit 2; }
+mkdir -p "$OUT"
+[ -f "$S/MANIFEST" ] || { echo "$S not delivered: run test/conformance/fetch.sh $SHA where stormcentral is"; exit 2; }
+grep -qx "rustkube $SHA" "$S/MANIFEST" || { echo "$S/MANIFEST names another commit"; exit 2; }
+(cd "$S" && grep -E '^[0-9a-f]{64}  ' MANIFEST | sha256sum -c --quiet) || { echo "delivered binaries fail their MANIFEST"; exit 2; }
 git fetch -q origin && git checkout -q "$SHA" || { echo "cannot check out $SHA"; exit 2; }
 cp "$S/MANIFEST" "$OUT/"
 
