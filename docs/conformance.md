@@ -50,7 +50,8 @@ each checked against its build's sha256, and fastetcd from its newest golden
 (the commit, the goldens read, every binary's sha256) and copies the
 directory to the VM over ssh. The VM needs no stormcentral token.
 `vm.sh` checks the directory against its MANIFEST and that it names `<sha>`,
-checks the clone out at `<sha>`, and runs the chunks side by side.
+runs the test scripts of `<sha>` from a worktree (`~/wt/<sha>`, so the
+driver itself is the clone's, at main), and runs the chunks side by side.
 
 The goldens are **release** builds; runs before 2026-10-21 used debug
 binaries from the checkout and fastetcd's `main`, so timing-sensitive specs

@@ -8,8 +8,9 @@
 # 1. checks /srv/conformance/<sha> against its MANIFEST: the commit's binaries
 #    from its goldens, delivered by `test/conformance/fetch.sh <sha>` from a
 #    machine with a stormcentral token (#140),
-# 2. checks this clone out at the same commit, so the test scripts match the
-#    binaries,
+# 2. runs the test scripts of that same commit, so they match the binaries:
+#    from a worktree at <sha> (~/wt/<sha>), leaving this clone — and this
+#    script — as they are,
 # 3. runs the six SIG chunks side by side, each on its own ports,
 # 4. writes ~/results/<sha>/<chunk>.log and a summary of RESULT counts.
 #
@@ -24,7 +25,9 @@ mkdir -p "$OUT"
 [ -f "$S/MANIFEST" ] || { echo "$S not delivered: run test/conformance/fetch.sh $SHA where stormcentral is"; exit 2; }
 grep -qx "rustkube $SHA" "$S/MANIFEST" || { echo "$S/MANIFEST names another commit"; exit 2; }
 (cd "$S" && grep -E '^[0-9a-f]{64}  ' MANIFEST | sha256sum -c --quiet) || { echo "delivered binaries fail their MANIFEST"; exit 2; }
-git fetch -q origin && git checkout -q "$SHA" || { echo "cannot check out $SHA"; exit 2; }
+git fetch -q origin || { echo "cannot fetch origin"; exit 2; }
+T=$HOME/wt/$SHA
+[ -d "$T" ] || git worktree add -q --detach "$T" "$SHA" || { echo "cannot check out $SHA"; exit 2; }
 cp "$S/MANIFEST" "$OUT/"
 
 i=0
@@ -33,7 +36,7 @@ for f in 'sig-api-machinery' 'sig-apps' 'sig-(auth|cli|instrumentation|architect
   i=$((i + 10))
   name=$(echo "$f" | tr -c 'a-z0-9\n' '-' | sed 's/-*$//')
   RK_BIN=$S/bin RK_FASTETCD=$S/fastetcd RK_PORT_OFFSET=$i RK_SUITE_TIMEOUT=${RK_SUITE_TIMEOUT:-45m} \
-    bash test/conformance/run.sh "\[$f\].*\[Conformance\]" >"$OUT/$name.log" 2>&1 &
+    bash "$T/test/conformance/run.sh" "\[$f\].*\[Conformance\]" >"$OUT/$name.log" 2>&1 &
 done
 wait
 
