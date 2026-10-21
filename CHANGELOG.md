@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-21
+- **docs:** #285 (1.36 API) audit: no removed-upstream group/version is served; resourceVersions are already decimal (KEP-5504). Filed for the rest: rustkube-node#286 (Pod `status.observedGeneration`), #287 (`--authentication-config`), #288 (external SA token signing), #289 (externalIPs deprecation warning).
 - **feat:** Ordered namespace deletion (#285, upstream's OrderedNamespaceDeletion, GA in 1.34): a terminating namespace's Pods are deleted first, and nothing else in it is deleted while one is left, so a Pod never outlives the NetworkPolicy, Secret or ServiceAccount it runs under. Rig `namespace-order.sh`.
 - **feat:** Job `spec.managedBy` (#285, GA in 1.35): the Job controller leaves a Job whose `managedBy` names another controller (no Pods, no status); the apiserver refuses a value that is not a domain-prefixed path or is over 63 bytes, and any change on update (422, upstream's wording). Rig `job-managed-by.sh`.
 - **fix:** Sidecar containers (init containers with `restartPolicy: Always`, GA in 1.33) count as upstream's PodRequests/PodLimits (#285): they add to the pod's total, and an ordinary init container is sized beside the sidecars started before it. One rule (`apimachinery::pod_resources`) for the scheduler's resource fit, ResourceQuota usage and LimitRanger's Pod aggregate. Before, a sidecar was taken as an ordinary init container (the larger of it and the containers), so a node could be overcommitted by every sidecar; LimitRanger's Pod limits left init containers out.

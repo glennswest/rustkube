@@ -575,7 +575,7 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-dd10785be2ea (stormcos#366)
 - [ ] unserved-resource rig (stormcentral#512); close
 
-### Kubernetes 1.36 API (#285, P2) — IN PROGRESS 2026-10-21
+### Kubernetes 1.36 API (#285, P2) — BUILT, rigs BLOCKED on stormcos#271, 2026-10-21
 The issue's crate pair does not apply: nothing imports k8s-openapi (declared
 0.24 `v1_32` in apimachinery/apiserver/cloud, never `use`d — the only "1.32"
 here) and kube-rs is not used; the wire API is the release-1.36 protos +
@@ -598,10 +598,19 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
       validated on create, immutable; units; rig job-managed-by.sh
 - [x] Ordered namespace deletion (1.34 GA): Pods first, the rest after;
       rig namespace-order.sh (no unit: the controller needs live feeds)
-- [ ] resourceVersions decimal everywhere (KEP-5504, 1.35): check
-- [ ] Separate issues: StructuredAuthenticationConfiguration, external SA
-      token signing, AuthorizeWithSelectors, externalIPs warning
-- [ ] Build VM per step; rigs when stormcos#271 lets them run; golden
+- [x] resourceVersions decimal everywhere (KEP-5504, 1.35): already — store
+      revisions as decimal strings (storage.rs, watch events/bookmarks, lists);
+      a non-numeric one sent in is a 400. No change
+- [x] Filed: rustkube-node#286 (Pod status.observedGeneration), #287
+      (--authentication-config), #288 (external SA token signing), #289
+      (externalIPs warning, if upstream sends one). MAP enforcement is #234.
+      AuthorizeWithSelectors: RBAC ignores selectors upstream too — not filed
+- [x] Build VMs per step (f0bb67a745, abd853be45, eaf6080208, 51306b0ea3,
+      564fc55498): tests pass, 0 rustc warnings, changed files clippy-clean;
+      golden requested 2026-10-21
+- [ ] Rigs builtin-generation, job-managed-by, namespace-order (+ the rest)
+      when stormcos#271 lets test images reach a node; the issue's
+      "test suites on pve and the Dell" and a release carrying it; then close
 
 ### Cold container start 1.49 s on 12.32-flowsdn (#284, P2) — CLOSED (not reproduced) 2026-10-21
 The issue: confirm on the next release before tracing. `testhost installs`
