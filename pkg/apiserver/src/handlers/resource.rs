@@ -2322,7 +2322,6 @@ mod tests {
 
     // rustkube#9: a client request with an unexpected shape must never panic.
     #[test]
-    #[test]
     fn merge_patch_updates_and_deletes_fields() {
         // RFC 7386: null removes a key, objects merge recursively.
         let mut obj = json!({"spec":{"replicas":1,"paused":true},"status":{"phase":"A"}});

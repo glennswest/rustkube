@@ -1229,7 +1229,6 @@ mod subresource_tests {
     }
 
     #[test]
-    #[test]
     fn discovery_is_recognised_by_shape_so_crd_groups_work() {
         // The failure this replaces: a hardcoded list could only name the
         // built-in groups, so every CRD group's discovery document answered

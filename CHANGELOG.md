@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-21
+- **fix:** Two apiserver tests carried `#[test]` twice (`rbac_engine.rs`, `handlers/resource.rs`): rustc's `duplicated attribute` warnings in the test build are gone.
 - **test:** Conformance binaries come from the commit's goldens (#140, owner: "Goldens"): `test/conformance/fetch.sh <sha>` reads kube-apiserver/-controller-manager/-scheduler from the rustkube-* stage goldens built at `<sha>` and fastetcd from its golden (`stormcentral component fetch`, stormcentral#557, sha256-checked), writes the MANIFEST and copies it to conform.g8.lo; `vm.sh` takes that directory (no rsync from dev). `stage.sh` and its `/build/assets` write are removed. Goldens are release builds.
 - **fix:** `--client-ca-file` is waited for at start (absent, empty or half-written; 250 ms polls, 120 s) like `--client-crl-file`, instead of read once (#286). On stormcos 12.39 the bundle is written by `stormcert-forge-trust`, which starts beside the apiserver (stormcos#572); a missing file failed the start into stormd's restart back-off. Not the cause of #286's 13 s: that was the kubelet's first create of the apiserver container refused by stormpump on its ublk root (stormblock#485).
 
