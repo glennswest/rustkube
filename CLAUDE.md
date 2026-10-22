@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### 12.39 apiserver boot +13 s (#286, P0) — DIAGNOSED, BLOCKED on rustkube-node#287, 2026-10-21
+### 12.39 apiserver boot +13 s (#286, P0) — DIAGNOSED, waits for a release of rustkube-node 08cb1a0, 2026-10-21
 Not rustkube code. 12.42 kubelet rings (pvetest1/2): on the late boot the
 kubelet's first create of a control-plane static pod is refused at its root —
 stormpump `VolumeRegister` ENXIO/EINVAL/ENOENT/EBADMSG, or stormblock 404 for
@@ -128,8 +128,15 @@ stormblock#485 (closed) measured no stormblock change in the path.
 - [x] Filed stormpump#182 (refusals), stormblock#489 (404 on the new root),
       rustkube-node#287 (retry a refused create in ~1 s); evidence on #286;
       proposed after rustkube-node#287. server1's 385 s is #290
-- [ ] Release carrying rustkube-node#287: reboot_phase_apiserver ~3 s,
-      boot_phase_apiserver ~5 s on both pve VMs; then close #286
+- [x] Master's review: the refused root is the kubelet's own start-up
+      sweep deleting a static pod's fresh root (same `ctr-ct-N` as last
+      boot) → rustkube-node#288. Both kubelet fixes on rustkube-node main:
+      008304b (#287, refused create retried 0.5→8 s) and 08cb1a0 (#288,
+      per-start root names; sweep skips this start's). Proposed
+      `--after-release rustkube-node>=08cb1a0`
+- [ ] Release carrying it: boot → apiserver ~21 s (reboot_phase_apiserver
+      ~3 s, boot_phase_apiserver ~5 s) on both pve VMs; then close #286 as
+      a duplicate of rustkube-node#288
 
 ### Kubelet events 403 in a test namespace (#282, P1) — BUILT, rig BLOCKED on stormcos#271, 2026-10-21
 Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.
