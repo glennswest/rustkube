@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Boot while the datastore is down: lost manifests, 403s (#293, P1) — BUILT 2026-10-22
+### Boot while the datastore is down: lost manifests, 403s (#293, P1) — COMPLETE 2026-10-22
 server1 12.49 reboot: fastetcd repairing its redb file (13:15:08); the
 apiserver's `wait_for_datastore` (60 s) and `load_existing_crds` (60 s) give
 up and their results are unused, so the one manifest pass ran against a store
@@ -134,8 +134,12 @@ inferred from the code, not read from the apiserver's log.
 - [x] Build VMs sc-build-ec35189573 (apiserver 346) and sc-build-c56955129f
       at 537e195: workspace build + tests exit 0, 0 rustc warnings, changed
       files clippy-clean. Golden stage build 01a3affcd023 requested
-- [ ] datastore-late rig on conform.g8.lo from the 01a3affcd023 goldens
-      (test machines blocked on stormcos#271); then close #293
+- [x] datastore-late rig on conform.g8.lo (test machines blocked on
+      stormcos#271), store 150 s late (aaedeab): golden-rustkube-apiserver-
+      01a3affcd023 13/13; control dfb448b7c686 9 FAIL — `0 created … 4
+      failed` at INFO, objects 404, 403 with the store down (server1's
+      signature). 70 s did not reproduce: the old CRD load's own 60 s
+      covered it. #293 closed
 
 ### Quantities stored as JSON numbers (#292, stormupdate#23) — COMPLETE 2026-10-21
 cilium's `install-cni-binaries` `limits.cpu: 1` (YAML number) was stored and
