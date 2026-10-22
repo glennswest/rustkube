@@ -134,7 +134,7 @@ kube-rs/k8s-openapi clients (stormupdate's controller) failed to list pods.
       golden-rustkube-*-dfb448b7c686 (recorded at 5074b54 = 071e284 + docs)
       10/10 PASS. #292 closed; ships with the release carrying dfb448b7c686
 
-### 12.39 apiserver boot +13 s (#286, P0) — FIXED on pvetest2 (12.43), waits for pvetest1, 2026-10-22
+### 12.39 apiserver boot +13 s (#286, P0) — COMPLETE 2026-10-22
 Not rustkube code. 12.42 kubelet rings (pvetest1/2): on the late boot the
 kubelet's first create of a control-plane static pod is refused at its root —
 stormpump `VolumeRegister` ENXIO/EINVAL/ENOENT/EBADMSG, or stormblock 404 for
@@ -162,9 +162,10 @@ stormblock#485 (closed) measured no stormblock change in the path.
       38.5 → 20.7 s, boot 24.4 s (firmware/initramfs, not the apiserver);
       phases 6.1 / 4.0 s; three apiserver starts total 0.29–0.55 s, no
       refused root in the kubelet ring. Posted on #286
-- [ ] pvetest1 on 12.43+ (unreachable since 02:23Z; parked `wait-owner
-      --until`, master asked to install it); then close #286 as a
-      duplicate of rustkube-node#288
+- [x] pvetest1 12.49 (pvetest1-1792669683): boot → apiserver 19.6 s
+      (phase 3.9 s), reboot 19.0 s (phase 4.0 s); reboot's apiserver start
+      attempts=1, total 308 ms, no CreateContainerError. pvetest2 12.48:
+      4.6 / 3.0 s. Closed as a duplicate of rustkube-node#288
 
 ### Kubelet events 403 in a test namespace (#282, P1) — BUILT, rig BLOCKED on stormcos#271, 2026-10-21
 Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.

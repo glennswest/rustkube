@@ -4,6 +4,7 @@
 
 ### 2026-10-22
 - **docs:** #292 verified from the goldens on conform.g8.lo: `quantity-strings.sh` 10/10 on golden-rustkube-*-dfb448b7c686 (5074b54, carries 071e284); the b52da76 goldens fail 8 of 9 (`{'cpu': 1}`). #292 closed.
+- **docs:** #286 verified on pvetest1 with 12.49 (install pvetest1-1792669683): boot → apiserver 19.6 s (`boot_phase_apiserver` 3.9 s), reboot → apiserver 19.0 s (`reboot_phase_apiserver` 4.0 s; 12.42 had 91.3 s late boots); the reboot's apiserver start `attempts=1 wait=5.8ms total=308ms`, no `CreateContainerError` in the kubelet ring. pvetest2 12.48-flowsdn: 4.6 / 3.0 s. Closed as a duplicate of rustkube-node#288.
 - **docs:** #286 verified on pvetest2 with 12.43-flowsdn (rustkube-node 81dc1bd): reboot → apiserver 38.5 → 20.7 s, every apiserver start 0.3–0.55 s, no refused static-pod root. pvetest1 (unreachable) still to measure before closing.
 
 ### 2026-10-21
