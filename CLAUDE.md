@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### 12.39 apiserver boot +13 s (#286, P0) — DIAGNOSED, waits for a release of rustkube-node 08cb1a0, 2026-10-21
+### 12.39 apiserver boot +13 s (#286, P0) — DIAGNOSED, 12.43 carries the fix, waits for its pve installs, 2026-10-21
 Not rustkube code. 12.42 kubelet rings (pvetest1/2): on the late boot the
 kubelet's first create of a control-plane static pod is refused at its root —
 stormpump `VolumeRegister` ENXIO/EINVAL/ENOENT/EBADMSG, or stormblock 404 for
@@ -134,6 +134,11 @@ stormblock#485 (closed) measured no stormblock change in the path.
       008304b (#287, refused create retried 0.5→8 s) and 08cb1a0 (#288,
       per-start root names; sweep skips this start's). Proposed
       `--after-release rustkube-node>=08cb1a0`
+- [x] 12.43 composed with rustkube-node 81dc1bd (contains 08cb1a0); the
+      item came back on the compose. Not measured: pvetest1's 12.43 update
+      failed at preflight (02:23Z, host unreachable), pvetest2 has not taken
+      it, both VMs unreachable 2026-10-21 evening. Parked `wait-owner
+      --until` a 12.43+ install on both pve VMs
 - [ ] Release carrying it: boot → apiserver ~21 s (reboot_phase_apiserver
       ~3 s, boot_phase_apiserver ~5 s) on both pve VMs; then close #286 as
       a duplicate of rustkube-node#288
