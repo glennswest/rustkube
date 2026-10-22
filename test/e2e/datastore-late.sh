@@ -8,9 +8,11 @@
 #
 # 1. Both stop; the apiserver starts with a --manifest-dir (a CRD, a
 #    ClusterRole, a ConfigMap and a custom resource of the CRD) and the
-#    datastore 70 s later — past the 60 s the boot used to wait before
-#    bootstrapping into a dead store. The apiserver waits (nothing served,
-#    an ERROR in its log), then applies every manifest: 4 created, 0 failed.
+#    datastore 150 s later — past both 60 s windows the boot used to give the
+#    datastore (its wait, then the CRD load) before running the manifest pass
+#    into a dead store (dfb448b7c686's apiserver: 0 created, 4 failed). The
+#    apiserver waits (nothing served, an ERROR in its log), then applies
+#    every manifest: 4 created, 0 failed.
 # 2. With the datastore stopped under a serving apiserver, a caller with no
 #    grant gets 503 + Retry-After (the refusal could not be checked), not 403;
 #    once it is back, the same request is a plain 403.
@@ -60,7 +62,7 @@ kind: Widget
 metadata: {name: w1}
 EOF
 
-# --- 1. reboot: apiserver first, datastore 70 s later --------------------------
+# --- 1. reboot: apiserver first, datastore 150 s later -------------------------
 kill "$API_PID"; wait "$API_PID" 2>/dev/null
 kill "$STORE_PID"; wait "$STORE_PID" 2>/dev/null
 "$BIN/kube-apiserver" --bind-addr 127.0.0.1 --secure-port "$PORT" \
@@ -69,12 +71,12 @@ kill "$STORE_PID"; wait "$STORE_PID" 2>/dev/null
   --service-account-signing-key-file "$W/sa.key" --service-account-key-file "$W/sa.pub" \
   --manifest-dir "$M" >"$W/apiserver.log" 2>&1 &
 API_PID=$!
-sleep 70
-if kill -0 "$API_PID" 2>/dev/null; then pass "apiserver still waiting after 70 s"; else fail "apiserver exited while the datastore was down"; fi
+sleep 150
+if kill -0 "$API_PID" 2>/dev/null; then pass "apiserver still waiting after 150 s"; else fail "apiserver exited while the datastore was down"; fi
 code=$(get /readyz)
 [ "$code" = 000 ] && pass "nothing served while the datastore is down" || fail "served $code while the datastore was down"
 grep -q 'datastore has not answered for' "$W/apiserver.log" && pass "the wait is an ERROR in the log" \
-  || fail "no 'datastore has not answered' line after 70 s"
+  || fail "no 'datastore has not answered' line after 150 s"
 t0=$(date +%s)
 start_store
 ready=
