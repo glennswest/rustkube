@@ -115,6 +115,20 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Boot while the datastore is down: lost manifests, 403s (#293, P1) — IN PROGRESS 2026-10-22
+server1 12.49 reboot: fastetcd repairing its redb file (13:15:08); the
+apiserver's `wait_for_datastore` (60 s) and `load_existing_crds` (60 s) both
+gave up, their results unused, so the one manifest pass ran against a dead
+store (0 created, 114 failed: `get` errors read as "absent"), then RBAC's
+store fallback failed closed → 403 for everyone until fastetcd answered.
+- [ ] `wait_for_datastore`: no deadline (ERROR each minute); the startup
+      probe allows 600 s and nothing can be served without the store
+- [ ] manifests: a `get` error is not "absent"; storage-caused failures (and
+      kinds not yet served) retried in the background until applied; the
+      summary at WARN with the failure reasons
+- [ ] RBAC: a deny reached with an unreadable store → 503 + Retry-After
+- [ ] Units; README/CHANGELOG; build VM; golden
+
 ### Quantities stored as JSON numbers (#292, stormupdate#23) — COMPLETE 2026-10-21
 cilium's `install-cni-binaries` `limits.cpu: 1` (YAML number) was stored and
 returned as `1`; upstream's Quantity always serializes as a string, so
