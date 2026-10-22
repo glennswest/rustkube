@@ -132,7 +132,7 @@ kube-rs/k8s-openapi clients (stormupdate's controller) failed to list pods.
 - [ ] quantity-strings rig on conform.g8.lo from the 071e284 goldens (test
       machines blocked on stormcos#271); then close #292
 
-### 12.39 apiserver boot +13 s (#286, P0) — DIAGNOSED, 12.43 carries the fix, waits for its pve installs, 2026-10-21
+### 12.39 apiserver boot +13 s (#286, P0) — FIXED on pvetest2 (12.43), waits for pvetest1, 2026-10-22
 Not rustkube code. 12.42 kubelet rings (pvetest1/2): on the late boot the
 kubelet's first create of a control-plane static pod is refused at its root —
 stormpump `VolumeRegister` ENXIO/EINVAL/ENOENT/EBADMSG, or stormblock 404 for
@@ -156,9 +156,13 @@ stormblock#485 (closed) measured no stormblock change in the path.
       failed at preflight (02:23Z, host unreachable), pvetest2 has not taken
       it, both VMs unreachable 2026-10-21 evening. Parked `wait-owner
       --until` a 12.43+ install on both pve VMs
-- [ ] Release carrying it: boot → apiserver ~21 s (reboot_phase_apiserver
-      ~3 s, boot_phase_apiserver ~5 s) on both pve VMs; then close #286 as
-      a duplicate of rustkube-node#288
+- [x] pvetest2 12.43-flowsdn (pvetest2-1792636341): reboot → apiserver
+      38.5 → 20.7 s, boot 24.4 s (firmware/initramfs, not the apiserver);
+      phases 6.1 / 4.0 s; three apiserver starts total 0.29–0.55 s, no
+      refused root in the kubelet ring. Posted on #286
+- [ ] pvetest1 on 12.43+ (unreachable since 02:23Z; parked `wait-owner
+      --until`, master asked to install it); then close #286 as a
+      duplicate of rustkube-node#288
 
 ### Kubelet events 403 in a test namespace (#282, P1) — BUILT, rig BLOCKED on stormcos#271, 2026-10-21
 Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.
