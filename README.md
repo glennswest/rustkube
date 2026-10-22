@@ -418,6 +418,18 @@ same-named key) on create, PUT, PATCH and from startup manifests, and never
 stored or returned, as upstream; Secrets stored with it before are folded at
 boot (#101).
 
+**Quantities** are strings (#292): a resource quantity sent as a JSON number
+(`cpu: 1` in unquoted YAML) is stored and returned as upstream's canonical
+string (`"1"`, `0.5` → `"500m"`, `1000` → `"1k"`), as kube-apiserver's
+`resource.Quantity` does; typed clients (k8s-openapi, kube-rs) refuse a
+number. It applies to every write of the built-ins that carry quantities
+(Pods and pod templates, Nodes, PVCs/PVs, ResourceQuota, LimitRange,
+RuntimeClass, HPA targets, CSIStorageCapacity, DRA capacity) — from clients,
+controllers, startup manifests and webhook patches — and objects stored with
+a number before are rewritten at boot. Quantity strings are kept as written
+(upstream also re-canonicalizes those, `1000m` → `1`; rustkube does not).
+Custom resources and CRDs keep their numbers.
+
 **Admission**, on create: NamespaceLifecycle (a missing namespace is 404;
 a Terminating one is 403 with upstream's `NamespaceTerminating` cause, which
 client-go's event recorder drops quietly, #282), namespace defaults (`Active`,

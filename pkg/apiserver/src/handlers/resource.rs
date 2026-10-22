@@ -601,7 +601,7 @@ pub(crate) async fn put_object(
 /// The built-in admission of an update of the object at `key` from
 /// `existing` to `body`, shared by PUT, every guaranteed update (PATCH,
 /// apply, `/status`) and a reconciled startup manifest (#158): a Secret's
-/// stringData folded (#101), a Service's port and spec defaults, immutable fields (ConfigMap/Secret,
+/// stringData folded (#101), quantities as strings (#292), a Service's port and spec defaults, immutable fields (ConfigMap/Secret,
 /// PriorityClass), a PersistentVolumeClaim's update rules (#63), a Pod's
 /// scheduling gates (#87), a Job's `spec.managedBy` and `metadata.generation` (#285), and a Service's ClusterIP and node ports (#132),
 /// whose [`crate::node_port::Plan`] the caller commits once its write lands
@@ -616,6 +616,8 @@ pub(crate) async fn builtin_update(
     if key.starts_with("/registry/secrets/") {
         crate::builtin_admission::fold_string_data(body);
     }
+    // Quantities as strings (#292), before the PVC/Pod rules read them.
+    apimachinery::quantity::numbers_to_strings(&crate::storage::metric_resource(key), body);
     crate::generation::on_update(key, existing, body); // #285; again after webhooks
     check_immutable(key, existing, body)?;
     if key.starts_with("/registry/persistentvolumeclaims/") {

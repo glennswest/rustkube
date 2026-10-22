@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-21
+- **fix:** A resource quantity sent as a JSON number (cilium's `install-cni-binaries` `limits.cpu: 1`, unquoted YAML) is stored and returned as upstream's canonical string (`"1"`, `"500m"`, `"1k"`) instead of the number, which k8s-openapi/kube-rs clients refused for the whole PodList — stormupdate's controller failed every tick (#292, stormupdate#23). `apimachinery::quantity::numbers_to_strings` on the built-ins that carry quantities, in create admission, `builtin_update` and every `ResourceStorage` write; stored objects rewritten at boot. CRDs and custom resources unchanged. Units; rig `quantity-strings.sh` (rigs).
 - **docs:** #286: release 12.43 carries the kubelet fix (rustkube-node 81dc1bd ⊇ 08cb1a0) but has no pve install yet (pvetest1's update failed at preflight, host unreachable; pvetest2 not taken). Parked until both pve VMs run 12.43 or later.
 - **docs:** #286's refused root is the kubelet's own start-up sweep deleting a static pod's fresh root (rustkube-node#288, master's review); fixed on rustkube-node main with #287's fast retry (08cb1a0). #286 waits for a release carrying it, then closes as a duplicate.
 - **docs:** #286 diagnosed from the 12.42 kubelet rings: the late boot's apiserver waits the kubelet's 10 s start back-off after its first create is refused at the root (stormpump `VolumeRegister` errno, or stormblock 404 on the fresh root). No rustkube code in the path; filed stormpump#182, stormblock#489, rustkube-node#287 (retry a refused create quickly).

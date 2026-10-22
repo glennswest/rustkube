@@ -38,6 +38,8 @@ pub async fn admit_create(
     obj: &mut Value,
     service_cidr: &str,
 ) -> Result<(), ApiError> {
+    // Quantities as strings (#292), before anything below reads them.
+    apimachinery::quantity::numbers_to_strings(resource, obj);
     // NamespaceLifecycle — namespaced resources (other than Namespaces) require
     // an existing, non-terminating namespace.
     let ns_obj = if let Some(ns) = namespace {

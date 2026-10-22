@@ -997,6 +997,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     bootstrap_namespace(&storage, "kube-node-lease").await;
     backfill_namespace_defaults(&storage).await;
     backfill_secret_string_data(&storage).await;
+    backfill_quantity_strings(&storage).await;
     bootstrap_service_cidr(&storage, &config.service_cidr).await;
     bootstrap_flowcontrol(&storage).await;
 
@@ -1670,6 +1671,52 @@ async fn backfill_secret_string_data(storage: &ResourceStorage) {
     }
     if fixed > 0 {
         tracing::info!("secret stringData backfill: {fixed} Secret(s) folded into data (#101)");
+    }
+}
+
+/// Objects stored before #292 may hold a quantity as a JSON number (cilium's
+/// `limits.cpu: 1`), which typed clients refuse: rewrite them once at boot,
+/// as a write now would. Conditional on each object's revision and
+/// idempotent, like the Secret backfill above.
+async fn backfill_quantity_strings(storage: &ResourceStorage) {
+    let mut fixed = 0usize;
+    for resource in apimachinery::quantity::QUANTITY_RESOURCES {
+        let prefix = ResourceStorage::cluster_prefix(resource);
+        let mut token: Option<String> = None;
+        loop {
+            let (items, next, _) = match storage.list(&prefix, 500, token.as_deref()).await {
+                Ok(page) => page,
+                Err(e) => {
+                    tracing::warn!("quantity backfill: list {resource} failed: {}", e.message);
+                    break;
+                }
+            };
+            for mut obj in items {
+                if !apimachinery::quantity::numbers_to_strings(resource, &mut obj) {
+                    continue;
+                }
+                let ns = obj["metadata"]["namespace"].as_str().unwrap_or_default().to_string();
+                let name = obj["metadata"]["name"].as_str().unwrap_or_default().to_string();
+                let rev = obj["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
+                let key = if ns.is_empty() {
+                    ResourceStorage::cluster_key(resource, &name)
+                } else {
+                    ResourceStorage::namespaced_key(resource, &ns, &name)
+                };
+                match storage.update(&key, obj, rev).await {
+                    Ok(_) => fixed += 1,
+                    Err(e) if e.reason == "Conflict" => {}
+                    Err(e) => tracing::warn!("quantity backfill: {resource} {ns}/{name}: {}", e.message),
+                }
+            }
+            match next {
+                Some(t) => token = Some(t),
+                None => break,
+            }
+        }
+    }
+    if fixed > 0 {
+        tracing::info!("quantity backfill: {fixed} object(s) had a quantity stored as a number (#292)");
     }
 }
 

@@ -568,6 +568,11 @@ audiences and reports the pod and its node.
 folded into data on create, merge PATCH and PUT (stringData winning a shared
 key), and GET and LIST return no stringData.
 
+`e2e/quantity-strings.sh` (#292, suite `rigs`): quantities sent as JSON
+numbers (create with JSON and YAML bodies, LimitRange, ResourceQuota) come
+back as canonical strings (`1`, `500m`, `1k`) on GET, LIST and PATCH;
+container ports and other numbers stay numbers.
+
 `e2e/cache-reads.sh` (#171, suite `rigs`): LIST and GET with
 `resourceVersion=0` answer what the datastore answers; `N` after a write sees
 it; a paged cache LIST returns every object once at one revision; `Exact`

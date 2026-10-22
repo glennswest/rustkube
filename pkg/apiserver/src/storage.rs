@@ -276,6 +276,10 @@ impl ResourceStorage {
     /// Create a resource (fails if it already exists).
     pub async fn create(&self, key: &str, mut obj: Value) -> Result<Value, ApiError> {
         let _timer = apimachinery::metrics::StoreTimer::new("create", Self::resource_of(key));
+        // Every write path ends here — clients, controllers, startup
+        // manifests, webhook patches — so no quantity is stored as a JSON
+        // number (#292).
+        apimachinery::quantity::numbers_to_strings(&Self::resource_of(key), &mut obj);
         // Never persist resourceVersion in the stored bytes — it is derived from
         // the store's mod_revision on read (#33). Baking it in makes later reads
         // return a stale RV.
@@ -306,6 +310,8 @@ impl ResourceStorage {
         prev_revision: Option<u64>,
     ) -> Result<Value, ApiError> {
         let _timer = apimachinery::metrics::StoreTimer::new("update", Self::resource_of(key));
+        // Quantities as strings (#292), as in `create`.
+        apimachinery::quantity::numbers_to_strings(&Self::resource_of(key), &mut obj);
         // Strip the client-supplied resourceVersion from the stored bytes: it is
         // used for the CAS (prev_revision) but must not be baked into storage, or
         // the next read returns a stale RV and optimistic concurrency breaks (#33).
@@ -650,5 +656,37 @@ mod not_found_tests {
         assert_eq!(m("/registry/example.com/widgets/default/w").0, "widgets.example.com \"w\" not found");
         assert_eq!(m("/registry/example.com/clusterwidgets/w").0, "clusterwidgets.example.com \"w\" not found");
         assert!(!m("/registry/secrets/ns/s").0.contains("/registry"));
+    }
+}
+
+#[cfg(test)]
+mod quantity_tests {
+    use super::ResourceStorage;
+    use crate::test_store::MemStore;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    /// A quantity written as a JSON number is stored and read back as
+    /// upstream's string, on create and on update; a custom resource's
+    /// numbers are its own (#292).
+    #[tokio::test]
+    async fn quantities_are_stored_as_strings() {
+        let s = ResourceStorage::new(Arc::new(MemStore::default()));
+        let key = ResourceStorage::namespaced_key("pods", "kube-system", "cilium");
+        let pod = |cpu: serde_json::Value| json!({"metadata": {"name": "cilium", "namespace": "kube-system"},
+            "spec": {"initContainers": [{"name": "install-cni-binaries",
+                "resources": {"limits": {"cpu": cpu, "memory": "1Gi"}}}]}});
+        s.create(&key, pod(json!(1))).await.unwrap();
+        let got = s.get(&key).await.unwrap();
+        assert_eq!(got["spec"]["initContainers"][0]["resources"]["limits"]["cpu"], "1");
+        s.update(&key, pod(json!(0.5)), None).await.unwrap();
+        let got = s.get(&key).await.unwrap();
+        assert_eq!(got["spec"]["initContainers"][0]["resources"]["limits"]["cpu"], "500m");
+
+        let cr = ResourceStorage::namespaced_key("example.com/widgets", "default", "w");
+        s.create(&cr, json!({"metadata": {"name": "w"}, "spec": {"resources": {"limits": {"cpu": 1}}}}))
+            .await
+            .unwrap();
+        assert_eq!(s.get(&cr).await.unwrap()["spec"]["resources"]["limits"]["cpu"], 1);
     }
 }
