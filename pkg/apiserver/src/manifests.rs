@@ -30,8 +30,17 @@
 //! of it, and a namespace before anything in it; nothing here infers that, so
 //! the filenames carry it. A CRD applied in this pass is registered as it goes,
 //! so a custom resource later in the same pass resolves.
+//!
+//! **What the datastore refused is tried again (#293).** The pass runs once,
+//! but a document that failed because the datastore could not be read or
+//! written — or whose kind is not served yet, because its CRD failed the same
+//! way — is not lost with that boot: it is retried in the background, in
+//! filename order, until it applies (a kind that stays unserved is given up
+//! after ten minutes). A document the API itself refuses is not retried.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -73,6 +82,35 @@ pub enum Outcome {
     /// manifest must not stop an apiserver from starting, or a typo in an
     /// addon takes the cluster with it.
     Failed(String),
+    /// The datastore could not be read or written (#293): nothing is known
+    /// about the object, and trying again later is the answer.
+    Unavailable(String),
+    /// The kind is not served (yet): its CRD may still arrive — later in the
+    /// retries, or through another apiserver.
+    NotServed(String),
+}
+
+impl Outcome {
+    /// Worth another try later.
+    fn retryable(&self) -> bool {
+        matches!(self, Outcome::Unavailable(_) | Outcome::NotServed(_))
+    }
+}
+
+/// The outcome of a failed store call or admission: a datastore that cannot
+/// serve is `Unavailable`, anything else the API's own refusal.
+fn failed(e: crate::error::ApiError) -> Outcome {
+    if store_trouble(&e) {
+        Outcome::Unavailable(e.message)
+    } else {
+        Outcome::Failed(e.message)
+    }
+}
+
+/// A datastore that cannot serve right now (503), or one that answered with
+/// an error of its own (500) — neither says anything about the manifest.
+fn store_trouble(e: &crate::error::ApiError) -> bool {
+    e.reason == "ServiceUnavailable" || e.reason == "InternalError"
 }
 
 /// Split a file's contents into documents.
@@ -122,11 +160,11 @@ struct Target {
     custom: Option<(String, String, String)>,
 }
 
-async fn resolve(obj: &Value, crds: &CrdRegistry) -> Result<Target, String> {
+async fn resolve(obj: &Value, crds: &CrdRegistry) -> Result<Target, Outcome> {
     let api_version = obj["apiVersion"].as_str().unwrap_or("");
     let kind = obj["kind"].as_str().unwrap_or("");
     if api_version.is_empty() || kind.is_empty() {
-        return Err("manifest has no apiVersion or kind".to_string());
+        return Err(Outcome::Failed("manifest has no apiVersion or kind".to_string()));
     }
     let (group, version) = group_version(api_version);
 
@@ -145,7 +183,7 @@ async fn resolve(obj: &Value, crds: &CrdRegistry) -> Result<Target, String> {
             custom: Some((group, version, plural)),
         });
     }
-    Err(format!("{api_version} {kind} is not served by this apiserver"))
+    Err(Outcome::NotServed(format!("{api_version} {kind} is not served by this apiserver")))
 }
 
 /// Apply one manifest document.
@@ -171,7 +209,7 @@ pub async fn apply_one(
 ) -> Outcome {
     let Target { resource, namespaced, custom } = match resolve(&obj, crds).await {
         Ok(r) => r,
-        Err(e) => return Outcome::Failed(e),
+        Err(outcome) => return outcome,
     };
     let Some(name) = obj["metadata"]["name"].as_str().map(str::to_owned) else {
         return Outcome::Failed("manifest has no metadata.name".to_string());
@@ -195,7 +233,14 @@ pub async fn apply_one(
     };
 
     let mode = Mode::of(&obj);
-    let existing = storage.get(&key).await.ok();
+    // Only NotFound means absent. Any other error says nothing about the
+    // object, and reading it as absent sent server1's whole pass into creates
+    // against a datastore that was not answering (#293).
+    let existing = match storage.get(&key).await {
+        Ok(current) => Some(current),
+        Err(e) if e.reason == "NotFound" => None,
+        Err(e) => return Outcome::Unavailable(e.message),
+    };
 
     match existing {
         None => {
@@ -217,7 +262,7 @@ pub async fn apply_one(
                 if storage.get(&key).await.is_ok() {
                     return Outcome::Unchanged;
                 }
-                return Outcome::Failed(e.message);
+                return failed(e);
             }
             crate::handlers::resource::ensure_metadata_pub(&mut obj, &name, ns);
             if custom.is_none() {
@@ -242,7 +287,7 @@ pub async fn apply_one(
                     if e.reason == "AlreadyExists" || e.reason == "Conflict" {
                         Outcome::Unchanged
                     } else {
-                        Outcome::Failed(e.message)
+                        failed(e)
                     }
                 }
             }
@@ -272,7 +317,7 @@ pub async fn apply_one(
             };
             let plan = match plan {
                 Ok(p) => p,
-                Err(e) => return Outcome::Failed(e.message),
+                Err(e) => return failed(e),
             };
             let is_crd = obj["kind"].as_str() == Some("CustomResourceDefinition");
             let written = storage.update(&key, obj, None).await;
@@ -288,7 +333,7 @@ pub async fn apply_one(
                     }
                     Outcome::Updated
                 }
-                Err(e) => Outcome::Failed(e.message),
+                Err(e) => failed(e),
             }
         }
     }
@@ -318,57 +363,205 @@ pub fn manifest_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Apply every manifest in a directory.
+/// One manifest document, and the file it came from.
+struct Document {
+    path: PathBuf,
+    obj: Value,
+}
+
+impl Document {
+    fn what(&self) -> String {
+        format!(
+            "{} {}",
+            self.obj["kind"].as_str().unwrap_or("?"),
+            self.obj["metadata"]["name"].as_str().unwrap_or("?")
+        )
+    }
+}
+
+/// What one pass did: the counts, and the documents worth another try.
+#[derive(Default)]
+struct Pass {
+    created: usize,
+    updated: usize,
+    unchanged: usize,
+    failed: usize,
+    unavailable: usize,
+    not_served: usize,
+    retry: Vec<Document>,
+}
+
+impl Pass {
+    fn not_applied(&self) -> usize {
+        self.failed + self.unavailable + self.not_served
+    }
+
+    /// The failures by cause, for the summary line.
+    fn causes(&self) -> String {
+        let mut why = Vec::new();
+        if self.unavailable > 0 {
+            why.push(format!("{} datastore unavailable", self.unavailable));
+        }
+        if self.not_served > 0 {
+            why.push(format!("{} kind not served", self.not_served));
+        }
+        if self.failed > 0 {
+            why.push(format!("{} refused", self.failed));
+        }
+        why.join(", ")
+    }
+}
+
+/// Apply documents in order, logging each one's outcome.
+///
+/// A failure the retries take up is a WARN (they say when it lands); one they
+/// do not is an ERROR, as before.
+async fn apply_all(
+    storage: &ResourceStorage,
+    crds: &CrdRegistry,
+    service_cidr: &str,
+    docs: Vec<Document>,
+) -> Pass {
+    let mut pass = Pass::default();
+    for doc in docs {
+        let what = doc.what();
+        let outcome = apply_one(storage, crds, service_cidr, doc.obj.clone()).await;
+        match &outcome {
+            Outcome::Created => {
+                tracing::info!("manifests: created {what}");
+                pass.created += 1;
+            }
+            Outcome::Updated => {
+                tracing::info!("manifests: reconciled {what}");
+                pass.updated += 1;
+            }
+            Outcome::Unchanged => pass.unchanged += 1,
+            Outcome::Failed(why) => {
+                tracing::error!("manifests: {what} from {} was not applied: {why}", doc.path.display());
+                pass.failed += 1;
+            }
+            Outcome::Unavailable(why) | Outcome::NotServed(why) => {
+                tracing::warn!(
+                    "manifests: {what} from {} was not applied: {why}; will retry",
+                    doc.path.display()
+                );
+                if matches!(outcome, Outcome::Unavailable(_)) {
+                    pass.unavailable += 1;
+                } else {
+                    pass.not_served += 1;
+                }
+            }
+        }
+        if outcome.retryable() {
+            pass.retry.push(doc);
+        }
+    }
+    pass
+}
+
+/// Apply every manifest in a directory, then retry in the background what
+/// the datastore refused (#293).
 ///
 /// Never fatal. A directory that does not exist is "nothing to apply", which
 /// is the normal case for a node that ships no addons; a manifest that cannot
 /// be applied is logged and the rest continue, because one bad addon must not
 /// keep an apiserver from serving.
-pub async fn apply_dir(storage: &ResourceStorage, crds: &CrdRegistry, service_cidr: &str, dir: &Path) {
+pub async fn apply_dir(
+    storage: &Arc<ResourceStorage>,
+    crds: &Arc<CrdRegistry>,
+    service_cidr: &str,
+    dir: &Path,
+) {
     let files = manifest_files(dir);
     if files.is_empty() {
         tracing::debug!("manifests: nothing to apply in {}", dir.display());
         return;
     }
-    let (mut created, mut updated, mut unchanged, mut failed) = (0, 0, 0, 0);
+    let mut docs = Vec::new();
+    let mut unreadable = 0;
     for path in &files {
         let Ok(text) = std::fs::read_to_string(path) else {
             tracing::error!("manifests: cannot read {}", path.display());
-            failed += 1;
+            unreadable += 1;
             continue;
         };
-        for obj in documents(&text) {
-            let what = format!(
-                "{} {}",
-                obj["kind"].as_str().unwrap_or("?"),
-                obj["metadata"]["name"].as_str().unwrap_or("?")
+        docs.extend(documents(&text).into_iter().map(|obj| Document { path: path.clone(), obj }));
+    }
+    let mut pass = apply_all(storage, crds, service_cidr, docs).await;
+    pass.failed += unreadable;
+    let summary = format!(
+        "manifests: {} file(s) from {} — {} created, {} reconciled, {} already present, {} failed",
+        files.len(),
+        dir.display(),
+        pass.created,
+        pass.updated,
+        pass.unchanged,
+        pass.not_applied(),
+    );
+    if pass.not_applied() == 0 {
+        tracing::info!("{summary}");
+    } else if pass.retry.is_empty() {
+        tracing::error!("{summary} ({})", pass.causes());
+    } else {
+        tracing::warn!("{summary} ({}); retrying {} in the background", pass.causes(), pass.retry.len());
+        tokio::spawn(retry(storage.clone(), crds.clone(), service_cidr.to_string(), pass.retry));
+    }
+}
+
+/// How long a kind may stay unserved before its documents are given up.
+const NOT_SERVED_FOR: Duration = Duration::from_secs(600);
+
+/// Retry, in filename order, what the first pass could not apply for the
+/// datastore's sake or for a kind not yet served, until it applies (#293).
+///
+/// Backoff 1 s doubling to 30 s. A datastore failure is retried for as long
+/// as it lasts: these are the objects this node ships, and an apiserver
+/// cannot do without its store anyway. Once only unserved kinds are left and
+/// [`NOT_SERVED_FOR`] has passed, they are given up at ERROR — their CRD is
+/// not coming.
+async fn retry(
+    storage: Arc<ResourceStorage>,
+    crds: Arc<CrdRegistry>,
+    service_cidr: String,
+    mut pending: Vec<Document>,
+) {
+    let start = tokio::time::Instant::now();
+    let mut delay = Duration::from_secs(1);
+    let mut round = 0;
+    while !pending.is_empty() {
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_secs(30));
+        round += 1;
+        let tried = pending.len();
+        let pass = apply_all(&storage, &crds, &service_cidr, std::mem::take(&mut pending)).await;
+        let applied = pass.created + pass.updated + pass.unchanged;
+        if applied > 0 || pass.failed > 0 {
+            let left = if pass.retry.is_empty() {
+                String::new()
+            } else {
+                format!("; {} left ({})", pass.retry.len(), pass.causes())
+            };
+            tracing::info!(
+                "manifests: retry {round}: {applied} of {tried} applied ({} created, {} reconciled, \
+                 {} already present){left}",
+                pass.created,
+                pass.updated,
+                pass.unchanged,
             );
-            match apply_one(storage, crds, service_cidr, obj).await {
-                Outcome::Created => {
-                    tracing::info!("manifests: created {what}");
-                    created += 1;
-                }
-                Outcome::Updated => {
-                    tracing::info!("manifests: reconciled {what}");
-                    updated += 1;
-                }
-                Outcome::Unchanged => unchanged += 1,
-                Outcome::Failed(why) => {
-                    tracing::error!(
-                        "manifests: {what} from {} was not applied: {why}",
-                        path.display()
-                    );
-                    failed += 1;
-                }
+        }
+        pending = pass.retry;
+        if pass.unavailable == 0 && !pending.is_empty() && start.elapsed() >= NOT_SERVED_FOR {
+            for doc in &pending {
+                tracing::error!(
+                    "manifests: {} from {} given up after {NOT_SERVED_FOR:?}: its kind is still not served",
+                    doc.what(),
+                    doc.path.display()
+                );
             }
+            return;
         }
     }
-    tracing::info!(
-        "manifests: {} file(s) from {} — {created} created, {updated} reconciled, \
-         {unchanged} already present, {failed} failed",
-        files.len(),
-        dir.display()
-    );
+    tracing::info!("manifests: every retried manifest applied, {:?} after the first pass", start.elapsed());
 }
 
 #[cfg(test)]
@@ -465,5 +658,68 @@ metadata:
     #[test]
     fn a_missing_directory_is_empty_not_an_error() {
         assert!(manifest_files(Path::new("/nonexistent/manifests")).is_empty());
+    }
+
+    fn cluster_role(name: &str) -> Value {
+        json!({"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
+               "metadata": {"name": name}, "rules": []})
+    }
+
+    /// A datastore that does not answer is not "the object is absent" (#293):
+    /// server1's pass created nothing and failed 114 objects that existed.
+    #[tokio::test]
+    async fn an_unreadable_store_is_unavailable_not_absent() {
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = ResourceStorage::new(store.clone());
+        let crds = CrdRegistry::new();
+
+        store.set_unavailable(true);
+        let got = apply_one(&storage, &crds, "10.96.0.0/12", cluster_role("a")).await;
+        assert!(matches!(got, Outcome::Unavailable(_)), "{got:?}");
+        assert!(got.retryable());
+
+        store.set_unavailable(false);
+        assert_eq!(apply_one(&storage, &crds, "10.96.0.0/12", cluster_role("a")).await, Outcome::Created);
+        assert_eq!(apply_one(&storage, &crds, "10.96.0.0/12", cluster_role("a")).await, Outcome::Unchanged);
+
+        // A kind not served may yet be (its CRD); a nameless one never will.
+        let cr = json!({"apiVersion": "cilium.io/v2alpha1", "kind": "CiliumL2AnnouncementPolicy",
+                        "metadata": {"name": "default"}});
+        let got = apply_one(&storage, &crds, "10.96.0.0/12", cr).await;
+        assert!(matches!(got, Outcome::NotServed(_)) && got.retryable(), "{got:?}");
+        let got = apply_one(&storage, &crds, "10.96.0.0/12", json!({"apiVersion": "v1", "kind": "ConfigMap",
+                                                                     "metadata": {}})).await;
+        assert!(matches!(got, Outcome::Failed(_)) && !got.retryable(), "{got:?}");
+    }
+
+    /// What the datastore refused at boot lands once it answers, without a
+    /// restart (#293).
+    #[tokio::test(start_paused = true)]
+    async fn refused_documents_are_retried_until_they_apply() {
+        let dir = std::env::temp_dir().join(format!("rk-manifests-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("10-roles.yaml"),
+            "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: a\n---\n\
+             apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: b\n",
+        )
+        .unwrap();
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = Arc::new(ResourceStorage::new(store.clone()));
+        let crds = Arc::new(CrdRegistry::new());
+
+        store.set_unavailable(true);
+        apply_dir(&storage, &crds, "10.96.0.0/12", &dir).await;
+        // Still down through the first retries: nothing lost, nothing given up.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        store.set_unavailable(false);
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        for name in ["a", "b"] {
+            assert!(
+                storage.get(&ResourceStorage::cluster_key("clusterroles", name)).await.is_ok(),
+                "clusterrole {name} not applied by the retries"
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

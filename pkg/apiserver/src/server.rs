@@ -1053,7 +1053,8 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // Manifests that ship with the node, applied once. After the CRD registry
     // is loaded, because a manifest may be a custom resource of a CRD that is
     // already established; before the HTTP server starts, so a controller or a
-    // kubelet never observes a half-applied cluster.
+    // kubelet never observes a half-applied cluster. What the datastore
+    // refused is retried in the background until it lands (#293).
     if let Some(dir) = &config.manifest_dir {
         crate::manifests::apply_dir(&storage, &crd_registry, &config.service_cidr, dir).await;
     }
@@ -1436,41 +1437,54 @@ fn publish_extension_authentication(storage: Arc<ResourceStorage>, config: &ApiS
 /// Backoff is exponential and capped, not a fixed-interval poll: a store that
 /// comes up in 200 ms is not made to wait five seconds, and one that is broken
 /// is not hammered.
-async fn wait_for_datastore(storage: &ResourceStorage) -> bool {
-    // ~60s total. Longer than any datastore takes to come up, shorter than
-    // anyone's patience for a control plane that is silently useless.
-    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+///
+/// **No deadline (#293).** It used to give up after 60 s and let bootstrap
+/// run anyway. On server1's 12.49 reboot fastetcd was repairing a data file
+/// that was not closed cleanly; the whole manifest pass (114 objects) failed
+/// into a store that did not answer, and the apiserver then served, refusing
+/// every client until the store came back.
+/// Nothing can be served without the store, and the node's startup probe
+/// allows ten minutes, so waiting is the only useful thing to do — said at
+/// ERROR once a minute, so the wait is never silent.
+async fn wait_for_datastore(storage: &ResourceStorage) {
+    const COMPLAIN_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
     let start = std::time::Instant::now();
     let mut delay = std::time::Duration::from_millis(50);
-    let mut complained = false;
+    let mut complained: Option<std::time::Instant> = None;
 
     loop {
-        // A read of a key that does not exist. NotFound means the store
+        // A read of a key that may not exist. NotFound means the store
         // answered, which is the whole question — a transport error does not.
         match storage
             .get(&ResourceStorage::cluster_key("namespaces", "kube-system"))
             .await
         {
-            Ok(_) => return true,
-            Err(e) if e.reason == "NotFound" => return true,
+            Ok(_) => break,
+            Err(e) if e.reason == "NotFound" => break,
             Err(e) => {
-                if start.elapsed() >= DEADLINE {
-                    tracing::error!(
-                        "datastore did not answer within {DEADLINE:?}: {}. Bootstrap will \
-                         be attempted anyway and will almost certainly fail; this cluster \
-                         will have no namespaces and no RBAC.",
-                        e.message
-                    );
-                    return false;
-                }
-                if !complained {
-                    tracing::info!("waiting for the datastore to answer: {}", e.message);
-                    complained = true;
+                match complained {
+                    None => {
+                        tracing::info!("waiting for the datastore to answer: {}", e.message);
+                        complained = Some(std::time::Instant::now());
+                    }
+                    Some(at) if at.elapsed() >= COMPLAIN_EVERY => {
+                        tracing::error!(
+                            "datastore has not answered for {:?}: {}. Bootstrap, the manifest \
+                             pass and serving wait for it",
+                            start.elapsed(),
+                            e.message
+                        );
+                        complained = Some(std::time::Instant::now());
+                    }
+                    Some(_) => {}
                 }
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(std::time::Duration::from_secs(2));
             }
         }
+    }
+    if complained.is_some() {
+        tracing::info!("datastore answered after {:?}", start.elapsed());
     }
 }
 

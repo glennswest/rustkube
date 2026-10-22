@@ -3,8 +3,9 @@
 //! Enough of etcd's semantics for a handler to be exercised as it runs:
 //! one revision counter for the whole store, a key's revision is the one that
 //! last wrote it, and a `prev_revision` is a compare-and-swap that fails with
-//! `Conflict` when the key has moved on. Listing, watching and leases are not
-//! here; a test that needs them needs fastetcd.
+//! `Conflict` when the key has moved on. Listing is a plain prefix scan
+//! (#293); watching and leases are not here — a test that needs them needs
+//! fastetcd.
 
 use apimachinery::store::{KvStore, LeaseId, ListResult, WatchStream};
 use apimachinery::{Error, Result};
@@ -20,7 +21,7 @@ type Data = (u64, BTreeMap<String, (Vec<u8>, u64)>);
 #[derive(Default)]
 pub struct MemStore {
     inner: Mutex<Data>,
-    /// Every read fails as a datastore without quorum does.
+    /// Every read and write fails as a datastore without quorum does.
     unavailable: AtomicBool,
 }
 
@@ -40,6 +41,9 @@ impl KvStore for MemStore {
     }
 
     async fn put(&self, key: &str, value: &[u8], prev_revision: Option<u64>) -> Result<u64> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(Error::Unavailable("no quorum".into()));
+        }
         let mut g = self.inner.lock().unwrap();
         if let Some(want) = prev_revision {
             let have = g.1.get(key).map(|(_, r)| *r).unwrap_or(0);
@@ -65,8 +69,22 @@ impl KvStore for MemStore {
         Ok(g.0)
     }
 
-    async fn list(&self, _: &str, _: usize, _: Option<&str>) -> Result<ListResult> {
-        Err(Error::Store("MemStore does not list".into()))
+    async fn list(&self, prefix: &str, limit: usize, continue_token: Option<&str>) -> Result<ListResult> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(Error::Unavailable("no quorum".into()));
+        }
+        let g = self.inner.lock().unwrap();
+        let mut matching = g
+            .1
+            .range(prefix.to_string()..)
+            .take_while(|(k, _)| k.starts_with(prefix))
+            .filter(|(k, _)| continue_token.is_none_or(|t| k.as_str() > t));
+        let limit = if limit == 0 { usize::MAX } else { limit };
+        let items: Vec<(String, Vec<u8>, u64)> =
+            matching.by_ref().take(limit).map(|(k, (v, r))| (k.clone(), v.clone(), *r)).collect();
+        let remaining = matching.count() as u64;
+        let continue_token = (remaining > 0).then(|| items.last().map(|(k, _, _)| k.clone())).flatten();
+        Ok(ListResult { items, continue_token, revision: g.0, remaining: Some(remaining) })
     }
     async fn watch(&self, _: &str, _: u64) -> Result<WatchStream> {
         Err(Error::Store("MemStore does not watch".into()))

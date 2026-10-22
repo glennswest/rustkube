@@ -137,19 +137,29 @@ impl RbacEngine {
             return Decision::allow(&why);
         }
 
+        // A deny is only a deny when the bindings and roles could be read.
+        // One that could not be read is the datastore's failure, not the
+        // caller's: 503, which every client retries, instead of a 403 a
+        // one-shot gives up on. server1's reboot answered every client 403
+        // for 50 s while fastetcd was not serving (#293).
+        let mut unreadable = None;
+
         // Check ClusterRoleBindings
-        if let Some(why) = self.check_cluster_role_bindings(user, req).await {
+        if let Some(why) = self.check_cluster_role_bindings(user, req, &mut unreadable).await {
             return Decision::allow(&why);
         }
 
         // Check namespace-scoped RoleBindings
         if let Some(ns) = &req.namespace {
-            if let Some(why) = self.check_role_bindings(user, req, ns).await {
+            if let Some(why) = self.check_role_bindings(user, req, ns, &mut unreadable).await {
                 return Decision::allow(&why);
             }
         }
 
-        Decision::deny()
+        match unreadable {
+            Some(cause) => Decision::unavailable(cause),
+            None => Decision::deny(),
+        }
     }
 
     /// Authorize a non-resource path (`/healthz`, `/metrics`, `/apis/...`).
@@ -358,13 +368,15 @@ impl RbacEngine {
     }
 
     /// The ClusterRoleBinding that grants `req`, if one does.
+    /// A read that failed for any reason but NotFound is put in `unreadable`.
     async fn check_cluster_role_bindings(
         &self,
         user: &UserInfo,
         req: &AuthorizationRequest,
+        unreadable: &mut Option<String>,
     ) -> Option<String> {
         let prefix = ResourceStorage::cluster_prefix("clusterrolebindings");
-        let (bindings, _, _) = self.storage.list(&prefix, 1000, None).await.ok()?;
+        let (bindings, _, _) = readable(self.storage.list(&prefix, 1000, None).await, unreadable)?;
 
         for binding in &bindings {
             if !subjects_match(binding, user) {
@@ -373,11 +385,10 @@ impl RbacEngine {
             let role_name = binding["roleRef"]["name"].as_str().unwrap_or("");
             let role_kind = binding["roleRef"]["kind"].as_str().unwrap_or("");
             if role_kind == "ClusterRole" {
-                if let Ok(role) = self
-                    .storage
-                    .get(&ResourceStorage::cluster_key("clusterroles", role_name))
-                    .await
-                {
+                if let Some(role) = readable(
+                    self.storage.get(&ResourceStorage::cluster_key("clusterroles", role_name)).await,
+                    unreadable,
+                ) {
                     if rules_permit(&role, req) {
                         let binding_name = binding["metadata"]["name"].as_str().unwrap_or("");
                         return Some(format!(
@@ -391,14 +402,16 @@ impl RbacEngine {
     }
 
     /// The RoleBinding in `namespace` that grants `req`, if one does.
+    /// A read that failed for any reason but NotFound is put in `unreadable`.
     async fn check_role_bindings(
         &self,
         user: &UserInfo,
         req: &AuthorizationRequest,
         namespace: &str,
+        unreadable: &mut Option<String>,
     ) -> Option<String> {
         let prefix = ResourceStorage::namespace_prefix("rolebindings", namespace);
-        let (bindings, _, _) = self.storage.list(&prefix, 1000, None).await.ok()?;
+        let (bindings, _, _) = readable(self.storage.list(&prefix, 1000, None).await, unreadable)?;
 
         for binding in &bindings {
             if !subjects_match(binding, user) {
@@ -408,18 +421,16 @@ impl RbacEngine {
             let role_kind = binding["roleRef"]["kind"].as_str().unwrap_or("");
 
             let role = match role_kind {
-                "ClusterRole" => {
-                    self.storage
-                        .get(&ResourceStorage::cluster_key("clusterroles", role_name))
-                        .await
-                        .ok()
-                }
-                "Role" => {
+                "ClusterRole" => readable(
+                    self.storage.get(&ResourceStorage::cluster_key("clusterroles", role_name)).await,
+                    unreadable,
+                ),
+                "Role" => readable(
                     self.storage
                         .get(&ResourceStorage::namespaced_key("roles", namespace, role_name))
-                        .await
-                        .ok()
-                }
+                        .await,
+                    unreadable,
+                ),
                 _ => None,
             };
 
@@ -511,6 +522,21 @@ pub struct WhoCan {
     pub errors: Vec<String>,
 }
 
+/// A read's value, or `None` with the failure kept in `unreadable` — unless
+/// it is NotFound, which is an answer (a binding's role that is not there
+/// grants nothing).
+fn readable<T>(read: Result<T, crate::error::ApiError>, unreadable: &mut Option<String>) -> Option<T> {
+    match read {
+        Ok(v) => Some(v),
+        Err(e) => {
+            if e.reason != "NotFound" {
+                unreadable.get_or_insert(e.message);
+            }
+            None
+        }
+    }
+}
+
 /// An authorization answer and why.
 #[derive(Debug, Clone)]
 pub struct Decision {
@@ -518,14 +544,20 @@ pub struct Decision {
     /// Empty when denied — upstream leaves it empty rather than inventing a
     /// rule that would have granted it.
     pub reason: String,
+    /// Not allowed because the bindings or roles could not be read (#293):
+    /// the datastore's error. The request path answers 503, not 403.
+    pub unavailable: Option<String>,
 }
 
 impl Decision {
     fn allow(reason: &str) -> Self {
-        Self { allowed: true, reason: reason.to_string() }
+        Self { allowed: true, reason: reason.to_string(), unavailable: None }
     }
     fn deny() -> Self {
-        Self { allowed: false, reason: String::new() }
+        Self { allowed: false, reason: String::new(), unavailable: None }
+    }
+    fn unavailable(cause: String) -> Self {
+        Self { allowed: false, reason: String::new(), unavailable: Some(cause) }
     }
 }
 
@@ -902,7 +934,11 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
     if let Some(auth_req) = auth_req {
         if let Some(rbac) = request.extensions().get::<Arc<RbacEngine>>() {
             let rbac = rbac.clone();
-            if !rbac.authorize(&user, &auth_req).await {
+            let decision = rbac.authorize_with_reason(&user, &auth_req).await;
+            if let Some(cause) = decision.unavailable {
+                return Err(authorizer_unavailable(&user, &cause));
+            }
+            if !decision.allowed {
                 let status = crate::error::ApiError {
                     status: StatusCode::FORBIDDEN,
                     reason: "Forbidden".into(),
@@ -938,6 +974,21 @@ pub async fn rbac_middleware(mut request: Request, next: Next) -> Result<Respons
     }
     request.extensions_mut().insert(user);
     Ok(crate::admission::in_request(attrs, next.run(request)).await)
+}
+
+/// The answer to a request the authorizer could not decide because the
+/// datastore could not be read (#293): 503 with `Retry-After`, which
+/// client-go retries by itself, rather than a 403 that reads as a missing
+/// grant and ends a one-shot.
+fn authorizer_unavailable(user: &UserInfo, cause: &str) -> Response {
+    tracing::debug!(user = %user.username, "authorization not decided: datastore unavailable: {cause}");
+    let mut resp = crate::error::ApiError::unavailable(&format!(
+        "authorization of {} could not be decided: the datastore is unavailable",
+        user.username
+    ))
+    .into_response();
+    resp.headers_mut().insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("1"));
+    resp
 }
 
 /// Check if a path is an API discovery path (no resource component).
@@ -1557,6 +1608,61 @@ mod impersonation_tests {
         h.insert("impersonate-group", "dev".parse().unwrap());
         let err = impersonated(&e, &admin(), &h).await.unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+mod unavailable_tests {
+    use super::*;
+    use crate::test_store::MemStore;
+
+    /// A deny the store could not back up is the store's failure: 503, not
+    /// 403 (#293, server1's reboot refused every client for 50 s).
+    #[tokio::test]
+    async fn an_unreadable_store_is_unavailable_not_forbidden() {
+        let store = Arc::new(MemStore::default());
+        let engine = RbacEngine::new(Arc::new(ResourceStorage::new(store.clone())));
+        let user = UserInfo { username: "system:node:n1".into(), groups: vec!["system:nodes".into()] };
+        let req = AuthorizationRequest {
+            verb: "get".into(), resource: "nodes".into(), subresource: None,
+            api_group: String::new(), namespace: None, name: Some("n1".into()),
+        };
+
+        store.set_unavailable(true);
+        let d = engine.authorize_with_reason(&user, &req).await;
+        assert!(!d.allowed);
+        assert!(d.unavailable.is_some(), "{d:?}");
+        // A masters' request needs no read, and is still allowed.
+        let admin = UserInfo { username: "admin".into(), groups: vec!["system:masters".into()] };
+        assert!(engine.authorize_with_reason(&admin, &req).await.allowed);
+
+        // The store answers, and there is no binding: a plain deny.
+        store.set_unavailable(false);
+        let d = engine.authorize_with_reason(&user, &req).await;
+        assert!(!d.allowed);
+        assert!(d.unavailable.is_none(), "{d:?}");
+
+        // A binding whose role is missing (NotFound) is an answer too.
+        engine
+            .storage()
+            .create(
+                &ResourceStorage::cluster_key("clusterrolebindings", "nodes"),
+                serde_json::json!({"metadata": {"name": "nodes"},
+                    "roleRef": {"kind": "ClusterRole", "name": "gone"},
+                    "subjects": [{"kind": "Group", "name": "system:nodes"}]}),
+            )
+            .await
+            .unwrap();
+        let d = engine.authorize_with_reason(&user, &req).await;
+        assert!(!d.allowed && d.unavailable.is_none(), "{d:?}");
+    }
+
+    #[test]
+    fn the_answer_is_503_with_retry_after() {
+        let user = UserInfo { username: "u".into(), groups: vec![] };
+        let resp = authorizer_unavailable(&user, "no quorum");
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(resp.headers()[axum::http::header::RETRY_AFTER], "1");
     }
 }
 
