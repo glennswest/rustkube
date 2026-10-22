@@ -115,23 +115,21 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### 12.39 apiserver boot +13 s (#286, P1) — DIAGNOSED, BLOCKED on stormblock#485, 2026-10-21
-12.39's apiserver golden carries no rustkube commit: only stormcos f8286e0
-(#572), client trust from `stormcert-forge-trust` (`client-ca.crt`,
-`client.crl`). pvetest2 reboot: the kubelet's first create of the apiserver
-container was refused by stormpump (`VolumeRegister: Invalid argument` on
-its ublk root /dev/ublkb85, 19:46:33, +21.8 s), the retry ~10 s later
-answered (+32.4 s) — stormblock's 12.39 volume path, stormblock#485.
-pvetest1 first boot: same 10 s gap before the first apiserver probe; the
-same refusal (`Bad message`) on that node's scheduler root later.
-- [x] e697313 `--client-ca-file` waited for like the CRL (a file another
-      process writes at the same start must not crash the apiserver into
-      stormd's back-off); README/certificates.md/CHANGELOG. Build VM
-      sc-build-2c676e5883: tests pass (apiserver 335), server.rs clippy-clean
-- [x] Evidence on #286 and stormblock#485; golden requested (26a55cc30646);
-      #286 proposed after stormblock#485
-- [ ] Next release after stormblock#485: reboot_phase_apiserver ~3 s on
-      pvetest2, boot_phase_apiserver ~5 s on pvetest1; then close #286
+### 12.39 apiserver boot +13 s (#286, P0) — DIAGNOSED, BLOCKED on rustkube-node#287, 2026-10-21
+Not rustkube code. 12.42 kubelet rings (pvetest1/2): on the late boot the
+kubelet's first create of a control-plane static pod is refused at its root —
+stormpump `VolumeRegister` ENXIO/EINVAL/ENOENT/EBADMSG, or stormblock 404 for
+the root it just cloned — and the kubelet's `start_backoff` floor (10 s,
+rustkube-node deadlines.rs:76) delays the retry, which works:
+apiserver `started: wait=11419ms … total=11493ms` vs 253–570 ms otherwise.
+stormblock#485 (closed) measured no stormblock change in the path.
+- [x] e697313 `--client-ca-file` waited for like the CRL (hardening, not
+      the cause); build VM sc-build-2c676e5883; golden 26a55cc30646
+- [x] Filed stormpump#182 (refusals), stormblock#489 (404 on the new root),
+      rustkube-node#287 (retry a refused create in ~1 s); evidence on #286;
+      proposed after rustkube-node#287. server1's 385 s is #290
+- [ ] Release carrying rustkube-node#287: reboot_phase_apiserver ~3 s,
+      boot_phase_apiserver ~5 s on both pve VMs; then close #286
 
 ### Kubelet events 403 in a test namespace (#282, P1) — BUILT, rig BLOCKED on stormcos#271, 2026-10-21
 Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.

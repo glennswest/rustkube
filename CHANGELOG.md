@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-21
+- **docs:** #286 diagnosed from the 12.42 kubelet rings: the late boot's apiserver waits the kubelet's 10 s start back-off after its first create is refused at the root (stormpump `VolumeRegister` errno, or stormblock 404 on the fresh root). No rustkube code in the path; filed stormpump#182, stormblock#489, rustkube-node#287 (retry a refused create quickly).
 - **docs:** #68 (ARM64) still waits for the owner's ARM64 host: the aarch64 musl release build passes at b52da76 (tarballs 6.8M/4.5M/3.8M); the measurement (option A) needs the host.
 - **fix:** A Deployment's generation no longer moves when the controller-manager records its revision (#285): the `deployment.kubernetes.io/revision` annotation rides on the controller's `/status` write, as upstream's UpdateStatus, instead of a main-resource PUT, and a `/status` write keeps the stored generation whatever annotations it carries. Found by `builtin-generation.sh`'s first run (conform.g8.lo, main's goldens): generation 3 for one spec change; the rig also gained the Node its Pod needs and checks the ReplicaSet's observedGeneration instead of a fixed generation.
 - **test:** #159 closed: `gc-orphan-load.sh` on conform.g8.lo from goldens — d5f48f5 (13 runs, 260 orphaning deletes) and main (8 runs, 160): 0 unsafe deletions, slowest 4.4 s of the spec's 120 s; the failing commit efbea2d as a control takes 21–34 s (its 30 s GC sweep), the likely cause of the 2026-09-27 failure under six chunks.
