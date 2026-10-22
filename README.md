@@ -356,7 +356,10 @@ the watch cache (#177), so authorizing costs no datastore read. Only an allow
 is taken from memory: a request the copies would refuse is checked again
 against the datastore, so a grant applies to the very next request, while a
 revocation applies once its watch event arrives (milliseconds, or up to the
-watch cache's 35 s stall window if its watch silently stalls).
+watch cache's 35 s stall window if its watch silently stalls). A refusal
+the datastore could not confirm — a binding or role list/read failed for any
+reason but NotFound — is **503 `ServiceUnavailable` with `Retry-After: 1`**,
+not 403, so clients retry instead of taking a missing grant (#293).
 `test/e2e/get-latency.sh` measures it: one datastore read per authorized GET,
 and a ServiceAccount's GET as fast as system:masters'. Under write load every
 read is one linearizable fastetcd Range; before fastetcd v1.9.0 that Range
@@ -497,7 +500,8 @@ start/stop/restart and migrate verbs, ProjectRequest, TokenRequest and
 `namespaces/finalize`. Configurations are read from the watch cache, so one
 applies within milliseconds of being stored.
 
-**At boot**, idempotently: waits for the datastore; creates the `default`,
+**At boot**, idempotently: waits for the datastore, for as long as it takes
+(ERROR once a minute; nothing is served until it answers, #293); creates the `default`,
 `kube-system`, `kube-public` and `kube-node-lease` namespaces and backfills
 older namespaces' phase and finalizer; migrates pre-#76 custom-resource keys;
 creates the bootstrap RBAC (below); registers itself in the `default/kubernetes`
@@ -507,7 +511,11 @@ built-in admission (namespace lifecycle and defaults, Service ClusterIP and
 node ports, the Pod defaults, LimitRanger, QoS, PodSecurity, the
 validations) or the CRD's strategy (schema defaults, `generation`), and a
 `Reconcile` update runs the update checks of PUT/PATCH (immutable fields,
-PVC and Service rules); a refused manifest is logged and skipped. Not RBAC,
+PVC and Service rules); a refused manifest is logged (ERROR) and skipped. A
+manifest the datastore could not read or write, or whose kind is not served
+yet, is retried in the background in filename order (1 s doubling to 30 s)
+until it applies — a kind still unserved after 10 min is given up at ERROR;
+the pass's summary line names the failures by cause (#293). Not RBAC,
 webhooks or the requester stamp: these are the apiserver's own writes.
 
 Bootstrap RBAC: `cluster-admin`; `system:masters` and `system:nodes` bound
@@ -819,7 +827,7 @@ override environment values.
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--service-node-port-range` | | `30000-32767` | NodePort range, inclusive (#132) |
-| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile` |
+| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if annotated `addonmanager.kubernetes.io/mode: Reconcile`; what the datastore refused retried until it applies (#293) |
 | `--data-dir` | | `/var/lib/kubernetes` | where the `--tls` self-signed pair is kept (#88); nothing else |
 | `--cluster-domain` | | `cluster.local` | the `--tls` certificate's `kubernetes.default.svc.<domain>` SAN (#88); nothing else |
 
