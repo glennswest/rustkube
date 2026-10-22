@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Quantities stored as JSON numbers (#292, stormupdate#23) — BUILT 2026-10-21
+### Quantities stored as JSON numbers (#292, stormupdate#23) — COMPLETE 2026-10-21
 cilium's `install-cni-binaries` `limits.cpu: 1` (YAML number) was stored and
 returned as `1`; upstream's Quantity always serializes as a string, so
 kube-rs/k8s-openapi clients (stormupdate's controller) failed to list pods.
@@ -129,8 +129,10 @@ kube-rs/k8s-openapi clients (stormupdate's controller) failed to list pods.
       (rigs); README/test README/CHANGELOG. Build VM sc-build-35c0e0fd84:
       workspace exit 0, 0 rustc warnings, no clippy warning in changed files
 - [x] Golden stage build dfb448b7c686 requested
-- [ ] quantity-strings rig on conform.g8.lo from the 071e284 goldens (test
-      machines blocked on stormcos#271); then close #292
+- [x] quantity-strings rig on conform.g8.lo (test machines blocked on
+      stormcos#271): control b52da76 goldens 8 of 9 FAIL (`{'cpu': 1}`);
+      golden-rustkube-*-dfb448b7c686 (recorded at 5074b54 = 071e284 + docs)
+      10/10 PASS. #292 closed; ships with the release carrying dfb448b7c686
 
 ### 12.39 apiserver boot +13 s (#286, P0) — FIXED on pvetest2 (12.43), waits for pvetest1, 2026-10-22
 Not rustkube code. 12.42 kubelet rings (pvetest1/2): on the late boot the

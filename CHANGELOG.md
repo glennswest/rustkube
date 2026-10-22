@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-22
+- **docs:** #292 verified from the goldens on conform.g8.lo: `quantity-strings.sh` 10/10 on golden-rustkube-*-dfb448b7c686 (5074b54, carries 071e284); the b52da76 goldens fail 8 of 9 (`{'cpu': 1}`). #292 closed.
 - **docs:** #286 verified on pvetest2 with 12.43-flowsdn (rustkube-node 81dc1bd): reboot → apiserver 38.5 → 20.7 s, every apiserver start 0.3–0.55 s, no refused static-pod root. pvetest1 (unreachable) still to measure before closing.
 
 ### 2026-10-21
