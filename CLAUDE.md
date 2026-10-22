@@ -115,6 +115,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Quantities stored as JSON numbers (#292, stormupdate#23) — IN PROGRESS 2026-10-21
+cilium's `install-cni-binaries` `limits.cpu: 1` (YAML number) is stored and
+returned as `1`; upstream's Quantity always serializes as a string, so
+kube-rs/k8s-openapi clients (stormupdate's controller) fail to list pods.
+- [ ] `apimachinery::quantity::{canonical_number, numbers_to_strings}`:
+      a number at a quantity path of a built-in that carries quantities →
+      upstream's canonical DecimalSI string (`1`, `500m`, `1k`); CRDs and
+      CRs untouched. Called in create admission, `builtin_update`, and in
+      `ResourceStorage::{create,update}` (controllers, manifests, webhooks)
+- [ ] Boot backfill of stored objects (as #101's Secrets); units; rig
+      `quantity-strings.sh` (rigs); README/test README/CHANGELOG
+- [ ] Build VM; golden; rig on a test machine when stormcos#271 allows
+
 ### 12.39 apiserver boot +13 s (#286, P0) — DIAGNOSED, 12.43 carries the fix, waits for its pve installs, 2026-10-21
 Not rustkube code. 12.42 kubelet rings (pvetest1/2): on the late boot the
 kubelet's first create of a control-plane static pod is refused at its root —
