@@ -568,6 +568,13 @@ audiences and reports the pod and its node.
 folded into data on create, merge PATCH and PUT (stringData winning a shared
 key), and GET and LIST return no stringData.
 
+`e2e/datastore-late.sh` (#293, suite `rigs`, ~2 min): the apiserver
+starts with a `--manifest-dir` and the datastore 70 s later; it waits
+(nothing served, an ERROR logged), then applies every manifest (a CRD, a
+ClusterRole, a ConfigMap, a custom resource: 4 created, 0 failed). With the
+datastore stopped under it, a caller with no grant gets 503 + `Retry-After`,
+and 403 again once the datastore is back.
+
 `e2e/quantity-strings.sh` (#292, suite `rigs`): quantities sent as JSON
 numbers (create with JSON and YAML bodies, LimitRange, ResourceQuota) come
 back as canonical strings (`1`, `500m`, `1k`) on GET, LIST and PATCH;
