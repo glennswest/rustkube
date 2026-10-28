@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-28
+- **docs:** #205 verified on pvetest1: with the kubelet's `--max-pods 250` (rustkube-node#165, stormcos#329) stormcos_qa turbomode a5c0e611fe's 100-Pod sleep burst found 212 free slots of 250, no Pod waited for a slot, peak running 100, request→scheduled max 0.84 / 0.94 s over two attempts (was p95 60.86 s). The run's failure — 2–6 Running Pods never reaching Succeeded — is rustkube-node#250 / stormcos_qa#74, not scheduling. No rustkube code change; #205 closed.
+
 ### 2026-10-22
 - **test:** #293 verified on conform.g8.lo with `datastore-late.sh` (store started 150 s after the apiserver): golden-rustkube-apiserver-01a3affcd023 13/13 — waits, then 4 created / 0 failed, 503 + `Retry-After` with the store down; control golden-rustkube-apiserver-dfb448b7c686 fails 9 — `0 created, 0 reconciled, 0 already present, 4 failed` at INFO, every object 404, 403 with the store down. #293 closed.
 - **fix:** An apiserver that boots while its datastore is not answering no longer loses the manifest pass or refuses every client (#293, server1 12.49 reboot: `0 created, 114 failed`, then 403 for ~50 s). The boot waits for the datastore without a deadline (ERROR once a minute) instead of giving up after 60 s and bootstrapping into a dead store; a manifest `get` that fails is no longer read as "absent"; manifests the datastore refused, or whose kind is not served yet, are retried in the background in filename order until they apply (an unserved kind given up after 10 min), and the summary names the failures by cause at WARN/ERROR; RBAC answers **503 + `Retry-After: 1`** instead of 403 when a refusal could not be checked against the datastore. Units (manifests, RBAC); the in-memory test store lists and fails writes when unavailable.
