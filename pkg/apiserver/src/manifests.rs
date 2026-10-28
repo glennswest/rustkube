@@ -319,6 +319,15 @@ pub async fn apply_one(
                 Ok(p) => p,
                 Err(e) => return failed(e),
             };
+            // A manifest the stored object already matches is not written
+            // again (#290): every boot rewrote every Reconcile manifest, about
+            // twenty fsyncs of 1–2 s each on server1's spinning disk.
+            if same_object(&current, &obj) {
+                if let Some(plan) = plan {
+                    plan.abort(storage).await;
+                }
+                return Outcome::Unchanged;
+            }
             let is_crd = obj["kind"].as_str() == Some("CustomResourceDefinition");
             let written = storage.update(&key, obj, None).await;
             if let Some(plan) = plan {
@@ -337,6 +346,19 @@ pub async fn apply_one(
             }
         }
     }
+}
+
+/// Whether writing `next` over `current` would change nothing: equal but for
+/// `metadata.resourceVersion`, which only the store sets.
+fn same_object(current: &Value, next: &Value) -> bool {
+    let without_rv = |v: &Value| {
+        let mut v = v.clone();
+        if let Some(meta) = v.get_mut("metadata").and_then(Value::as_object_mut) {
+            meta.remove("resourceVersion");
+        }
+        v
+    };
+    without_rv(current) == without_rv(next)
 }
 
 /// The manifest files in a directory, in the order they must be applied.
@@ -690,6 +712,68 @@ metadata:
         let got = apply_one(&storage, &crds, "10.96.0.0/12", json!({"apiVersion": "v1", "kind": "ConfigMap",
                                                                      "metadata": {}})).await;
         assert!(matches!(got, Outcome::Failed(_)) && !got.retryable(), "{got:?}");
+    }
+
+    fn reconciled(mut obj: Value) -> Value {
+        obj["metadata"]["annotations"] = json!({"addonmanager.kubernetes.io/mode": "Reconcile"});
+        obj
+    }
+
+    async fn resource_version(storage: &ResourceStorage, key: &str) -> Value {
+        storage.get(key).await.unwrap()["metadata"]["resourceVersion"].clone()
+    }
+
+    /// A Reconcile manifest the stored object already matches is not written
+    /// again (#290): server1 rewrote about twenty on every boot, 1–2 s an
+    /// fsync on its spinning disk. A changed one still is.
+    #[tokio::test]
+    async fn an_unchanged_reconcile_manifest_is_not_rewritten() {
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = ResourceStorage::new(store.clone());
+        let crds = CrdRegistry::new();
+        let cidr = "10.96.0.0/12";
+        let ns = "cilium-secrets";
+        // The kinds server1's pass reconciled, the Namespace first.
+        let docs = [
+            (json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": ns}}),
+             ResourceStorage::cluster_key("namespaces", ns)),
+            (json!({"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "cilium", "namespace": ns}}),
+             ResourceStorage::namespaced_key("serviceaccounts", ns, "cilium")),
+            (json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "cfg", "namespace": ns},
+                    "data": {"a": "1"}}),
+             ResourceStorage::namespaced_key("configmaps", ns, "cfg")),
+            (cluster_role("cilium"), ResourceStorage::cluster_key("clusterroles", "cilium")),
+            (json!({"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
+                    "metadata": {"name": "rb", "namespace": ns},
+                    "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cilium"},
+                    "subjects": [{"kind": "ServiceAccount", "name": "cilium", "namespace": ns}]}),
+             ResourceStorage::namespaced_key("rolebindings", ns, "rb")),
+            (json!({"apiVersion": "storage.k8s.io/v1", "kind": "CSIDriver",
+                    "metadata": {"name": "stormblock.storm.io"}, "spec": {"attachRequired": false}}),
+             ResourceStorage::cluster_key("csidrivers", "stormblock.storm.io")),
+            (json!({"apiVersion": "v1", "kind": "Service", "metadata": {"name": "kube-dns", "namespace": ns},
+                    "spec": {"selector": {"k": "v"}, "ports": [{"name": "dns", "port": 53, "protocol": "UDP"}]}}),
+             ResourceStorage::namespaced_key("services", ns, "kube-dns")),
+        ];
+        let mut versions = Vec::new();
+        for (doc, key) in &docs {
+            assert_eq!(apply_one(&storage, &crds, cidr, reconciled(doc.clone())).await, Outcome::Created, "{key}");
+            versions.push(resource_version(&storage, key).await);
+        }
+        // The next boot's pass.
+        for ((doc, key), rv) in docs.iter().zip(&versions) {
+            assert_eq!(apply_one(&storage, &crds, cidr, reconciled(doc.clone())).await, Outcome::Unchanged, "{key}");
+            assert_eq!(&resource_version(&storage, key).await, rv, "{key} was written again");
+        }
+        // The Namespace kept the finalizer its create defaulted.
+        let stored = storage.get(&docs[0].1).await.unwrap();
+        assert_eq!(stored["spec"]["finalizers"], json!(["kubernetes"]));
+
+        // A manifest that changed lands.
+        let mut cm = docs[2].0.clone();
+        cm["data"]["a"] = json!("2");
+        assert_eq!(apply_one(&storage, &crds, cidr, reconciled(cm)).await, Outcome::Updated);
+        assert_eq!(storage.get(&docs[2].1).await.unwrap()["data"]["a"], "2");
     }
 
     /// What the datastore refused at boot lands once it answers, without a

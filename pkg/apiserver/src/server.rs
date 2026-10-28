@@ -976,18 +976,21 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     } else {
         None
     };
+    let mut boot = BootPhases::new(); // #290
     tracing::info!("connecting to datastore: {:?}", config.etcd_servers);
     let store = EtcdStore::connect(&config.etcd_servers, etcd_tls)
         .await
         .map_err(|e| anyhow::anyhow!("failed to connect to etcd/fastetcd {:?}: {e}", config.etcd_servers))?;
     let kv: Arc<dyn KvStore> = Arc::new(store);
     let storage = Arc::new(ResourceStorage::new(kv.clone()));
+    boot.done("connect");
 
     // One gate for the whole of bootstrap. `Client::connect` above succeeds
     // against a datastore that is not up — the connection is lazy — so without
     // this the next dozen writes go into a hole and the cluster comes up with
     // no namespaces and no RBAC (#52).
     wait_for_datastore(&storage).await;
+    boot.done("datastore_wait");
     crate::compactor::spawn(kv, config.etcd_compaction_interval);
 
     // Bootstrap default namespaces
@@ -995,9 +998,12 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     bootstrap_namespace(&storage, "kube-system").await;
     bootstrap_namespace(&storage, "kube-public").await;
     bootstrap_namespace(&storage, "kube-node-lease").await;
+    // Each reads every stored object of its kind (Namespaces, Secrets, the
+    // kinds that carry quantities): timed apart from the bootstrap writes.
     backfill_namespace_defaults(&storage).await;
     backfill_secret_string_data(&storage).await;
     backfill_quantity_strings(&storage).await;
+    boot.done("backfill");
     bootstrap_service_cidr(&storage, &config.service_cidr).await;
     bootstrap_flowcontrol(&storage).await;
 
@@ -1043,9 +1049,12 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         });
     }
 
+    boot.done("bootstrap");
+
     // Initialize CRD registry and load existing CRDs
     let crd_registry = Arc::new(CrdRegistry::new());
     crd::load_existing_crds(&storage, &crd_registry).await;
+    boot.done("crd_load");
     // And keep following them: a CRD written through another replica, or one
     // the boot read could not see, is registered here too (#185).
     tokio::spawn(crd::follow_stored_crds(storage.clone(), crd_registry.clone()));
@@ -1058,6 +1067,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     if let Some(dir) = &config.manifest_dir {
         crate::manifests::apply_dir(&storage, &crd_registry, &config.service_cidr, dir).await;
     }
+    boot.done("manifests");
 
     // Claim the addresses Services already hold.
     //
@@ -1095,6 +1105,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             holders.join(", ")
         );
     }
+    boot.done("claims");
 
     // ServiceAccount token signing keys. A real cluster supplies the RSA
     // keypair (--service-account-signing-key-file / --service-account-key-file)
@@ -1225,6 +1236,8 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
         // handler/middleware is caught and turned into a 500 (rustkube#9).
         .layer(tower_http::catch_panic::CatchPanicLayer::new());
 
+    boot.done("auth");
+
     let addr = format!("{}:{}", config.bind_addr, config.secure_port);
     if !config.client_crl.is_empty() && config.client_ca.is_none() {
         anyhow::bail!("--client-crl-file needs --client-ca-file: with no client CA no client certificate is accepted, so there is nothing to revoke");
@@ -1305,6 +1318,8 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             if let Some((cert_path, key_path)) = cert_files {
                 crate::tls::watch_cert_files(resolver, cert_path, key_path);
             }
+            boot.done("tls");
+            boot.listening();
             crate::tls::serve(listener, app, cfg).await?;
         }
         None => {
@@ -1329,11 +1344,55 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
                     tracing::debug!("TCP_NODELAY: {e}");
                 }
             });
+            boot.done("tls");
+            boot.listening();
             axum::serve(listener, app).await?;
         }
     }
 
     Ok(())
+}
+
+/// Where the time between the process start and serving goes (#290).
+///
+/// server1's reboots took 385–775 s from root ready to an apiserver that
+/// listens, and the log could not say which part was the apiserver's: a line
+/// per phase as it ends, and one summary as the server starts accepting. The
+/// phases run in order, so their sum is the whole start.
+struct BootPhases {
+    start: std::time::Instant,
+    last: std::time::Instant,
+    phases: Vec<(&'static str, std::time::Duration)>,
+}
+
+impl BootPhases {
+    fn new() -> Self {
+        let now = std::time::Instant::now();
+        BootPhases { start: now, last: now, phases: Vec::new() }
+    }
+
+    /// The phase `name` ended now; it began where the previous one ended.
+    fn done(&mut self, name: &'static str) {
+        let now = std::time::Instant::now();
+        let took = now - self.last;
+        self.last = now;
+        self.phases.push((name, took));
+        info!("boot phase {name}: {}", secs(took));
+    }
+
+    /// The summary, as the server starts accepting.
+    fn listening(&self) {
+        info!("{}", self.summary(self.start.elapsed()));
+    }
+
+    fn summary(&self, total: std::time::Duration) -> String {
+        let phases: Vec<String> = self.phases.iter().map(|(n, d)| format!("{n} {}", secs(*d))).collect();
+        format!("boot: serving {} after the process started ({})", secs(total), phases.join(", "))
+    }
+}
+
+fn secs(d: std::time::Duration) -> String {
+    format!("{:.1}s", d.as_secs_f64())
 }
 
 /// Days before expiry at which a certificate is considered near-expiry.
@@ -2554,6 +2613,21 @@ mod tests {
         );
         assert!(first_service_ip("not-a-cidr").is_none());
         assert!(first_service_ip("10.96.0.0").is_none());
+    }
+
+    /// The summary names every phase in order with its duration (#290).
+    #[test]
+    fn boot_summary_names_each_phase() {
+        use std::time::Duration;
+        let mut boot = super::BootPhases::new();
+        boot.phases = vec![("datastore_wait", Duration::from_millis(33_713)), ("manifests", Duration::from_millis(12_400))];
+        assert_eq!(
+            boot.summary(Duration::from_millis(102_000)),
+            "boot: serving 102.0s after the process started (datastore_wait 33.7s, manifests 12.4s)"
+        );
+        boot.done("tls");
+        assert_eq!(boot.phases.len(), 3);
+        assert_eq!(boot.phases[2].0, "tls");
     }
 }
 

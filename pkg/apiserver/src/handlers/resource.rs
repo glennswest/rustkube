@@ -619,6 +619,9 @@ pub(crate) async fn builtin_update(
     // Quantities as strings (#292), before the PVC/Pod rules read them.
     apimachinery::quantity::numbers_to_strings(&crate::storage::metric_resource(key), body);
     crate::generation::on_update(key, existing, body); // #285; again after webhooks
+    if key.starts_with("/registry/namespaces/") {
+        keep_namespace_finalizers(existing, body);
+    }
     check_immutable(key, existing, body)?;
     if key.starts_with("/registry/persistentvolumeclaims/") {
         crate::builtin_admission::pvc_update(storage, existing, body).await?;
@@ -635,6 +638,23 @@ pub(crate) async fn builtin_update(
         return Ok(Some(crate::node_port::plan(storage, service_cidr, Some(existing), body).await?));
     }
     Ok(None)
+}
+
+/// A Namespace's `spec.finalizers` change only through `/finalize`, as in
+/// upstream's namespace strategy (PrepareForUpdate). A reconciled manifest
+/// with no spec used to drop the `kubernetes` finalizer on every boot (#290).
+fn keep_namespace_finalizers(existing: &Value, body: &mut Value) {
+    let stored = &existing["spec"]["finalizers"];
+    if stored.is_null() {
+        if let Some(spec) = body.get_mut("spec").and_then(Value::as_object_mut) {
+            spec.remove("finalizers");
+        }
+        return;
+    }
+    if !body["spec"].is_object() {
+        body["spec"] = serde_json::json!({});
+    }
+    body["spec"]["finalizers"] = stored.clone();
 }
 
 /// What the server decides about an object written through its main resource
