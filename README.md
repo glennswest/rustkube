@@ -511,12 +511,18 @@ built-in admission (namespace lifecycle and defaults, Service ClusterIP and
 node ports, the Pod defaults, LimitRanger, QoS, PodSecurity, the
 validations) or the CRD's strategy (schema defaults, `generation`), and a
 `Reconcile` update runs the update checks of PUT/PATCH (immutable fields,
-PVC and Service rules); a refused manifest is logged (ERROR) and skipped. A
+PVC and Service rules; a Namespace keeps its `spec.finalizers`, which only
+`/finalize` changes, as upstream) and is not written when the result equals
+the stored object (#290); a refused manifest is logged (ERROR) and skipped. A
 manifest the datastore could not read or write, or whose kind is not served
 yet, is retried in the background in filename order (1 s doubling to 30 s)
 until it applies — a kind still unserved after 10 min is given up at ERROR;
 the pass's summary line names the failures by cause (#293). Not RBAC,
 webhooks or the requester stamp: these are the apiserver's own writes.
+Each boot phase logs its duration as it ends (`boot phase datastore_wait:
+33.7s` — connect, datastore_wait, backfill, bootstrap, crd_load, manifests,
+claims, auth, tls), and one summary line when the server starts accepting
+(`boot: serving 102.0s after the process started (…)`, #290).
 
 Bootstrap RBAC: `cluster-admin`; `system:masters` and `system:nodes` bound
 to it (a Node authorizer for kubelets is #228);

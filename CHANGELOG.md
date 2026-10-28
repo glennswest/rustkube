@@ -3,6 +3,11 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-28
+- **fix:** An apiserver boot no longer rewrites every `Reconcile` startup manifest (#290): a manifest whose admitted result equals the stored object is left alone (`already present`). server1's reboots rewrote about 20 of them each boot, 12–40 s of 1–2 s fsyncs on its spinning disk.
+- **fix:** An update of a Namespace keeps its stored `spec.finalizers`, which only `/finalize` changes, as upstream's namespace strategy. A reconciled manifest with no spec (`cilium-secrets`) dropped the `kubernetes` finalizer on every boot (#290).
+- **feat:** The apiserver logs each boot phase's duration as it ends (connect, datastore_wait, backfill, bootstrap, crd_load, manifests, claims, auth, tls) and a summary when it starts serving (#290).
+- **docs:** #290 from server1's boot logs (12.52–12.55): most of the reboot's 385–775 s before the apiserver listens is fastetcd's redb repair after the warm reset (195–376 s of datastore wait; on 12.55 the first start was killed at the 600 s startup probe with the apiserver and redone) — fastetcd#176, fixed in fastetcd v1.37.0. The apiserver's own share after the store answers was 60–80 s.
+
 - **docs:** #205 verified on pvetest1: with the kubelet's `--max-pods 250` (rustkube-node#165, stormcos#329) stormcos_qa turbomode a5c0e611fe's 100-Pod sleep burst found 212 free slots of 250, no Pod waited for a slot, peak running 100, request→scheduled max 0.84 / 0.94 s over two attempts (was p95 60.86 s). The run's failure — 2–6 Running Pods never reaching Succeeded — is rustkube-node#250 / stormcos_qa#74, not scheduling. No rustkube code change; #205 closed.
 
 ### 2026-10-22
