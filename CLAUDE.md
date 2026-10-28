@@ -115,6 +115,26 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### server1 reboot: apiserver listens 385–775 s after root ready (#290, P0) — IN PROGRESS 2026-10-28
+Read from server1's boot logs (stormcentral bootlog server1-1792702658,
+-1793204384, -1793208481, -1793213309; console + pods.log). Not the
+apiserver's own work: fastetcd after a warm reset (unclean stop, SMR disk)
+spends 195–376 s in redb's full repair, and on 12.55 its first start never
+answered /livez, so the kubelet's 600 × 1 s startup probe killed fastetcd
+(and the apiserver, still waiting for it, #293) and both started over —
+fastetcd#176, fixed in fastetcd v1.37.0 (early /livez, quick-repair commits).
+The apiserver's share after the store answers is ~60–80 s on that disk
+(~1–2 s per fsync, fastetcd#135): bootstrap+backfill+CRD load 25–47 s
+(not split in the log), manifests 12–40 s — every `Reconcile` manifest
+rewritten on every boot (~20: cilium RBAC/ConfigMap, coredns, CSIDriver).
+- [ ] Per-phase boot timing: a line per phase (connect, datastore wait,
+      bootstrap, backfill, CRD load, manifests, claims, auth, TLS) and a
+      summary at listen
+- [ ] Manifests: a Reconcile whose result equals the stored object is not
+      written (Unchanged); units
+- [ ] README/CHANGELOG; build VM; golden; findings on #290; close when a
+      server1 reboot's log shows the phases (or ship with the golden)
+
 ### Boot while the datastore is down: lost manifests, 403s (#293, P1) — COMPLETE 2026-10-22
 server1 12.49 reboot: fastetcd repairing its redb file (13:15:08); the
 apiserver's `wait_for_datastore` (60 s) and `load_existing_crds` (60 s) give
