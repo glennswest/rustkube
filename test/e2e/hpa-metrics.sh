@@ -41,11 +41,14 @@ def pods():
     c.request("GET", "/api/v1/namespaces/hpa/pods", headers={"Authorization": "Bearer " + os.environ["ADMIN"]})
     items = json.loads(c.getresponse().read()).get("items", []); c.close(); return items
 def cg(name, labels, cores, mem):
+    # The counters run from 1000 s of usage, so the first sample of the stub's
+    # first 10 s is not negative (it was: no usage, a 404 NodeMetrics, #89).
     t1 = time.time() - start; t0 = t1 - 10
+    used = lambda t: int((t + 1000) * cores * 1e9)
     ts = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(start + t)) + ".%06dZ" % int(((start + t) % 1) * 1e6)
     return {"name": name, "spec": {"labels": labels}, "stats": [
-        {"timestamp": ts(t0), "cpu": {"usage": {"total": int(t0 * cores * 1e9)}}, "memory": {"working_set": mem}},
-        {"timestamp": ts(t1), "cpu": {"usage": {"total": int(t1 * cores * 1e9)}}, "memory": {"working_set": mem}}]}
+        {"timestamp": ts(t0), "cpu": {"usage": {"total": used(t0)}}, "memory": {"working_set": mem}},
+        {"timestamp": ts(t1), "cpu": {"usage": {"total": used(t1)}}, "memory": {"working_set": mem}}]}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
