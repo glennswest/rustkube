@@ -724,7 +724,7 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-f4592f74ec16 (stormcos#366)
 - [ ] oc-adm rig (stormcentral#512); close
 
-### Scheduler preemption (#84, P2) — BUILT 2026-10-07
+### Scheduler preemption (#84, P2) — COMPLETE 2026-10-29
 - [x] `preemption.rs` rewritten (on_node/select/waiting_for_victims over
       ClusterState + filters, PDB-aware reprieve); `Scheduler::preempt`
       (nominate, Eviction API, Preempted Event); nominated room held in
@@ -733,7 +733,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 - [x] Build VM at 72fc783: 601 passed / 4 ignored (scheduler 64: the old
       module's 10 tests replaced by 3 on the wired path);
       golden-rustkube-7df7dc5a5562 (stormcos#366)
-- [ ] scheduler-preemption rig (stormcentral#512); close
+- [x] scheduler-preemption 8/8 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b and on conform.g8.lo (apiserver 4fe0997b273e, scheduler
+      dfb448b7c686); control efbea2d fails 5. #84 closed. The conformance
+      preemption specs use an extended resource the fit filter ignores: #297;
+      three of them also need running Pods
 
 ### Unserved resources → 404 (#110, P3) — COMPLETE 2026-10-29
 - [x] `served.rs` middleware from `discovery::advertised` (the discovery
