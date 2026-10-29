@@ -124,7 +124,8 @@ change_template(ns)
 # is gone, so it binds without ever being Unschedulable (1c81036901 failed
 # here, 2026-10-13). Anti-affinity holding is the control's check below.
 msg = until(ns, lambda: unschedulable(ns) or rs_of(ns, "2") and rs_of(ns, "2").get("status", {}).get("availableReplicas") == 1, 30)
-print(f"NOTE  surge pod before the old one went: {msg if isinstance(msg, str) else 'bound without waiting'}", flush=True)
+seen = msg if isinstance(msg, str) else "bound without waiting" if msg else "neither Unschedulable nor available in 30 s"
+print(f"NOTE  surge pod before the old one went: {seen}", flush=True)
 old = lambda: next((r for r in rss(ns) if r["spec"]["template"]["metadata"].get("annotations", {}).get("rev") != "2"), None)
 check(until(ns, lambda: old() and old()["spec"]["replicas"] == 0, 30), "old ReplicaSet scaled to 0 under maxUnavailable 1")
 def done():
