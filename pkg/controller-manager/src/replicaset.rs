@@ -371,6 +371,30 @@ fn is_pod_ready(pod: &Value) -> bool {
         .unwrap_or(false)
 }
 
+#[async_trait::async_trait]
+impl crate::owned::Controller for ReplicaSetController {
+    fn name(&self) -> &'static str {
+        self.kind.name
+    }
+    fn primary(&self) -> &str {
+        &self.primary
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/api/v1/pods")
+    }
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        _deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        self.reconcile_replicaset(namespace, object, children).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,7 +402,7 @@ mod tests {
     // Classify pods exactly as reconcile does, to lock in the #27 fix: a Failed
     // pod must NOT count as active (else the RS is "under" desired and storms),
     // and it must be visible as terminal (so it gets GC'd).
-    fn classify<'a>(owned: &'a [Value]) -> (Vec<&'a Value>, Vec<&'a Value>) {
+    fn classify(owned: &[Value]) -> (Vec<&Value>, Vec<&Value>) {
         let mut active = Vec::new();
         let mut terminal = Vec::new();
         for pod in owned {
@@ -454,29 +478,5 @@ mod tests {
         let (active, terminal) = classify(&owned);
         assert!(active.is_empty(), "deleting pod must not count as active");
         assert!(terminal.is_empty(), "deleting pod must not be re-deleted");
-    }
-}
-
-#[async_trait::async_trait]
-impl crate::owned::Controller for ReplicaSetController {
-    fn name(&self) -> &'static str {
-        self.kind.name
-    }
-    fn primary(&self) -> &str {
-        &self.primary
-    }
-    fn children(&self) -> Option<&'static str> {
-        Some("/api/v1/pods")
-    }
-    async fn reconcile(
-        &self,
-        object: &Value,
-        children: &[Value],
-        _deps: &crate::owned::Deps,
-    ) -> anyhow::Result<()> {
-        let namespace = object["metadata"]["namespace"]
-            .as_str()
-            .unwrap_or("default");
-        self.reconcile_replicaset(namespace, object, children).await
     }
 }
