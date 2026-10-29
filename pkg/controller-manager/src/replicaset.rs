@@ -163,6 +163,10 @@ impl ReplicaSetController {
             self.backoff.clear(rs_uid);
         }
         let create_allowed = self.backoff.allowed(rs_uid, now);
+        // What this pass tried to change and the first refusal (#125):
+        // upstream's manageReplicas error, for the ReplicaFailure condition.
+        let mut attempted = false;
+        let mut failure: Option<(&'static str, String)> = None;
 
         if current < desired {
             if !create_allowed {
@@ -173,6 +177,7 @@ impl ReplicaSetController {
             } else {
                 // Scale up — create missing pods
                 let to_create = desired - current;
+                attempted = true;
                 for _i in 0..to_create {
                     let pod = build_pod_from_template(namespace, rs_name, rs_uid, rs, &self.kind)?;
                     match self
@@ -195,6 +200,7 @@ impl ReplicaSetController {
                         }
                         Err(e) => {
                             warn!("Failed to create pod for {rs_name}: {e}");
+                            failure.get_or_insert(("FailedCreate", e.to_string()));
                             self.recorder
                                 .event(
                                     rs,
@@ -218,6 +224,7 @@ impl ReplicaSetController {
                 tb.cmp(ta)
             });
 
+            attempted = true;
             for pod in deletable.iter().take(to_delete) {
                 let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
                 if !pod_name.is_empty() {
@@ -242,6 +249,7 @@ impl ReplicaSetController {
                         }
                         Err(e) => {
                             warn!("Failed to delete pod {pod_name}: {e}");
+                            failure.get_or_insert(("FailedDelete", e.to_string()));
                         }
                     }
                 }
@@ -270,6 +278,11 @@ impl ReplicaSetController {
             "availableReplicas": ready_count,
             "observedGeneration": rs["metadata"]["generation"].as_u64().unwrap_or(1)
         });
+        let settled = attempted || current == desired;
+        let conditions = failure_conditions(&rs["status"]["conditions"], failure.as_ref(), settled);
+        if conditions.as_array().is_some_and(|c| !c.is_empty()) {
+            updated_rs["status"]["conditions"] = conditions;
+        }
 
         let _ = self
             .api
@@ -283,6 +296,26 @@ impl ReplicaSetController {
 
         Ok(())
     }
+}
+
+/// The status conditions after a pass, as upstream's calculateStatus (#125):
+/// a refused create or delete adds `ReplicaFailure` (True, its reason and the
+/// API's message) unless one is there already, which keeps its transition
+/// time; a pass that `settled` (tried and was not refused, or is at the
+/// desired count) removes it; a pass that tried nothing (recreate backoff)
+/// leaves it.
+fn failure_conditions(existing: &Value, failure: Option<&(&'static str, String)>, settled: bool) -> Value {
+    let mut conditions: Vec<Value> = existing.as_array().cloned().unwrap_or_default();
+    let has = conditions.iter().any(|c| c["type"] == "ReplicaFailure");
+    match failure {
+        Some((reason, message)) if !has => conditions.push(json!({
+            "type": "ReplicaFailure", "status": "True", "reason": reason, "message": message,
+            "lastTransitionTime": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        })),
+        None if settled => conditions.retain(|c| c["type"] != "ReplicaFailure"),
+        _ => {}
+    }
+    Value::Array(conditions)
 }
 
 /// Build a Pod object from a ReplicaSet's pod template.
@@ -374,6 +407,26 @@ mod tests {
         assert_eq!(pod["metadata"]["labels"]["app"], "a");
         let rs = build_pod_from_template("ns", "web", "u1", &rc, &Kind::REPLICA_SET).unwrap();
         assert_eq!(rs["metadata"]["ownerReferences"][0]["kind"], "ReplicaSet");
+    }
+
+    #[test]
+    fn a_refused_create_is_a_replica_failure_until_a_clean_pass() {
+        let refused = ("FailedCreate", "pods \"x\" is forbidden: exceeded quota: q".to_string());
+        let set = failure_conditions(&Value::Null, Some(&refused), true);
+        assert_eq!(set[0]["type"], "ReplicaFailure");
+        assert_eq!(set[0]["status"], "True");
+        assert_eq!(set[0]["reason"], "FailedCreate");
+        assert!(set[0]["message"].as_str().unwrap().contains("exceeded quota"));
+        // Refused again: the condition is kept, transition time and all.
+        let mut aged = set.clone();
+        aged[0]["lastTransitionTime"] = json!("2026-01-01T00:00:00Z");
+        assert_eq!(failure_conditions(&aged, Some(&refused), true), aged);
+        // Backing off, nothing tried: left as it is.
+        assert_eq!(failure_conditions(&aged, None, false), aged);
+        // A clean pass (or at the desired count): gone; other conditions stay.
+        let mut mixed = aged.as_array().unwrap().clone();
+        mixed.push(json!({"type": "Other", "status": "True"}));
+        assert_eq!(failure_conditions(&json!(mixed), None, true), json!([{"type": "Other", "status": "True"}]));
     }
 
     #[test]
