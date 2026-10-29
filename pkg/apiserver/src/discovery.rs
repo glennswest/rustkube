@@ -1031,7 +1031,17 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
             ("serviceaccounts", "ServiceAccount", true),
             ("events", "Event", true),
             ("persistentvolumeclaims", "PersistentVolumeClaim", true),
+            // Missing until #158: a manifest's LimitRange was "not served".
+            ("limitranges", "LimitRange", true),
+            ("resourcequotas", "ResourceQuota", true),
+            ("replicationcontrollers", "ReplicationController", true),
+            ("podtemplates", "PodTemplate", true),
         ],
+        ("policy", "v1") => vec![("poddisruptionbudgets", "PodDisruptionBudget", true)],
+        ("scheduling.k8s.io", "v1") => vec![("priorityclasses", "PriorityClass", false)],
+        ("route.openshift.io", "v1") => vec![("routes", "Route", true)],
+        ("apiregistration.k8s.io", "v1") => vec![("apiservices", "APIService", false)],
+        ("rustkube.io", "v1alpha1") => vec![("podmigrations", "PodMigration", true)],
         ("apps", "v1") => vec![
             ("deployments", "Deployment", true),
             ("replicasets", "ReplicaSet", true),
