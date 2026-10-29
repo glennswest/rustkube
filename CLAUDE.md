@@ -364,7 +364,7 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
 - [x] secret-stringdata 5/5 in rigs 756f2f6c20 (pvetest1), 1a879717b9,
       51ef481a0b (pvetest2); in every golden since 10-07; #101 closed
 
-### autoscaling/v1 served (#123, P3) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
+### autoscaling/v1 served (#123, P3) — COMPLETE 2026-10-29
 - [x] `handlers/hpa_v1.rs` (to_v1/to_v2 with upstream's annotations; v1
       routes delegating to the v2 handlers; watch converted per line; PATCH
       on the v1 view); discovery (v2 preferred + v1), apply table; autoscaling/v1
@@ -372,7 +372,12 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
 - [x] Build VM cabae5a433 at 7ef6fac: 577 passed / 4 ignored (#235: my
       unit caught a null-annotations insert, fixed 7ef6fac);
       golden-rustkube-10934b6134a7 (stormcos#366)
-- [ ] hpa-v1 rig (stormcentral#512); close
+- [x] Discovery "should locate the groupVersion and a resource within each
+      APIGroup" conformance spec passed in the d5f48f5 run (failed at
+      efbea2d). hpa-v1's test-machine failures (TypeError) were #277's raw
+      chunked WATCH reads; 92f399a fixes all five rigs; on conform.g8.lo from
+      the 01a3affcd023 goldens hpa-v1 10/10, watch-timeout 6, runtime-class
+      18, flowcontrol 29, gc-orphan-load 5. #123, #277 closed
 
 ### Admission policies served (#119, P3) — COMPLETE 2026-10-29
 Split: (1) serve the four resources here; (2) CEL evaluation is #234 (the
