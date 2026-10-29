@@ -669,15 +669,17 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       left, as before); #139 closed. Golden with the next component build
       (after stormcentral#827)
 
-### nodes/{name}/proxy (#108, P3) — BUILT 2026-10-08
+### nodes/{name}/proxy (#108, P3) — COMPLETE 2026-10-29
 - [x] `handlers/node_proxy.rs` (every method → kubelet :10250, apiserver
       token, status/content type/body streamed), RBAC path arm
       (`nodes/proxy`), discovery; units; `test/e2e/node-proxy.sh` (stub
       kubelet); docs. Kubelet `/logs/` filed rustkube-node#198
 - [x] Build VM at 76f125d: 607 passed / 4 ignored (apiserver 309);
       golden-rustkube-ac7748374265 (stormcos#366)
-- [ ] node-proxy rig (stormcentral#512); close (node-logs itself needs
-      rustkube-node#198)
+- [x] node-proxy 8/8 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b and on conform.g8.lo (apiserver 4fe0997b273e, rig 71e6a10);
+      control efbea2d fails 7 ("admin cannot be authorized … unrecognized").
+      #108 closed; node-logs' content needs rustkube-node#198 (open)
 
 ### CSR controller and external signers (#199, P2) — BUILT 2026-10-08
 - [x] `--csr-external-signer-names` → `CsrController::with_external_signers`;
