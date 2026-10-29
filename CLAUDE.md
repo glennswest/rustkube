@@ -392,15 +392,18 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       51ef481a0b and on conform.g8.lo (controller-manager 3e10ed08dcac);
       control efbea2d fails the Block cases. #201 closed (with #92)
 
-### Slow pod status PUT breakdown (#191, P2) — BUILT 2026-10-08
+### Slow pod status PUT breakdown (#191, P2) — COMPLETE 2026-10-29
 - [x] `WritePhases` in `guaranteed_update`: read/mutate/webhooks/write/
       retry_wait histogram; `slow write` warn > 100 ms with the key;
       `slow request` warn in metrics_middleware (long-running left out);
       unit; `test/e2e/status-put-latency.sh` (rigs); docs/metrics.md, CHANGELOG
 - [x] Build VM at fc74517: 611 passed / 4 ignored (#239, my unit's path,
       closed); golden-rustkube-268f9826b9cd (stormcos#366)
-- [ ] status-put-latency rig (stormcentral#512); real acceptance: the next
-      slow PUT on pvetest1 logs its breakdown after the release
+- [x] The breakdown names the phase in production: pvetest2 12.19 (163
+      `slow write`, read-heavy), server1 12.55 (write_ms 8538 of 8552) — the
+      datastore (fastetcd#135). Rig fixed (ee524d1: colour codes broke its
+      webhooks_ms parse; p99 bound was the disk → NOTE + apiserver's own
+      share < 50 ms): 5/5 ×3 on conform.g8.lo, own share ≤ 0.5 ms. #191 closed
 
 ### Secret stringData folded into data (#101, P2) — COMPLETE 2026-10-14
 - [x] `builtin_admission::fold_string_data` on create, PUT, PATCH (before

@@ -366,9 +366,12 @@ an external signerName (kubelet-serving here) and `stormcert.io/*` unapproved
 or unsigned.
 
 `e2e/status-put-latency.sh` (#191, suite `rigs`): 300 sequential pod
-status PUTs on an idle apiserver, p50/p99/max printed, p99 under 50 ms; the
-write-phase histogram has every phase; a webhook sleeping 300 ms makes the
-breakdown log `slow write` with `webhooks_ms` ≥ 250, plus `slow request`.
+status PUTs on an idle apiserver, p50/p99/max as a NOTE (mostly the
+datastore's write: the machine's disk); every slow PUT has its `slow write`
+breakdown and the apiserver's own share of it (read, mutate, webhooks, retry
+wait) is under 50 ms; the write-phase histogram has every phase; a webhook
+sleeping 300 ms makes the breakdown log `webhooks_ms` ≥ 250, plus `slow
+request`.
 
 `e2e/notfound-message.sh` (#109, suite `rigs`): 404s name the object as the
 API does (`namespaces "x"`, `deployments.apps "web"`, a custom resource's
