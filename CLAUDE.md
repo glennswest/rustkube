@@ -458,7 +458,7 @@ Cargo.lock via a build job; shares the engine with #217).
       listed by the registry (stormcentral#512); golden (stormcentral#541);
       close #87
 
-### HPA (#89, P2) — C BUILT, rig BLOCKED on stormcentral#512 2026-10-07
+### HPA (#89, P2) — COMPLETE 2026-10-29
 Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
 serve `metrics.k8s.io` (pods/nodes, `kubectl top`); upstream's ratio,
 tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
@@ -475,9 +475,12 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
 - [x] cadvisor#3 told the labels rustkube reads
 - [x] Built + units at 90208b0 (job 50292519d5): controller-manager 94
       (HPA calculator/behavior units), apiserver 280 (cadvisor summary)
-- [ ] rigs run: 465e6c4490 (C2NR0Q2, 90208b0) image pushed, "registry did
-      not list it" (stormcentral#512; 275 MB image, small ones pass); golden
-      (stormcentral#541). On stormcos pod metrics wait for cadvisor#3
+- [x] hpa-metrics rig: the 10-13 C2NR0Q2 failures (NodeMetrics 404, no
+      PodMetrics) were the rig's stub cadvisor — negative CPU counters in its
+      first 10 s (fixed 80b7184). On conform.g8.lo from the 01a3affcd023 /
+      dfb448b7c686 goldens: 3/3 runs 10/10. Control, efbea2d's placeholder
+      controller-manager with the same apiserver: the 7 HPA checks fail.
+      #89 closed. On stormcos pod metrics wait for cadvisor#3 (open)
 
 ### Rejected bearer token → 401, not anonymous (#115, P2) — COMPLETE 2026-10-14
 - [x] `auth_middleware`: a presented Bearer token nothing accepts → 401
