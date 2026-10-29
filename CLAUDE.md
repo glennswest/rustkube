@@ -437,16 +437,17 @@ Cargo.lock via a build job; shares the engine with #217).
       570 passed / 4 ignored (apiserver 280, incl. the rotation unit), exit 0
 - [x] golden-rustkube-4f7661e44994 (stormcos#366); marked shipped
 
-### Scale subresource (#86, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
+### Scale subresource (#86, P2) — COMPLETE 2026-10-29
 - [x] `handlers/scale.rs`: autoscaling/v1 Scale GET/PUT/PATCH for
       deployments/replicasets/statefulsets and CRDs with
       `subresources.scale` (`CrdDefinition.scale`); discovery entries (apps +
       CR `/scale`, `/status`); protobuf path → Scale. Units;
       `test/e2e/scale.sh` (rigs, real kubectl); docs/CHANGELOG
 - [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
-- [ ] rigs: 465e6c4490 (C2NR0Q2) and 7219e85020 (server3) at 90208b0 —
-      image never listed by the registry (stormcentral#512); golden
-      (stormcentral#541); close #86
+- [x] scale (real kubectl) 14/14 in rigs fe841f11a1, 3c6585e0ea,
+      7cb36fe72a (C2NR0Q2), 51ef481a0b (pvetest2); conform.g8.lo from the
+      01a3affcd023 goldens 14/14; control efbea2d fails 12 (`kubectl scale`
+      NotFound, the issue's symptom). #86 closed
 
 ### Scheduling gates (#87, P2) — COMPLETE 2026-10-29
 - [x] ddcc821 scheduler: gated Pod → PodScheduled=False/SchedulingGated (no
