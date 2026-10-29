@@ -421,15 +421,19 @@ Cargo.lock via a build job; shares the engine with #217).
       build VM 9d8d14de2d 571 passed / 4 ignored; golden-rustkube-5e640df87001
       (stormcos#366, release note posted there)
 
-### KubeVirt controllers gated on their CRDs (#172, P2) — BUILT, golden 4f7661e44994; rig BLOCKED on stormcentral#512 2026-10-07
+### KubeVirt controllers gated on their CRDs (#172, P2) — COMPLETE 2026-10-29
 - [x] `runner.rs::kubevirt_gate`: VM / VMI launcher / VMI migration
       controllers start when their CRDs are Established (shared CRD feed),
       stop on delete, abort with the term. deadlines.sh: strict 0 idle +
       no KubeVirt requests. README/design/CHANGELOG
 - [x] Built + units on a build VM at 6235778 (job 9ffe19b531): 571 passed /
       4 ignored; golden-rustkube-4f7661e44994 (stormcos#366)
-- [ ] Rigs (deadlines in rigs-night: strict 0 idle; the KubeVirt rigs in
-      rigs) — stormcentral#512; then close #172
+- [x] KubeVirt rigs (vm-runstrategy, vmi-migration, vmi-launcher, vmi-verbs)
+      pass in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a (C2NR0Q2), 51ef481a0b
+      (pvetest2): the gated controllers start with their CRDs. deadlines on
+      conform.g8.lo, dfb448b7c686 goldens: 0 KubeVirt requests without the
+      CRDs; efbea2d's controller-manager: 2,575 (404 VM LISTs). Its idle-0
+      check fails on both: #272's EndpointSlice loop. #172 closed
 
 ### ServiceAccount key rotation (#223, P2) — SHIPPED (golden-rustkube-4f7661e44994) 2026-10-07
 - [x] `SigningKeys::from_pem`: signing key RSA or P-256; verify against

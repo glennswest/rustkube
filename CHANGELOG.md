@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #172 verified: without the KubeVirt CRDs the dfb448b7c686 controller-manager sends no request to `kubevirt.io` in `deadlines.sh` (conform.g8.lo), efbea2d's sent 2,575 (404 VirtualMachine LISTs); the KubeVirt rigs pass in four test-machine `rigs` runs. #172 closed.
 - **test:** #260 verified: `client-crl.sh` 13/13 in four test-machine `rigs` runs and on conform.g8.lo from the 01a3affcd023 goldens; the efbea2d apiserver does not know `--client-crl-file`. #260 closed.
 - **test:** #86 verified: `scale.sh` (real `kubectl scale`) 14/14 in four test-machine `rigs` runs and on conform.g8.lo from the 01a3affcd023 goldens; the efbea2d goldens fail 12 — discovery lists `deployments/scale`, `kubectl scale` answers NotFound. #86 closed.
 - **test:** #87 verified: `scheduling-gates.sh` 7/7 in four test-machine `rigs` runs (C2NR0Q2, pvetest2) and on conform.g8.lo from the dfb448b7c686 goldens; the efbea2d goldens fail 4 (a gated Pod is bound, adding a gate is accepted). #87 closed.
