@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **fix:** The apiserver's own `default/kubernetes` Endpoints carry `endpointslice.kubernetes.io/skip-mirror: "true"`, as upstream's endpoint reconciler writes them: the apiserver writes that Service's EndpointSlice itself, and the mirroring controller made a second one and re-created it every few seconds (#272: ~15,000 requests a minute on an idle control plane).
+- **feat:** The Service controller logs each mirrored EndpointSlice it deletes, with the reason (not wanted, or owner changed, with both UIDs) (#133).
 - **test:** #136 (apiserver half) verified: `pod-resize.sh` 13/13 in four test-machine `rigs` runs. The upstream InPlace Resize conformance specs still fail on conform.g8.lo, before and after, waiting for pods to run (no kubelet there); the node half is rustkube-node#192. #136 closed.
 - **test:** #118 verified: upstream's `API priority and fairness should support FlowSchema API operations` and `… PriorityLevelConfiguration API operations [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `flowcontrol.sh` 29/29 on conform.g8.lo after #277. #118 closed.
 - **test:** #126 verified: upstream's `Servers with support for Table transformation should return a 406 for a backend which does not implement metadata [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `table-review.sh` 7/7 in four test-machine `rigs` runs. #126 closed.

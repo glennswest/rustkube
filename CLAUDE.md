@@ -144,11 +144,13 @@ a cycle — 23 creates / 22 deletes / 0 updates in one rig run; idle, the
 bootstrap default/kubernetes-<hash> ~1 pair per 7 s (#272's 15k idle
 requests). The deleter is service.rs `mirror()` (GC logs none; nothing else
 deletes slices); which of its two conditions fires is not logged.
-- [ ] `mirror()` logs each delete with its reason (not wanted / owner uid)
-- [ ] apiserver: bootstrap default/kubernetes Endpoints labelled
-      `endpointslice.kubernetes.io/skip-mirror: "true"` (upstream)
-- [ ] build VM; golden; rerun the rig + a probe on conform; fix the cause;
-      close #133/#272
+- [x] 4eb27f8 `mirror()` logs each delete with its reason (not wanted /
+      owner changed, both uids); apiserver's bootstrap default/kubernetes
+      Endpoints labelled `endpointslice.kubernetes.io/skip-mirror: "true"`
+      (upstream). Build VM sc-build-8c66c06bf1: workspace exit 0, apiserver
+      348, 0 rustc warnings, changed files clippy-clean
+- [ ] golden (stage build requested 2026-10-29); rerun the rig + probe on
+      conform; the logged reason names the cause; fix; close #133/#272
 
 ### Boot while the datastore is down: lost manifests, 403s (#293, P1) — COMPLETE 2026-10-22
 server1 12.49 reboot: fastetcd repairing its redb file (13:15:08); the
