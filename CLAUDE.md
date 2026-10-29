@@ -1069,8 +1069,12 @@ Owner (#162): "Persistent tests should be pods, and should live on forge."
 - [x] 3c6585e0ea at 183e8b9: 51 pass / 12 fail, tails in the pod log; each
       failing rig's result posted on its issue (#83 #89 #107 #118 #123 #133
       #135 #139 #147 #158 #165 #191; #266 flaky 1/3)
-- [ ] rigs-night: refused on C2NR0Q2 (>30 min = pve VM at night); both pve
-      VMs failed 12.18 on stormcos#554 — proposed after it. Then close #173
+- [x] multi-master (night list's first rig) passes as its own pod suite:
+      7d4962ed39, f39953a31e, a833054561 (pvetest2)
+- [ ] rigs-night as a pod: pve VMs install again (12.58), but every test
+      image fetch fails, nodes' sbregistry has no forge peer (stormcos#271,
+      2026-10-29). Meanwhile its other nine rigs on conform.g8.lo from the
+      01a3affcd023 goldens (2026-10-29, running). Then a night pod run; close
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
