@@ -505,7 +505,9 @@ applies within milliseconds of being stored.
 `kube-system`, `kube-public` and `kube-node-lease` namespaces and backfills
 older namespaces' phase and finalizer; migrates pre-#76 custom-resource keys;
 creates the bootstrap RBAC (below); registers itself in the `default/kubernetes`
-Service and Endpoints; then applies `--manifest-dir`. A manifest is admitted
+Service and Endpoints; then applies `--manifest-dir` (any built-in a client
+can create and the API stores as written — LimitRange, ResourceQuota, PDB,
+PriorityClass, … — or a custom resource, #158). A manifest is admitted
 as the same object would be through the API (#158): a create runs the
 built-in admission (namespace lifecycle and defaults, Service ClusterIP and
 node ports, the Pod defaults, LimitRanger, QoS, PodSecurity, the

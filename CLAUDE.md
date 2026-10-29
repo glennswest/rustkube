@@ -851,7 +851,7 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       golden-rustkube-5a7defd5f41c (stormcos#366)
 - [ ] rig (stormcentral#512); close
 
-### Startup manifests through admission (#158, P3) — BUILT 2026-10-07
+### Startup manifests through admission (#158, P3) — COMPLETE 2026-10-29
 - [x] `apply_one`: create → admit_create / CRD on_create; Reconcile →
       `resource::builtin_update` (now shared with PUT and guaranteed_update)
       / CRD on_update; Service claims released on a failed create; node
@@ -860,7 +860,11 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
 - [x] Build VM at 1db5ca5 (covers a9f3fff #158, 8ea98d6 #120, 1db5ca5 #135):
       600 passed / 4 ignored (apiserver 301, scheduler 71);
       golden-rustkube-5a7defd5f41c (stormcos#366)
-- [ ] rig (stormcentral#512); close
+- [x] Rig failures were real: the manifest pass refused LimitRange (apply
+      table in discovery.rs drifted: 9 creatable stored built-ins missing).
+      630e469 adds them + a unit holding the table to discovery; f453582 rig
+      FAILs instead of KeyError. Golden apiserver ed8490a03a01 on conform.g8.lo:
+      manifest-admission 12/12 ×3. #158 closed
 
 ### VMI verbs pause/unpause/softreboot/freeze/unfreeze (#141, P2) — COMPLETE 2026-10-29
 - [x] `kubevirt::vmi_verb` → kubelet `/vmVerb` (rustkube-node#94), routes,
