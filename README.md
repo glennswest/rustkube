@@ -616,7 +616,10 @@ selector, EndpointSlices mirrored from its hand-written Endpoints, as
 upstream's EndpointSliceMirroring does — one per address type and port set,
 owned by the Endpoints, `managed-by: endpointslicemirroring-controller.k8s.io`,
 skipped for `endpointslice.kubernetes.io/skip-mirror: "true"`, which the
-controller's own Endpoints carry, #133), Namespace (default
+controller's own Endpoints carry, and so do the apiserver's `default/kubernetes`
+Endpoints — it writes that Service's slice itself, #272; a mirrored slice
+wakes its Service by its `kubernetes.io/service-name` label, never as the
+Endpoints' owner, #133), Namespace (default
 ServiceAccount, deletion cascade — Pods first, and nothing else while a Pod is left, as upstream's ordered namespace deletion, #285), node lifecycle (a Lease stale or
 missing past 40 s — also one that died before the controller started; with
 no Lease, the Ready heartbeat — sets every condition `Unknown`, keeping
