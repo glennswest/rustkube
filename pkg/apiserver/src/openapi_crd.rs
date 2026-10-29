@@ -62,12 +62,35 @@ fn to_v2(schema: &mut Value) {
     }
 }
 
+/// The boolean extensions upstream writes only when they are true. A CRD
+/// created over protobuf comes back with every one of them `false` on every
+/// node, and the conformance suite's comparison saw a different schema
+/// (#120: seven CustomResourcePublishOpenAPI specs timed out on it).
+const TRUE_ONLY: [&str; 3] =
+    ["x-kubernetes-embedded-resource", "x-kubernetes-int-or-string", "x-kubernetes-preserve-unknown-fields"];
+
+fn drop_false_flags(schema: &mut Value) {
+    match schema {
+        Value::Object(m) => {
+            for k in TRUE_ONLY {
+                if m.get(k) == Some(&Value::Bool(false)) {
+                    m.remove(k);
+                }
+            }
+            m.values_mut().for_each(drop_false_flags);
+        }
+        Value::Array(a) => a.iter_mut().for_each(drop_false_flags),
+        _ => {}
+    }
+}
+
 /// The published schema of one CRD version.
 pub fn definition(def: &CrdDefinition, v2: bool) -> Value {
     let mut s = match &def.schema {
         Some(schema) => (**schema).clone(),
         None => json!({"type": "object", "x-kubernetes-preserve-unknown-fields": true}),
     };
+    drop_false_flags(&mut s);
     if v2 {
         to_v2(&mut s);
     }
@@ -161,6 +184,22 @@ mod tests {
         }
         got.as_object_mut().unwrap().remove("x-kubernetes-group-version-kind");
         assert_eq!(got, schema);
+    }
+
+    #[test]
+    fn false_extension_flags_are_not_published() {
+        let schema = json!({"type": "object", "x-kubernetes-embedded-resource": false,
+            "x-kubernetes-int-or-string": false, "x-kubernetes-preserve-unknown-fields": false,
+            "properties": {"spec": {"type": "object", "x-kubernetes-embedded-resource": false,
+                "x-kubernetes-preserve-unknown-fields": true}}});
+        for v2 in [true, false] {
+            let got = definition(&def(Some(schema.clone())), v2);
+            for k in TRUE_ONLY {
+                assert!(got.get(k).is_none(), "{k} false published (v2 {v2})");
+            }
+            assert!(got["properties"]["spec"].get("x-kubernetes-embedded-resource").is_none());
+            assert_eq!(got["properties"]["spec"]["x-kubernetes-preserve-unknown-fields"], true, "true kept");
+        }
     }
 
     #[test]
