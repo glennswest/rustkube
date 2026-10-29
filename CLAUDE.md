@@ -137,7 +137,7 @@ rewritten on every boot (~20: cilium RBAC/ConfigMap, coredns, CSIDriver).
 - [x] Findings on #290; `shipped`. Next server1 reboot on a release with
       fastetcd v1.37.0 + this golden: read `boot:` from pods.log
 
-### ReplicationController: ReplicaFailure condition (#125, P2) — IN PROGRESS 2026-10-29
+### ReplicationController: ReplicaFailure condition (#125, P2) — COMPLETE 2026-10-29
 The issue's two specs pass at d5f48f5 (GC "delete pods created by rc when not
 orphaning", ResourceQuota "capture the life of a replication controller";
 both failed at efbea2d); replication-controller rig 14/14 on four test
@@ -145,9 +145,13 @@ machines. sig-apps "ReplicationController should surface a failure
 condition … exceeded quota" fails without needing a node: no
 `ReplicaFailure` condition (RS and RC share the reconcile). The other
 sig-apps RC specs wait for running Pods (no kubelet on conform).
-- [ ] `replicaset.rs`: upstream's ReplicaFailure (FailedCreate/FailedDelete,
-      set once, removed after a clean pass or at desired); unit
-- [ ] build VM; golden; the spec on conform (focused); close #125
+- [x] 0a41ade `replicaset.rs`: upstream's ReplicaFailure (FailedCreate /
+      FailedDelete, set once, removed after a clean pass or at desired);
+      unit; ea1a855 file clippy-clean. Build VM sc-build-be4b9fc611: c-m 121
+- [x] golden 3e10ed08dcac on conform.g8.lo, 3 focused runs: RC "surface a
+      failure condition", RC scale, GC "delete pods created by rc", quota
+      "life of a replication controller" all passed ×3. #125 closed.
+      Adoption/release of Pods (RS + RC) filed as #295
 
 ### EndpointSlice mirroring churn (#133 + #272, P1) — COMPLETE 2026-10-29
 endpointslice-mirroring rig fails every run; probe on conform.g8.lo
