@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #110 verified: `unserved-resource.sh` 22/22 in four test-machine `rigs` runs and on conform.g8.lo from apiserver golden 4fe0997b273e; the efbea2d apiserver fails 16 (an unserved path answers 200 `<plural>List`, and writes to it are stored). #110 closed.
 - **test:** #124 verified: all twelve upstream `[sig-api-machinery] ResourceQuota … [Conformance]` specs passed in the d5f48f5 conformance run from goldens (ten failed at efbea2d); `resource-quota.sh` 11/11 in four test-machine `rigs` runs. #124 closed.
 - **test:** #135 verified: the five upstream `[sig-node] RuntimeClass … [Conformance]` specs passed in the d5f48f5 conformance run from goldens (all failed at efbea2d); `runtime-class.sh` 18/18 on conform.g8.lo after #277's reader fix. #135 closed.
 - **fix:** CRD OpenAPI matches upstream's, so all nine `CustomResourcePublishOpenAPI [Conformance]` specs pass (two did at d5f48f5, #120): boolean `x-kubernetes-*` extensions are published only when true (a CRD created over protobuf carried `false` on every node); v2 drops `x-kubernetes-preserve-unknown-fields`, as upstream's v2 conversion; `metadata` lists ObjectMeta's fields with upstream's descriptions (from the vendored `meta/v1` proto), as `kubectl explain <cr>.metadata` is expected to. `test/conformance/run.sh` gains `RK_E2E_LOG` to keep the whole e2e.log.

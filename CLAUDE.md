@@ -735,12 +735,14 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-7df7dc5a5562 (stormcos#366)
 - [ ] scheduler-preemption rig (stormcentral#512); close
 
-### Unserved resources → 404 (#110, P3) — BUILT 2026-10-07
+### Unserved resources → 404 (#110, P3) — COMPLETE 2026-10-29
 - [x] `served.rs` middleware from `discovery::advertised` (the discovery
       handlers' own lists); units; `test/e2e/unserved-resource.sh`; docs
 - [x] Build VM at 999f2c0: 608 passed / 4 ignored (apiserver 304);
       golden-rustkube-dd10785be2ea (stormcos#366)
-- [ ] unserved-resource rig (stormcentral#512); close
+- [x] unserved-resource 22/22 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b and on conform.g8.lo (apiserver golden 4fe0997b273e);
+      control efbea2d fails 16 (200 `<plural>List`, writes stored). #110 closed
 
 ### Kubernetes 1.36 API (#285, P2) — BUILT, rigs BLOCKED on stormcos#271, 2026-10-21
 The issue's crate pair does not apply: nothing imports k8s-openapi (declared
