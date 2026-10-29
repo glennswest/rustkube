@@ -406,13 +406,16 @@ Cargo.lock via a build job; shares the engine with #217).
 - [ ] service-cidr rig (stormcentral#512); close. Not done (optional in the
       issue): IPAddress per ClusterIP, allocation from extra ServiceCIDRs
 
-### VMI migrate addedNodeSelector (#208, P2) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
+### VMI migrate addedNodeSelector (#208, P2) — COMPLETE 2026-10-29
 - [x] cf83dc4 apiserver: MigrateOptions.addedNodeSelector → migration spec
       (non-string 422); scheduler: reads the migration's selector, adds it to
       the VMI's (VMI's keys win); units; vmi-migration.sh cases; docs
 - [x] Build VM 104f75011a at 1ffcc34: 571 passed / 4 ignored;
       golden-rustkube-c4cbcef1dd7d (stormcos#366)
-- [ ] vmi-migration rig (in `rigs`) — stormcentral#512; then close
+- [x] vmi-migration 36/36 (4 addedNodeSelector checks) in rigs fe841f11a1,
+      3c6585e0ea, 7cb36fe72a (C2NR0Q2), 51ef481a0b (pvetest2); conform.g8.lo
+      from the dfb448b7c686 goldens 36/36. No pre-cf83dc4 binaries to control
+      with (goldens of then carry none, stormcos#62). #208 closed
 
 ### TokenRequest default back to 1 h (#206, P3) — SHIPPED 2026-10-07
 - [x] rustkube-node#122 (d25f05c, 0cdc142, e69287f) is in a318daf, the
