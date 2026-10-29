@@ -137,7 +137,7 @@ rewritten on every boot (~20: cilium RBAC/ConfigMap, coredns, CSIDriver).
 - [x] Findings on #290; `shipped`. Next server1 reboot on a release with
       fastetcd v1.37.0 + this golden: read `boot:` from pods.log
 
-### EndpointSlice mirroring churn (#133 + #272, P1) — IN PROGRESS 2026-10-29
+### EndpointSlice mirroring churn (#133 + #272, P1) — COMPLETE 2026-10-29
 endpointslice-mirroring rig fails every run; probe on conform.g8.lo
 (01a3affcd023/dfb448b7c686 goldens): mirrored slices created and deleted in
 a cycle — 23 creates / 22 deletes / 0 updates in one rig run; idle, the
@@ -149,8 +149,16 @@ deletes slices); which of its two conditions fires is not logged.
       Endpoints labelled `endpointslice.kubernetes.io/skip-mirror: "true"`
       (upstream). Build VM sc-build-8c66c06bf1: workspace exit 0, apiserver
       348, 0 rustc warnings, changed files clippy-clean
-- [ ] golden (stage build requested 2026-10-29); rerun the rig + probe on
-      conform; the logged reason names the cause; fix; close #133/#272
+- [x] golden b3e0f453f79d: default/kubernetes loop gone (0 deletes/70 s),
+      user slices still churned and mirror() logged no delete — the deleter
+      was `deleted()`: owner_keys routed the slice's Endpoints owner (same
+      name, own UID) as a missing Service. 2460f71: `service_owned` (only
+      Service owners route) + mirrored slices deleted only when the name is
+      free; unit; build VM sc-build-d1c93da429 (c-m 120)
+- [x] golden-rustkube-controller-manager-9ce3ba85d932 on conform.g8.lo:
+      endpointslice-mirroring 13/13 ×3; deadlines clean (idle 0 requests in
+      60 s); EndpointSliceMirroring conformance spec 3/3. #133, #272 closed.
+      DELETE events without UID stay #274
 
 ### Boot while the datastore is down: lost manifests, 403s (#293, P1) — COMPLETE 2026-10-22
 server1 12.49 reboot: fastetcd repairing its redb file (13:15:08); the
