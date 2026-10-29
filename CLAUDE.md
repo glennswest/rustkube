@@ -301,7 +301,7 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       every bootstrap token, forged spec.username stored, no signer role).
       #264 closed
 
-### --client-crl-file (#260, P2, stormcert#61) — BUILT 2026-10-09
+### --client-crl-file (#260, P2, stormcert#61) — COMPLETE 2026-10-29
 - [x] `--client-crl-file` (repeatable, PEM or DER) → WebPkiClientVerifier
       `with_crls`, end-entity only, unknown status allowed; re-read with the
       client CA (30 s), last good kept on a bad file; units; rig
@@ -310,7 +310,10 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       warnings, changed files clippy-clean
 - [x] bf1bb67 DER-completeness unit; golden-rustkube-5ac87c053591
       (stormcos#424); wiring notes on stormcos#481
-- [ ] client-crl rig (stormcentral#512, proposed after it); then close #260
+- [x] client-crl 13/13 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a
+      (C2NR0Q2), 51ef481a0b (pvetest2); conform.g8.lo from the 01a3affcd023
+      goldens 13/13; efbea2d's apiserver refuses the flag (no revocation
+      before). #260 closed
 
 ### Docs refresh from the code (since 2026-10-02) — COMPLETE 2026-10-09
 - [x] README (date, How it ships at stormcos 73091eac, rig suites, build

@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #260 verified: `client-crl.sh` 13/13 in four test-machine `rigs` runs and on conform.g8.lo from the 01a3affcd023 goldens; the efbea2d apiserver does not know `--client-crl-file`. #260 closed.
 - **test:** #86 verified: `scale.sh` (real `kubectl scale`) 14/14 in four test-machine `rigs` runs and on conform.g8.lo from the 01a3affcd023 goldens; the efbea2d goldens fail 12 — discovery lists `deployments/scale`, `kubectl scale` answers NotFound. #86 closed.
 - **test:** #87 verified: `scheduling-gates.sh` 7/7 in four test-machine `rigs` runs (C2NR0Q2, pvetest2) and on conform.g8.lo from the dfb448b7c686 goldens; the efbea2d goldens fail 4 (a gated Pod is bound, adding a gate is accepted). #87 closed.
 - **test:** #90 verified: `metrics-auth.sh` 23/23 in four test-machine `rigs` runs (C2NR0Q2 fe841f11a1, 3c6585e0ea, 7cb36fe72a; pvetest2 51ef481a0b) and on conform.g8.lo from the dfb448b7c686 goldens; the efbea2d goldens fail 20 of 23. #90 closed.
