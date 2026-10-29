@@ -493,7 +493,7 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
 - [x] bad-token 9/9 in rigs 756f2f6c20 (pvetest1), 1a879717b9, 51ef481a0b
       (pvetest2); in every golden since 10-07; #115 closed
 
-### Metrics (#90, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
+### Metrics (#90, P2) — COMPLETE 2026-10-29
 - [x] Reconcile metrics recorded per object pass (`owned::run`)
 - [x] Buckets (upstream's for apiserver/etcd request durations and scheduler
       e2e; DefBuckets else); `render()` types process_cpu_seconds_total counter
@@ -510,9 +510,11 @@ tolerance, scale-down stabilisation. A (inert) shipped meanwhile.
       probe scheme) — must land with the golden carrying this
 - [x] Compiled + units on a build VM at f7bdbe7 (job 19f5cef027): workspace
       557 passed / 4 ignored (apimachinery 117, apiserver 272), exit 0
-- [ ] `rigs` run on C2NR0Q2 at f7bdbe7: 2dcef65d8a interrupted
-      (stormcentral restarted), ccc3315c35 image built + pushed, then "the
-      registry did not list it" (stormcentral#512). Then golden
+- [x] metrics-auth 23/23 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a
+      (C2NR0Q2), 51ef481a0b (pvetest2); on conform.g8.lo from the
+      01a3affcd023/dfb448b7c686 goldens 23/23; control efbea2d 3/23 (20
+      FAIL: /metrics open, summaries, no buckets, :10257/:10259 plain/no
+      auth, no reconcile metric). #90 closed; stormcos#384 is stormcos's
 
 ### Service create cost (#113, P2) — COMPLETE 2026-10-14
 Cause (from the code): `service_ip::allocate` walked the range from offset
