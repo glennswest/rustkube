@@ -693,12 +693,15 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       disabled (`actions/permissions` → enabled false); releasing.md, audit
       table, plan updated; workspace on a build VM 606 passed / 4 ignored
 
-### SelfSubjectReview (#116, P3) — BUILT 2026-10-08
+### SelfSubjectReview (#116, P3) — COMPLETE 2026-10-29
 - [x] handler + route + discovery; system:basic-user gains the rule and is
       reconciled at boot; unit; `test/e2e/whoami.sh` (kubectl auth whoami)
 - [x] Build VM at 5c0e041: 606 passed / 4 ignored (apiserver 308);
       golden-rustkube-d85a5ba35d81 (stormcos#366)
-- [ ] whoami rig (stormcentral#512); close
+- [x] whoami 4/4 (kubectl auth whoami) in rigs fe841f11a1, 3c6585e0ea,
+      7cb36fe72a, 51ef481a0b and on conform.g8.lo (apiserver 4fe0997b273e);
+      control efbea2d fails 4 ("selfsubjectreviews API is not enabled").
+      #116 closed
 
 ### Ephemeral-volume controller (#94, P2) — COMPLETE 2026-10-29
 - [x] `ephemeral.rs` (pods primary, owned PVC children; create from the
