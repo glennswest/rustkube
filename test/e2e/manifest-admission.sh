@@ -122,8 +122,10 @@ if sys.argv[1] == "first":
     check(code == 200 and any(v["name"].startswith("kube-api-access-") for v in p["spec"].get("volumes", [])), "Pod: token volume")
     keys = {t.get("key") for t in p["spec"].get("tolerations", [])} if code == 200 else set()
     check({"node.kubernetes.io/not-ready", "node.kubernetes.io/unreachable"} <= keys, f"Pod: default tolerations ({keys})")
-    check(code == 200 and c["resources"].get("requests") == {"cpu": "100m", "memory": "64Mi"}
-          and c["resources"].get("limits") == {"cpu": "500m", "memory": "128Mi"}
+    # .get: a Pod with no defaults is a FAIL, not a KeyError that skips the
+    # checks after it (and np.json, which the second boot reads).
+    check(code == 200 and c.get("resources", {}).get("requests") == {"cpu": "100m", "memory": "64Mi"}
+          and c.get("resources", {}).get("limits") == {"cpu": "500m", "memory": "128Mi"}
           and "kubernetes.io/limit-ranger" in p["metadata"].get("annotations", {}), f"Pod: LimitRange defaults ({c.get('resources')})")
     check(code == 200 and p["status"].get("qosClass") == "Burstable" and p["status"].get("phase") == "Pending",
           f"Pod: QoS and phase ({p['status'] if code == 200 else ''})")
