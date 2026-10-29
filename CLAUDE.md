@@ -825,14 +825,16 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       control efbea2d slowest 34.4 s (the 30 s sweep). #159 closed 2026-10-21.
       fetch partial-answer bug → stormcentral#1076, fetch.sh checks (639e0c7)
 
-### ResourceQuota controller + admission (#124, P2) — BUILT 2026-10-07
+### ResourceQuota controller + admission (#124, P2) — COMPLETE 2026-10-29
 - [x] `apimachinery::quota` (usage, scopes, formatting); apiserver
       `quota_admission.rs` (check all, CAS charge, rollback, charged-at);
       controller-manager `resourcequota.rs` (feeds + LIST for other count/,
       5 s settle, 5 min resync); units; `test/e2e/resource-quota.sh`; docs
 - [x] Build VM at 46cd67b: 606 passed / 4 ignored (apimachinery 123,
       apiserver 302, controller-manager 101); golden-rustkube-4ecdc374808d
-- [ ] resource-quota rig (stormcentral#512); close
+- [x] All 12 ResourceQuota conformance specs passed in the d5f48f5 run
+      from goldens (10 failed at efbea2d); resource-quota 11/11 in rigs
+      fe841f11a1, 3c6585e0ea, 7cb36fe72a, 51ef481a0b. #124 closed
 
 ### RuntimeClass (#135, P3) — COMPLETE 2026-10-29
 - [x] node.k8s.io/v1 served; `builtin_admission::runtime_class`; scheduler
