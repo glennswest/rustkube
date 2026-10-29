@@ -708,13 +708,16 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-41c5a5a6ec37 (stormcos#366)
 - [ ] ephemeral-volume rig (stormcentral#512); close
 
-### Aggregated discovery (#107, P3) — BUILT 2026-10-07
+### Aggregated discovery (#107, P3) — COMPLETE 2026-10-29
 - [x] `wants_aggregated`, `to_v2_resources`, `aggregated` on `/api` + `/apis`
       from `builtin_lists` (now also events/metrics) + CRD registry; aggregated
       APIs Stale; units; oc-adm.sh `inspect` → works + curl checks; docs
 - [x] Build VM at 5215b7f: 604 passed / 4 ignored (apiserver 307);
       golden-rustkube-b15d23ed5f76 (stormcos#366)
-- [ ] oc-adm rig (stormcentral#512); close
+- [x] The four AggregatedDiscovery conformance specs passed in the d5f48f5
+      run from goldens (failed at efbea2d); oc-adm inspect + the two
+      aggregated-discovery checks pass on conform.g8.lo at 12a63ba (57/57).
+      #107 closed
 
 ### authorization.openshift.io reviews (#106, P3) — COMPLETE 2026-10-29
 - [x] `RbacEngine::who_can`; `handlers/openshift_authorization.rs` (SAR,
