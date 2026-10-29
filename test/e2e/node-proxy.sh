@@ -56,7 +56,13 @@ def req(method, path, body=None, token=None, ctype="application/json"):
     c.request(method, path, body=body, headers={"Authorization": "Bearer " + (token or os.environ["ADMIN"]), "Content-Type": ctype})
     r = c.getresponse(); raw = r.read(); ct = r.getheader("Content-Type", ""); c.close()
     return r.status, raw.decode(errors="replace"), ct
-last = lambda: [json.loads(l) for l in open(f"{W}/kubelet.log")][-1]
+def last():
+    # What the stub kubelet was last sent; {} when nothing reached it (a
+    # FAIL below, not a FileNotFoundError that ends the rig).
+    try:
+        return [json.loads(l) for l in open(f"{W}/kubelet.log")][-1]
+    except (FileNotFoundError, IndexError):
+        return {}
 n = json.loads(req("POST", "/api/v1/nodes", json.dumps({"apiVersion": "v1", "kind": "Node", "metadata": {"name": "n1"}}))[1])
 n["status"] = {"addresses": [{"type": "InternalIP", "address": "127.0.0.1"}]}
 req("PUT", "/api/v1/nodes/n1/status", json.dumps(n))
