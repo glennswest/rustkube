@@ -886,13 +886,15 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       header, stale claims; 48cb177 re-rendered 12/12 fit. Command in the
       deck's header comment
 
-### WATCH honours timeoutSeconds (#165) — BUILT 2026-10-07
+### WATCH honours timeoutSeconds (#165) — COMPLETE 2026-10-29
 - [x] `WatchParams::timeout` (400 on a non-integer), `WatchResponseOpts
       .timeout` on every watch path, deadline in the initial and live loops;
       units; `test/e2e/watch-timeout.sh` (rigs); README/design/CHANGELOG
 - [x] Build VM at ad439d8: 589 passed / 4 ignored (apiserver 292);
       golden-rustkube-b15e040af5b3 (stormcos#366)
-- [ ] watch-timeout rig (stormcentral#512); close
+- [x] watch-timeout 6/6 on conform.g8.lo from the 01a3affcd023 golden
+      after #277's reader fix (the test-machine failures were that reader);
+      control efbea2d: every timeoutSeconds watch still open. #165 closed
 
 ### EndpointSliceMirroring (#133, P3) — BUILT 2026-10-07
 - [x] `endpointslicemirroring.rs` (desired slices) + Service controller:
