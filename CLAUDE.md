@@ -842,14 +842,18 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       golden-rustkube-5a7defd5f41c (stormcos#366)
 - [ ] rig (stormcentral#512); close
 
-### CRD schemas in /openapi (#120, P2) — BUILT 2026-10-07
+### CRD schemas in /openapi (#120, P2) — COMPLETE 2026-10-29
 - [x] `openapi_crd.rs` (v2 definitions, v3 index + documents), handlers take
       state; `CrdRegistry::all_versions`; register drops stale versions;
       units; `test/e2e/crd-openapi.sh` (rigs, kubectl explain); docs
 - [x] Build VM at 1db5ca5 (covers a9f3fff #158, 8ea98d6 #120, 1db5ca5 #135):
       600 passed / 4 ignored (apiserver 301, scheduler 71);
       golden-rustkube-5a7defd5f41c (stormcos#366)
-- [ ] rig (stormcentral#512); close
+- [x] Only 2 of the 9 CustomResourcePublishOpenAPI specs passed (d5f48f5).
+      993c3a3 false x-kubernetes-* flags dropped; 91a8de5 metadata =
+      ObjectMeta's fields from the vendored proto; dd354b3 v2 drops
+      preserve-unknown-fields. Golden apiserver 4fe0997b273e on conform.g8.lo:
+      9/9 in 3 of 3 focused runs; crd-openapi 12/12 (with kubectl). #120 closed
 
 ### Startup manifests through admission (#158, P3) — COMPLETE 2026-10-29
 - [x] `apply_one`: create → admit_create / CRD on_create; Reconcile →
