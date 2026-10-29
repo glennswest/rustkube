@@ -267,15 +267,20 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       first hardware install of a passing release. Marked `shipped`
       2026-10-13; a new cause the log names → new issue
 
-### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — BUILT 2026-10-09
+### Rollout stalls on an unschedulable surge pod (#266, P2, stormcos#482) — COMPLETE 2026-10-28
 - [x] `rollout::plan_rolling` old-RS scale-down as upstream's
       reconcileOldReplicaSets (maxScaledDown from spec totals; unhealthy
       first; healthy down to available - minAvailable); units incl. the
       issue's case; rig `rollout-unschedulable.sh`; docs (0f8114f, ebcc42b)
 - [x] Build VMs: 631 passed / 4 ignored, 0 warnings;
       golden-rustkube-31a9a9242129 (stormcos#424); stormcos#482 told
-- [ ] rig (stormcentral#512, proposed after it); Dell cilium-operator
-      rollout after the release; then close #266
+- [x] rig on conform.g8.lo (test machines blocked, stormcentral#512 /
+      stormcos#271), goldens 01a3affcd023/dfb448b7c686: 6/6 runs pass
+      (21–22 s); control efbea2d fails 4 (old RS kept, two pods, stalled).
+      1c81036901's failure was the rig: whether the surge pod is seen
+      Unschedulable before the old one goes is timing → NOTE line (0f473fb,
+      ddbf36f). No live rollout yet (pvetest1's updates fail in stormupdate's
+      stage); a regression there → new issue. #266 closed
 
 ### Bootstrap tokens + forge-node CSR rules (#264, P0, stormcert#78) — COMPLETE 2026-10-28
 - [x] `bootstrap_token.rs` (upstream's: Secret kube-system/bootstrap-token-<id>,

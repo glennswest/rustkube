@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-28
+- **test:** #266 verified on conform.g8.lo: `rollout-unschedulable.sh` 6/6 on the dfb448b7c686 controller-manager golden; control efbea2d fails 4 (old ReplicaSet never scaled down, two pods, rollout stalled). The rig's surge-pod Unschedulable sighting is now a NOTE: with maxUnavailable 1 the old pod may go before the scheduler sees the new one (the 2026-10-13 1c81036901 failure). #266 closed.
 - **test:** #264 verified on conform.g8.lo with `bootstrap-token.sh` (rig at 906e6f2): golden-rustkube-apiserver-01a3affcd023 32/32 — bootstrap token creates only `storm.io/forge-node` CSRs stamped as itself, reads only its own, expired/wrong/deleted tokens 401, `system:node:n1` renews, `/approval` and the certificate need `approve`/`sign` on the signer, TokenReview answers; control efbea2d goldens fail 19 (every bootstrap token 401, a body's `spec.username: system:node:victim` stored). #264 closed.
 - **fix:** An apiserver boot no longer rewrites every `Reconcile` startup manifest (#290): a manifest whose admitted result equals the stored object is left alone (`already present`). server1's reboots rewrote about 20 of them each boot, 12–40 s of 1–2 s fsyncs on its spinning disk.
 - **fix:** An update of a Namespace keeps its stored `spec.finalizers`, which only `/finalize` changes, as upstream's namespace strategy. A reconciled manifest with no spec (`cilium-secrets`) dropped the `kubernetes` finalizer on every boot (#290).
