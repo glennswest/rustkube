@@ -317,15 +317,18 @@ impl Controller for ServiceController {
         // A stale informer must not authorize collection of a still-live owner.
         let path = format!("/api/v1/namespaces/{}/services/{}", key.namespace, key.name);
         let response = self.api.get(&path).await?;
-        if response.status().as_u16() != 404 {
+        let name_free = response.status().as_u16() == 404;
+        if !name_free {
             let current: Value = response.error_for_status()?.json().await?;
             anyhow::ensure!(
                 current["metadata"]["uid"].as_str() != Some(&key.uid),
                 "Service still exists"
             );
         }
-        // Mirrored slices name the Endpoints as owner, not the Service.
-        for slice in mirrored_slices(deps.feed(1), &key.namespace, &key.name)? {
+        // Mirrored slices name the Endpoints as owner, not the Service, and
+        // a Service now holding the name decides on them in `mirror` (#272).
+        let mirrored = if name_free { mirrored_slices(deps.feed(1), &key.namespace, &key.name)? } else { Vec::new() };
+        for slice in mirrored {
             let name = slice["metadata"]["name"].as_str().unwrap_or("");
             self.api
                 .delete_observed(
@@ -379,10 +382,29 @@ fn mirrored_slices(slices: &Feed, namespace: &str, name: &str) -> anyhow::Result
         .collect())
 }
 
+/// `delta` with only its objects' Service owner references.
+///
+/// A mirrored slice is owned by its Endpoints, which has the Service's name
+/// and its own UID. Routed as an owner, that made a key for a "Service" with
+/// the Endpoints' UID; no Service has it, so the runner called `deleted` for
+/// it, which deleted the mirrored slices `mirror` had just written — and the
+/// new slice was routed the same way (#272, #133: a create/delete loop).
+fn service_owned(delta: &Delta) -> Delta {
+    let keep = |object: &Option<Value>| {
+        object.clone().map(|mut o| {
+            if let Some(refs) = o["metadata"]["ownerReferences"].as_array_mut() {
+                refs.retain(|r| r["kind"] == "Service");
+            }
+            o
+        })
+    };
+    Delta { old: keep(&delta.old), new: keep(&delta.new), affected: delta.affected.clone() }
+}
+
 /// A slice change wakes its owning Service and, for a mirrored slice, the
 /// Service it is labelled with.
 fn slice_services(delta: &Delta, primary: &Feed) -> Vec<Key> {
-    let mut keys = owned::owner_keys(delta, primary);
+    let mut keys = owned::owner_keys(&service_owned(delta), primary);
     for slice in delta.old.iter().chain(delta.new.iter()) {
         let labels = &slice["metadata"]["labels"];
         if labels["endpointslice.kubernetes.io/managed-by"].as_str() != Some(mirroring::MANAGED_BY) {
@@ -394,4 +416,24 @@ fn slice_services(delta: &Delta, primary: &Feed) -> Vec<Key> {
         }
     }
     keys
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A mirrored slice routes through its label only: its Endpoints owner
+    /// is not a Service (#272, #133). A Service owner reference is kept.
+    #[test]
+    fn only_service_owners_route_a_slice() {
+        let slice = json!({"metadata": {"name": "web-1a2b3c4d", "namespace": "ns", "ownerReferences": [
+            {"apiVersion": "v1", "kind": "Endpoints", "name": "web", "uid": "ep-uid"},
+            {"apiVersion": "v1", "kind": "Service", "name": "web", "uid": "svc-uid"}]}});
+        let d = service_owned(&Delta { old: None, new: Some(slice), affected: Default::default() });
+        let refs = d.new.unwrap()["metadata"]["ownerReferences"].clone();
+        assert_eq!(refs, json!([{"apiVersion": "v1", "kind": "Service", "name": "web", "uid": "svc-uid"}]));
+        let mirrored = json!({"metadata": {"ownerReferences": [{"kind": "Endpoints", "name": "web", "uid": "ep-uid"}]}});
+        let d = service_owned(&Delta { old: Some(mirrored), new: None, affected: Default::default() });
+        assert_eq!(d.old.unwrap()["metadata"]["ownerReferences"], json!([]));
+    }
 }
