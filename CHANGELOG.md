@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #88 verified: `tls-data-dir.sh` 14/14 in four test-machine `rigs` runs and on conform.g8.lo from apiserver golden 4fe0997b273e; the efbea2d apiserver fails 11 (no pair under `--data-dir`, a new certificate on every start, no cluster-domain SAN). #88 closed.
 - **test:** #108 verified: `node-proxy.sh` 8/8 in four test-machine `rigs` runs and on conform.g8.lo from apiserver golden 4fe0997b273e; the efbea2d apiserver refuses `nodes/n1/proxy/…` (7 of 8 fail). The rig reports nothing reaching its stub kubelet as a FAIL rather than a crash (71e6a10). #108 closed.
 - **test:** #116 verified: `whoami.sh` (`kubectl auth whoami`) 4/4 in four test-machine `rigs` runs and on conform.g8.lo from apiserver golden 4fe0997b273e; the efbea2d apiserver fails all 4 (`the selfsubjectreviews API is not enabled in the cluster`). #116 closed.
 - **test:** #94 verified: `ephemeral-volume.sh` 6/6 in four test-machine `rigs` runs and on conform.g8.lo from the goldens; with efbea2d's controller-manager no `<pod>-<volume>` claim is created. #94 closed.

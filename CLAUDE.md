@@ -1684,7 +1684,7 @@ when each piece landed.
       6fd2722; discovery was exercised by the efbea2d conformance run.
 - [x] `/scale` subresource (#86, 2026-10-07): apps + CRDs; build blocked on
       stormcentral#544
-- [x] `--data-dir`, `--cluster-domain` (#88) — BUILT 2026-10-09.
+- [x] `--data-dir`, `--cluster-domain` (#88) — COMPLETE 2026-10-29.
       Owner: B. `--tls` cert kept in `<data-dir>/apiserver.crt|key` (reused
       while valid, matching, > 30 d left and carrying
       `kubernetes.default.svc.<cluster-domain>`; else regenerated; unwritable
@@ -1695,8 +1695,10 @@ when each piece landed.
   - [x] 8f26005 (clippy type_complexity); 0 rustc warnings, my files
         clippy-clean; workspace clippy backlog filed #263.
         golden-rustkube-d633117067d8 (stormcos#424)
-  - [ ] tls-data-dir rig: 32e08fd54b (C2NR0Q2, 0e83609) "registry did not
-        list it" (stormcentral#512); proposed after it; then close #88
+  - [x] tls-data-dir 14/14 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+        51ef481a0b and on conform.g8.lo (apiserver 4fe0997b273e); control
+        efbea2d fails 11 (nothing written, a new cert each start). #88 closed
+        2026-10-29
 - [x] HPA placeholder (#89) — real HPA on cadvisor metrics 2026-10-07 (rig waits)
 - [x] Metrics: reconcile metrics, buckets, authenticated `/metrics` (#90)
       — 2026-10-07 (rig waits)
