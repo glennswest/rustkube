@@ -901,14 +901,18 @@ serving-cert rig); gen-pki.sh's default output leaves the terragrunt tree.
 - [x] Build VM sc-build-03a0ebb50a at 683f812 exit 0; gen-pki.sh +
       renew-certs.sh (FORCE) run clean; #157 closed. No golden (no code)
 
-### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — BUILT 2026-10-07
+### flowcontrol.apiserver.k8s.io/v1 (#118, P3) — COMPLETE 2026-10-29
 - [x] Routes (+ cluster /status), discovery (/apis + APIResourceList),
       resources_for, kinds; flowcontrol/v1 proto vendored (release-1.36);
       bootstrap exempt/catch-all; protobuf unit; `test/e2e/flowcontrol.sh`
       (rigs); README/inventory/conformance/CHANGELOG. Not enforced
 - [x] Build VM at 451d783: 582 passed / 4 ignored (apimachinery 120);
       golden-rustkube-f52d8fa2f47f (stormcos#366)
-- [ ] flowcontrol rig after stormcentral#512; then close
+- [x] Both "API priority and fairness should support FlowSchema /
+      PriorityLevelConfiguration API operations" conformance specs passed in
+      the d5f48f5 run from goldens (failed at efbea2d); flowcontrol 29/29 on
+      conform.g8.lo from the 01a3affcd023 golden after #277's reader fix
+      (92f399a). Not enforced (as the issue scoped). #118 closed
 
 ### CR schema defaulting/pruning/fieldValidation (#121, P2) — COMPLETE 2026-10-14
 - [x] 3ae6a5c `schema.rs` (defaults, prune, unknown paths; preserve-unknown,
