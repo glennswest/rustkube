@@ -290,7 +290,7 @@ pub(crate) fn wants_aggregated(headers: &axum::http::HeaderMap) -> Option<&'stat
         let mut parts = entry.split(';').map(str::trim);
         let media = parts.next().unwrap_or("");
         let params: Vec<&str> = parts.collect();
-        let has = |p: &str| params.iter().any(|x| *x == p);
+        let has = |p: &str| params.contains(&p);
         if media.contains("protobuf") {
             continue;
         }
