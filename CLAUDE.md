@@ -329,13 +329,16 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       golden-rustkube-773e0d8ddf86 (stormcos#366)
 - [ ] table-review rig after stormcentral#512; then close
 
-### LimitRanger admission (#131, P2) — BUILT 2026-10-07
+### LimitRanger admission (#131, P2) — COMPLETE 2026-10-29
 - [x] `limitranger.rs`: Container defaults + annotation, Container/Pod
       min/max/ratio, PVC storage bounds, 403 upstream wording; requests from
       limits before QoS; units; `test/e2e/limitrange.sh` (rigs); docs
 - [x] Workspace at cc19063 on a build VM exit 0 (apiserver 287, 3 new);
       golden-rustkube-79c26ab4b5e5 (stormcos#366)
-- [ ] `rigs` run (limitrange.sh) after stormcentral#512; then close
+- [x] [sig-scheduling] "LimitRange … pod has those defaults applied"
+      conformance spec passed in the d5f48f5 run from goldens (failed at
+      efbea2d); limitrange 9/9 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b. #131 closed
 
 ### stormblock PV volumeMode from the claim (#201, P2) — BUILT 2026-10-08
 - [x] `stormblock::desired_pv` (PV construction out of `provision_claim`)

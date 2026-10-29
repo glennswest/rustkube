@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #131 verified: upstream's `[sig-scheduling] LimitRange should create a LimitRange with defaults and ensure pod has those defaults applied [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `limitrange.sh` 9/9 in four test-machine `rigs` runs. #131 closed.
 - **test:** Five rigs (hpa-v1, watch-timeout, runtime-class, flowcontrol, gc-orphan-load) read WATCH events with `r.readline()` instead of the raw chunked socket, which returned chunk-size lines (#277); all five pass on conform.g8.lo from the 01a3affcd023 goldens. #123 verified: upstream's `Discovery should locate the groupVersion and a resource within each APIGroup [Conformance]` passed in the d5f48f5 run (failed at efbea2d), hpa-v1 10/10. #123, #277 closed.
 - **test:** #119 verified: the four upstream `ValidatingAdmissionPolicy`/`MutatingAdmissionPolicy` `…API operations [Conformance]` specs passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `admission-policy-api.sh` 30/30 in four test-machine `rigs` runs. The four specs that need the policies evaluated still fail (#234). #119 closed.
 - **test:** #122 verified: all seven upstream `[sig-api-machinery] FieldValidation … [Conformance]` specs passed in the d5f48f5 conformance run from goldens (five failed at efbea2d, among them the issue's two typed-object specs); `field-validation.sh` 9/9 in four test-machine `rigs` runs. #122 closed.
