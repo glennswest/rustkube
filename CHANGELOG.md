@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-28
+- **test:** #264 verified on conform.g8.lo with `bootstrap-token.sh` (rig at 906e6f2): golden-rustkube-apiserver-01a3affcd023 32/32 — bootstrap token creates only `storm.io/forge-node` CSRs stamped as itself, reads only its own, expired/wrong/deleted tokens 401, `system:node:n1` renews, `/approval` and the certificate need `approve`/`sign` on the signer, TokenReview answers; control efbea2d goldens fail 19 (every bootstrap token 401, a body's `spec.username: system:node:victim` stored). #264 closed.
 - **fix:** An apiserver boot no longer rewrites every `Reconcile` startup manifest (#290): a manifest whose admitted result equals the stored object is left alone (`already present`). server1's reboots rewrote about 20 of them each boot, 12–40 s of 1–2 s fsyncs on its spinning disk.
 - **fix:** An update of a Namespace keeps its stored `spec.finalizers`, which only `/finalize` changes, as upstream's namespace strategy. A reconciled manifest with no spec (`cilium-secrets`) dropped the `kubernetes` finalizer on every boot (#290).
 - **feat:** The apiserver logs each boot phase's duration as it ends (connect, datastore_wait, backfill, bootstrap, crd_load, manifests, claims, auth, tls) and a summary when it starts serving (#290).

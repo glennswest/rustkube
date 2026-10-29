@@ -277,7 +277,7 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
 - [ ] rig (stormcentral#512, proposed after it); Dell cilium-operator
       rollout after the release; then close #266
 
-### Bootstrap tokens + forge-node CSR rules (#264, P0, stormcert#78) — BUILT 2026-10-09
+### Bootstrap tokens + forge-node CSR rules (#264, P0, stormcert#78) — COMPLETE 2026-10-28
 - [x] `bootstrap_token.rs` (upstream's: Secret kube-system/bootstrap-token-<id>,
       type, usage, expiration, extra groups) in `SigningKeys::authenticate`
       (requests + TokenReview)
@@ -290,8 +290,11 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       README/CHANGELOG. Build VMs at ba24d77/098943f: 629 passed / 4
       ignored, 0 warnings; golden-rustkube-4c916e869ff5 (stormcos#424);
       stormcert#78 told to bind its identity
-- [ ] bootstrap-token rig: proposed after stormcentral#512 (noted there it
-      blocks this P0); then close #264
+- [x] bootstrap-token rig on conform.g8.lo (test machines still blocked on
+      stormcentral#512 / stormcos#271), rig at 906e6f2: golden-rustkube-
+      apiserver-01a3affcd023 32/32; control efbea2d goldens 19 FAIL (401 for
+      every bootstrap token, forged spec.username stored, no signer role).
+      #264 closed
 
 ### --client-crl-file (#260, P2, stormcert#61) — BUILT 2026-10-09
 - [x] `--client-crl-file` (repeatable, PEM or DER) → WebPkiClientVerifier
