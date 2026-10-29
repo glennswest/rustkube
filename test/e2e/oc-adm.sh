@@ -82,8 +82,10 @@ check "drain: n1 cordoned and empty" test "$(adm get node n1 -o jsonpath='{.spec
 # nodes/n1/proxy is served (#108); there is no kubelet here, and the
 # kubelet serves no /logs/ yet (rustkube-node#198).
 verb missing "node-logs" adm adm node-logs n1
+# metrics.k8s.io is served from each node's cadvisor (#89): the stand-in
+# nodes have none, so a node has no metrics; the Pods list answers (empty).
 verb missing "top node" adm adm top node
-verb missing "top pod" adm adm top pod -n work
+verb works "top pod" adm adm top pod -n work
 
 # --- policy -------------------------------------------------------------------
 # authorization.openshift.io LocalResourceAccessReview, not the k8s SAR (#106)
@@ -148,9 +150,12 @@ check "its ReplicaSet was never collected as orphaned" bash -c "! grep -q 'Repli
 check "and it is owned by the deployment's uid" test "$(adm get rs -n work -o jsonpath='{.items[0].metadata.ownerReferences[0].uid}')" = "$(adm get deployment web -n work -o jsonpath='{.metadata.uid}')"
 
 # --- inspection ---------------------------------------------------------------
-# Exits 0 now that /api and /apis answer aggregated discovery (#107).
-verb works "inspect" adm adm inspect ns/work --dest-dir="$W/inspect"
-check "inspect wrote its data" test -d "$W/inspect/namespaces/work"
+# Exits 0 now that /api and /apis answer aggregated discovery (#107). Its
+# own namespace: in `work` a Pod drained off n1 is on no node, and gathering
+# its container logs fails whatever discovery says.
+adm create namespace inspected >/dev/null
+verb works "inspect" adm adm inspect ns/inspected --dest-dir="$W/inspect"
+check "inspect wrote its data" test -d "$W/inspect/namespaces/inspected"
 check "aggregated discovery: /apis answers APIGroupDiscoveryList" bash -c "curl -sk -H 'Authorization: Bearer $ADMIN' -H 'Accept: application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList,application/json' -D - $API/apis | grep -qi 'content-type: application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList'"
 check "aggregated discovery: /api lists pods" bash -c "curl -sk -H 'Authorization: Bearer $ADMIN' -H 'Accept: application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList' $API/api | grep -q '\"resource\":\"pods\"'"
 verb missing "must-gather" adm adm must-gather --dest-dir="$W/mg" --timeout=30s
