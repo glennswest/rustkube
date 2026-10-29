@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #141 verified: `vmi-verbs.sh` 12/12 in four test-machine `rigs` runs and on conform.g8.lo from golden 3e10ed08dcac; the efbea2d apiserver answers every verb 404. #141 closed.
 - **test:** #125 verified on conform.g8.lo from golden 3e10ed08dcac: upstream's `ReplicationController should surface a failure condition on a common issue like exceeded quota`, `… get and update a ReplicationController scale`, `Garbage collector should delete pods created by rc when not orphaning` and `ResourceQuota … capture the life of a replication controller` [Conformance] passed in 3 of 3 focused runs. Adoption/release of Pods filed as #295. #125 closed.
 - **feat:** ReplicaSets and ReplicationControllers report a refused Pod create or delete as upstream does: status condition `ReplicaFailure` True, reason `FailedCreate`/`FailedDelete`, the API's message (an exceeded quota, say), set once and removed after a pass that is not refused or once the count is reached (#125: the sig-apps spec "ReplicationController should surface a failure condition on a common issue like exceeded quota"). `replicaset.rs` clippy-clean.
 - **test:** #132 verified: `service-nodeport.sh` 16/16 in four test-machine `rigs` runs; the four upstream Services type-change/NodePort conformance specs no longer fail on allocation (at efbea2d: `NodePort (0)`, `didn't get ClusterIP`) and now stop where they need running Pods (no kubelet on conform.g8.lo). #132 closed.

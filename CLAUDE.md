@@ -862,14 +862,16 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       golden-rustkube-5a7defd5f41c (stormcos#366)
 - [ ] rig (stormcentral#512); close
 
-### VMI verbs pause/unpause/softreboot/freeze/unfreeze (#141, P2) — BUILT 2026-10-07
+### VMI verbs pause/unpause/softreboot/freeze/unfreeze (#141, P2) — COMPLETE 2026-10-29
 - [x] `kubevirt::vmi_verb` → kubelet `/vmVerb` (rustkube-node#94), routes,
       discovery, edit role; unit; `test/e2e/vmi-verbs.sh` (rigs, stub
       kubelet); README/CHANGELOG
 - [x] Build VM at 0cf5acd: 596 passed / 4 ignored (apiserver 298);
       golden-rustkube-2ac2b650df54 (stormcos#366); rustkube-node#94 closed
-- [ ] vmi-verbs rig (stormcentral#512); close. On a node: stormvm#42's
-      medium suite can use the verbs once both goldens are released
+- [x] vmi-verbs 12/12 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b and on conform.g8.lo from golden 3e10ed08dcac; control
+      efbea2d fails 9 (every verb 404). #141 closed. On a node: stormvm#42's
+      medium suite can use them once both goldens are released
 
 ### ReplicationController controller (#125, P2) — BUILT 2026-10-07
 - [x] `replicaset::Kind` (RS / RC), RC instance in runner; fullyLabeledReplicas;
