@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #87 verified: `scheduling-gates.sh` 7/7 in four test-machine `rigs` runs (C2NR0Q2, pvetest2) and on conform.g8.lo from the dfb448b7c686 goldens; the efbea2d goldens fail 4 (a gated Pod is bound, adding a gate is accepted). #87 closed.
 - **test:** #90 verified: `metrics-auth.sh` 23/23 in four test-machine `rigs` runs (C2NR0Q2 fe841f11a1, 3c6585e0ea, 7cb36fe72a; pvetest2 51ef481a0b) and on conform.g8.lo from the dfb448b7c686 goldens; the efbea2d goldens fail 20 of 23. #90 closed.
 - **test:** #89 verified on conform.g8.lo: `hpa-metrics.sh` 10/10 in 3 runs on the dfb448b7c686 goldens (NodeMetrics/PodMetrics from cadvisor, scale to max at 200 %, scale down, conditions, no metrics → no change); with efbea2d's placeholder controller-manager its 7 HPA checks fail. The rig's stub cadvisor reported negative CPU counters in its first 10 s (the test-machine failures: NodeMetrics 404, empty PodMetrics); its counters now start at 1000 s of usage. #89 closed.
 - **test:** `deadlines.sh` waits for the `node.kubernetes.io/unreachable` taint on a Node whose Lease expired — upstream's, and what the node controller writes since #267 — instead of `not-ready` (#173). The rigs-night list run on conform.g8.lo from the 01a3affcd023 goldens: every rig passes but deadlines' idle check (15,022–15,564 requests in 60 s, #272's EndpointSlice loop).

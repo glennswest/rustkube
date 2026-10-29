@@ -448,15 +448,16 @@ Cargo.lock via a build job; shares the engine with #217).
       image never listed by the registry (stormcentral#512); golden
       (stormcentral#541); close #86
 
-### Scheduling gates (#87, P2) — BUILT, rig BLOCKED on stormcentral#512 2026-10-07
+### Scheduling gates (#87, P2) — COMPLETE 2026-10-29
 - [x] ddcc821 scheduler: gated Pod → PodScheduled=False/SchedulingGated (no
       Event), placed when the last gate goes; apiserver PUT/PATCH adding a
       gate → 422 (upstream's message). Units; `test/e2e/scheduling-gates.sh`
       (rigs); README/inventory/research/presentation/test README/CHANGELOG
 - [x] Built + units at 90208b0 (job 50292519d5, 570 passed / 4 ignored)
-- [ ] rigs: 465e6c4490 (C2NR0Q2, 90208b0, has scheduling-gates) image never
-      listed by the registry (stormcentral#512); golden (stormcentral#541);
-      close #87
+- [x] scheduling-gates 7/7 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a
+      (C2NR0Q2), 51ef481a0b (pvetest2); conform.g8.lo from the dfb448b7c686
+      goldens 7/7; control efbea2d fails 4 (gated Pod bound, gate add 200).
+      In every golden since 10-07; #87 closed
 
 ### HPA (#89, P2) — COMPLETE 2026-10-29
 Owner (2026-10-07, twice): the real HPA, CPU/memory from **cadvisor**;
