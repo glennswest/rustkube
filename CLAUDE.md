@@ -137,6 +137,19 @@ rewritten on every boot (~20: cilium RBAC/ConfigMap, coredns, CSIDriver).
 - [x] Findings on #290; `shipped`. Next server1 reboot on a release with
       fastetcd v1.37.0 + this golden: read `boot:` from pods.log
 
+### EndpointSlice mirroring churn (#133 + #272, P1) — IN PROGRESS 2026-10-29
+endpointslice-mirroring rig fails every run; probe on conform.g8.lo
+(01a3affcd023/dfb448b7c686 goldens): mirrored slices created and deleted in
+a cycle — 23 creates / 22 deletes / 0 updates in one rig run; idle, the
+bootstrap default/kubernetes-<hash> ~1 pair per 7 s (#272's 15k idle
+requests). The deleter is service.rs `mirror()` (GC logs none; nothing else
+deletes slices); which of its two conditions fires is not logged.
+- [ ] `mirror()` logs each delete with its reason (not wanted / owner uid)
+- [ ] apiserver: bootstrap default/kubernetes Endpoints labelled
+      `endpointslice.kubernetes.io/skip-mirror: "true"` (upstream)
+- [ ] build VM; golden; rerun the rig + a probe on conform; fix the cause;
+      close #133/#272
+
 ### Boot while the datastore is down: lost manifests, 403s (#293, P1) — COMPLETE 2026-10-22
 server1 12.49 reboot: fastetcd repairing its redb file (13:15:08); the
 apiserver's `wait_for_datastore` (60 s) and `load_existing_crds` (60 s) give
