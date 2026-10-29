@@ -99,7 +99,9 @@ def active_rs_pods():
 
 def tainted():
     n = get('/api/v1/nodes/stale-lease')
-    return any(t.get('key') == 'node.kubernetes.io/not-ready' and t.get('effect') == 'NoExecute'
+    # An expired Lease is `unreachable`, as upstream (#267); `not-ready` is a
+    # kubelet's own Ready=False.
+    return any(t.get('key') == 'node.kubernetes.io/unreachable' and t.get('effect') == 'NoExecute'
                for t in n.get('spec', {}).get('taints', []))
 def job_failed():
     j = get(batch + '/jobs/deadline')
