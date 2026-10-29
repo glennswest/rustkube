@@ -716,13 +716,16 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-b15d23ed5f76 (stormcos#366)
 - [ ] oc-adm rig (stormcentral#512); close
 
-### authorization.openshift.io reviews (#106, P3) — BUILT 2026-10-07
+### authorization.openshift.io reviews (#106, P3) — COMPLETE 2026-10-29
 - [x] `RbacEngine::who_can`; `handlers/openshift_authorization.rs` (SAR,
       LocalSAR, RAR, LocalRAR; legacy-group mapping); routes, discovery,
       advertised table; unit; oc-adm.sh verbs → works; docs
 - [x] Build VM at 046d2c3: 602 passed / 4 ignored (apiserver 305);
       golden-rustkube-f4592f74ec16 (stormcos#366)
-- [ ] oc-adm rig (stormcentral#512); close
+- [x] oc-adm: #106's checks (who-can, new-project --admin) passed in every
+      test-machine run; its 2 failures were the rig's expectations (top pod
+      works since #89; inspect of `work` hit a node-less Pod). 12a63ba; 57/57
+      ×2 on conform.g8.lo (apiserver 4fe0997b273e). #106 closed
 
 ### Scheduler preemption (#84, P2) — COMPLETE 2026-10-29
 - [x] `preemption.rs` rewritten (on_node/select/waiting_for_victims over
