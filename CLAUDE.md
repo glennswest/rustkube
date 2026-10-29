@@ -385,7 +385,7 @@ Cargo.lock via a build job; shares the engine with #217).
       golden-rustkube-883fe8afc72d (stormcos#366)
 - [ ] admission-policy-api rig (stormcentral#512); then close #119
 
-### YAML bodies + built-in fieldValidation (#122, P2) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
+### YAML bodies + built-in fieldValidation (#122, P2) — COMPLETE 2026-10-29
 - [x] protos re-vendored to release-1.36 (all additive, checked per field);
       `protobuf::unknown_fields`; `field_validation.rs` middleware (POST/PUT,
       Strict/Warn/Ignore, upstream wording); protobuf_mw: YAML→JSON, missing
@@ -393,8 +393,11 @@ Cargo.lock via a build job; shares the engine with #217).
       `test/e2e/field-validation.sh` (rigs); README/conformance/CHANGELOG
 - [x] Build VM 84a18836ef at a3bff57: 575 passed / 4 ignored;
       golden-rustkube-96f8267cda52 (stormcos#366)
-- [ ] field-validation rig (stormcentral#512); close. Not done: dropping
-      unknown fields under Warn/Ignore; PATCH; CRDs
+- [x] All 7 [sig-api-machinery] FieldValidation conformance specs passed in
+      the d5f48f5 run from goldens (5 failed at efbea2d, incl. the issue's
+      two typed-object specs); field-validation rig 9/9 in rigs fe841f11a1,
+      3c6585e0ea, 7cb36fe72a, 51ef481a0b. #122 closed. Not done: dropping
+      unknown built-in fields under Warn/Ignore; PATCH bodies
 
 ### ServiceCIDR / IPAddress served (#134, P3) — COMPLETE 2026-10-29
 - [x] networking/v1 proto re-vendored (release-1.36, additions only);

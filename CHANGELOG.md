@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #122 verified: all seven upstream `[sig-api-machinery] FieldValidation … [Conformance]` specs passed in the d5f48f5 conformance run from goldens (five failed at efbea2d, among them the issue's two typed-object specs); `field-validation.sh` 9/9 in four test-machine `rigs` runs. #122 closed.
 - **test:** #134 verified: upstream's `[sig-network] ServiceCIDR and IPAddress API should support ServiceCIDR/IPAddress API operations [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `service-cidr.sh` 12/12 in four test-machine `rigs` runs. #134 closed.
 - **test:** #208 verified: `vmi-migration.sh` 36/36, including its addedNodeSelector cases, in four test-machine `rigs` runs and on conform.g8.lo from the dfb448b7c686 goldens. #208 closed.
 - **test:** #172 verified: without the KubeVirt CRDs the dfb448b7c686 controller-manager sends no request to `kubevirt.io` in `deadlines.sh` (conform.g8.lo), efbea2d's sent 2,575 (404 VirtualMachine LISTs); the KubeVirt rigs pass in four test-machine `rigs` runs. #172 closed.
