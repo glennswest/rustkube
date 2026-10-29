@@ -322,12 +322,15 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
 - [x] Filed #257 (stormblock PV reclaim from the claim), #258 (HPA not via
       `/scale`); rig day budget noted on #173. presentation.md not re-rendered
 
-### Table-only Accept on reviews → 406 (#126, P3) — BUILT 2026-10-07
+### Table-only Accept on reviews → 406 (#126, P3) — COMPLETE 2026-10-29
 - [x] `table::{only_table, refuse_table}` on the five review routes; unit;
       `test/e2e/table-review.sh` (rigs); README/conformance/CHANGELOG
 - [x] Build VM at fb08f87 exit 0 (apiserver 288);
       golden-rustkube-773e0d8ddf86 (stormcos#366)
-- [ ] table-review rig after stormcentral#512; then close
+- [x] "Servers with support for Table transformation should return a 406 …"
+      conformance spec passed in the d5f48f5 run from goldens (failed at
+      efbea2d); table-review 7/7 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b. #126 closed
 
 ### LimitRanger admission (#131, P2) — COMPLETE 2026-10-29
 - [x] `limitranger.rs`: Container defaults + annotation, Container/Pod
