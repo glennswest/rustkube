@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #199 verified: `csr-signers.sh` 6/6 in four test-machine `rigs` runs and on conform.g8.lo from controller-manager golden 3e10ed08dcac; efbea2d's controller-manager signs a `kubernetes.io/kubelet-serving` CSR approved for an external signer. #199 closed.
 - **test:** #109 verified: `notfound-message.sh` 5/5 in four test-machine `rigs` runs and on conform.g8.lo from apiserver golden 4fe0997b273e (efbea2d: 0/5, `resource "/registry/…" not found`); a probe of ten more 404s (`/status`, `/scale`, CSR `/approval`, eviction, `pods/log`, `/finalize`, DELETE, PATCH, a namespaced and a grouped cluster-scoped miss) found none naming a storage key. #109 closed.
 - **test:** #92 and #201 verified: `stormblock-class.sh` 5/5 in four test-machine `rigs` runs and on conform.g8.lo from controller-manager golden 3e10ed08dcac; efbea2d's controller-manager writes an in-kubelet PV for a `stormblock` class whose provisioner is a CSI driver (#92) and gives a Block claim a PV without `volumeMode: Block` (#201). Both closed.
 - **test:** #88 verified: `tls-data-dir.sh` 14/14 in four test-machine `rigs` runs and on conform.g8.lo from apiserver golden 4fe0997b273e; the efbea2d apiserver fails 11 (no pair under `--data-dir`, a new certificate on every start, no cluster-domain SAN). #88 closed.
