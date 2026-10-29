@@ -1949,6 +1949,38 @@ mod tests {
         assert!(advertised("example.com", "v1").await.is_none(), "custom groups are not checked here");
     }
 
+    /// The other direction (#158): every stored built-in a client can create
+    /// is in the apply table, which the startup manifests resolve through.
+    /// LimitRange was missing, so a manifest's LimitRange was "not served by
+    /// this apiserver" and the Pods after it got no defaults. Left out: the
+    /// groups whose objects are not stored as written (reviews, the VMI verbs,
+    /// metrics, events.k8s.io's view of core Events, Projects over Namespaces).
+    #[tokio::test]
+    async fn every_creatable_stored_built_in_is_in_the_apply_table() {
+        const NOT_STORED: [&str; 7] = ["authorization.k8s.io", "authentication.k8s.io", "authorization.openshift.io",
+            "subresources.kubevirt.io", "metrics.k8s.io", "events.k8s.io", "project.openshift.io"];
+        let mut missing = Vec::new();
+        for ((g, v), list) in builtin_lists().await {
+            if NOT_STORED.contains(&g.as_str()) {
+                continue;
+            }
+            let table = resources_for(g, v);
+            for r in list.as_array().into_iter().flatten() {
+                let name = r["name"].as_str().unwrap_or("");
+                let verbs: Vec<&str> = r["verbs"].as_array().into_iter().flatten().filter_map(|v| v.as_str()).collect();
+                if name.contains('/') || !verbs.contains(&"create") || !verbs.contains(&"list") {
+                    continue;
+                }
+                let kind = r["kind"].as_str().unwrap_or("");
+                let namespaced = r["namespaced"].as_bool().unwrap_or(false);
+                if !table.iter().any(|(p, k, n)| *p == name && *k == kind && *n == namespaced) {
+                    missing.push(format!("{g}/{v} ({name:?}, {kind:?}, {namespaced})"));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "advertised, creatable, not in resources_for: {missing:#?}");
+    }
+
     #[test]
     fn aggregated_discovery_is_negotiated_as_kubectl_asks() {
         let h = |a: &str| {
