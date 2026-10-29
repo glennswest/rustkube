@@ -834,13 +834,15 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       apiserver 302, controller-manager 101); golden-rustkube-4ecdc374808d
 - [ ] resource-quota rig (stormcentral#512); close
 
-### RuntimeClass (#135, P3) — BUILT 2026-10-07
+### RuntimeClass (#135, P3) — COMPLETE 2026-10-29
 - [x] node.k8s.io/v1 served; `builtin_admission::runtime_class`; scheduler
       `pod_requests` + overhead; units; `test/e2e/runtime-class.sh`; docs
 - [x] Build VM at 1db5ca5 (covers a9f3fff #158, 8ea98d6 #120, 1db5ca5 #135):
       600 passed / 4 ignored (apiserver 301, scheduler 71);
       golden-rustkube-5a7defd5f41c (stormcos#366)
-- [ ] rig (stormcentral#512); close
+- [x] All five [sig-node] RuntimeClass conformance specs passed in the
+      d5f48f5 run from goldens (failed at efbea2d); runtime-class rig 18/18
+      on conform.g8.lo from the 01a3affcd023 golden after #277. #135 closed
 
 ### CRD schemas in /openapi (#120, P2) — COMPLETE 2026-10-29
 - [x] `openapi_crd.rs` (v2 definitions, v3 index + documents), handlers take
