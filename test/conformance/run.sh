@@ -24,7 +24,8 @@
 # Without RK_BIN it still builds from the checkout, as it did in sc-build.
 # RK_PORT_OFFSET (test/e2e/lib.sh) lets chunks run side by side;
 # RK_SUITE_TIMEOUT (default 100m) cuts hung specs off sooner; RK_WHY_LINES
-# prints that many more lines of each failure message (a diff, say).
+# prints that many more lines of each failure message (a diff, say);
+# RK_E2E_LOG=<file> keeps the whole e2e.log.
 #
 # Output: one line per spec, `RESULT <passed|failed|skipped> <seconds> <name>`,
 # followed by its first failure line — that is the triage input. The binaries
@@ -115,6 +116,9 @@ mkdir -p "$W/report"
   --node-schedulable-timeout=2m \
   >"$W/e2e.log" 2>&1
 echo "ginkgo exit $?"
+# RK_E2E_LOG=<file>: keep the whole e2e.log (the work dir goes with the run);
+# a failure message past the triage line's 300 characters is in it.
+[ -n "${RK_E2E_LOG:-}" ] && cp "$W/e2e.log" "$RK_E2E_LOG"
 
 # --- per-spec results, for triage ----------------------------------------------
 python3 - "$W/report" <<'PY'
