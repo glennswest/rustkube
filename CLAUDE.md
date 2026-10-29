@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### server1 reboot: apiserver listens 385–775 s after root ready (#290, P0) — IN PROGRESS 2026-10-28
+### server1 reboot: apiserver listens 385–775 s after root ready (#290, P0) — SHIPPED 2026-10-28
 Read from server1's boot logs (stormcentral bootlog server1-1792702658,
 -1793204384, -1793208481, -1793213309; console + pods.log). Not the
 apiserver's own work: fastetcd after a warm reset (unclean stop, SMR disk)
@@ -127,13 +127,15 @@ The apiserver's share after the store answers is ~60–80 s on that disk
 (~1–2 s per fsync, fastetcd#135): bootstrap+backfill+CRD load 25–47 s
 (not split in the log), manifests 12–40 s — every `Reconcile` manifest
 rewritten on every boot (~20: cilium RBAC/ConfigMap, coredns, CSIDriver).
-- [ ] Per-phase boot timing: a line per phase (connect, datastore wait,
-      bootstrap, backfill, CRD load, manifests, claims, auth, TLS) and a
-      summary at listen
-- [ ] Manifests: a Reconcile whose result equals the stored object is not
-      written (Unchanged); units
-- [ ] README/CHANGELOG; build VM; golden; findings on #290; close when a
-      server1 reboot's log shows the phases (or ship with the golden)
+- [x] 297e7e2 per-phase boot timing (`boot phase <name>: N s`; summary
+      `boot: serving …` at listen); unchanged Reconcile manifests not
+      written; Namespace `spec.finalizers` kept on update (upstream; the
+      reconciled cilium-secrets lost `kubernetes` every boot). Units
+- [x] README/CHANGELOG (96aee5f); build VM sc-build-4377ac4bf9: workspace
+      exit 0, apiserver 348, 0 rustc warnings (clippy hits only in #263's
+      older code); golden stage build 440e8d9a9510
+- [x] Findings on #290; `shipped`. Next server1 reboot on a release with
+      fastetcd v1.37.0 + this golden: read `boot:` from pods.log
 
 ### Boot while the datastore is down: lost manifests, 403s (#293, P1) — COMPLETE 2026-10-22
 server1 12.49 reboot: fastetcd repairing its redb file (13:15:08); the
