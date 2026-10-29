@@ -382,13 +382,15 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       efbea2d); limitrange 9/9 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
       51ef481a0b. #131 closed
 
-### stormblock PV volumeMode from the claim (#201, P2) — BUILT 2026-10-08
+### stormblock PV volumeMode from the claim (#201, P2) — COMPLETE 2026-10-29
 - [x] `stormblock::desired_pv` (PV construction out of `provision_claim`)
       sets `volumeMode` from the claim (default Filesystem); unit;
       stormblock-class.sh Block case; storage.md, CHANGELOG
 - [x] Build VM sc-build-470bf3e632 at 7c859df: 612 passed / 4 ignored;
       golden-rustkube-1589ac3cd829 (stormcos#366)
-- [ ] stormblock-class rig (stormcentral#512); close
+- [x] stormblock-class 5/5 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b and on conform.g8.lo (controller-manager 3e10ed08dcac);
+      control efbea2d fails the Block cases. #201 closed (with #92)
 
 ### Slow pod status PUT breakdown (#191, P2) — BUILT 2026-10-08
 - [x] `WritePhases` in `guaranteed_update`: read/mutate/webhooks/write/
@@ -1946,8 +1948,10 @@ Continue live acceptance in #147/#149; do not claim those gates passed.
       scheduler picks a node (#71, v0.13.0–v0.14.1)
 - [x] `stormblock.rs` checks the class's provisioner (#92, 2026-10-08):
       `stormblock.storm.io` (or `/in-kubelet`); StorageClass feed wakes claims.
-      Built fe60e97 (608 passed); golden-rustkube-d638c9a6eb55. Rig
-      stormblock-class waits for stormcentral#512
+      Built fe60e97 (608 passed); golden-rustkube-d638c9a6eb55.
+      stormblock-class 5/5 (four test machines, conform.g8.lo); efbea2d's
+      controller-manager provisions a CSI-provisioner `stormblock` class.
+      #92 closed 2026-10-29
 - See [docs/storage.md](docs/storage.md) for the contract with stormblock,
   sbregistry and stormblock-csi. rustkube creates no volume bytes itself.
 
