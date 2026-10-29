@@ -50,7 +50,7 @@ def watch():
               headers={"Authorization": "Bearer " + os.environ["ADMIN"]})
     r = c.getresponse()
     while not stop.is_set():
-        line = r.fp.readline()
+        line = r.readline()
         if not line: break
         ev = json.loads(line)
         if ev["type"] == "DELETED": deleted.append(ev["object"]["metadata"]["uid"])

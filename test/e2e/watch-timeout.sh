@@ -34,7 +34,7 @@ def watch(path, socket_timeout=12):
     events = []
     try:
         while True:
-            line = r.fp.readline()
+            line = r.readline()
             if not line:
                 return time.monotonic() - start, events, r.status
             events.append(json.loads(line))

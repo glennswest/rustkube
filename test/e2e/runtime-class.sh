@@ -53,7 +53,7 @@ code, out = req("GET", RC + "/e2e-1"); check(code == 200 and out["handler"] == "
 code, out = req("GET", RC + "?labelSelector=e2e%3Drc"); check(code == 200 and out["kind"] == "RuntimeClassList" and len(out["items"]) == 2, f"list ({code})")
 c = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=5)
 c.request("GET", RC + "?watch=true&labelSelector=e2e%3Drc", headers={"Authorization": "Bearer " + os.environ["ADMIN"]})
-line = c.getresponse().fp.readline(); c.close()
+line = c.getresponse().readline(); c.close()
 check(json.loads(line)["type"] == "ADDED", "watch")
 code, out = req("PATCH", RC + "/e2e-1", {"metadata": {"annotations": {"p": "1"}}}, "application/merge-patch+json")
 check(code == 200 and out["metadata"]["annotations"]["p"] == "1", f"merge patch ({code})")

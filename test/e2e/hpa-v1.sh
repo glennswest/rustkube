@@ -49,7 +49,7 @@ def watch():
     c.request("GET", V1 + "?watch=1", headers={"Authorization": "Bearer " + os.environ["ADMIN"]})
     r = c.getresponse()
     for _ in range(2):
-        line = r.fp.readline()
+        line = r.readline()
         if not line: break
         events.append(json.loads(line))
 t = threading.Thread(target=watch, daemon=True); t.start()

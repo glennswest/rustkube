@@ -53,7 +53,7 @@ def watch_added(path, name):
     r = c.getresponse()
     try:
         while True:
-            line = r.fp.readline()
+            line = r.readline()
             if not line: return False
             ev = json.loads(line)
             if ev["type"] == "ADDED" and ev["object"]["metadata"]["name"] == name: return True
