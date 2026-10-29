@@ -1715,7 +1715,8 @@ when each piece landed.
       stored with `uid: ""`; fixed in v0.15.3
 - [x] NotFound names the store key (#109) — upstream wording + details, 2026-10-08;
       built 77d1b47 (609 passed, #238 my one-line miss), golden-rustkube-e069ee5958f3;
-      rig notfound-message waits for stormcentral#512
+      notfound-message 5/5 (four test machines, conform.g8.lo; efbea2d 0/5);
+      ten subresource/verb 404s probed, none names a key. #109 closed 2026-10-29
 - [x] Unserved resources answer an empty list (#110) — 404 since 2026-10-07
 - [x] LIST items carry resourceVersion and continuation pages request the
       first page's revision (64963b2, #111). The still-open issue label does
