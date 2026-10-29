@@ -870,14 +870,17 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       build VM: 3 static binaries, 3 tarballs, 3 podman images under
       /work/job/tmp, sha256s printed, exit 0
 
-### NodePort allocation + type changes (#132, P2) — BUILT 2026-10-07
+### NodePort allocation + type changes (#132, P2) — COMPLETE 2026-10-29
 - [x] `node_port.rs` (claim keys, `--service-node-port-range`, Plan
       commit/abort), create (admission) + update (put_object,
       guaranteed_update) + delete + startup/manifests; create failure
       releases claims; units; `test/e2e/service-nodeport.sh` (rigs); docs
 - [x] Build VM at 706a807: 592 passed / 4 ignored (apiserver 295);
       golden-rustkube-e7ee3d193c98 (stormcos#366)
-- [ ] service-nodeport rig (stormcentral#512); close
+- [x] service-nodeport 16/16 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b. The four Services conformance specs no longer fail on
+      allocation (efbea2d: NodePort 0 / no ClusterIP); at d5f48f5 they wait
+      for their Deployment's Pods Ready (no kubelet on conform). #132 closed
 
 ### Presentation rendered and inspected (#160) — COMPLETE 2026-10-07
 - [x] marp-cli 4.5.1 + Chrome 155 headless on a build VM (no browser on the
