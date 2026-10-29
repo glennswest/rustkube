@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #136 (apiserver half) verified: `pod-resize.sh` 13/13 in four test-machine `rigs` runs. The upstream InPlace Resize conformance specs still fail on conform.g8.lo, before and after, waiting for pods to run (no kubelet there); the node half is rustkube-node#192. #136 closed.
 - **test:** #118 verified: upstream's `API priority and fairness should support FlowSchema API operations` and `… PriorityLevelConfiguration API operations [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `flowcontrol.sh` 29/29 on conform.g8.lo after #277. #118 closed.
 - **test:** #126 verified: upstream's `Servers with support for Table transformation should return a 406 for a backend which does not implement metadata [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `table-review.sh` 7/7 in four test-machine `rigs` runs. #126 closed.
 - **test:** #131 verified: upstream's `[sig-scheduling] LimitRange should create a LimitRange with defaults and ensure pod has those defaults applied [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `limitrange.sh` 9/9 in four test-machine `rigs` runs. #131 closed.

@@ -880,15 +880,18 @@ sha256-checked); fastetcd has no golden and no release assets (noted there).
       golden-rustkube-fb045ca519eb (stormcos#366)
 - [ ] endpointslice-mirroring rig (stormcentral#512); close
 
-### In-place pod resize, apiserver half (#136, P2) — BUILT 2026-10-07
+### In-place pod resize, apiserver half (#136, P2) — COMPLETE 2026-10-29
 - [x] `handlers/pod_resize.rs` (merge resources/resizePolicy; upstream's
       ValidatePodResize incl. the version-skew guard), route, discovery;
       `qos_of`; units; `test/e2e/pod-resize.sh` (rigs); docs. Kubelet half
       filed rustkube-node#192
 - [x] Build VM at 8ccfc7f: 584 passed / 4 ignored (apiserver 290);
       golden-rustkube-e4fb2ff2f004 (stormcos#366)
-- [ ] pod-resize rig (stormcentral#512); close when the apiserver half is
-      verified (the conformance specs need rustkube-node#192 too)
+- [x] pod-resize 13/13 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b. The three InPlace Resize conformance specs fail on
+      conform.g8.lo before and after ("3 pods not found running", 300 s: no
+      kubelet there); they need a node + rustkube-node#192 (open). #136
+      closed
 
 ### Legacy Terragrunt/RPM path (#157) — COMPLETE 2026-10-09
 Owner (2026-10-09): A, retire. Delete deploy/terragrunt, deploy/packaging,
