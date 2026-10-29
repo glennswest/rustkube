@@ -17,9 +17,10 @@
 //!
 //! Built from the CRD registry on every request, so a CRD that is created,
 //! changed (a version renamed or no longer served) or deleted is reflected
-//! at once. `metadata` is an inline object, not a `$ref` to ObjectMeta: the
-//! built-in types are not published here (their schemas are the server's,
-//! #31).
+//! at once. `metadata` is ObjectMeta inline rather than a `$ref` (the
+//! built-in types are not published here, #31): its fields and upstream's
+//! descriptions, read from the vendored `meta/v1` proto, so `kubectl explain
+//! <cr>.metadata` lists them as upstream's does.
 
 use crate::crd::{CrdDefinition, CrdScope};
 use serde_json::{json, Map, Value};
@@ -84,10 +85,62 @@ fn drop_false_flags(schema: &mut Value) {
     }
 }
 
+/// ObjectMeta's properties, from the vendored proto's fields and doc comments
+/// (upstream's OpenAPI descriptions are those comments).
+fn object_meta_properties() -> &'static Map<String, Value> {
+    static PROPS: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
+    PROPS.get_or_init(|| {
+        const PROTO: &str = include_str!("../../apimachinery/protos/k8s.io/apimachinery/pkg/apis/meta/v1/generated.proto");
+        let mut props = Map::new();
+        let Some(start) = PROTO.find("message ObjectMeta {") else { return props };
+        let body = &PROTO[start..];
+        let body = &body[..body.find("\n}").unwrap_or(body.len())];
+        let mut doc: Vec<String> = Vec::new();
+        for line in body.lines().skip(1).map(str::trim) {
+            if let Some(c) = line.strip_prefix("//") {
+                let c = c.trim();
+                if !c.starts_with('+') {
+                    doc.push(c.to_string());
+                }
+                continue;
+            }
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let (ty, name) = match words.as_slice() {
+                ["optional", ty, name, ..] => (*ty, *name),
+                ["repeated", ty, name, ..] => (*ty, *name),
+                [m, _, name, ..] if m.starts_with("map<") => ("map", *name),
+                _ => {
+                    doc.clear();
+                    continue;
+                }
+            };
+            let scalar = |t: &str| match t {
+                "string" => json!({"type": "string"}),
+                "int64" | "int32" => json!({"type": "integer", "format": t}),
+                "Time" => json!({"type": "string", "format": "date-time"}),
+                _ => json!({"type": "object"}),
+            };
+            let mut field = match (words[0], ty) {
+                (_, "map") => json!({"type": "object", "additionalProperties": {"type": "string"}}),
+                ("repeated", t) => json!({"type": "array", "items": scalar(t)}),
+                (_, t) => scalar(t),
+            };
+            // Comment lines joined; an empty one is a paragraph break.
+            let text = doc.join("\n").split("\n\n").map(|p| p.replace('\n', " ")).collect::<Vec<_>>().join("\n\n");
+            field["description"] = json!(text.trim());
+            props.insert(name.to_string(), field);
+            doc.clear();
+        }
+        props
+    })
+}
+
 /// The published schema of one CRD version.
 pub fn definition(def: &CrdDefinition, v2: bool) -> Value {
     let mut s = match &def.schema {
         Some(schema) => (**schema).clone(),
+        // v2 says only "an object", as upstream; v3 keeps unknown fields.
+        None if v2 => json!({"type": "object"}),
         None => json!({"type": "object", "x-kubernetes-preserve-unknown-fields": true}),
     };
     drop_false_flags(&mut s);
@@ -101,7 +154,8 @@ pub fn definition(def: &CrdDefinition, v2: bool) -> Value {
     if let Some(p) = props.as_object_mut() {
         p.insert("apiVersion".into(), json!({"type": "string", "description": API_VERSION_DOC}));
         p.insert("kind".into(), json!({"type": "string", "description": KIND_DOC}));
-        p.insert("metadata".into(), json!({"type": "object", "description": METADATA_DOC}));
+        p.insert("metadata".into(), json!({"type": "object", "description": METADATA_DOC,
+                                           "properties": object_meta_properties()}));
     }
     s["x-kubernetes-group-version-kind"] = json!([{"group": def.group, "version": def.version, "kind": def.kind}]);
     s
@@ -186,6 +240,22 @@ mod tests {
         assert_eq!(got, schema);
     }
 
+    /// `kubectl explain <cr>.metadata` lists ObjectMeta's fields with
+    /// upstream's descriptions (the conformance pattern: creationTimestamp
+    /// <string>, "CreationTimestamp is a timestamp").
+    #[test]
+    fn metadata_is_object_meta_with_its_descriptions() {
+        let got = definition(&def(None), false);
+        let meta = &got["properties"]["metadata"]["properties"];
+        assert_eq!(meta["creationTimestamp"]["type"], "string");
+        assert!(meta["creationTimestamp"]["description"].as_str().unwrap().starts_with("CreationTimestamp is a timestamp"));
+        assert_eq!(meta["labels"]["additionalProperties"]["type"], "string");
+        assert_eq!(meta["ownerReferences"]["type"], "array");
+        assert_eq!(meta["generation"]["type"], "integer");
+        assert!(!meta["name"]["description"].as_str().unwrap().contains("+optional"));
+        assert_eq!(meta.as_object().unwrap().len(), 15, "{:?}", meta.as_object().unwrap().keys().collect::<Vec<_>>());
+    }
+
     #[test]
     fn false_extension_flags_are_not_published() {
         let schema = json!({"type": "object", "x-kubernetes-embedded-resource": false,
@@ -214,6 +284,7 @@ mod tests {
         let (paths, schemas) = v3_parts(&[d], "crd-publish-openapi-test-foo.example.com", "v1");
         assert!(schemas.contains_key("com.example.crd-publish-openapi-test-foo.v1.E2eTestFoo"));
         assert!(paths.contains_key("/apis/crd-publish-openapi-test-foo.example.com/v1/namespaces/{namespace}/e2e-test-foos"));
-        assert!(def(None).schema.is_none() && definition(&def(None), true)["x-kubernetes-preserve-unknown-fields"] == true);
+        assert!(def(None).schema.is_none() && definition(&def(None), false)["x-kubernetes-preserve-unknown-fields"] == true);
+        assert!(definition(&def(None), true).get("x-kubernetes-preserve-unknown-fields").is_none(), "v2: an object, as upstream");
     }
 }
