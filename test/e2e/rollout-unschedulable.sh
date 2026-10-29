@@ -8,9 +8,10 @@
 # kubelet (marks bound pods Ready, finishes their deletion).
 #
 #   1. the Deployment rolls out its first pod, Ready
-#   2. a template change: the new pod is Unschedulable (anti-affinity), and
-#      the old ReplicaSet is scaled to 0 anyway, as upstream's
-#      reconcileOldReplicaSets does with maxUnavailable 1
+#   2. a template change: the old ReplicaSet is scaled to 0 although the new
+#      pod cannot schedule beside the old one (anti-affinity), as upstream's
+#      reconcileOldReplicaSets does with maxUnavailable 1 (whether the new pod
+#      is seen Unschedulable first is timing: a NOTE line)
 #   3. the old pod goes, the new one binds, is Ready: the rollout completes
 #   4. control: the same with maxUnavailable 0 keeps the old pod (the floor is
 #      1), as upstream — that Deployment cannot roll on one node
@@ -118,8 +119,12 @@ ns = "roll"
 deployment(ns, 1)
 check(until(ns, lambda: dep(ns).get("status", {}).get("availableReplicas") == 1), "first rollout: 1 available")
 change_template(ns)
-msg = until(ns, lambda: unschedulable(ns), 30)
-check(bool(msg), f"the surge pod is unschedulable beside the old one: {msg!r}")
+# Not a check: with maxUnavailable 1 the old ReplicaSet goes to 0 in the
+# same moment, and the scheduler may first see the new pod after the old one
+# is gone, so it binds without ever being Unschedulable (1c81036901 failed
+# here, 2026-10-13). Anti-affinity holding is the control's check below.
+msg = until(ns, lambda: unschedulable(ns) or rs_of(ns, "2") and rs_of(ns, "2").get("status", {}).get("availableReplicas") == 1, 30)
+print(f"NOTE  surge pod before the old one went: {msg if isinstance(msg, str) else 'bound without waiting'}", flush=True)
 old = lambda: next((r for r in rss(ns) if r["spec"]["template"]["metadata"].get("annotations", {}).get("rev") != "2"), None)
 check(until(ns, lambda: old() and old()["spec"]["replicas"] == 0, 30), "old ReplicaSet scaled to 0 under maxUnavailable 1")
 def done():
