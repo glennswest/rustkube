@@ -44,11 +44,13 @@ pub fn definition_name(def: &CrdDefinition) -> String {
     format!("{}.{}.{}", reversed(&def.group), def.version, def.kind)
 }
 
-/// Swagger 2.0 cannot say these; upstream's v2 conversion drops them.
+/// Swagger 2.0 cannot say these; upstream's v2 conversion drops them —
+/// `x-kubernetes-preserve-unknown-fields` too: a schemaless-looking CRD
+/// (`type: object` keeping unknown fields) is `type: object` in v2 (#120).
 fn to_v2(schema: &mut Value) {
     match schema {
         Value::Object(m) => {
-            for k in ["nullable", "oneOf", "anyOf", "not"] {
+            for k in ["nullable", "oneOf", "anyOf", "not", "x-kubernetes-preserve-unknown-fields"] {
                 m.remove(k);
             }
             if m.get("x-kubernetes-int-or-string") == Some(&Value::Bool(true)) {
@@ -268,8 +270,10 @@ mod tests {
                 assert!(got.get(k).is_none(), "{k} false published (v2 {v2})");
             }
             assert!(got["properties"]["spec"].get("x-kubernetes-embedded-resource").is_none());
-            assert_eq!(got["properties"]["spec"]["x-kubernetes-preserve-unknown-fields"], true, "true kept");
         }
+        // A true one is kept in v3 and, as upstream, not said in v2.
+        assert_eq!(definition(&def(Some(schema.clone())), false)["properties"]["spec"]["x-kubernetes-preserve-unknown-fields"], true);
+        assert!(definition(&def(Some(schema)), true)["properties"]["spec"].get("x-kubernetes-preserve-unknown-fields").is_none());
     }
 
     #[test]
