@@ -198,8 +198,17 @@ impl ServiceController {
         let wanted: Vec<&Value> = want.iter().map(|s| &s["metadata"]["name"]).collect();
         for slice in &current {
             // Not wanted, or written for an Endpoints since replaced.
-            if !wanted.contains(&&slice["metadata"]["name"]) || slice["metadata"]["ownerReferences"][0]["uid"] != owner {
+            let unwanted = !wanted.contains(&&slice["metadata"]["name"]);
+            let slice_owner = &slice["metadata"]["ownerReferences"][0]["uid"];
+            if unwanted || *slice_owner != owner {
                 let n = slice["metadata"]["name"].as_str().unwrap_or("");
+                // Said, not silent: a delete here re-creating at once was #272's
+                // loop, and nothing named the reason.
+                tracing::info!(
+                    "service: deleting mirrored EndpointSlice {ns}/{n}: {} (slice owner {slice_owner}, Endpoints {owner}, wanted {:?})",
+                    if unwanted { "not wanted" } else { "owner changed" },
+                    wanted
+                );
                 self.api.delete_observed(&format!("/apis/discovery.k8s.io/v1/namespaces/{ns}/endpointslices/{n}"), slice).await?;
             }
         }

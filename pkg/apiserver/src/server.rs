@@ -1893,6 +1893,10 @@ fn bootstrap_endpoint(current: Option<&serde_json::Value>, slice: bool, advertis
         object["endpoints"] = json!(endpoints);
         object["ports"] = ports.clone();
     } else {
+        // The apiserver writes this Service's slice itself (above), so the
+        // mirroring controller is told to leave its Endpoints alone, as
+        // upstream's endpoint reconciler does (#272: it mirrored them too).
+        object["metadata"]["labels"]["endpointslice.kubernetes.io/skip-mirror"] = json!("true");
         let mut addresses = object["subsets"][0]["addresses"].as_array().cloned().unwrap_or_default();
         if !addresses.iter().any(|a| a["ip"] == advertise) { addresses.push(json!({"ip":advertise})); }
         addresses.sort_by(|a,b| a["ip"].as_str().cmp(&b["ip"].as_str()));
@@ -2594,6 +2598,8 @@ mod tests {
             let repaired = super::bootstrap_endpoint(Some(&legacy),slice,"127.0.0.1",&ports);
             assert!(!repaired["metadata"]["uid"].as_str().unwrap().is_empty());
             assert_eq!(super::bootstrap_endpoint(Some(&second),slice,"127.0.0.2",&ports),second);
+            // Not mirrored: the apiserver writes its own slice (#272).
+            assert_eq!(first["metadata"]["labels"]["endpointslice.kubernetes.io/skip-mirror"] == "true", !slice);
             assert_eq!(if slice { second["endpoints"].as_array().unwrap().len() }
                 else { second["subsets"][0]["addresses"].as_array().unwrap().len() },2);
         }
