@@ -700,13 +700,15 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       golden-rustkube-d85a5ba35d81 (stormcos#366)
 - [ ] whoami rig (stormcentral#512); close
 
-### Ephemeral-volume controller (#94, P2) — BUILT 2026-10-08
+### Ephemeral-volume controller (#94, P2) — COMPLETE 2026-10-29
 - [x] `ephemeral.rs` (pods primary, owned PVC children; create from the
       template; foreign claim → Warning Event, never adopted); CM role
       creates PVCs; unit; `test/e2e/ephemeral-volume.sh`; README/storage.md
 - [x] Build VM at 40157d0: 605 passed / 4 ignored (controller-manager 102);
       golden-rustkube-41c5a5a6ec37 (stormcos#366)
-- [ ] ephemeral-volume rig (stormcentral#512); close
+- [x] ephemeral-volume 6/6 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b and on conform.g8.lo (controller-manager 3e10ed08dcac);
+      control: efbea2d's controller-manager makes no claim. #94 closed
 
 ### Aggregated discovery (#107, P3) — COMPLETE 2026-10-29
 - [x] `wants_aggregated`, `to_v2_resources`, `aggregated` on `/api` + `/apis`

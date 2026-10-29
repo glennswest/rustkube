@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #94 verified: `ephemeral-volume.sh` 6/6 in four test-machine `rigs` runs and on conform.g8.lo from the goldens; with efbea2d's controller-manager no `<pod>-<volume>` claim is created. #94 closed.
 - **test:** #107 verified: upstream's four `AggregatedDiscovery … [Conformance]` specs passed in the d5f48f5 conformance run from goldens (all failed at efbea2d); `oc adm inspect` exits 0 and `/api`, `/apis` answer `APIGroupDiscoveryList` in `oc-adm.sh` (57/57 on conform.g8.lo). #107 closed.
 - **test:** #106 verified: `oc-adm.sh` (oc 4.x) — `oc adm policy who-can` answered from `authorization.openshift.io` LocalResourceAccessReview and listing system:masters, `oc adm new-project --admin` making alice its admin — passed in four test-machine `rigs` runs; the rig's two failures were its own expectations (`top pod` works since #89; `inspect` of a namespace with a Pod on no node), fixed in 12a63ba: 57/57 in 2 runs on conform.g8.lo from the goldens. #106 closed.
 - **test:** #84 verified: `scheduler-preemption.sh` 8/8 in four test-machine `rigs` runs and on conform.g8.lo from the goldens (efbea2d fails 5: no Pod evicted, the high-priority Pod never binds). The upstream SchedulerPreemption specs size Pods with an extended resource, which the fit filter does not count: filed #297. #84 closed.
