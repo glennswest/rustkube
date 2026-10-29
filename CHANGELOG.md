@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-10-29
+- **test:** #119 verified: the four upstream `ValidatingAdmissionPolicy`/`MutatingAdmissionPolicy` `…API operations [Conformance]` specs passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `admission-policy-api.sh` 30/30 in four test-machine `rigs` runs. The four specs that need the policies evaluated still fail (#234). #119 closed.
 - **test:** #122 verified: all seven upstream `[sig-api-machinery] FieldValidation … [Conformance]` specs passed in the d5f48f5 conformance run from goldens (five failed at efbea2d, among them the issue's two typed-object specs); `field-validation.sh` 9/9 in four test-machine `rigs` runs. #122 closed.
 - **test:** #134 verified: upstream's `[sig-network] ServiceCIDR and IPAddress API should support ServiceCIDR/IPAddress API operations [Conformance]` passed in the d5f48f5 conformance run from goldens (failed at efbea2d); `service-cidr.sh` 12/12 in four test-machine `rigs` runs. #134 closed.
 - **test:** #208 verified: `vmi-migration.sh` 36/36, including its addedNodeSelector cases, in four test-machine `rigs` runs and on conform.g8.lo from the dfb448b7c686 goldens. #208 closed.

@@ -374,7 +374,7 @@ False. This side: `virtualmachine.rs` PUTs the VMI's spec on a live change.
       golden-rustkube-10934b6134a7 (stormcos#366)
 - [ ] hpa-v1 rig (stormcentral#512); close
 
-### Admission policies served (#119, P3) — BUILT + golden, rig BLOCKED on stormcentral#512 2026-10-07
+### Admission policies served (#119, P3) — COMPLETE 2026-10-29
 Split: (1) serve the four resources here; (2) CEL evaluation is #234 (the
 `cel` crate 0.15 handles struct literals via registered StructTypes; needs
 Cargo.lock via a build job; shares the engine with #217).
@@ -383,7 +383,11 @@ Cargo.lock via a build job; shares the engine with #217).
       (rigs); README/inventory/conformance/CHANGELOG; #234 filed
 - [x] Build VM 2bd668d442 at 08d5974: 575 passed / 4 ignored;
       golden-rustkube-883fe8afc72d (stormcos#366)
-- [ ] admission-policy-api rig (stormcentral#512); then close #119
+- [x] The four "…AdmissionPolicy(Binding) API operations" conformance specs
+      passed in the d5f48f5 run from goldens (failed at efbea2d); the four
+      evaluation specs still fail (and hang ~40 min each): #234.
+      admission-policy-api 30/30 in rigs fe841f11a1, 3c6585e0ea, 7cb36fe72a,
+      51ef481a0b. #119 closed
 
 ### YAML bodies + built-in fieldValidation (#122, P2) — COMPLETE 2026-10-29
 - [x] protos re-vendored to release-1.36 (all additive, checked per field);
