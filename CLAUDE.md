@@ -1073,8 +1073,16 @@ Owner (#162): "Persistent tests should be pods, and should live on forge."
       7d4962ed39, f39953a31e, a833054561 (pvetest2)
 - [ ] rigs-night as a pod: pve VMs install again (12.58), but every test
       image fetch fails, nodes' sbregistry has no forge peer (stormcos#271,
-      2026-10-29). Meanwhile its other nine rigs on conform.g8.lo from the
-      01a3affcd023 goldens (2026-10-29, running). Then a night pod run; close
+      2026-10-29). Proposed after it
+- [x] Its other nine rigs on conform.g8.lo from the 01a3affcd023 goldens
+      (2026-10-29): 8 pass (list-snapshot-race, crd-restart,
+      scheduler-failover 68 s, schedule-latency, get-latency, watch-deadline
+      423 s, serving-cert, client-cert-reload). deadlines: its stale-Lease
+      check waited for `not-ready`, #267 made it `unreachable` (rig fixed
+      19fd0b1, passes); its idle check fails, 15,022–15,564 requests in 60 s
+      = #272's EndpointSlice loop (evidence posted there)
+- [ ] First rigs-night pod run once stormcos#271 lets images reach a node
+      (deadlines' idle check stays red until #272); then close #173
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could

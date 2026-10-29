@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-10-29
+- **test:** `deadlines.sh` waits for the `node.kubernetes.io/unreachable` taint on a Node whose Lease expired — upstream's, and what the node controller writes since #267 — instead of `not-ready` (#173). The rigs-night list run on conform.g8.lo from the 01a3affcd023 goldens: every rig passes but deadlines' idle check (15,022–15,564 requests in 60 s, #272's EndpointSlice loop).
+
 ### 2026-10-28
 - **test:** #266 verified on conform.g8.lo: `rollout-unschedulable.sh` 6/6 on the dfb448b7c686 controller-manager golden; control efbea2d fails 4 (old ReplicaSet never scaled down, two pods, rollout stalled). The rig's surge-pod Unschedulable sighting is now a NOTE: with maxUnavailable 1 the old pod may go before the scheduler sees the new one (the 2026-10-13 1c81036901 failure). #266 closed.
 - **test:** #264 verified on conform.g8.lo with `bootstrap-token.sh` (rig at 906e6f2): golden-rustkube-apiserver-01a3affcd023 32/32 — bootstrap token creates only `storm.io/forge-node` CSRs stamped as itself, reads only its own, expired/wrong/deleted tokens 401, `system:node:n1` renews, `/approval` and the certificate need `approve`/`sign` on the signer, TokenReview answers; control efbea2d goldens fail 19 (every bootstrap token 401, a body's `spec.username: system:node:victim` stored). #264 closed.
