@@ -1608,7 +1608,7 @@ when each piece landed.
 - [x] #35 closed as superseded — **owner, 2026-09-28: "tests per component,
       and only system burn or stress tests of the system in the qa."**
       rustkube's tests live in its own `test/` container, never stormcos_qa
-- [ ] Test containers per the stormcos test standard (#96) — BLOCKED on stormcentral#512 (2026-10-07); IN PROGRESS
+- [ ] Test containers per the stormcos test standard (#96) — BLOCKED on stormcos#271 (2026-10-29: `test run rustkube short` refused on pvetest1/pvetest2, sbregistry has no forge peer; C2NR0Q2 is a blade, evening window, and hardware waits for a pve pass, #791). The same image's `rigs` suite ran as a pod on C2NR0Q2/pvetest2 (10-13…10-21), so delivery and /test work; short/medium/long have no live result yet. Earlier: BLOCKED on stormcentral#512 (2026-10-07); IN PROGRESS
       2026-09-29: sc-build at a4dba9c compiled rustkube-test and passed all
       9 unit tests (remote exit 0; local build-log append read-only). Real
       short suite at main@d7bc1f8 was refused with HTTP 400 before any Job:
