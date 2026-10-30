@@ -85,6 +85,17 @@ EndpointSlices, ResourceQuota), the scheduler's decisions, watch semantics.
 
 ## Results
 
+### Focused reruns from goldens, 2026-10-28/29
+
+After the d5f48f5 run, issues were closed on focused reruns on conform.g8.lo
+from the 01a3affcd023 / dfb448b7c686 / 3e10ed08dcac goldens: all nine
+`CustomResourcePublishOpenAPI` specs (3 of 3 runs; two passed at d5f48f5, #120),
+ReplicationController "surface a failure condition" and the GC / quota specs
+that use RCs (#125), startup-manifest LimitRange (#158) and the
+EndpointSliceMirroring spec (#133). Specs that need a running Pod still fail
+(no kubelet); preemption specs use an extended resource the fit filter ignores
+(#297). The 306-failure table below has still not been triaged (#291).
+
 ### From the goldens, 2026-10-21, at d5f48f5 (#140)
 
 The first run from goldens (`fetch.sh` then `vm.sh`; kube-apiserver

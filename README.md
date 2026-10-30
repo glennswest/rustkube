@@ -5,7 +5,7 @@
 the wire for `kubectl`, `oc`, `helm` and client-go controllers. Compatibility
 is operation-specific; this is not a conformant or drop-in replacement yet.
 
-This page was checked against the code on **2026-10-09**: v0.18.0 plus
+This page was checked against the code on **2026-10-30**: v0.18.0 plus
 unreleased changes on main (the workspace version has not been bumped since;
 component goldens `golden-rustkube-<digest>` are built from main per issue).
 See the [change audit](docs/changes-since-2026-09-18.md) for commits,

@@ -141,3 +141,25 @@ linked issues:
 - The scheduler does set `nominatedNodeName` (#84); the README said it did not.
 - #153/#154 are closed, not under investigation; the PV binder is no longer
   one claim worker (#147).
+
+## Addendum: 2026-10-23 to 2026-10-30
+
+Checked 2026-10-30 with `git log --since=2026-10-23` (72 commits, main through
+f1e4027; v0.18.0 plus unreleased changes, no version bump). No CLI flag, port
+or default changed in this window (`cmd/*/src/main.rs` untouched); the README
+tables stand. Code changes were seven files; the rest is verification.
+
+| Area | Current behavior and source | Commits / issues |
+|---|---|---|
+| Boot | `boot phase <name>: N s` per phase, `boot: serving …` at listen; Reconcile manifests that already match are not rewritten; Namespace `spec.finalizers` kept on update (`server.rs`, `manifests.rs`, `handlers/resource.rs`) | 297e7e2, #290 |
+| Manifests | Startup apply table covers LimitRange, ResourceQuota, ReplicationController, PodTemplate, PodDisruptionBudget, PriorityClass, Route, APIService, PodMigration; a unit holds it to discovery (`discovery.rs`) | 630e469, #158 |
+| CRD OpenAPI | boolean `x-kubernetes-*` only when true; `metadata` lists ObjectMeta's fields; v2 drops `x-kubernetes-preserve-unknown-fields` (`openapi_crd.rs`) | 993c3a3, 91a8de5, dd354b3, #120 |
+| Controllers | `ReplicaFailure` condition on ReplicaSets/ReplicationControllers (`replicaset.rs`); mirrored EndpointSlices no longer created/deleted in a loop, apiserver's `default/kubernetes` Endpoints labelled skip-mirror, each mirror delete logged with its reason (`service.rs`) | 0a41ade, 4eb27f8, 2460f71, #125, #133, #272 |
+| Tests | five rigs read WATCH with `readline()` (#277); hpa-metrics stub cadvisor, deadlines unreachable taint, rollout-unschedulable, node-proxy, oc-adm, manifest-admission, status-put-latency rig fixes; `RK_E2E_LOG` keeps the whole conformance log | 92f399a, 80b7184, 19fd0b1, 0f473fb, 71e6a10, 12a63ba, f453582, ee524d1, c33c0b3 |
+
+Most other commits are "verified; closed" records: issues closed on rig runs
+(test machines and conform.g8.lo from the goldens) or on upstream conformance
+specs from the d5f48f5 run. Still open and named in the README: #96 and #173
+(test pods wait on stormcos#271), #282, #285 (rigs), #272-adjacent #274, #295
+(RS/RC adoption and release), #297 (extended resources in fit), #298 (SA key
+re-read), #294 (DER client CA).
