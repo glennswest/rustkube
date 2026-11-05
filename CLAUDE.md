@@ -115,6 +115,19 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### Manifest-dir prune (#236, P1, stormcos#668) + mode from the label (#299) — IN PROGRESS 2026-11-04
+A flavour switch over kept data (cilium ↔ flowsdn on server1) leaves the old
+flavour's DaemonSets in ImagePullBackOff: the applier only creates/updates.
+- [ ] #299 `Mode::of`: label first (upstream), then the annotation, then
+      `storm.io/manifest-mode`; units; help text, module doc
+- [ ] #236 inventory ConfigMap `kube-system/rustkube-manifests` (the dir +
+      the Reconcile documents it named); at startup, after the pass, delete
+      recorded objects no readable file names any more (dangling link = not
+      named) if the stored object is still Reconcile; finalizers/Namespaces
+      terminate; no prune when a file is unreadable/unparseable or the dir
+      is empty; each deletion logged. Units; rig; docs
+- [ ] sc-build; rig on conform.g8.lo from the golden; close both
+
 ### server1 reboot: apiserver listens 385–775 s after root ready (#290, P0) — SHIPPED 2026-10-28
 Read from server1's boot logs (stormcentral bootlog server1-1792702658,
 -1793204384, -1793208481, -1793213309; console + pods.log). Not the
