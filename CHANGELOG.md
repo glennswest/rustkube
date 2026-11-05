@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-11-04
+- **fix:** The `--manifest-dir` applier reads `addonmanager.kubernetes.io/mode` from the object's **label** first, as upstream's addon-manager does, then the annotation, then `storm.io/manifest-mode` (#299). 22 stormcos manifest files carry it only as a label, so their RBAC rules and CRDs were treated as `EnsureExists` and never updated on a cluster whose datastore survived an install.
+
 ### 2026-10-29
 - **docs:** Docs refreshed from the code since 2026-10-23: README checked date, audit addendum 2026-10-23 to 2026-10-30, conformance focused-rerun note; CLAUDE.md work plan current. No flag, port or default changed in the window.
 - **test:** #191 verified: the `slow write` breakdown names the phase of every slow write — on pvetest2 (12.19) and server1 (12.55) it is the datastore's read or write (fastetcd#135), and on conform.g8.lo the apiserver's own share of each slow status PUT is ≤ 0.5 ms of up to 124 ms. `status-put-latency.sh` parsed the breakdown through the log's colour codes (its webhook check read `''`) and failed its `p99 < 50 ms` on the machine's disk: it now strips them, prints the total as a NOTE and asserts the apiserver's own share; 5/5 in 3 runs. #191 closed.

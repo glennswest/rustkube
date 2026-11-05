@@ -122,9 +122,9 @@ struct Cli {
     service_account_key: Vec<PathBuf>,
 
     /// Directory of manifests to apply once at startup (YAML or JSON, applied
-    /// in filename order). Objects are created if absent; an object annotated
-    /// `addonmanager.kubernetes.io/mode: Reconcile` is also overwritten when
-    /// it already exists.
+    /// in filename order). Objects are created if absent; an object labelled
+    /// (or annotated) `addonmanager.kubernetes.io/mode: Reconcile` is also
+    /// overwritten when it already exists.
     #[arg(long = "manifest-dir", env = "MANIFEST_DIR")]
     manifest_dir: Option<PathBuf>,
 

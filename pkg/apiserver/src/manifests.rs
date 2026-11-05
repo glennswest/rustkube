@@ -12,7 +12,8 @@
 //!
 //! This is **not** a reconciler. It runs once, at startup, and its job is
 //! "these objects exist". Two modes, spelled the way the upstream addon
-//! manager spells them, on the object's own annotations:
+//! manager spells them, on the object's own labels (upstream's place, #299)
+//! or annotations:
 //!
 //! | `addonmanager.kubernetes.io/mode` | behaviour |
 //! |---|---|
@@ -58,12 +59,14 @@ enum Mode {
 
 impl Mode {
     fn of(obj: &Value) -> Mode {
-        let ann = &obj["metadata"]["annotations"];
-        // The upstream key first, then ours — a manifest copied from an
-        // upstream chart should behave the way it says it does.
-        let raw = ann["addonmanager.kubernetes.io/mode"]
+        let meta = &obj["metadata"];
+        // Upstream's addon-manager reads the label, which is where upstream
+        // addons — and every manifest copied from them — carry it (#299);
+        // then the annotation, then ours.
+        let raw = meta["labels"]["addonmanager.kubernetes.io/mode"]
             .as_str()
-            .or_else(|| ann["storm.io/manifest-mode"].as_str())
+            .or_else(|| meta["annotations"]["addonmanager.kubernetes.io/mode"].as_str())
+            .or_else(|| meta["annotations"]["storm.io/manifest-mode"].as_str())
             .unwrap_or("EnsureExists");
         match raw {
             "Reconcile" => Mode::Reconcile,
@@ -649,6 +652,18 @@ metadata:
             Mode::of(&json!({"metadata": {"annotations": {
                 "storm.io/manifest-mode": "Reconcile"}}})),
             Mode::Reconcile
+        );
+        // Upstream's place, the label (#299), and it wins over an annotation.
+        assert_eq!(
+            Mode::of(&json!({"metadata": {"labels": {
+                "addonmanager.kubernetes.io/mode": "Reconcile"}}})),
+            Mode::Reconcile
+        );
+        assert_eq!(
+            Mode::of(&json!({"metadata": {
+                "labels": {"addonmanager.kubernetes.io/mode": "EnsureExists"},
+                "annotations": {"addonmanager.kubernetes.io/mode": "Reconcile"}}})),
+            Mode::EnsureExists
         );
         // An unrecognised value is the safe one, not an error.
         assert_eq!(
