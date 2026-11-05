@@ -145,7 +145,13 @@ fn parse(text: &str) -> (Vec<Value>, bool) {
                 Ok(json) => out.push(json),
                 Err(_) => clean = false,
             },
-            Err(_) => clean = false,
+            // serde_yaml's document iterator does not move past a syntax
+            // error: it yields the same error again, so stop at the first
+            // (#307 — a malformed file hung the applier).
+            Err(_) => {
+                clean = false;
+                break;
+            }
         }
     }
     (out, clean)
