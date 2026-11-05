@@ -325,6 +325,13 @@ ConfigMap refused; a CR's schema default and generation — and after a
 restart a Reconcile keeps the Service's allocations and refuses an immutable
 ConfigMap's change.
 
+`e2e/manifest-prune.sh` (#236, suite `rigs`): stormcos's network flavour
+switch over a kept store — the other flavour's files are dangling links.
+After the switch cilium's DaemonSet (mode as a label, #299), ServiceAccount
+and Reconcile ConfigMap are pruned and logged, an EnsureExists ConfigMap
+and a ClusterRole taken off Reconcile stay, flowsdn's DaemonSet is applied;
+an unchanged third start prunes nothing.
+
 `e2e/vmi-verbs.sh` (#141, suite `rigs`): the five VMI verbs against a stub
 kubelet on 127.0.0.1:10250 — path, bearer, query and answer passed through,
 dryRun not forwarded, 409/404 cases, `edit` allowed and `view` refused.

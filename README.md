@@ -524,6 +524,20 @@ yet, is retried in the background in filename order (1 s doubling to 30 s)
 until it applies — a kind still unserved after 10 min is given up at ERROR;
 the pass's summary line names the failures by cause (#293). Not RBAC,
 webhooks or the requester stamp: these are the apiserver's own writes.
+**What left the directory is pruned (#236)**, as upstream's addon-manager
+does: the applier records the `Reconcile` documents it applied in ConfigMap
+`kube-system/rustkube-manifests` (the directory and each object's
+apiVersion/kind/namespace/name), and at the next start deletes those no file
+names any more — a removed file and a dangling symlink alike (stormcos's
+other network flavour, #261) — logging `manifests: pruned <kind> <ns>/<name>`.
+Only while the stored object still says `Reconcile` (an operator who sets
+`EnsureExists` keeps it); `EnsureExists` objects and objects the applier
+never recorded (applied before this, or made by others) are never pruned.
+The delete is a plain DELETE's: finalizers set `deletionTimestamp`, a
+Namespace goes Terminating, a Service gives back its addresses, dependents go
+by the GC. Nothing is pruned when a file cannot be read or parsed, or the
+directory has no manifests; a prune the datastore refused is owed to the
+next start.
 Each boot phase logs its duration as it ends (`boot phase datastore_wait:
 33.7s` — connect, datastore_wait, backfill, bootstrap, crd_load, manifests,
 claims, auth, tls), and one summary line when the server starts accepting
@@ -844,7 +858,7 @@ override environment values.
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--service-node-port-range` | | `30000-32767` | NodePort range, inclusive (#132) |
-| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if labelled (upstream's place, #299) or annotated `addonmanager.kubernetes.io/mode: Reconcile`; what the datastore refused retried until it applies (#293) |
+| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if labelled (upstream's place, #299) or annotated `addonmanager.kubernetes.io/mode: Reconcile`, and pruned at a later start once no file names it (#236); what the datastore refused retried until it applies (#293) |
 | `--data-dir` | | `/var/lib/kubernetes` | where the `--tls` self-signed pair is kept (#88); nothing else |
 | `--cluster-domain` | | `cluster.local` | the `--tls` certificate's `kubernetes.default.svc.<domain>` SAN (#88); nothing else |
 

@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-04
+- **feat:** The `--manifest-dir` applier prunes what left the directory (#236, stormcos#668): it records the `Reconcile` documents it applied in ConfigMap `kube-system/rustkube-manifests` and, at the next start, deletes those no file names any more (a dangling symlink names nothing, so a cilium ↔ flowsdn switch over a kept datastore removes the old flavour's DaemonSets). Only objects it recorded and whose stored copy still says `Reconcile`; never `EnsureExists`. Deletes as a plain DELETE (finalizers, Namespace termination, Service addresses released); each logged. Nothing is pruned when a manifest cannot be read or parsed or the directory is empty. Unit; rig `manifest-prune.sh` (rigs).
 - **fix:** The `--manifest-dir` applier reads `addonmanager.kubernetes.io/mode` from the object's **label** first, as upstream's addon-manager does, then the annotation, then `storm.io/manifest-mode` (#299). 22 stormcos manifest files carry it only as a label, so their RBAC rules and CRDs were treated as `EnsureExists` and never updated on a cluster whose datastore survived an install.
 
 ### 2026-10-29

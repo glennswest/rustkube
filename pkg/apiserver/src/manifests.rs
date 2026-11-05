@@ -32,6 +32,12 @@
 //! the filenames carry it. A CRD applied in this pass is registered as it goes,
 //! so a custom resource later in the same pass resolves.
 //!
+//! **What left the directory is removed (#236).** The applier records the
+//! `Reconcile` documents it applied (ConfigMap `kube-system/rustkube-manifests`)
+//! and, at the next start, deletes those no file names any more — the way
+//! upstream's addon-manager prunes. `EnsureExists` objects are never pruned,
+//! nor an object whose stored copy no longer says `Reconcile`; see [`prune`].
+//!
 //! **What the datastore refused is tried again (#293).** The pass runs once,
 //! but a document that failed because the datastore could not be read or
 //! written — or whose kind is not served yet, because its CRD failed the same
@@ -123,19 +129,26 @@ fn store_trouble(e: &crate::error::ApiError) -> bool {
 /// or a file that is only comments — are dropped rather than reported, since
 /// they are normal in generated manifests.
 pub fn documents(text: &str) -> Vec<Value> {
+    parse(text).0
+}
+
+/// [`documents`], and whether every document parsed: a file that did not
+/// parse whole may name objects nobody can see, so nothing is pruned (#236).
+fn parse(text: &str) -> (Vec<Value>, bool) {
     let mut out = Vec::new();
+    let mut clean = true;
     for doc in serde_yaml::Deserializer::from_str(text) {
         match serde_yaml::Value::deserialize(doc) {
             Ok(serde_yaml::Value::Null) => {}
             Ok(v) => match serde_json::to_value(v) {
                 Ok(Value::Null) => {}
                 Ok(json) => out.push(json),
-                Err(_) => {}
+                Err(_) => clean = false,
             },
-            Err(_) => {}
+            Err(_) => clean = false,
         }
     }
-    out
+    (out, clean)
 }
 
 use serde::Deserialize;
@@ -504,14 +517,26 @@ pub async fn apply_dir(
     }
     let mut docs = Vec::new();
     let mut unreadable = 0;
+    let mut complete = true;
     for path in &files {
         let Ok(text) = std::fs::read_to_string(path) else {
             tracing::error!("manifests: cannot read {}", path.display());
             unreadable += 1;
+            complete = false;
             continue;
         };
-        docs.extend(documents(&text).into_iter().map(|obj| Document { path: path.clone(), obj }));
+        let (objs, clean) = parse(&text);
+        if !clean {
+            tracing::error!("manifests: {} has a document that does not parse", path.display());
+            complete = false;
+        }
+        docs.extend(objs.into_iter().map(|obj| Document { path: path.clone(), obj }));
     }
+    let named: Vec<Entry> = docs
+        .iter()
+        .filter(|d| Mode::of(&d.obj) == Mode::Reconcile)
+        .filter_map(|d| Entry::of(&d.obj))
+        .collect();
     let mut pass = apply_all(storage, crds, service_cidr, docs).await;
     pass.failed += unreadable;
     let summary = format!(
@@ -530,6 +555,233 @@ pub async fn apply_dir(
     } else {
         tracing::warn!("{summary} ({}); retrying {} in the background", pass.causes(), pass.retry.len());
         tokio::spawn(retry(storage.clone(), crds.clone(), service_cidr.to_string(), pass.retry));
+    }
+    prune(storage, crds, dir, named, complete).await;
+}
+
+/// One `Reconcile` document, as the inventory records it (#236).
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Entry {
+    api_version: String,
+    kind: String,
+    #[serde(default)]
+    namespace: String,
+    name: String,
+}
+
+impl Entry {
+    fn of(obj: &Value) -> Option<Entry> {
+        let s = |v: &Value| v.as_str().unwrap_or("").to_string();
+        let e = Entry {
+            api_version: s(&obj["apiVersion"]),
+            kind: s(&obj["kind"]),
+            namespace: s(&obj["metadata"]["namespace"]),
+            name: s(&obj["metadata"]["name"]),
+        };
+        (!e.api_version.is_empty() && !e.kind.is_empty() && !e.name.is_empty()).then_some(e)
+    }
+
+    /// The object it names: the group, not the version — a manifest moving
+    /// to a new version still names the same object — and no namespace is
+    /// `default`, as the applier stores it.
+    fn id(&self) -> (String, &str, &str, &str) {
+        let ns = if self.namespace.is_empty() { "default" } else { &self.namespace };
+        (group_version(&self.api_version).0, &self.kind, ns, &self.name)
+    }
+
+    fn what(&self) -> String {
+        if self.namespace.is_empty() {
+            format!("{} {}", self.kind, self.name)
+        } else {
+            format!("{} {}/{}", self.kind, self.namespace, self.name)
+        }
+    }
+
+    /// Prune order: other kinds first, then CRDs, then Namespaces.
+    fn rank(&self) -> u8 {
+        match self.kind.as_str() {
+            "Namespace" => 2,
+            "CustomResourceDefinition" => 1,
+            _ => 0,
+        }
+    }
+}
+
+/// Where the applier records what it applied: one ConfigMap, the directory
+/// and the `Reconcile` documents it named.
+const INVENTORY_NS: &str = "kube-system";
+const INVENTORY: &str = "rustkube-manifests";
+
+/// What pruning one recorded object came to.
+#[derive(Debug, PartialEq)]
+enum Pruned {
+    /// Deleted, or its deletion started (finalizers, a Namespace).
+    Deleted,
+    /// Already gone, already deleting, or of a kind no longer served.
+    Gone,
+    /// There, but no longer `Reconcile`: someone took it over; left.
+    Kept,
+    /// The datastore did not answer, or the object changed under the delete:
+    /// tried again next start.
+    Later(String),
+}
+
+/// Delete what an earlier start applied as `Reconcile` and no file in the
+/// directory names any more (#236) — upstream's addon-manager prune.
+///
+/// What counts is the inventory, not every `Reconcile` object in the
+/// cluster: only objects this applier applied are pruned, and only while
+/// the stored object still says `Reconcile`. A dangling link (stormcos's
+/// other network's files, #261) names nothing, so a flavour switch removes
+/// the old flavour. Nothing is pruned when a file could not be read or
+/// parsed, or when the directory has no manifests at all (an unmounted
+/// pallet must not empty the cluster); the inventory then keeps what it had.
+async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named: Vec<Entry>, complete: bool) {
+    let key = ResourceStorage::namespaced_key("configmaps", INVENTORY_NS, INVENTORY);
+    let stored = match storage.get(&key).await {
+        Ok(cm) => Some(cm),
+        Err(e) if e.reason == "NotFound" => None,
+        Err(e) => {
+            tracing::warn!("manifests: inventory not read, nothing pruned this start: {}", e.message);
+            return;
+        }
+    };
+    let dir_text = dir.display().to_string();
+    let previous: Vec<Entry> = match &stored {
+        Some(cm) if cm["data"]["manifest-dir"].as_str() == Some(dir_text.as_str()) => {
+            serde_json::from_str(cm["data"]["objects"].as_str().unwrap_or("[]")).unwrap_or_default()
+        }
+        Some(cm) => {
+            tracing::info!(
+                "manifests: inventory was for {}, not {dir_text}: nothing pruned this start",
+                cm["data"]["manifest-dir"].as_str().unwrap_or("?")
+            );
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
+    let wanted: std::collections::HashSet<_> = named.iter().map(Entry::id).collect();
+    let mut stale: Vec<Entry> = previous.into_iter().filter(|e| !wanted.contains(&e.id())).collect();
+    stale.sort_by_key(Entry::rank);
+
+    let mut keep = Vec::new();
+    let mut pruned = 0;
+    if !complete && !stale.is_empty() {
+        tracing::warn!(
+            "manifests: {} recorded object(s) not named, not pruned: a manifest in {dir_text} could not be read",
+            stale.len()
+        );
+        keep = stale;
+    } else {
+        for entry in stale {
+            match prune_one(storage, crds, &entry).await {
+                Pruned::Deleted => {
+                    tracing::info!("manifests: pruned {}: no manifest in {dir_text} names it", entry.what());
+                    pruned += 1;
+                }
+                Pruned::Gone => {}
+                Pruned::Kept => tracing::info!(
+                    "manifests: {} is no longer named but no longer Reconcile either: left",
+                    entry.what()
+                ),
+                Pruned::Later(why) => {
+                    tracing::warn!("manifests: {} not pruned ({why}); will retry next start", entry.what());
+                    keep.push(entry);
+                }
+            }
+        }
+    }
+    if pruned > 0 {
+        tracing::info!("manifests: pruned {pruned} object(s) no manifest in {dir_text} names");
+    }
+
+    // The record for the next start: what is named now, and what is still
+    // owed a prune.
+    let mut objects = named;
+    objects.extend(keep);
+    let data = serde_json::json!({
+        "manifest-dir": dir_text,
+        "objects": serde_json::to_string(&objects).unwrap_or_else(|_| "[]".into()),
+    });
+    let written = match stored {
+        Some(mut cm) => {
+            if cm["data"] == data {
+                return;
+            }
+            let rev = cm["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
+            cm["data"] = data;
+            storage.update(&key, cm, rev).await.map(|_| ())
+        }
+        None => {
+            let mut cm = serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": INVENTORY, "namespace": INVENTORY_NS},
+                "data": data,
+            });
+            crate::handlers::resource::ensure_metadata_pub(&mut cm, INVENTORY, Some(INVENTORY_NS));
+            storage.create(&key, cm).await.map(|_| ())
+        }
+    };
+    if let Err(e) = written {
+        // Another apiserver applying the same directory wrote the same record.
+        if e.reason != "Conflict" && e.reason != "AlreadyExists" {
+            tracing::warn!("manifests: inventory not written: {}", e.message);
+        }
+    }
+}
+
+/// Delete one recorded object, as a DELETE with no options would: finalizers
+/// and a Namespace's termination honoured, a Service's addresses given back,
+/// conditional on the revision just read.
+async fn prune_one(storage: &ResourceStorage, crds: &CrdRegistry, entry: &Entry) -> Pruned {
+    let probe = serde_json::json!({"apiVersion": entry.api_version, "kind": entry.kind});
+    let Ok(Target { resource, namespaced, .. }) = resolve(&probe, crds).await else {
+        return Pruned::Gone;
+    };
+    let key = if namespaced {
+        ResourceStorage::namespaced_key(&resource, entry.id().2, &entry.name)
+    } else {
+        ResourceStorage::cluster_key(&resource, &entry.name)
+    };
+    let mut current = match storage.get(&key).await {
+        Ok(current) => current,
+        Err(e) if e.reason == "NotFound" => return Pruned::Gone,
+        Err(e) => return Pruned::Later(e.message),
+    };
+    if Mode::of(&current) != Mode::Reconcile {
+        return Pruned::Kept;
+    }
+    if !current["metadata"]["deletionTimestamp"].is_null() {
+        return Pruned::Gone;
+    }
+    let rev = current["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse::<u64>().ok());
+    let now = serde_json::json!(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+    let has_finalizers = current["metadata"]["finalizers"].as_array().is_some_and(|f| !f.is_empty());
+    let done = if resource == "namespaces" {
+        // Terminating, as a DELETE leaves it: the namespace controller
+        // empties it and `/finalize` removes it.
+        current["metadata"]["deletionTimestamp"] = now;
+        current["status"]["phase"] = serde_json::json!("Terminating");
+        let mut fins = current["spec"]["finalizers"].as_array().cloned().unwrap_or_default();
+        if !fins.iter().any(|f| f == "kubernetes") {
+            fins.push(serde_json::json!("kubernetes"));
+        }
+        current["spec"]["finalizers"] = Value::Array(fins);
+        storage.update(&key, current, rev).await.map(|_| ())
+    } else if has_finalizers {
+        current["metadata"]["deletionTimestamp"] = now;
+        storage.update(&key, current, rev).await.map(|_| ())
+    } else {
+        if resource == "services" {
+            crate::node_port::release_all(storage, &current).await;
+        }
+        storage.delete(&key, rev).await
+    };
+    match done {
+        Ok(()) => Pruned::Deleted,
+        Err(e) if e.reason == "NotFound" => Pruned::Gone,
+        Err(e) => Pruned::Later(e.message),
     }
 }
 
@@ -819,6 +1071,77 @@ metadata:
                 "clusterrole {name} not applied by the retries"
             );
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn role_yaml(name: &str, mode: Option<&str>) -> String {
+        let labels = mode.map_or(String::new(), |m| format!("  labels:\n    addonmanager.kubernetes.io/mode: {m}\n"));
+        format!("apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: {name}\n{labels}rules: []\n")
+    }
+
+    /// What left the directory is pruned at the next start (#236): a removed
+    /// file and a dangling link (stormcos's other network, #261) alike.
+    /// EnsureExists objects, objects someone took off Reconcile, and
+    /// everything when a file does not parse, are left.
+    #[tokio::test]
+    async fn objects_whose_manifest_left_the_directory_are_pruned() {
+        let dir = std::env::temp_dir().join(format!("rk-manifests-prune-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = Arc::new(ResourceStorage::new(store.clone()));
+        let crds = Arc::new(CrdRegistry::new());
+        let cidr = "10.96.0.0/12";
+        let role = |n: &str| ResourceStorage::cluster_key("clusterroles", n);
+        let ns_key = ResourceStorage::cluster_key("namespaces", "cilium-secrets");
+
+        std::fs::write(dir.join("10-a.yaml"), role_yaml("a", Some("Reconcile"))).unwrap();
+        std::fs::write(dir.join("20-b.yaml"), role_yaml("b", Some("Reconcile"))).unwrap();
+        std::fs::write(dir.join("30-e.yaml"), role_yaml("e", None)).unwrap();
+        std::fs::write(dir.join("40-m.yaml"), role_yaml("m", Some("Reconcile"))).unwrap();
+        std::fs::write(
+            dir.join("50-ns.yaml"),
+            "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: cilium-secrets\n  annotations:\n    \
+             addonmanager.kubernetes.io/mode: Reconcile\n",
+        )
+        .unwrap();
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        for n in ["a", "b", "e", "m"] {
+            assert!(storage.get(&role(n)).await.is_ok(), "{n} not applied");
+        }
+
+        // The release drops b (its file a dangling link now), e, m and the
+        // Namespace; an operator took m off Reconcile.
+        std::fs::remove_file(dir.join("20-b.yaml")).unwrap();
+        std::os::unix::fs::symlink("/nonexistent/pallets/cilium/20-b.yaml", dir.join("20-b.yaml")).unwrap();
+        for f in ["30-e.yaml", "40-m.yaml", "50-ns.yaml"] {
+            std::fs::remove_file(dir.join(f)).unwrap();
+        }
+        let mut m = storage.get(&role("m")).await.unwrap();
+        m["metadata"]["labels"]["addonmanager.kubernetes.io/mode"] = json!("EnsureExists");
+        storage.update(&role("m"), m, None).await.unwrap();
+
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("a")).await.is_ok(), "a is still named");
+        assert_eq!(storage.get(&role("b")).await.unwrap_err().reason, "NotFound", "b not pruned");
+        assert!(storage.get(&role("e")).await.is_ok(), "EnsureExists e pruned");
+        assert!(storage.get(&role("m")).await.is_ok(), "m, taken off Reconcile, pruned");
+        let ns = storage.get(&ns_key).await.unwrap();
+        assert_eq!(ns["status"]["phase"], "Terminating", "{ns}");
+        assert!(ns["metadata"]["deletionTimestamp"].is_string());
+
+        // A file that does not parse: nothing is pruned, and what it may
+        // name is still owed a prune once it does.
+        std::fs::remove_file(dir.join("20-b.yaml")).unwrap();
+        std::fs::write(dir.join("20-b.yaml"), role_yaml("b", Some("Reconcile"))).unwrap();
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("b")).await.is_ok(), "b back");
+        std::fs::write(dir.join("20-b.yaml"), "apiVersion: [unclosed\n").unwrap();
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("b")).await.is_ok(), "pruned from a directory that did not parse");
+        std::fs::remove_file(dir.join("20-b.yaml")).unwrap();
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert_eq!(storage.get(&role("b")).await.unwrap_err().reason, "NotFound", "b owed a prune");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
