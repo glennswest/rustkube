@@ -3,6 +3,8 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-04
+- **test:** #236/#299 verified: `manifest-prune.sh` 12/12 in 3 runs on conform.g8.lo from golden-rustkube-apiserver-4b47213c228d; the dd354b3a apiserver fails 5 (no inventory, the old flavour's DaemonSet, ServiceAccount and ConfigMap left). #236, #299 closed.
+- **fix:** A manifest file with a YAML syntax error no longer hangs the applier: serde_yaml's document iterator yields the same error forever, so parsing stops at the first one (#307, found by #236's unit, which hung its build for an hour).
 - **feat:** The `--manifest-dir` applier prunes what left the directory (#236, stormcos#668): it records the `Reconcile` documents it applied in ConfigMap `kube-system/rustkube-manifests` and, at the next start, deletes those no file names any more (a dangling symlink names nothing, so a cilium ↔ flowsdn switch over a kept datastore removes the old flavour's DaemonSets). Only objects it recorded and whose stored copy still says `Reconcile`; never `EnsureExists`. Deletes as a plain DELETE (finalizers, Namespace termination, Service addresses released); each logged. Nothing is pruned when a manifest cannot be read or parsed or the directory is empty. Unit; rig `manifest-prune.sh` (rigs).
 - **fix:** The `--manifest-dir` applier reads `addonmanager.kubernetes.io/mode` from the object's **label** first, as upstream's addon-manager does, then the annotation, then `storm.io/manifest-mode` (#299). 22 stormcos manifest files carry it only as a label, so their RBAC rules and CRDs were treated as `EnsureExists` and never updated on a cluster whose datastore survived an install.
 

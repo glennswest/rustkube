@@ -115,18 +115,25 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### Manifest-dir prune (#236, P1, stormcos#668) + mode from the label (#299) — IN PROGRESS 2026-11-04
+### Manifest-dir prune (#236, P1, stormcos#668) + mode from the label (#299) — COMPLETE 2026-11-04
 A flavour switch over kept data (cilium ↔ flowsdn on server1) leaves the old
 flavour's DaemonSets in ImagePullBackOff: the applier only creates/updates.
-- [ ] #299 `Mode::of`: label first (upstream), then the annotation, then
+- [x] 3089917 #299 `Mode::of`: label first (upstream), then the annotation, then
       `storm.io/manifest-mode`; units; help text, module doc
-- [ ] #236 inventory ConfigMap `kube-system/rustkube-manifests` (the dir +
+- [x] 847063d #236 inventory ConfigMap `kube-system/rustkube-manifests` (the dir +
       the Reconcile documents it named); at startup, after the pass, delete
       recorded objects no readable file names any more (dangling link = not
       named) if the stored object is still Reconcile; finalizers/Namespaces
       terminate; no prune when a file is unreadable/unparseable or the dir
       is empty; each deletion logged. Units; rig; docs
-- [ ] sc-build; rig on conform.g8.lo from the golden; close both
+- [x] 847063d's build hung an hour (#307, P0 auto-filed): serde_yaml's
+      document iterator repeats a syntax error forever, and my unit fed it
+      one; ebd156a stops at the first. Build VM sc-build-435774720f: 0
+      warnings, apiserver 352 passed, clippy clean in manifests.rs, 80 s
+- [x] golden-rustkube-apiserver-4b47213c228d on conform.g8.lo:
+      manifest-prune 12/12 ×3; control dd354b3a fails 5 (no inventory,
+      nothing pruned). Objects applied before this are not in the inventory
+      (server1's leftovers: one manual delete). #236, #299, #307 closed
 
 ### server1 reboot: apiserver listens 385–775 s after root ready (#290, P0) — SHIPPED 2026-10-28
 Read from server1's boot logs (stormcentral bootlog server1-1792702658,
