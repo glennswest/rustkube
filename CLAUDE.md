@@ -640,7 +640,7 @@ create, and concurrent creates raced for the same lowest address.
 - [x] golden-rustkube-4f7661e44994 (stormcos#366); marked shipped. Whether
       the controller should exist stays #70
 
-### API aggregation wired (#83, P2) — BUILT, rig waits for test runs 2026-10-07
+### API aggregation wired (#83, P2) — COMPLETE 2026-11-06
 Done when a registered, Available APIService's group is in discovery and its
 requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 (#89's real HPA, `kubectl top`), stormblock's storage.storm.io (comment).
@@ -667,9 +667,11 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
 - [x] Build VM at fc180f3: tests pass (apiserver 334), aggregation.rs clippy-clean
 - [x] rigs: 3dd6f3f469, b29fc80675 errored (pvetest2 down; pvetest1 no
       release) → stormcentral#846 (closed)
-- [ ] rig: effaf28113 (pvetest2, c90df0c, 2026-10-21) errored — nodes'
-      sbregistry has no forge peer (stormcos#271); proposed after it. fc180f3
-      is in golden build 26a55cc30646. Then rig, close
+- [x] rig: effaf28113 (pvetest2, c90df0c, 2026-10-21) errored (stormcos#271);
+      test machines still can't start test pods (stormcentral#512), so on
+      conform.g8.lo from the ebd156a goldens (apiserver 4b47213c228d, has
+      fc180f3): aggregation 21/21 ×3; control efbea2d refuses
+      `--proxy-client-cert-file` (no aggregation). #83 closed
 
 ### Store compaction / continue-token expiry (#139, P2) — COMPLETE 2026-10-14
 - [x] fastetcd: auto-compaction off by default (`--auto-compaction-retention
