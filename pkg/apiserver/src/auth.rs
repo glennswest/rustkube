@@ -16,7 +16,7 @@ use jsonwebtoken::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::storage::ResourceStorage;
 
@@ -221,20 +221,120 @@ fn pem_blocks(pem: &[u8]) -> Vec<String> {
 /// `deletionTimestamp`, as upstream allows, so a terminating pod can finish.
 const DELETED_GRACE_SECS: i64 = 60;
 
+/// One verification key, with its `saPin` when it is an SPKI public key.
+struct Verifier {
+    key: DecodingKey,
+    algorithm: Algorithm,
+    pin: Option<String>,
+}
+
+/// `sha256:` and the hex SHA-256 of a `PUBLIC KEY` PEM block's
+/// SubjectPublicKeyInfo DER: the pin stormcluster names a ServiceAccount pair
+/// by (`saPin`, stormcluster `src/sakey.rs`). None for other PEM kinds.
+fn spki_pin(block: &str) -> Option<String> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    if !block.starts_with("-----BEGIN PUBLIC KEY-----") {
+        return None;
+    }
+    let body: String = block.lines().filter(|l| !l.starts_with("-----")).collect();
+    let der = base64::engine::general_purpose::STANDARD.decode(body.trim()).ok()?;
+    let digest = sha2::Sha256::digest(&der);
+    Some(format!("sha256:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>()))
+}
+
+/// The keys in use: what tokens are signed with and verified against.
+/// Swapped whole when the key files change (#298).
+struct Material {
+    encoding: EncodingKey,
+    /// The signing key's algorithm — RS256 or ES256 for a real
+    /// ServiceAccount key, HS256 for the ephemeral dev key.
+    algorithm: Algorithm,
+    /// Every public key of every `--service-account-key-file` (#223). A
+    /// token verifies against any of them, so a cluster rotates by adding the
+    /// new public key everywhere, switching the signing key, waiting for
+    /// tokens to turn over and then dropping the old key, as upstream does.
+    decoding: Vec<Verifier>,
+    /// The keys verified against before the last reload, kept until the next
+    /// one, so a token signed just before a pair is replaced still verifies
+    /// (#298).
+    retired: Vec<Verifier>,
+    /// The signing key's pin: that of the public key its tokens verify with.
+    signing_pin: Option<String>,
+}
+
+impl Material {
+    /// The signing key (RSA, or ECDSA P-256) and every public key in the
+    /// verification files — each file may hold several PEM public keys.
+    fn parse(private_pem: &[u8], public_pems: &[&[u8]]) -> Result<Self, jsonwebtoken::errors::Error> {
+        let (encoding, algorithm) = match EncodingKey::from_rsa_pem(private_pem) {
+            Ok(k) => (k, Algorithm::RS256),
+            Err(_) => (EncodingKey::from_ec_pem(private_pem)?, Algorithm::ES256),
+        };
+        let mut decoding = Vec::new();
+        for pem in public_pems {
+            for block in pem_blocks(pem) {
+                let (key, algorithm) = match DecodingKey::from_rsa_pem(block.as_bytes()) {
+                    Ok(k) => (k, Algorithm::RS256),
+                    Err(_) => (DecodingKey::from_ec_pem(block.as_bytes())?, Algorithm::ES256),
+                };
+                decoding.push(Verifier { key, algorithm, pin: spki_pin(&block) });
+            }
+        }
+        if decoding.is_empty() {
+            return Err(jsonwebtoken::errors::ErrorKind::InvalidKeyFormat.into());
+        }
+        let mut material = Self { encoding, algorithm, decoding, retired: Vec::new(), signing_pin: None };
+        material.signing_pin = material.signer().and_then(|v| v.pin.clone());
+        Ok(material)
+    }
+
+    /// The verification key the signing key's tokens verify with, if any: a
+    /// probe token is signed and checked against each.
+    fn signer(&self) -> Option<&Verifier> {
+        let probe = Claims {
+            iss: None,
+            sub: "probe".into(),
+            aud: None,
+            groups: Vec::new(),
+            iat: 0,
+            nbf: None,
+            exp: u64::MAX / 2,
+            jti: None,
+            kubernetes: None,
+        };
+        let token = encode(&Header::new(self.algorithm), &probe, &self.encoding).ok()?;
+        self.decoding.iter().find(|v| {
+            let mut validation = Validation::new(v.algorithm);
+            validation.validate_aud = false;
+            decode::<Claims>(&token, &v.key, &validation).is_ok()
+        })
+    }
+
+    /// The pins, for the log: the signing key's and each verification key's.
+    fn describe(&self) -> String {
+        let pins = |keys: &[Verifier]| -> Vec<String> {
+            keys.iter().map(|v| v.pin.clone().unwrap_or_else(|| "(not SPKI)".into())).collect()
+        };
+        format!(
+            "signing saPin {}, verifying {:?}{}",
+            self.signing_pin.as_deref().unwrap_or("(not among the verification keys)"),
+            pins(&self.decoding),
+            if self.retired.is_empty() {
+                String::new()
+            } else {
+                format!(", and until the next change the previous {:?}", pins(&self.retired))
+            }
+        )
+    }
+}
+
 /// Signing keys for JWT token creation and validation, with the issuer and
 /// audiences tokens are minted and checked against.
 #[derive(Clone)]
 pub struct SigningKeys {
-    pub encoding: EncodingKey,
-    /// What tokens are verified against, each with its algorithm: every
-    /// public key of every `--service-account-key-file` (#223). A token
-    /// verifies against any of them, so a cluster rotates by adding the new
-    /// public key everywhere, switching the signing key, waiting for tokens
-    /// to turn over and then dropping the old key, as upstream does.
-    decoding: Arc<[(DecodingKey, Algorithm)]>,
-    /// The signing key's algorithm — RS256 or ES256 for a real
-    /// ServiceAccount key, HS256 for the ephemeral dev key.
-    algorithm: Algorithm,
+    /// Shared by every clone, so a reload reaches every handler (#298).
+    keys: Arc<RwLock<Arc<Material>>>,
     issuer: Arc<str>,
     /// `--api-audiences`: what a token must be for to authenticate here.
     audiences: Arc<[String]>,
@@ -246,16 +346,18 @@ pub struct SigningKeys {
 }
 
 impl SigningKeys {
-    fn with_keys(encoding: EncodingKey, decoding: Vec<(DecodingKey, Algorithm)>, algorithm: Algorithm) -> Self {
+    fn with_material(material: Material) -> Self {
         Self {
-            encoding,
-            decoding: decoding.into(),
-            algorithm,
+            keys: Arc::new(RwLock::new(Arc::new(material))),
             issuer: DEFAULT_ISSUER.into(),
             audiences: vec![DEFAULT_ISSUER.to_string()].into(),
             extend_expiration: true,
             bound: None,
         }
+    }
+
+    fn material(&self) -> Arc<Material> {
+        self.keys.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Generate an ephemeral HMAC-SHA256 signing key (dev only).
@@ -264,11 +366,17 @@ impl SigningKeys {
     /// apiserver replica — use `from_rsa_pem` in any real cluster (#11).
     pub fn generate() -> Self {
         let secret = uuid::Uuid::new_v4().to_string();
-        Self::with_keys(
-            EncodingKey::from_secret(secret.as_bytes()),
-            vec![(DecodingKey::from_secret(secret.as_bytes()), Algorithm::HS256)],
-            Algorithm::HS256,
-        )
+        Self::with_material(Material {
+            encoding: EncodingKey::from_secret(secret.as_bytes()),
+            algorithm: Algorithm::HS256,
+            decoding: vec![Verifier {
+                key: DecodingKey::from_secret(secret.as_bytes()),
+                algorithm: Algorithm::HS256,
+                pin: None,
+            }],
+            retired: Vec::new(),
+            signing_pin: None,
+        })
     }
 
     /// Load the ServiceAccount RS256 keypair: a PKCS#1/PKCS#8 private key PEM
@@ -288,28 +396,43 @@ impl SigningKeys {
     /// verification files — each file may hold several PEM public keys, as
     /// upstream's `--service-account-key-file` may (#223).
     pub fn from_pem(private_pem: &[u8], public_pems: &[&[u8]]) -> Result<Self, jsonwebtoken::errors::Error> {
-        let (encoding, algorithm) = match EncodingKey::from_rsa_pem(private_pem) {
-            Ok(k) => (k, Algorithm::RS256),
-            Err(_) => (EncodingKey::from_ec_pem(private_pem)?, Algorithm::ES256),
-        };
-        let mut decoding = Vec::new();
-        for pem in public_pems {
-            for block in pem_blocks(pem) {
-                decoding.push(match DecodingKey::from_rsa_pem(block.as_bytes()) {
-                    Ok(k) => (k, Algorithm::RS256),
-                    Err(_) => (DecodingKey::from_ec_pem(block.as_bytes())?, Algorithm::ES256),
-                });
-            }
-        }
-        if decoding.is_empty() {
-            return Err(jsonwebtoken::errors::ErrorKind::InvalidKeyFormat.into());
-        }
-        Ok(Self::with_keys(encoding, decoding, algorithm))
+        Ok(Self::with_material(Material::parse(private_pem, public_pems)?))
     }
 
-    /// How many keys tokens are verified against.
+    /// Replace the keys with the files' new contents (#298), for every clone.
+    /// The keys verified against until now stay good until the next reload.
+    /// Refused, keeping the current keys, when the new signing key's tokens
+    /// would verify against none of the new public keys — a pair caught half
+    /// written; the second half's write is looked at again.
+    pub fn reload(&self, private_pem: &[u8], public_pems: &[&[u8]]) -> anyhow::Result<String> {
+        let mut material = Material::parse(private_pem, public_pems)
+            .map_err(|e| anyhow::anyhow!("loading ServiceAccount keys: {e}"))?;
+        if material.signer().is_none() {
+            anyhow::bail!(
+                "the signing key's public half is in no --service-account-key-file \
+                 (a pair written half way?)"
+            );
+        }
+        let mut current = self.keys.write().unwrap_or_else(|e| e.into_inner());
+        material.retired = current
+            .decoding
+            .iter()
+            .map(|v| Verifier { key: v.key.clone(), algorithm: v.algorithm, pin: v.pin.clone() })
+            .collect();
+        let described = material.describe();
+        *current = Arc::new(material);
+        Ok(described)
+    }
+
+    /// How many keys tokens are verified against (the previous pair's kept
+    /// ones not counted).
     pub fn verifying_keys(&self) -> usize {
-        self.decoding.len()
+        self.material().decoding.len()
+    }
+
+    /// The keys' pins, for the log.
+    pub fn describe(&self) -> String {
+        self.material().describe()
     }
 
     /// Issuer and API audiences (`--service-account-issuer`,
@@ -368,15 +491,19 @@ impl SigningKeys {
 
     /// Sign `claims` as they are.
     pub fn sign(&self, claims: &Claims) -> Option<String> {
-        encode(&Header::new(self.algorithm), claims, &self.encoding).ok()
+        let keys = self.material();
+        encode(&Header::new(keys.algorithm), claims, &keys.encoding).ok()
     }
 
     /// Signature, `exp`/`nbf` and `iss` (when present, it must be ours).
     /// Audiences and bindings are not checked here.
     fn verify(&self, token: &str) -> Option<TokenData<Claims>> {
-        // Any verification key will do (#223): the one its signer used.
-        let data = self.decoding.iter().find_map(|(key, algorithm)| {
-            let mut validation = Validation::new(*algorithm);
+        // Any verification key will do (#223): the one its signer used —
+        // the previous pair's too, until the next reload (#298).
+        let keys = self.material();
+        let data = keys.decoding.iter().chain(&keys.retired).find_map(|v| {
+            let (key, algorithm) = (&v.key, v.algorithm);
+            let mut validation = Validation::new(algorithm);
             validation.validate_exp = true;
             validation.validate_nbf = true;
             // Checked by `audiences_for`: a token with no `aud` (stormcert's,
@@ -884,6 +1011,41 @@ pub(crate) mod tests {
         let only_new = SigningKeys::from_pem(new_priv.as_bytes(), &[new_pub.as_bytes()]).unwrap();
         assert!(only_new.validate_token(&old_token).is_none());
         assert!(SigningKeys::from_pem(new_priv.as_bytes(), &[b"not a key"]).is_err());
+    }
+
+    #[test]
+    fn a_replaced_pair_is_used_without_a_restart() {
+        // #298: a promoted master gets the cluster's pair installed under a
+        // running apiserver.
+        use sha2::Digest as _;
+        let keys = test_keys();
+        let handler = keys.clone();
+        let old_token = sign(serde_json::json!({"sub": "system:serviceaccount:a:b", "exp": in_ten_years()}));
+        let cluster = rcgen::KeyPair::generate().unwrap();
+        let (cluster_priv, cluster_pub) = (cluster.serialize_pem(), cluster.public_key_pem());
+        let only_cluster = || SigningKeys::from_pem(cluster_priv.as_bytes(), &[cluster_pub.as_bytes()]).unwrap();
+
+        let described = keys.reload(cluster_priv.as_bytes(), &[cluster_pub.as_bytes()]).unwrap();
+        let pin: String = sha2::Sha256::digest(cluster.public_key_der()).iter().map(|b| format!("{b:02x}")).collect();
+        assert!(described.contains(&format!("signing saPin sha256:{pin}")), "{described}");
+
+        // Every clone signs with the cluster's key now…
+        let new_token = handler.sign(&handler.validate_token(&old_token).unwrap().claims).unwrap();
+        assert!(only_cluster().validate_token(&new_token).is_some(), "signed with the new key");
+        // …and the node's own key's tokens still verify until the next change.
+        assert!(handler.validate_token(&old_token).is_some());
+
+        // A pair caught half written is refused; the keys in use stay.
+        let other = rcgen::KeyPair::generate().unwrap();
+        assert!(keys.reload(other.serialize_pem().as_bytes(), &[cluster_pub.as_bytes()]).is_err());
+        let still = handler.sign(&handler.validate_token(&new_token).unwrap().claims).unwrap();
+        assert!(only_cluster().validate_token(&still).is_some());
+        assert!(keys.reload(cluster_priv.as_bytes(), &[b"not a key"]).is_err());
+
+        // The next change drops the node's own key.
+        keys.reload(cluster_priv.as_bytes(), &[cluster_pub.as_bytes()]).unwrap();
+        assert!(handler.validate_token(&old_token).is_none());
+        assert!(handler.validate_token(&new_token).is_some());
     }
 
     #[test]

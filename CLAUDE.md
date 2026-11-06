@@ -115,6 +115,17 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
+### ServiceAccount key files followed (#298, P2, stormcos#176) — IN PROGRESS 2026-11-06
+A promote onto a running master (stormcluster#67) or an SNO master join
+(stormcluster#21) installs the cluster's SA pair under a running apiserver,
+which kept signing/verifying with the node's own key.
+- [x] `auth.rs`: keys behind a shared `RwLock` (every clone), `reload`
+      (previous public keys kept until the next change; refused when the
+      signing key's tokens verify against none of the new keys), saPin
+      (sha256 of SPKI) logged; server.rs follows both files via
+      `tls_reload::watch_files`. Unit; README/certificates.md/CHANGELOG
+- [ ] Build VM; rig (key swap under a running apiserver) on conform.g8.lo
+
 ### Manifest-dir prune (#236, P1, stormcos#668) + mode from the label (#299) — COMPLETE 2026-11-04
 A flavour switch over kept data (cilium ↔ flowsdn on server1) leaves the old
 flavour's DaemonSets in ImagePullBackOff: the applier only creates/updates.

@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-06
+- **feat:** `--service-account-signing-key-file` and `--service-account-key-file` are followed (30 s) and a changed pair applies without a restart; the previous public keys verify until the next change; a pair caught half written (signing key not among the public keys) is refused; each load logs the `saPin`s (#298, stormcos#176)
 - **docs:** Docs refreshed from the code since 2026-10-30: README checked date, audit addendum 2026-10-30 to 2026-11-06 (manifest prune #236, mode from the label #299, YAML hang #307), presentation manifests row. No flag, port or default added; no docs promise found that the code does not keep.
 - **test:** #285: released in 12.58 (apiserver 01a3affcd023, CM/scheduler dfb448b7c686); builtin-generation 14/14, job-managed-by 10/10, namespace-order 8/8 on the current goldens; pve/Dell suites wait on stormcentral#512
 - **test:** #96: live `short` run eb5b18ef34 (pvetest2) now fetches the test image from forge but fails ImagePullBackOff before sealing (stormcentral#512); proposed after it

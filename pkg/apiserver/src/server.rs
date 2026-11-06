@@ -1130,9 +1130,10 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             let keys = SigningKeys::from_pem(&priv_pem, &refs)
                 .map_err(|e| anyhow::anyhow!("loading ServiceAccount keys: {e}"))?;
             tracing::info!(
-                "ServiceAccount tokens: signed with {priv_path:?}, verified against {} key(s) in {:?}",
+                "ServiceAccount tokens: signed with {priv_path:?}, verified against {} key(s) in {:?}: {}",
                 keys.verifying_keys(),
-                config.service_account_key
+                config.service_account_key,
+                keys.describe()
             );
             keys
         }
@@ -1155,6 +1156,22 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
             config.service_account_extend_token_expiration,
         )
         .with_bound_objects(storage.clone());
+    // Both files followed (#298): a promoted master gets the cluster's pair
+    // installed under a running apiserver (stormcos#176).
+    if let (Some(priv_path), false) = (
+        &config.service_account_signing_key,
+        config.service_account_key.is_empty(),
+    ) {
+        let mut paths = vec![priv_path.clone()];
+        paths.extend(config.service_account_key.iter().cloned());
+        let keys = signing_keys.clone();
+        apimachinery::tls_reload::watch_files("ServiceAccount key pair", paths, move |files| {
+            let publics: Vec<&[u8]> = files[1..].iter().map(Vec::as_slice).collect();
+            let described = keys.reload(&files[0], &publics)?;
+            tracing::info!("ServiceAccount tokens: {described}");
+            Ok(())
+        });
+    }
     tracing::info!(
         "ServiceAccount tokens: issuer {}, API audiences {:?}",
         signing_keys.issuer(),

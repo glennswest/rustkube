@@ -290,14 +290,30 @@ any of them, and only `--service-account-signing-key-file` signs. A rotation
 therefore never invalidates outstanding tokens at once:
 
 1. add the new public key to every apiserver's `--service-account-key-file`,
-   beside the old one, and restart them;
+   beside the old one (read within 30 s, no restart, #298);
 2. switch `--service-account-signing-key-file` to the new private key;
 3. wait for tokens signed with the old key to turn over (pod-bound tokens
    are refreshed by the kubelet within their 1 h; offline-minted ones must be
    re-minted);
 4. drop the old public key.
 
-Swapping a single key file instead fails every outstanding token the moment
-it is read. The files are read at start (stormcos#176 owns doing this on a
-cluster).
+### Both files are followed (#298)
+
+The signing key and every `--service-account-key-file` are re-read every 30 s
+and on a change take effect without a restart, for every request after it —
+a promoted master gets the cluster's pair installed under a running apiserver
+(stormcos#176, stormcluster#38). Each load logs the pins stormcluster compares
+as `saPin` (`sha256:` + hex SHA-256 of the SPKI DER):
+`ServiceAccount tokens: signing saPin sha256:…, verifying [sha256:…]`.
+
+- The public keys verified against before a change keep verifying **until
+  the next change**, so a token signed with a node's own key just before the
+  cluster's pair replaced it still works. A pair swapped outright (both files
+  at once, as stormcluster installs it) therefore costs no token right away;
+  the old key's tokens stop at the change after that, or at a restart.
+- A change is refused, keeping the keys in use, when a file does not parse or
+  the new signing key's tokens would verify against none of the new public
+  keys — a pair caught half written. The other half's write is looked at on
+  the next tick. A refused or unreadable file is warned about once.
+- The ephemeral HS256 key (either flag absent) is not followed.
 
