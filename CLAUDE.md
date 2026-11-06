@@ -1205,7 +1205,7 @@ at N; Exact → store at N; continuation → store pinned to the token's rev.
 - [x] In every golden since 2026-10-07 (latest be6ddd9ee998); marked
       `shipped` — server1 GET p99 < 20 ms (#187) after a release has it
 
-### e2e rigs as pods on the test machines (#173, P2) — DAY SUITE RUNS; night BLOCKED on stormcos#554, 2026-10-13
+### e2e rigs as pods on the test machines (#173, P2) — night run QUEUED 2026-11-06
 Owner (#162): "Persistent tests should be pods, and should live on forge."
 - [x] 68e3260/f3cea50: test/build.sh stages binaries + upstream tools;
       `/test rigs` / `/test rigs-night` exec `test/rigs.sh`; requires.toml
@@ -1232,8 +1232,10 @@ Owner (#162): "Persistent tests should be pods, and should live on forge."
       check waited for `not-ready`, #267 made it `unreachable` (rig fixed
       19fd0b1, passes); its idle check fails, 15,022–15,564 requests in 60 s
       = #272's EndpointSlice loop (evidence posted there)
-- [ ] First rigs-night pod run once stormcos#271 lets images reach a node
-      (deadlines' idle check stays red until #272); then close #173
+- [ ] First rigs-night pod run: stormcos#271 closed 2026-11-06, #272 closed
+      (idle check should pass). Queued da598f8d8c (pvetest2, 91d0c9c; waits
+      for the 22:00–07:00 Chicago window); day check 5e9f2f7a9c (pvetest1)
+      that images reach a node again. Then close #173
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
