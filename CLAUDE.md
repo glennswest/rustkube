@@ -124,7 +124,9 @@ which kept signing/verifying with the node's own key.
       signing key's tokens verify against none of the new keys), saPin
       (sha256 of SPKI) logged; server.rs follows both files via
       `tls_reload::watch_files`. Unit; README/certificates.md/CHANGELOG
-- [ ] Build VM; rig (key swap under a running apiserver) on conform.g8.lo
+- [x] Build VM sc-build-a41b414221 at 9090e15: 0 warnings, apiserver 353,
+      clippy clean in auth.rs/server.rs
+- [ ] rig `sa-key-reload.sh` (rigs) on conform.g8.lo from the golden; close
 
 ### Manifest-dir prune (#236, P1, stormcos#668) + mode from the label (#299) — COMPLETE 2026-11-04
 A flavour switch over kept data (cilium ↔ flowsdn on server1) leaves the old

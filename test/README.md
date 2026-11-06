@@ -722,6 +722,13 @@ path still works and the token is never logged; that a rewrite rotates it, a
 malformed rewrite keeps the last good token, and removing the file revokes it.
 `RK_APISERVER_ARGS` (lib.sh) passes the extra flag.
 
+`e2e/sa-key-reload.sh` (#298, suite `rigs`, ~2 min) replaces the running
+apiserver's ServiceAccount pair with a cluster's, as a promote onto a running
+master does (stormcos#176): the private key alone is refused (half a pair; the
+node's key keeps signing), the whole pair applies without a restart and is
+logged by its `saPin`, TokenRequest tokens are signed with the new key, the
+node key's tokens keep verifying until the next change and stop after it.
+
 `e2e/admission-webhook.sh` (#82, suite `rigs`) runs a Python HTTPS webhook (certificate
 from the rig's CA, sent as `caBundle`) and checks: a validating webhook with
 an `objectSelector` refuses a labelled ConfigMap create with upstream's
