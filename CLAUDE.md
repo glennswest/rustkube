@@ -115,7 +115,7 @@ clone requests. README's configuration tables come from the three CLI sources.
 
 ## Work Plan
 
-### ServiceAccount key files followed (#298, P2, stormcos#176) — IN PROGRESS 2026-11-06
+### ServiceAccount key files followed (#298, P2, stormcos#176) — COMPLETE 2026-11-06
 A promote onto a running master (stormcluster#67) or an SNO master join
 (stormcluster#21) installs the cluster's SA pair under a running apiserver,
 which kept signing/verifying with the node's own key.
@@ -126,7 +126,9 @@ which kept signing/verifying with the node's own key.
       `tls_reload::watch_files`. Unit; README/certificates.md/CHANGELOG
 - [x] Build VM sc-build-a41b414221 at 9090e15: 0 warnings, apiserver 353,
       clippy clean in auth.rs/server.rs
-- [ ] rig `sa-key-reload.sh` (rigs) on conform.g8.lo from the golden; close
+- [x] golden-rustkube-apiserver-34a8ee084049 (4f59790) on conform.g8.lo:
+      sa-key-reload 14/14 ×3; control ebd156a fails 8 (signs with the node's
+      key, cluster-key tokens 401, no saPin). #298 closed
 
 ### Manifest-dir prune (#236, P1, stormcos#668) + mode from the label (#299) — COMPLETE 2026-11-04
 A flavour switch over kept data (cilium ↔ flowsdn on server1) leaves the old
