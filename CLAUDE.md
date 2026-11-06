@@ -1234,8 +1234,10 @@ Owner (#162): "Persistent tests should be pods, and should live on forge."
       = #272's EndpointSlice loop (evidence posted there)
 - [ ] First rigs-night pod run: stormcos#271 closed 2026-11-06, #272 closed
       (idle check should pass). Queued da598f8d8c (pvetest2, 91d0c9c; waits
-      for the 22:00–07:00 Chicago window); day check 5e9f2f7a9c (pvetest1)
-      that images reach a node again. Then close #173
+      for the 22:00–07:00 Chicago window). Day check 5e9f2f7a9c (pvetest1):
+      forge fetch works now, but the Job started while the node's registry
+      was still `building` the image → ImagePullBackOff (stormcentral#512,
+      evidence posted). Proposed after #512; close after a night run passes
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
