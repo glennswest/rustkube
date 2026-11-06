@@ -163,3 +163,22 @@ specs from the d5f48f5 run. Still open and named in the README: #96 and #173
 (test pods wait on stormcos#271), #282, #285 (rigs), #272-adjacent #274, #295
 (RS/RC adoption and release), #297 (extended resources in fit), #298 (SA key
 re-read), #294 (DER client CA).
+
+## Addendum: 2026-10-30 to 2026-11-06
+
+Checked 2026-11-06 with `git log --since=2026-10-30` (12 commits, main through
+00ec53c; v0.18.0 plus unreleased changes, no version bump). One flag's
+behaviour changed (`--manifest-dir`: help text and README row updated); no
+flag, port or default was added. The code change is `manifests.rs`.
+
+| Area | Current behavior and source | Commits / issues |
+|---|---|---|
+| Manifests | `addonmanager.kubernetes.io/mode` read from the label first, then the annotation, then `storm.io/manifest-mode` (`Mode::of`) | 3089917, #299 |
+| Manifests | Applied `Reconcile` documents recorded in ConfigMap `kube-system/rustkube-manifests`; at the next start recorded objects no file names (a dangling link names nothing) and still stored as `Reconcile` are deleted, logged; no prune when a file is unreadable/unparseable or the directory is empty | 847063d, #236 |
+| Manifests | A YAML syntax error stops parsing of that file (serde_yaml's document iterator repeats it forever) | ebd156a, #307 |
+
+The rest are verification records (#282, #285, #83, #236). Still open and
+named in the README: #96 and #173 (test pods: the node's registry has not
+sealed the test image when the Job starts, stormcentral#512; stormcos#271 is
+fixed), #285's pve/Dell suites, #274, #295, #297, #298, #294. Objects the
+applier made before #236 are not in the inventory and are never pruned.

@@ -158,7 +158,7 @@ summed; scheduling gates, preemption, Events; VMIs placed.
 | scheduler | :10259 (HTTPS with `--tls-cert-file`) — `/healthz`; `/metrics` token-reviewed |
 | datastore | `--etcd-servers` (required), optional mutual TLS |
 | config | flags + a few env vars (`ETCD_SERVERS`, `APISERVER_URL`, `APISERVER_TOKEN`, …), `RUST_LOG`; no config file, no `--kubeconfig` |
-| manifests | `--manifest-dir`: applied once at boot, in filename order |
+| manifests | `--manifest-dir`: applied once at boot, in filename order; what left the directory is pruned at a later start (#236) |
 
 Every flag, its env var and default: README → *Configuration*.
 Metric names follow upstream's: `docs/metrics.md`.
