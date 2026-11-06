@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-11-06
+- **test:** #282 verified: `test/e2e/node-events.sh` 6/6 in 3 of 3 runs on conform.g8.lo from golden-rustkube-apiserver-4b47213c228d; the efbea2d apiserver fails 2 (no `NamespaceTerminating` cause, 403 for a missing namespace)
+
 ### 2026-11-04
 - **test:** #236/#299 verified: `manifest-prune.sh` 12/12 in 3 runs on conform.g8.lo from golden-rustkube-apiserver-4b47213c228d; the dd354b3a apiserver fails 5 (no inventory, the old flavour's DaemonSet, ServiceAccount and ConfigMap left). #236, #299 closed.
 - **fix:** A manifest file with a YAML syntax error no longer hangs the applier: serde_yaml's document iterator yields the same error forever, so parsing stops at the first one (#307, found by #236's unit, which hung its build for an hour).

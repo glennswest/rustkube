@@ -274,7 +274,7 @@ stormblock#485 (closed) measured no stormblock change in the path.
       attempts=1, total 308 ms, no CreateContainerError. pvetest2 12.48:
       4.6 / 3.0 s. Closed as a duplicate of rustkube-node#288
 
-### Kubelet events 403 in a test namespace (#282, P1) — BUILT, rig BLOCKED on stormcos#271, 2026-10-21
+### Kubelet events 403 in a test namespace (#282, P1) — COMPLETE 2026-11-06
 Not RBAC: the stormcos kubelet's cert is `O=system:nodes` → `cluster-admin`.
 The namespace (stormcos_qa turbomode 543727dbc0) was deleted by the run's
 cleanup before the Dell rebooted; the 403 is NamespaceLifecycle (Terminating,
@@ -285,9 +285,10 @@ or missing before 776a392). Upstream also 403s, but with the
 - [x] Build VM sc-build-09c08f291e at d5f48f5: workspace build + tests exit 0
 - [x] Kubelet half filed: rustkube-node#260 (log the cause at debug)
 - [x] Golden requested 2026-10-21 (stage build 143a30c11fc3)
-- [ ] node-events rig: 4c36149c2f (pvetest1) errored, pvetest2 refused,
-      C2NR0Q2 skipped (#791) — nodes' sbregistry has no forge peer
-      (stormcos#271, open). Proposed after it; then close #282
+- [x] node-events rig: test machines still blocked (stormcos#271), so run
+      on conform.g8.lo from golden-rustkube-apiserver-4b47213c228d (ebd156a):
+      6/6 ×3; control efbea2d fails 2 (no NamespaceTerminating cause,
+      missing namespace 403 not 404). #282 closed
 
 ### VM template changes reach the running VMI (#269, P1, stormvm#23/#24) — COMPLETE 2026-10-13
 Kubelet half on rustkube-node main (#246 cpu/memory/NICs, #247 disks): it
