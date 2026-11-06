@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-06
+- **test:** #285: released in 12.58 (apiserver 01a3affcd023, CM/scheduler dfb448b7c686); builtin-generation 14/14, job-managed-by 10/10, namespace-order 8/8 on the current goldens; pve/Dell suites wait on stormcentral#512
 - **test:** #96: live `short` run eb5b18ef34 (pvetest2) now fetches the test image from forge but fails ImagePullBackOff before sealing (stormcentral#512); proposed after it
 - **test:** #83 verified: `test/e2e/aggregation.sh` 21/21 in 3 of 3 runs on conform.g8.lo from golden-rustkube-apiserver-4b47213c228d; the efbea2d apiserver refuses `--proxy-client-cert-file`
 - **test:** #173: first `rigs-night` pod run queued (da598f8d8c, pvetest2) now that stormcos#271 is fixed; day run 5e9f2f7a9c reached the node but the image was not sealed before its Job (stormcentral#512)

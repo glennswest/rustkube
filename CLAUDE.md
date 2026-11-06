@@ -792,7 +792,7 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       51ef481a0b and on conform.g8.lo (apiserver golden 4fe0997b273e);
       control efbea2d fails 16 (200 `<plural>List`, writes stored). #110 closed
 
-### Kubernetes 1.36 API (#285, P2) — BUILT, rigs BLOCKED on stormcos#271, 2026-10-21
+### Kubernetes 1.36 API (#285, P2) — BUILT + RELEASED (12.58), suites BLOCKED on stormcentral#512, 2026-11-06
 The issue's crate pair does not apply: nothing imports k8s-openapi (declared
 0.24 `v1_32` in apimachinery/apiserver/cloud, never `use`d — the only "1.32"
 here) and kube-rs is not used; the wire API is the release-1.36 protos +
@@ -830,9 +830,13 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
       the Deployment controller's revision annotation PUT bumped generation
       (now on its /status write; /status keeps generation), rig had no Node and
       a wrong RS expectation. b52da76 golden: builtin-generation 14/14
-- [ ] Rigs builtin-generation, job-managed-by, namespace-order (+ the rest)
-      when stormcos#271 lets test images reach a node; the issue's
-      "test suites on pve and the Dell" and a release carrying it; then close
+- [x] Published 12.58/12.58-flowsdn carry it: apiserver 01a3affcd023
+      (537e195), CM/scheduler dfb448b7c686 (5074b54). Rigs on the ebd156a
+      goldens (2026-11-06): builtin-generation 14/14, job-managed-by 10/10,
+      namespace-order 8/8
+- [ ] The issue's "test suites on pve and the Dell": test pods
+      ImagePullBackOff before the node's registry seals the image
+      (stormcentral#512; eb5b18ef34, 5e9f2f7a9c). Proposed after it; then close
 
 ### Cold container start 1.49 s on 12.32-flowsdn (#284, P2) — CLOSED (not reproduced) 2026-10-21
 The issue: confirm on the next release before tracing. `testhost installs`
