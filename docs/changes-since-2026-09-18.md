@@ -182,3 +182,20 @@ named in the README: #96 and #173 (test pods: the node's registry has not
 sealed the test image when the Job starts, stormcentral#512; stormcos#271 is
 fixed), #285's pve/Dell suites, #274, #295, #297, #298, #294. Objects the
 applier made before #236 are not in the inventory and are never pruned.
+
+## Addendum: 2026-11-06 to 2026-11-13
+
+Checked 2026-11-13 with `git log --since=2026-11-06` (4 commits, main through
+a9c08b4; v0.18.0 plus unreleased changes, no version bump). One code change:
+`--service-account-signing-key-file` and `--service-account-key-file` are
+followed (`auth.rs`, `server.rs`; README flag row and `docs/certificates.md`
+updated in the same commit, 9090e15). No other flag, port or default changed;
+the rest is the `sa-key-reload` rig, a research note and verification records.
+
+| Area | Current behavior and source | Commits / issues |
+|---|---|---|
+| Auth | SA signing and verifying keys re-read every 30 s; a changed pair applies without a restart; previous public keys verify until the next change; a signing key whose tokens verify against none of the new keys is refused; `saPin` logged per load | 9090e15, 4f59790, #298 |
+
+No docs promise found that the code does not keep. Issues opened since and
+not yet fixed in code (#306, #313, #316, #317, #318 among them) are bugs, not
+documented behaviour. #313: the Job controller ignores `spec.suspend`.

@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-11-13
+- **docs:** Docs refreshed from the code since 2026-11-06: README checked date, audit addendum 2026-11-06 to 2026-11-13 (only #298 changed code, already documented). No flag, port or default added; no docs promise found that the code does not keep.
+
 ### 2026-11-06
 - **test:** #298 verified: `test/e2e/sa-key-reload.sh` 14/14 in 3 of 3 runs on conform.g8.lo from golden-rustkube-apiserver-34a8ee084049; the ebd156a apiserver fails 8
 - **feat:** `--service-account-signing-key-file` and `--service-account-key-file` are followed (30 s) and a changed pair applies without a restart; the previous public keys verify until the next change; a pair caught half written (signing key not among the public keys) is refused; each load logs the `saPin`s (#298, stormcos#176)
