@@ -212,7 +212,7 @@ sys.exit(0 if head.startswith(b"HTTP/1.1 101") and b"echo-test" in head.lower() 
 PY
 [ "$(grep '/w0/echo' "$W/stub.jsonl" | tail -1 | jq_ 'd["user"]=="admin" and d["authorization"] is None')" = True ] \
   && pass "the upgrade reached the backend as the caller, without the caller's token" || fail "upgrade identity: $(grep '/w0/echo' "$W/stub.jsonl" | tail -1)"
-code=$(curl -sk -o "$W/out" -w '%{http_code}' -H "Authorization: Bearer $ADMIN" -H 'Connection: Upgrade' -H 'Upgrade: echo-test' \
+code=$(curl --http1.1 -sk -o "$W/out" -w '%{http_code}' -H "Authorization: Bearer $ADMIN" -H 'Connection: Upgrade' -H 'Upgrade: echo-test' \
   "$API/apis/stub.example.com/v1/namespaces/default/widgets/w0/other")
 [ "$code" = 400 ] && grep -q "no such stream" "$W/out" && pass "a backend's refusal of an upgrade comes back as it sent it" \
   || fail "upgrade refusal: $code $(head -c 200 "$W/out")"
