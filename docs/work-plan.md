@@ -4,19 +4,25 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Registry roles (#325, P0, stormblock-registry#188) — IN PROGRESS 2026-11-18
+### Registry roles (#325, P0, stormblock-registry#188) — CODE DONE 2026-11-18, rig run pending
 - TokenReview, SubjectAccessReview, SelfSubjectAccessReview and
   LocalSubjectAccessReview already exist (#85, #59, #69); a `sc user create`
   user is a ServiceAccount in `storm-users`, which TokenReview already answers.
-- [ ] ClusterRoles as OpenShift's bootstrap policy: `registry-viewer`,
+- [x] ClusterRoles as OpenShift's bootstrap policy: `registry-viewer`,
   `registry-editor`, `system:image-puller`, `system:image-pusher`,
   `system:registry` over `image.openshift.io` (+ legacy `""`) imagestreams,
   `imagestreams/layers` (get = pull, update = push), images, tags.
-- [ ] `view` reads image streams, `edit` holds `registry-editor`, so a project
+- [x] `view` reads image streams, `edit` holds `registry-editor`, so a project
   admin may bind every registry role in their project (escalation, #98).
-- [ ] unit tests: the roles answer the registry's SARs; admin holds them.
+- [x] unit tests: the roles answer the registry's SARs; admin holds them.
 - Not here: the per-namespace `system:image-pullers` binding OpenShift's
-  controller makes (needs RBAC create in the controller-manager, against #176).
+  controller makes (needs RBAC create in the controller-manager, against #176):
+  filed as #326. sc's `add-role-to-user <user>` must name the storm-users
+  ServiceAccount: sc#95.
+- [x] sc-build 112d7e1 passed (new unit tests ran). Image requested.
+- [ ] rig `registry-roles` in `rigs` run 8d9b1b7fa4 (pvetest1); item parked
+  `--after-run`. Then: close-out comment; `shipped` proof waits on a release
+  and stormblock-registry#188's registry test.
 
 ### fetch.sh: partial stage (#323) — COMPLETE 2026-11-18
 - [x] A binary with no golden at `<sha>` comes from the newest golden of its image at an ancestor (only when the stage ran at `<sha>`, i.e. some golden is there); MANIFEST names it; the refusal names the missing binary
