@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### restricted-v2 on stormcos (#321, P0, stormstorefront#1 option A) — IN PROGRESS 2026-11-18
+### restricted-v2 on stormcos (#321, P0, stormstorefront#1 option A) — COMPLETE 2026-11-18 (ships in a release)
 OpenShift manifests (no runAsUser/fsGroup, no root) must run unchanged.
 - [x] cf375a6 `scc.rs`: per-namespace `openshift.io/sa.scc.uid-range` /
       `sa.scc.supplemental-groups` (1000000000/10000 blocks) from a monotonic
@@ -21,7 +21,13 @@ OpenShift manifests (no runAsUser/fsGroup, no root) must run unchanged.
 - [x] Build VM sc-build-72b1e582dd at 75068f6: 0 build warnings, all unit
       tests pass (apiserver 364); clippy --no-deps on apiserver: nothing in
       the new code (workspace clippy backlog is #263)
-- [ ] Goldens at 75068f6; scc-restricted + oc-adm + projects rigs on conform.g8.lo
+- [x] golden-rustkube-*-73e5e502d340 (bf51ae7) on conform.g8.lo:
+      scc-restricted 15/15 ×3; oc-adm, projects, resource-quota 0 failed;
+      control (apiserver 34a8ee084049) fails 11. `shipped` with an api proof
+      (the default namespace's uid-range on a test install)
+- Open risk: conformance specs whose controller-made pods pin UID 1000 in
+  restricted e2e namespaces are refused now (as on OpenShift); watch #291's
+  next run
 - Kubelet side (fsGroup on claims/emptyDir) is rustkube-node#171
 
 ### ServiceAccount key files followed (#298, P2, stormcos#176) — COMPLETE 2026-11-06
