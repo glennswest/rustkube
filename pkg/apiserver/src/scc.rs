@@ -217,6 +217,36 @@ fn set_ranges(ns: &mut Value, block: u64) {
     ns["metadata"]["annotations"][SUPPLEMENTAL_GROUPS] = json!(text);
 }
 
+/// A Namespace update keeps the stored ranges unless it sets valid ones of
+/// its own: a PUT or a reconciled manifest that does not mention them must
+/// not strip them, or the namespace's next pod would get a new block and
+/// lose the files its volumes hold under the old UIDs.
+pub fn keep_ranges(existing: &Value, body: &mut Value) {
+    if namespace_ranges(body).is_some() {
+        return;
+    }
+    let stored = &existing["metadata"]["annotations"];
+    if stored[UID_RANGE].is_null() && stored[SUPPLEMENTAL_GROUPS].is_null() {
+        return;
+    }
+    if !body["metadata"].is_object() {
+        body["metadata"] = json!({});
+    }
+    if !body["metadata"]["annotations"].is_object() {
+        body["metadata"]["annotations"] = json!({});
+    }
+    for k in [UID_RANGE, SUPPLEMENTAL_GROUPS] {
+        match stored.get(k) {
+            Some(v) => body["metadata"]["annotations"][k] = v.clone(),
+            None => {
+                if let Some(a) = body["metadata"]["annotations"].as_object_mut() {
+                    a.remove(k);
+                }
+            }
+        }
+    }
+}
+
 /// The stored namespace `name` with ranges, writing them if it had none
 /// (a namespace stored before #321 whose boot backfill has not reached it).
 pub async fn namespace_with_ranges(storage: &ResourceStorage, mut ns: Value) -> Result<Value, ApiError> {
@@ -686,6 +716,19 @@ mod tests {
         assert_eq!(ns["metadata"]["annotations"][SUPPLEMENTAL_GROUPS], "1000100000/10000");
         // Already set: kept.
         assert!(!ensure_ranges(&storage, &mut ns).await.unwrap());
+    }
+
+    #[test]
+    fn an_update_without_ranges_keeps_the_stored_ones() {
+        let mut stored = json!({"metadata": {"name": "a"}});
+        set_ranges(&mut stored, 3);
+        let mut body = json!({"metadata": {"name": "a", "labels": {"x": "y"}}});
+        keep_ranges(&stored, &mut body);
+        assert_eq!(namespace_ranges(&body), namespace_ranges(&stored));
+        // Valid ones of its own are the writer's choice.
+        let mut body = json!({"metadata": {"name": "a", "annotations": {UID_RANGE: "5000/10", SUPPLEMENTAL_GROUPS: "5000/10"}}});
+        keep_ranges(&stored, &mut body);
+        assert_eq!(body["metadata"]["annotations"][UID_RANGE], "5000/10");
     }
 
     #[tokio::test]

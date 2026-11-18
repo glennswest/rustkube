@@ -86,10 +86,7 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    loop {
-        let Some(remaining) = gate.remaining() else {
-            break;
-        };
+    while let Some(remaining) = gate.remaining() {
         tokio::time::sleep(retry.min(remaining)).await;
         let Some(remaining) = gate.remaining().filter(|r| !r.is_zero()) else {
             break;

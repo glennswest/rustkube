@@ -275,9 +275,11 @@ impl Store {
         let items = list["items"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("not a LIST"))?;
-        let mut replacement = Store::default();
-        replacement.seen = self.seen.clone();
-        replacement.history_evicted_at = self.history_evicted_at;
+        let mut replacement = Store {
+            seen: self.seen.clone(),
+            history_evicted_at: self.history_evicted_at,
+            ..Default::default()
+        };
         for object in items {
             replacement.put(object.clone())?;
             if let Some(rv) = revision(object) {

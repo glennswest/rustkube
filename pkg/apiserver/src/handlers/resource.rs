@@ -621,6 +621,8 @@ pub(crate) async fn builtin_update(
     crate::generation::on_update(key, existing, body); // #285; again after webhooks
     if key.starts_with("/registry/namespaces/") {
         keep_namespace_finalizers(existing, body);
+        // Its UID ranges (#321): a PUT or manifest without them keeps them.
+        crate::scc::keep_ranges(existing, body);
     }
     check_immutable(key, existing, body)?;
     if key.starts_with("/registry/persistentvolumeclaims/") {
