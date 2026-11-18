@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Registry roles (#325, P0, stormblock-registry#188) — CODE DONE 2026-11-18, rig run pending
+### Registry roles (#325, P0, stormblock-registry#188) — COMPLETE 2026-11-18 (ships in a release)
 - TokenReview, SubjectAccessReview, SelfSubjectAccessReview and
   LocalSubjectAccessReview already exist (#85, #59, #69); a `sc user create`
   user is a ServiceAccount in `storm-users`, which TokenReview already answers.
@@ -28,8 +28,12 @@ Kept here whole, newest notes as they were. Write new intentions here.
   line, `--subresource=layers`, a CRD standing in for the registry's
   image.openshift.io (stormblock-registry#187). status-put-latency's failure
   there is stormpump#153 (no /dev/fd in containers), not #325.
-- [ ] rerun `rigs` at the fix commit; item parked `--after-run`. Then: close-out comment; `shipped` proof waits on a release
-  and stormblock-registry#188's registry test.
+- [x] `rigs` run 97a837819d at 860029e (pvetest1): registry-roles 34/34.
+  The run's other failures are not #325's: status-put-latency is stormpump#153,
+  and namespace-order (8/8 at 112d7e1, with only the rig script changed since)
+  is a teardown timing flake, filed as #329 (relists, #274/#273).
+- [x] Close-out comment; `shipped` with a ClusterRole proof. The registry's
+  own test runs in stormblock-registry#188.
 
 ### fetch.sh: partial stage (#323) — COMPLETE 2026-11-18
 - [x] A binary with no golden at `<sha>` comes from the newest golden of its image at an ancestor (only when the stage ran at `<sha>`, i.e. some golden is there); MANIFEST names it; the refusal names the missing binary
