@@ -101,8 +101,11 @@ expect_ok "bob: oc adm policy add-role-to-user registry-editor alice -n shop" \
   as "$BOB" bob adm policy add-role-to-user registry-editor "$ALICE_USER" -n shop
 expect_denied "bob: may not bind registry-editor in a project he does not own" \
   as "$BOB" bob adm policy add-role-to-user registry-editor "$ALICE_USER" -n other
-out=$(as "$BOB" bob describe rolebinding -n shop)
-if grep -q 'ClusterRole/registry-editor\|ClusterRole.*registry-editor' <<<"$out" && grep -q 'alice' <<<"$out"; then
+# oc prints the role as `Kind:  ClusterRole` and `Name:  registry-editor` on
+# lines of their own under `Role:`, and the subject as a row of the table.
+out=$(as "$BOB" bob describe rolebinding registry-editor -n shop)
+if grep -qE '^ +Kind: +ClusterRole$' <<<"$out" && grep -qE '^ +Name: +registry-editor$' <<<"$out" \
+  && grep -qE '^ *ServiceAccount +alice +storm-users' <<<"$out"; then
   pass "oc describe rolebinding: registry-editor for alice"
 else
   fail "oc describe rolebinding: no registry-editor binding for alice: $out"
@@ -116,10 +119,36 @@ expect_sar false "carol (no role): no pull from shop" system:serviceaccount:stor
 expect_sar true  "admin: everything" admin '["system:masters"]' other update imagestreams layers
 
 # `sc auth can-i` with the user's own token: SelfSubjectAccessReview.
-out=$(as "$ALICE" alice auth can-i update imagestreams.image.openshift.io/layers -n shop)
-[ "$out" = yes ] && pass "alice: can-i push to shop: yes" || fail "alice: can-i push to shop: $out"
-out=$(as "$ALICE" alice auth can-i update imagestreams.image.openshift.io/layers -n other)
-[ "$out" = no ] && pass "alice: can-i push to other: no" || fail "alice: can-i push to other: $out"
+# oc resolves the resource through discovery first; one it cannot find goes
+# out as the literal `imagestreams.image.openshift.io` in the core group and
+# is answered `no` (upstream kubectl does the same). On a node the registry
+# serves image.openshift.io (stormblock-registry#187); here a CRD stands in
+# for it. `/x` in can-i is a resource NAME — the subresource is a flag.
+adm apply -f - >/dev/null <<'YAML'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: {name: imagestreams.image.openshift.io}
+spec:
+  group: image.openshift.io
+  scope: Namespaced
+  names: {plural: imagestreams, singular: imagestream, kind: ImageStream, listKind: ImageStreamList, shortNames: [is]}
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema: {openAPIV3Schema: {type: object, x-kubernetes-preserve-unknown-fields: true}}
+YAML
+sleep 2 # discovery shows the new group
+can_i() { # <want yes|no> <what> <token> <name> <namespace> — stdout only; a warning is a failure
+  local want=$1 what=$2 t=$3 k=$4 ns=$5 o e
+  o=$(KUBECONFIG=$W/kc-$k timeout 60 "$OC" --cache-dir "$W/cache-$k" --server "$API" \
+    --insecure-skip-tls-verify --token "$t" auth can-i update imagestreams.image.openshift.io \
+    --subresource=layers -n "$ns" 2>"$W/can-i.err")
+  e=$(cat "$W/can-i.err")
+  if [ "$o" = "$want" ] && [ -z "$e" ]; then pass "$what: $o"; else fail "$what: want $want, got '$o' ${e:+(stderr: $e)}"; fi
+}
+can_i yes "alice: can-i push to shop" "$ALICE" alice shop
+can_i no  "alice: can-i push to other" "$ALICE" alice other
 
 # --- registry-viewer: pull only ------------------------------------------------
 expect_ok "bob: add-role-to-user registry-viewer carol -n shop" \

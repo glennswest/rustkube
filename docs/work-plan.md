@@ -20,8 +20,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
   filed as #326. sc's `add-role-to-user <user>` must name the storm-users
   ServiceAccount: sc#95.
 - [x] sc-build 112d7e1 passed (new unit tests ran). Image requested.
-- [ ] rig `registry-roles` in `rigs` run 8d9b1b7fa4 (pvetest1); item parked
-  `--after-run`. Then: close-out comment; `shipped` proof waits on a release
+- [x] rig `registry-roles` in `rigs` run 8d9b1b7fa4 (pvetest1): 31/34. All
+  SAR/TokenReview checks passed; the 3 failures were the rig's: the describe
+  grep wanted Kind and Name on one line, and `can-i …/layers` named a resource
+  NAME, not the subresource, against a group with no discovery (oc then sends
+  `imagestreams.image.openshift.io` in the core group → `no`). Fixed: grep per
+  line, `--subresource=layers`, a CRD standing in for the registry's
+  image.openshift.io (stormblock-registry#187). status-put-latency's failure
+  there is stormpump#153 (no /dev/fd in containers), not #325.
+- [ ] rerun `rigs` at the fix commit; item parked `--after-run`. Then: close-out comment; `shipped` proof waits on a release
   and stormblock-registry#188's registry test.
 
 ### fetch.sh: partial stage (#323) — COMPLETE 2026-11-18
