@@ -188,7 +188,7 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `policy add-role-to-user/-group`, `remove-role-from-user/-group`, `remove-user`, `remove-group` | ✅ | RoleBindings (the remove verbs needed #69's protobuf fix) |
 | `policy add-/remove-cluster-role-to/from-user/-group` | ✅ | ClusterRoleBindings |
 | `create-bootstrap-project-template`, `create-login-template`, `create-error-template`, `create-provider-selection-template` | ✅ | client-side only: print a template |
-| `policy add-scc-to-user/-group` | ⚪ inert | binds ClusterRole `system:openshift:scc:<name>`; there are no SCCs and no SCC admission (#70) |
+| `policy add-scc-to-user/-group` | ✅ | binds ClusterRole `system:openshift:scc:<name>` (bootstrapped for `anyuid`, `privileged`, `restricted-v2`), which SCC admission reads: the user, group or ServiceAccount may then use that SCC (#321). SCC objects themselves are not served |
 | `new-project` | ✅ | the project, its admin binding, and the post-check (an `authorization.openshift.io` SubjectAccessReview of `get projects`, #106) |
 | `inspect` | ✅ | `/api` and `/apis` answer aggregated discovery (#107) |
 | `policy who-can` | ✅ | `authorization.openshift.io` (Local)ResourceAccessReview: the users and groups of every binding whose role permits it (#106) |

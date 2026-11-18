@@ -108,9 +108,9 @@ adm adm policy add-role-to-user view alice -n work >/dev/null
 verb works "policy remove-user" adm adm policy remove-user alice -n work
 adm adm policy add-role-to-group view devs -n work >/dev/null
 verb works "policy remove-group" adm adm policy remove-group devs -n work
-# Binds ClusterRole system:openshift:scc:privileged. Accepted, and inert:
-# there are no SCCs and no SCC admission here (#70).
-verb works "policy add-scc-to-user (inert)" adm adm policy add-scc-to-user privileged alice
+# Binds ClusterRole system:openshift:scc:privileged, which SCC admission
+# reads (#321: alice may then use the privileged SCC; scc-restricted.sh).
+verb works "policy add-scc-to-user" adm adm policy add-scc-to-user privileged alice
 verb missing "policy scc-review" adm adm policy scc-subject-review -u alice -f - <<<'{"apiVersion":"v1","kind":"Pod","metadata":{"name":"x"},"spec":{"containers":[{"name":"c","image":"i"}]}}'
 
 # --- certificates -------------------------------------------------------------
