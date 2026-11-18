@@ -544,14 +544,76 @@ fn view_rules() -> Vec<Value> {
         .map(|(g, rs)| rule(&[*g], rs, READ))
         .collect();
     rules.push(rule(&["project.openshift.io"], &["projects"], &["get"]));
+    // Image streams, read-only, as OpenShift's view (#325) — not their
+    // layers: pulling is `registry-viewer` or `system:image-puller`.
+    rules.push(rule(IMAGE_GROUPS, IMAGE_KINDS, READ));
     // `kubectl top pod` in the project, as upstream's view aggregates (#89).
     rules.push(rule(&["metrics.k8s.io"], &["pods"], &["get", "list"]));
     rules
 }
 
+// ---------------------------------------------------------------------------
+// The registry roles (#325, stormblock-registry#188), as OpenShift's bootstrap
+// policy writes them. A node's registry asks the apiserver for each request:
+// a TokenReview for who the password (the user's token) is, then a
+// SubjectAccessReview in the repository's project — `get` on
+// `imagestreams/layers` to pull, `update` to push, and on the image kinds
+// below for the objects a push writes.
+// ---------------------------------------------------------------------------
+
+/// `image.openshift.io` and its legacy core-group spelling, as OpenShift's
+/// roles carry both.
+const IMAGE_GROUPS: &[&str] = &["image.openshift.io", ""];
+
+/// The image kinds a project holds. `images` are namespaced here: the
+/// registry's `Image` object lives in the repository's project
+/// (stormblock-registry#187).
+const IMAGE_KINDS: &[&str] = &[
+    "imagestreams", "imagestreamimages", "imagestreamtags", "imagestreammappings", "imagetags", "images",
+];
+
+const LAYERS: &[&str] = &["imagestreams/layers"];
+
+/// Pull: read the project's images and their layers.
+fn registry_viewer_rules() -> Vec<Value> {
+    vec![
+        rule(IMAGE_GROUPS, IMAGE_KINDS, READ),
+        rule(IMAGE_GROUPS, LAYERS, &["get"]),
+        rule(&["project.openshift.io"], &["projects"], &["get"]),
+    ]
+}
+
+/// Pull and push: everything on the project's images.
+fn registry_editor_rules() -> Vec<Value> {
+    let mut kinds = IMAGE_KINDS.to_vec();
+    kinds.push("imagestreams/secrets");
+    vec![
+        rule(IMAGE_GROUPS, &kinds, ALL),
+        rule(IMAGE_GROUPS, LAYERS, &["get", "update"]),
+        rule(&["project.openshift.io"], &["projects"], &["get"]),
+    ]
+}
+
+/// The node registry's own identity, bound by a RoleBinding in its own
+/// project: it writes the images it is pushed and reads the project's
+/// limits and quotas, as OpenShift's `system:registry`.
+fn registry_service_rules() -> Vec<Value> {
+    vec![
+        rule(&[""], &["limitranges", "resourcequotas"], &["list"]),
+        rule(IMAGE_GROUPS, IMAGE_KINDS, &["get", "list", "watch", "create", "update", "patch", "delete"]),
+        rule(IMAGE_GROUPS, &["imagestreams/secrets"], &["get"]),
+        rule(IMAGE_GROUPS, LAYERS, &["get", "update"]),
+    ]
+}
+
 fn edit_rules() -> Vec<Value> {
     let mut rules = view_rules();
     rules.extend(WORKLOADS.iter().map(|(g, rs)| rule(&[*g], rs, WRITE)));
+    // Push and pull in the project's registry, as OpenShift's edit (#325).
+    // It holds all of `registry-editor` and `system:registry`, so a project
+    // admin may bind either in their project (escalation prevention, #98).
+    rules.extend(registry_editor_rules());
+    rules.extend(registry_service_rules());
     rules.push(rule(&[""], &["secrets"], ALL));
     // A shell in a pod, and the pod's ports — edit, not view, as upstream.
     rules.push(rule(
@@ -606,7 +668,8 @@ fn cluster_role(name: &str, description: &str, rules: Vec<Value>) -> Value {
 /// The ClusterRoles projects are built on, reconciled at every boot.
 ///
 /// `admin`, `edit` and `view` are the roles a project is shared with —
-/// bound per project by a RoleBinding, never cluster-wide. `basic-user` lets
+/// bound per project by a RoleBinding, never cluster-wide; so are the
+/// registry roles (#325). `basic-user` lets
 /// anyone who authenticated ask for their own projects; `self-provisioner`
 /// lets them request one.
 pub fn bootstrap_cluster_roles() -> Vec<Value> {
@@ -638,6 +701,33 @@ pub fn bootstrap_cluster_roles() -> Vec<Value> {
             "self-provisioner",
             "Request a new project, becoming its admin.",
             vec![rule(&["project.openshift.io"], &["projectrequests"], &["create"])],
+        ),
+        // The registry (#325). Bound per project:
+        // `oc adm policy add-role-to-user registry-editor alice -n demo`.
+        cluster_role(
+            "registry-viewer",
+            "Pull from the project's registry: read its image streams and images.",
+            registry_viewer_rules(),
+        ),
+        cluster_role(
+            "registry-editor",
+            "Push to and pull from the project's registry: create, change and delete its image streams and images.",
+            registry_editor_rules(),
+        ),
+        cluster_role(
+            "system:image-puller",
+            "Pull the project's images (bound to another project's service accounts for cross-project pulls).",
+            vec![rule(IMAGE_GROUPS, LAYERS, &["get"])],
+        ),
+        cluster_role(
+            "system:image-pusher",
+            "Push and pull the project's images.",
+            vec![rule(IMAGE_GROUPS, LAYERS, &["get", "update"])],
+        ),
+        cluster_role(
+            "system:registry",
+            "A node's registry service, bound in its own project: writes the images pushed to it.",
+            registry_service_rules(),
         ),
     ]
 }
@@ -802,6 +892,36 @@ mod tests {
             .unwrap()
             .iter()
             .any(|rule| crate::rbac_engine::rule_matches(rule, &req))
+    }
+
+    #[test]
+    fn the_registry_roles_answer_the_registrys_reviews() {
+        // Pull is `get` on imagestreams/layers; push is `update` (#325).
+        for g in ["image.openshift.io", ""] {
+            assert!(allows("registry-viewer", "get", g, "imagestreams", Some("layers")));
+            assert!(!allows("registry-viewer", "update", g, "imagestreams", Some("layers")));
+            assert!(allows("registry-viewer", "list", g, "images", None));
+            assert!(!allows("registry-viewer", "create", g, "imagestreams", None));
+
+            assert!(allows("registry-editor", "update", g, "imagestreams", Some("layers")));
+            assert!(allows("registry-editor", "create", g, "imagestreams", None));
+            assert!(allows("registry-editor", "delete", g, "images", None));
+
+            assert!(allows("system:image-puller", "get", g, "imagestreams", Some("layers")));
+            assert!(!allows("system:image-puller", "update", g, "imagestreams", Some("layers")));
+            assert!(!allows("system:image-puller", "list", g, "imagestreams", None));
+            assert!(allows("system:image-pusher", "update", g, "imagestreams", Some("layers")));
+
+            assert!(allows("system:registry", "create", g, "images", None));
+            assert!(allows("system:registry", "update", g, "imagestreams", Some("layers")));
+
+            // view sees image streams but pulls nothing; edit pushes.
+            assert!(allows("view", "list", g, "imagestreams", None));
+            assert!(!allows("view", "get", g, "imagestreams", Some("layers")));
+            assert!(allows("edit", "update", g, "imagestreams", Some("layers")));
+        }
+        assert!(allows("system:registry", "list", "", "resourcequotas", None));
+        assert!(!allows("registry-editor", "get", "", "secrets", None));
     }
 
     #[test]

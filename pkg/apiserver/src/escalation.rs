@@ -357,7 +357,10 @@ mod tests {
     fn a_project_admin_holds_admin_edit_and_view() {
         let roles = crate::handlers::project::bootstrap_cluster_roles();
         let rules = |n: &str| roles.iter().find(|r| r["metadata"]["name"] == n).unwrap()["rules"].clone();
-        for r in ["admin", "edit", "view"] {
+        // and every registry role, so `oc adm policy add-role-to-user
+        // registry-editor bob -n demo` works for demo's admin (#325).
+        for r in ["admin", "edit", "view", "registry-viewer", "registry-editor", "system:image-puller",
+                  "system:image-pusher", "system:registry"] {
             assert!(missing(rules("admin"), rules(r)).is_empty(), "admin does not hold {r}");
         }
         assert!(!missing(rules("edit"), rules("admin")).is_empty());

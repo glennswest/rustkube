@@ -607,7 +607,19 @@ writing `status.certificate` needs `sign` on `signers/<signerName>` (or
 `system:basic-user` (self-reviews) for `system:authenticated`;
 `system:discovery` for `system:anonymous`; the project roles `admin`,
 `edit`, `view`, `basic-user` (list one's projects) and `self-provisioner`,
-the latter two bound to `system:authenticated`; and the ServiceAccount
+the latter two bound to `system:authenticated`; the registry roles (#325),
+as OpenShift's, bound per project with
+`oc adm policy add-role-to-user <role> <user> -n <project>`:
+`registry-viewer` (read image streams and images, `get`
+`imagestreams/layers` = pull), `registry-editor` (everything on them,
+`update` `imagestreams/layers` = push), `system:image-puller` (pull only, for
+another project's service accounts), `system:image-pusher` and
+`system:registry` (a node registry's own identity in its project), over
+`image.openshift.io` and its legacy core-group spelling. `view` reads image
+streams but pulls nothing; `edit` (so `admin`) holds every registry role, so a
+project admin may bind them. A node's registry checks a login with a
+TokenReview and each pull or push with a SubjectAccessReview in the
+repository's project (stormblock-registry#188); and the ServiceAccount
 `kube-system/node-admin` bound to `cluster-admin` for a node's ssh login
 (#79). The project roles are reconciled at every boot — a stored copy's
 rules are brought up to date unless it is annotated
