@@ -4,6 +4,10 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### fetch.sh: partial stage (#323)
+- [ ] A binary with no golden at `<sha>` comes from the newest golden of its image at an ancestor (only when the stage ran at `<sha>`, i.e. some golden is there); MANIFEST names it; the refusal names the missing binary
+- [ ] Verified: `fetch.sh 89bfa0e` delivers apiserver@89bfa0e + controller-manager/scheduler from bf51ae7's goldens
+
 ### No stubs (#322, P-1) — COMPLETE 2026-11-18
 - [x] Aggregated-API connection upgrades spliced (was 501 NotImplemented); rig check in aggregation.sh
 - [x] Test fakes: panicking stubs → `Error::Store`; docs reworded with the gap's issue (#246, #3, stormcos_qa#26) or what replaced it
