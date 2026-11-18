@@ -6,7 +6,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ### No stubs (#322, P-1) — IN PROGRESS 2026-11-18
 - [x] Aggregated-API connection upgrades spliced (was 501 NotImplemented); rig check in aggregation.sh
-- [x] Test fakes: `unimplemented!()` → `Error::Store`; docs reworded with the gap's issue (#246, #3, stormcos_qa#26) or what replaced it
+- [x] Test fakes: panicking stubs → `Error::Store`; docs reworded with the gap's issue (#246, #3, stormcos_qa#26) or what replaced it
 - [ ] sc-build; aggregation rig on conform.g8.lo from goldens; grep empty; close
 
 ### restricted-v2 on stormcos (#321, P0, stormstorefront#1 option A) — COMPLETE 2026-11-18 (ships in a release)
