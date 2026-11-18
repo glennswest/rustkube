@@ -6,21 +6,22 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ### restricted-v2 on stormcos (#321, P0, stormstorefront#1 option A) — IN PROGRESS 2026-11-18
 OpenShift manifests (no runAsUser/fsGroup, no root) must run unchanged.
-- [ ] `scc.rs`: per-namespace `openshift.io/sa.scc.uid-range` /
-      `sa.scc.supplemental-groups` (OpenShift's 1000000000/10000 blocks) from a
-      monotonic cluster-wide allocator (`/registry/rangeallocations/scc-uid`,
-      CAS; never reused); on namespace create, lazily at pod admission, and a
-      boot backfill
-- [ ] Pod admission picks an SCC as OpenShift does: `anyuid` / `privileged`
-      when the requester or the pod's SA may `use` it
-      (`security.openshift.io` `securitycontextconstraints`, RBAC), else
-      `restricted-v2`: runAsUser (MustRunAsRange, first UID), runAsNonRoot,
-      fsGroup (first group), allowPrivilegeEscalation false, drop ALL,
-      seccomp RuntimeDefault; refusals in OpenShift's words; pod annotated
-      `openshift.io/scc`. Platform namespaces (kube-*, storm-*, openshift-*)
-      and `enforce: privileged` ones are exempt; mirror pods untouched
-- [ ] Bootstrap ClusterRoles `system:openshift:scc:{anyuid,privileged,restricted-v2}`
-- [ ] Units; e2e rig; README/docs/CHANGELOG; sc-build; golden; rig on a test machine
+- [x] cf375a6 `scc.rs`: per-namespace `openshift.io/sa.scc.uid-range` /
+      `sa.scc.supplemental-groups` (1000000000/10000 blocks) from a monotonic
+      allocator (`/registry/rangeallocations/scc-uid`, CAS; never reused); on
+      namespace create, lazily at pod admission, boot backfill; 75068f6 a
+      Namespace update (PUT, reconciled manifest) keeps them
+- [x] Pod admission picks the SCC as OpenShift does (anyuid → restricted-v2 →
+      privileged, RBAC `use` for requester or pod SA); restricted-v2 sets
+      runAsUser/runAsNonRoot/fsGroup/APE false/drop ALL/seccomp, refuses in
+      OpenShift's words; `openshift.io/scc`; platform + `enforce: privileged`
+      exempt; mirror pods untouched. ClusterRoles `system:openshift:scc:*`
+- [x] Units (scc::tests, 10); rig `scc-restricted.sh` (day list);
+      README/oc-compatibility/CHANGELOG
+- [x] Build VM sc-build-72b1e582dd at 75068f6: 0 build warnings, all unit
+      tests pass (apiserver 364); clippy --no-deps on apiserver: nothing in
+      the new code (workspace clippy backlog is #263)
+- [ ] Goldens at 75068f6; scc-restricted + oc-adm + projects rigs on conform.g8.lo
 - Kubelet side (fsGroup on claims/emptyDir) is rustkube-node#171
 
 ### ServiceAccount key files followed (#298, P2, stormcos#176) — COMPLETE 2026-11-06
