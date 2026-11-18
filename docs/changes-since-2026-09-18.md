@@ -18,7 +18,7 @@ ports and API summary; this page records why those descriptions changed.
 | Admission/controllers | Projected SA token volume, root CA publisher, key/sysctl/immutability validation, Pending and QoS defaults; VM runStrategy and failure backoff. | c393b4b, 0683e75, c12a6ff, 289331f, 6d0ed10, c241688, f3577fb; builtin_admission.rs, rootca.rs, virtualmachine.rs |
 | CSI compatibility | Upstream snapshot-controller works against CRDs/RBAC/status; expansion admission and binder preserve the external-resizer's capacity/condition handshake. These do not implement storage bytes, cluster-wide installation or node filesystem growth. | 5435b41, 0118748, 3e4f5f8, e404d72, 812df77, 69f33e3; test/e2e/snapshot-controller.sh, volume-expansion.sh |
 | Component tests | `/test short|medium|long`, namespace-scoped Job permissions, API rig and controller/storage regressions. Real test-machine acceptance is still pending (#96). | 6911810, e512016, 3fe5869, bed735e; test/README.md |
-| Conformance | Upstream suite has run against stand-in Nodes without kubelets; failures are triaged, not waived as passes. New binary staging broke with disposable build drives; the owner chose goldens as the route (#140), not yet implemented. | 430b268, efbea2d, c241688; docs/conformance.md; #118–139 |
+| Conformance | Upstream suite has run against stand-in Nodes without kubelets; failures are triaged, not waived as passes. New binary staging broke with disposable build drives; the owner chose goldens as the route (#140), in place since 2026-10-21 (`test/conformance/fetch.sh`). | 430b268, efbea2d, c241688; docs/conformance.md; #118–139 |
 | Turbomode execution | Shared indexed informer feeds, bounded per-object controller workers, a serialized priority Pod/VMI scheduler, write overlays, uncertain-create expectations, UID/RV cleanup guards and monotonic leadership deadlines. | 7f7b305, 46aa507 through af87b2d, 447faa4, 01f1a42; apimachinery/{informer,informers,workqueue}.rs, controller-manager/owned.rs; docs/event-driven-design.md |
 | Delivery | Rustls uses ring; no native-certs/aws-lc requirement. Builds use sc-build private drives; Actions disabled by owner. Component goldens feed stormcos release assembly. | 6836bcb, d7bc1f8; Cargo.toml/Cargo.lock; #114; docs/releasing.md |
 
@@ -99,8 +99,8 @@ Corrections made in this pass, from the code and the linked issues:
 - Snapshot CRD/controller install moved from stormpump#28 to stormcos#170
   (open); stormblock#111 is answered — CreateSnapshot maps onto CoW snapshots.
 - stormcos_qa's rustkube scripts are ported, not yet retired (stormcos_qa#25).
-- #140 is answered "Goldens": conformance binaries are to come from goldens;
-  not implemented yet. Persistent tests as pods on forge is #173.
+- #140 is answered "Goldens": conformance binaries come from goldens
+  (`test/conformance/fetch.sh`, since 2026-10-21). Persistent tests as pods on forge is #173.
 - How it ships: nodes run the stormd goldens that stormcos's stage build
   compiles from a rustkube checkout; the component golden is not yet mounted
   by any release (stormcos#62). Checked against stormcos bb347bf4.

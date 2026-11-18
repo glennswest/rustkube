@@ -25,9 +25,14 @@
 //! - **Discovery.** Aggregated groups are in `/apis` and `/apis/{group}`;
 //!   `/apis/{group}/{version}` is the backend's own answer, proxied.
 //!
-//! Not done: connection upgrades (exec-style) to a backend are refused with
-//! 501. In aggregated discovery (#107) an aggregated group's versions are
-//! listed without resources, `freshness: Stale`.
+//! - **Connection upgrades** (WebSocket, SPDY: an aggregated API's exec- or
+//!   console-style subresource) go to the backend over HTTP/1.1 with the
+//!   client's `Connection`/`Upgrade` and negotiation headers; a `101` is
+//!   handed back with the backend's handshake headers and the two
+//!   connections are spliced. Any other answer is passed back as it came.
+//!
+//! In aggregated discovery (#107) an aggregated group's versions are listed
+//! without resources, `freshness: Stale`.
 
 use crate::auth::UserInfo;
 use crate::error::ApiError;
@@ -112,6 +117,8 @@ struct ClientKey {
     ca_bundle: Option<Vec<u8>>,
     insecure: bool,
     resolve: (String, SocketAddr),
+    /// HTTP/1.1 only: a connection upgrade cannot cross HTTP/2.
+    http1: bool,
 }
 
 /// The APIService table and the clients that reach the backends.
@@ -210,6 +217,15 @@ impl Aggregator {
     /// Where a backend is, and a client that verifies it and presents the
     /// proxy identity.
     async fn endpoint(&self, storage: &ResourceStorage, api: &ApiService) -> Result<(String, reqwest::Client), Unreachable> {
+        self.endpoint_with(storage, api, false).await
+    }
+
+    async fn endpoint_with(
+        &self,
+        storage: &ResourceStorage,
+        api: &ApiService,
+        http1: bool,
+    ) -> Result<(String, reqwest::Client), Unreachable> {
         let s = api.service.as_ref().ok_or(Unreachable::Local)?;
         let svc = storage
             .get(&ResourceStorage::namespaced_key("services", &s.namespace, &s.name))
@@ -224,7 +240,7 @@ impl Aggregator {
             .ok_or_else(|| Unreachable::Other(format!("service/{} in \"{}\" has no ClusterIP", s.name, s.namespace)))?;
         let host = format!("{}.{}.svc", s.name, s.namespace);
         let base = format!("https://{host}:{}", s.port);
-        let key = ClientKey { ca_bundle: api.ca_bundle.clone(), insecure: api.insecure, resolve: (host, SocketAddr::new(ip, s.port)) };
+        let key = ClientKey { ca_bundle: api.ca_bundle.clone(), insecure: api.insecure, resolve: (host, SocketAddr::new(ip, s.port)), http1 };
         if let Some(c) = self.clients.lock().unwrap().get(&key) {
             return Ok((base, c.clone()));
         }
@@ -236,7 +252,11 @@ impl Aggregator {
             self.identity.clone(),
         )
         .map_err(|e| Unreachable::Other(format!("caBundle: {e}")))?;
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder();
+        if key.http1 {
+            builder = builder.http1_only();
+        }
+        let client = builder
             .use_preconfigured_tls(tls)
             .no_proxy()
             .connect_timeout(Duration::from_secs(5))
@@ -423,14 +443,7 @@ pub async fn proxy(State(state): State<crate::handlers::AppState>, req: Request,
         return ApiError::unavailable("service unavailable").into_response();
     }
     if req.headers().contains_key(header::UPGRADE) {
-        return ApiError {
-            status: StatusCode::NOT_IMPLEMENTED,
-            reason: "NotImplemented".into(),
-            message: "connection upgrades to an aggregated API are not supported (rustkube#83)".into(),
-            continue_token: None,
-            details: None,
-        }
-        .into_response();
+        return proxy_upgrade(&state, &api, req).await;
     }
     let (base, client) = match state.aggregator.endpoint(&state.storage, &api).await {
         Ok(e) => e,
@@ -466,9 +479,104 @@ pub async fn proxy(State(state): State<crate::handlers::AppState>, req: Request,
         .unwrap_or_else(|e| ApiError::internal(&e.to_string()).into_response())
 }
 
+/// The request headers of an upgrade: [`proxy_headers`] plus the
+/// `Connection` and `Upgrade` that carry the negotiation.
+pub(crate) fn upgrade_headers(incoming: &HeaderMap, user: Option<&UserInfo>) -> HeaderMap {
+    let mut out = proxy_headers(incoming, user);
+    out.insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
+    if let Some(v) = incoming.get(header::UPGRADE) {
+        out.insert(header::UPGRADE, v.clone());
+    }
+    out
+}
+
+/// A connection upgrade to an aggregated API: the same request to the
+/// backend over HTTP/1.1, and on its `101` the two connections spliced.
+async fn proxy_upgrade(state: &crate::handlers::AppState, api: &ApiService, mut req: Request) -> Response {
+    let (base, client) = match state.aggregator.endpoint_with(&state.storage, api, true).await {
+        Ok(e) => e,
+        Err(e) => return ApiError::unavailable(&format!("error trying to reach service: {}", e.message())).into_response(),
+    };
+    let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/").to_string();
+    let headers = upgrade_headers(req.headers(), req.extensions().get::<UserInfo>());
+    let upstream = client
+        .request(req.method().clone(), format!("{base}{path}"))
+        .version(axum::http::Version::HTTP_11)
+        .headers(headers)
+        .send()
+        .await;
+    let resp = match upstream {
+        Ok(r) => r,
+        Err(e) => {
+            return ApiError::unavailable(&format!("error trying to reach service: {}", error_chain(&e))).into_response()
+        }
+    };
+    if resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+        // The backend's refusal (a missing object, a forbidden stream) is
+        // the useful answer: passed back as it came.
+        let mut out = Response::builder().status(resp.status().as_u16());
+        for (k, v) in resp.headers() {
+            if forwarded(k, false) {
+                out = out.header(k, v);
+            }
+        }
+        return out
+            .body(Body::from_stream(resp.bytes_stream()))
+            .unwrap_or_else(|e| ApiError::internal(&e.to_string()).into_response());
+    }
+    // The backend's handshake — Upgrade, the subprotocol, a WebSocket
+    // accept key — is the client's to check.
+    let mut out = Response::builder().status(StatusCode::SWITCHING_PROTOCOLS);
+    for (k, v) in resp.headers() {
+        if k != header::CONTENT_LENGTH && k != header::TRANSFER_ENCODING {
+            out = out.header(k, v);
+        }
+    }
+    let on_client = hyper::upgrade::on(&mut req);
+    tokio::spawn(async move {
+        let backend = match resp.upgrade().await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("aggregation: backend upgrade failed: {}", error_chain(&e));
+                return;
+            }
+        };
+        let client = match on_client.await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("aggregation: client never upgraded: {e}");
+                return;
+            }
+        };
+        let mut client = hyper_util::rt::TokioIo::new(client);
+        let mut backend = backend;
+        match tokio::io::copy_bidirectional(&mut client, &mut backend).await {
+            Ok((up, down)) => tracing::debug!("aggregation: upgraded session closed: {up}B up, {down}B down"),
+            Err(e) => tracing::debug!("aggregation: upgraded session ended: {e}"),
+        }
+    });
+    out.body(Body::empty()).unwrap_or_else(|e| ApiError::internal(&e.to_string()).into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_upgrade_carries_its_negotiation_and_not_the_callers_credentials() {
+        let mut h = HeaderMap::new();
+        h.insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
+        h.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+        h.insert("sec-websocket-key", HeaderValue::from_static("dGhlIHNhbXBsZSBub25jZQ=="));
+        h.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer secret"));
+        let user = UserInfo { username: "alice".into(), groups: vec!["devs".into()] };
+        let out = upgrade_headers(&h, Some(&user));
+        assert_eq!(out[header::UPGRADE], "websocket");
+        assert_eq!(out[header::CONNECTION], "Upgrade");
+        assert_eq!(out["sec-websocket-key"], "dGhlIHNhbXBsZSBub25jZQ==");
+        assert_eq!(out["x-remote-user"], "alice");
+        assert!(out.get(header::AUTHORIZATION).is_none());
+    }
 
     fn api(group: &str, version: &str, service: bool, gp: i64, vp: i64) -> Value {
         let mut spec = json!({"group": group, "version": version, "groupPriorityMinimum": gp, "versionPriority": vp,

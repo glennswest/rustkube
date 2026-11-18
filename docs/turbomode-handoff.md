@@ -85,7 +85,7 @@ release from these branch commits.
    Audit destructive UID preconditions and shared-volume concurrency.
 6. Implement bounded load-test retries in stormcos_qa#26. Keep every attempt's
    results; only retry after verified cleanup, and never hide integrity failure
-   behind a later success. This request is tracked, **not implemented**.
+   behind a later success. This request is open as stormcos_qa#26.
 7. Resolve test target (C2NR0Q2 or isolated dev cluster), image digests, storage
    class and node audit access. Run the two profiles sequentially. Validate
    SQLite records/checksums before and after 120-second sleep, then prove

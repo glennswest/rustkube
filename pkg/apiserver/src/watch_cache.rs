@@ -768,13 +768,13 @@ mod revision_tests {
     #[async_trait]
     impl KvStore for ScriptedStore {
         async fn get(&self, _: &str) -> Result<Option<(Vec<u8>, u64)>> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("ScriptedStore does not serve this call".into()))
         }
         async fn put(&self, _: &str, _: &[u8], _: Option<u64>) -> Result<u64> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("ScriptedStore does not serve this call".into()))
         }
         async fn delete(&self, _: &str, _: Option<u64>) -> Result<u64> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("ScriptedStore does not serve this call".into()))
         }
         async fn list(&self, prefix: &str, _: usize, _: Option<&str>) -> Result<ListResult> {
             let state = self.state.lock().unwrap();
@@ -796,16 +796,16 @@ mod revision_tests {
             Ok(rx)
         }
         async fn lease_grant(&self, _: Duration) -> Result<LeaseId> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("ScriptedStore does not serve this call".into()))
         }
         async fn lease_keepalive(&self, _: LeaseId) -> Result<()> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("ScriptedStore does not serve this call".into()))
         }
         async fn lease_revoke(&self, _: LeaseId) -> Result<()> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("ScriptedStore does not serve this call".into()))
         }
         async fn compact(&self, _: u64) -> Result<()> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("ScriptedStore does not serve this call".into()))
         }
     }
 

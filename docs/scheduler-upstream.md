@@ -1,6 +1,6 @@
 # What upstream actually does, and what we should not build
 
-> Historical upstream research and design input, not implemented RustKube
+> Historical upstream research and design input, not a description of RustKube
 > features or the acceptance version pin. See README for current code and
 > scheduler-research.md for the component-swap acceptance prerequisites.
 

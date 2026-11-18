@@ -17,6 +17,10 @@
 #   - a POST's body and the backend's 201 pass; a watch streams (the first
 #     event arrives before the backend sends the second); a protobuf Accept
 #     is passed and the backend's JSON comes back untranscoded
+#   - a connection upgrade (an exec-style subresource) is spliced through:
+#     the backend's 101 reaches the client, bytes echo both ways, and the
+#     backend saw the caller as X-Remote-User; a backend's refusal of an
+#     upgrade comes back as it sent it
 #   - kube-system/extension-apiserver-authentication publishes the
 #     front-proxy CA and headers; system:auth-delegator and the reader Role exist
 #   - an APIService claiming a built-in group (apps) changes nothing
@@ -69,6 +73,14 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers(); self.wfile.write(b)
     def do_GET(self):
         self.record()
+        if self.headers.get("Upgrade") and self.path.startswith("/apis/stub.example.com/v1/namespaces/default/widgets/w0/echo"):
+            self.send_response(101); self.send_header("Connection", "Upgrade")
+            self.send_header("Upgrade", self.headers["Upgrade"]); self.end_headers(); self.wfile.flush()
+            data = self.connection.recv(64)
+            self.connection.sendall(b"echo:" + data)
+            self.close_connection = True; return
+        if self.headers.get("Upgrade"):
+            return self.send(400, {"kind": "Status", "code": 400, "message": "stub: no such stream"})
         if self.path.startswith("/apis/stub.example.com/v1/namespaces/default/widgets") and "watch=1" in self.path:
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
@@ -178,6 +190,32 @@ ok = r.status == 200 and b"w1" in first and b"w2" in second and t1 - t0 < 2 and 
 print(r.status, first[:80], second[:80], round(t1 - t0, 2), round(t2 - t0, 2))
 sys.exit(0 if ok else 1)
 PY
+python3 - "$API" "$ADMIN" <<'PY' && pass "an upgrade is spliced to the backend: 101, bytes echo both ways" || fail "upgrade not spliced"
+import socket, ssl, sys, urllib.parse
+u = urllib.parse.urlparse(sys.argv[1])
+s = ssl._create_unverified_context().wrap_socket(socket.create_connection((u.hostname, u.port), timeout=10))
+s.sendall(("GET /apis/stub.example.com/v1/namespaces/default/widgets/w0/echo HTTP/1.1\r\nHost: x\r\n"
+           f"Authorization: Bearer {sys.argv[2]}\r\nConnection: Upgrade\r\nUpgrade: echo-test\r\n\r\n").encode())
+head = b""
+while b"\r\n\r\n" not in head:
+    b = s.recv(1)
+    if not b: break
+    head += b
+s.sendall(b"ping")
+got = b""
+while len(got) < 9:
+    b = s.recv(64)
+    if not b: break
+    got += b
+print(head.split(b"\r\n")[0], got)
+sys.exit(0 if head.startswith(b"HTTP/1.1 101") and b"echo-test" in head.lower() and got == b"echo:ping" else 1)
+PY
+[ "$(grep '/w0/echo' "$W/stub.jsonl" | tail -1 | jq_ 'd["user"]=="admin" and d["authorization"] is None')" = True ] \
+  && pass "the upgrade reached the backend as the caller, without the caller's token" || fail "upgrade identity: $(grep '/w0/echo' "$W/stub.jsonl" | tail -1)"
+code=$(curl -sk -o "$W/out" -w '%{http_code}' -H "Authorization: Bearer $ADMIN" -H 'Connection: Upgrade' -H 'Upgrade: echo-test' \
+  "$API/apis/stub.example.com/v1/namespaces/default/widgets/w0/other")
+[ "$code" = 400 ] && grep -q "no such stream" "$W/out" && pass "a backend's refusal of an upgrade comes back as it sent it" \
+  || fail "upgrade refusal: $code $(head -c 200 "$W/out")"
 ct=$(curl -sk -o "$W/out" -w '%{content_type}' -H "Authorization: Bearer $ADMIN" \
   -H 'Accept: application/vnd.kubernetes.protobuf, application/json' "$API/apis/stub.example.com/v1/namespaces/default/widgets")
 [ "$ct" = application/json ] && [ "$(jq_ 'd["kind"]=="WidgetList"' <"$W/out")" = True ] \

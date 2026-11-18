@@ -7,7 +7,7 @@
 
 ## Implementation checkpoint — 2026-09-29 (#3)
 
-Full drop-in parity is not implemented. The CLI has explicit TLS/token flags
+Full drop-in parity is open work (#3). The CLI has explicit TLS/token flags
 but no kubeconfig or scheduler configuration/profile loading. The scheduling
 loop uses fixed filter/score calls; plugin traits are unused. With the turbomode implementation,
 indexed dependency events drive a serialized priority-ordered Pod/VMI queue,

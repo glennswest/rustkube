@@ -4,6 +4,11 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### No stubs (#322, P-1) — IN PROGRESS 2026-11-18
+- [x] Aggregated-API connection upgrades spliced (was 501 NotImplemented); rig check in aggregation.sh
+- [x] Test fakes: `unimplemented!()` → `Error::Store`; docs reworded with the gap's issue (#246, #3, stormcos_qa#26) or what replaced it
+- [ ] sc-build; aggregation rig on conform.g8.lo from goldens; grep empty; close
+
 ### restricted-v2 on stormcos (#321, P0, stormstorefront#1 option A) — COMPLETE 2026-11-18 (ships in a release)
 OpenShift manifests (no runAsUser/fsGroup, no root) must run unchanged.
 - [x] cf375a6 `scc.rs`: per-namespace `openshift.io/sa.scc.uid-range` /
@@ -1969,7 +1974,7 @@ results are in docs/conformance.md.
       `test/conformance/run.sh`: e2e.test v1.36.x `[Conformance]` (443) against
       apiserver + controller-manager + scheduler with two heartbeat-kept
       stand-in Nodes and no kubelet; pod-dependent tests are expected to
-      fail as "needs a node". Triage every failure into: not implemented /
+      fail as "needs a node". Triage every failure into: missing /
       wrong / needs a real node / not applicable → issues. A full-cluster run
       needs stormcos test machines (rustkube-node#27, #32).
   - **State 2026-09-27 (session restarted mid-run):** sig-api-machinery ran

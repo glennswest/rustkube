@@ -185,7 +185,7 @@ Every failure, by cause (`tmp/classify.py`-style rules over the `RESULT`/
 | Failures | Cause | Kind |
 |---:|---|---|
 | 242 | needs a running pod: pod-start, Deployment/DaemonSet readiness, DNS, pod networking, logs, init containers | needs a node |
-| 26 | admission/conversion webhook and aggregator specs: their server is a pod (and then #82, #83) | needs a node, then not implemented |
+| 26 | admission/conversion webhook and aggregator specs: their server is a pod (and then #82, #83) | needs a node (webhooks #82 and aggregation #83 are served since) |
 | 11 | ResourceQuota: no controller or admission — #124 | implemented 2026-10-07 (controller, admission with charging, scopes); not rerun |
 | 11 | ReplicationController: no controller — #125 | implemented 2026-10-07 (controller, `/scale`, defaults); not rerun — the specs that wait for Running/Ready Pods need a kubelet |
 | 9 | CRD schemas not in `/openapi` — #120 | implemented 2026-10-07 (v2 definitions, v3 documents, stale versions dropped); not rerun |

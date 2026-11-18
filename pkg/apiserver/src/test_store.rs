@@ -90,13 +90,13 @@ impl KvStore for MemStore {
         Err(Error::Store("MemStore does not watch".into()))
     }
     async fn lease_grant(&self, _: Duration) -> Result<LeaseId> {
-        unimplemented!("MemStore has no leases")
+        Err(apimachinery::Error::Store("MemStore has no leases".into()))
     }
     async fn lease_keepalive(&self, _: LeaseId) -> Result<()> {
-        unimplemented!("MemStore has no leases")
+        Err(apimachinery::Error::Store("MemStore has no leases".into()))
     }
     async fn lease_revoke(&self, _: LeaseId) -> Result<()> {
-        unimplemented!("MemStore has no leases")
+        Err(apimachinery::Error::Store("MemStore has no leases".into()))
     }
     async fn compact(&self, _: u64) -> Result<()> {
         Ok(())

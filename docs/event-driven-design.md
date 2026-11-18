@@ -564,8 +564,8 @@ Commands use `bash test/e2e/{list-snapshot-race,indexed-selectors,indexed-safety
 The strengthened probe samples distinct early, middle and late revisions and
 requires exact name/revision equality between WATCH output and the remaining
 acknowledged writes. Missing, duplicate and unexpected events fail; a client
-deadline ends observation because server timeoutSeconds was not implemented
-then (it is since #165, 2026-10-07).
+deadline ends observation because the server ignored timeoutSeconds then
+(it honours it since #165, 2026-10-07).
 
 The DaemonSet test now waits for both Pod placement and full status accounting
 before asserting heartbeat-only updates leave its revision unchanged. Pod

@@ -495,7 +495,7 @@ fn modes(v: &Value) -> String {
 /// The subset upstream actually allows in a printer column: a leading `.`,
 /// dotted field names, and numeric indices — `.spec.replicas`,
 /// `.status.conditions[0].type`. Filters and wildcards are not permitted
-/// there, so they are not implemented here; an unresolvable path yields an
+/// there (upstream refuses them in a CRD), so none reach this; an unresolvable path yields an
 /// empty cell, which is what upstream prints.
 fn json_path<'a>(obj: &'a Value, path: &str) -> Option<&'a Value> {
     let mut cur = obj;

@@ -171,7 +171,7 @@ TokenReview, the access reviews, SelfSubjectRulesReview — have none: an
 Accept offering only a Table is 406 `NotAcceptable`, #126); `PartialObjectMetadata`;
 watch with bookmarks, `sendInitialEvents` and `timeoutSeconds` (the stream
 ends cleanly at that deadline, after what was already sent; absent or 0 is no
-deadline — upstream's `--min-request-timeout` default is not implemented;
+deadline (upstream picks a random one from `--min-request-timeout`; that is #246);
 not an integer is 400; #165) (a watch with no
 `resourceVersion`, or `0`, starts with the current objects as ADDED events;
 a DELETED event carries the
@@ -311,7 +311,9 @@ kube-aggregator:
   `X-Remote-Group`; the caller's own `Authorization`, `Impersonate-*` and
   `X-Remote-*` headers are not forwarded. Responses stream (watches work);
   bodies and protobuf are passed as they are. Not `Available`: 503.
-  Connection upgrades are refused (501);
+  Connection upgrades (WebSocket, SPDY) go to the backend over HTTP/1.1
+  with their negotiation headers; its `101` is handed back and the two
+  connections spliced, any other answer passed back as it came (#322);
 - aggregated groups are in `/apis` and `/apis/{group}`; `/apis/{group}/{version}`
   is the backend's own answer; in aggregated discovery their versions are
   listed without resources, `freshness: Stale` (#107);

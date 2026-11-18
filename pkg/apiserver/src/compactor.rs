@@ -129,22 +129,22 @@ mod tests {
             Ok(g.0)
         }
         async fn delete(&self, _: &str, _: Option<u64>) -> Result<u64> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("this fake store does not serve this call".into()))
         }
         async fn list(&self, _: &str, _: usize, _: Option<&str>) -> Result<ListResult> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("this fake store does not serve this call".into()))
         }
         async fn watch(&self, _: &str, _: u64) -> Result<WatchStream> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("this fake store does not serve this call".into()))
         }
         async fn lease_grant(&self, _: Duration) -> Result<LeaseId> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("this fake store does not serve this call".into()))
         }
         async fn lease_keepalive(&self, _: LeaseId) -> Result<()> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("this fake store does not serve this call".into()))
         }
         async fn lease_revoke(&self, _: LeaseId) -> Result<()> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("this fake store does not serve this call".into()))
         }
         async fn compact(&self, revision: u64) -> Result<()> {
             let mut g = self.inner.lock().unwrap();

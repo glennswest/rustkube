@@ -547,10 +547,10 @@ mod compacted_continue_tests {
             Ok(None)
         }
         async fn put(&self, _: &str, _: &[u8], _: Option<u64>) -> Result<u64> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("the Compacted fake does not serve this call".into()))
         }
         async fn delete(&self, _: &str, _: Option<u64>) -> Result<u64> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("the Compacted fake does not serve this call".into()))
         }
         async fn list(&self, p: &str, l: usize, c: Option<&str>) -> Result<ListResult> {
             self.list_at(p, l, c, None).await
@@ -570,16 +570,16 @@ mod compacted_continue_tests {
             })
         }
         async fn watch(&self, _: &str, _: u64) -> Result<WatchStream> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("the Compacted fake does not serve this call".into()))
         }
         async fn lease_grant(&self, _: Duration) -> Result<LeaseId> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("the Compacted fake does not serve this call".into()))
         }
         async fn lease_keepalive(&self, _: LeaseId) -> Result<()> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("the Compacted fake does not serve this call".into()))
         }
         async fn lease_revoke(&self, _: LeaseId) -> Result<()> {
-            unimplemented!()
+            Err(apimachinery::Error::Store("the Compacted fake does not serve this call".into()))
         }
         async fn compact(&self, _: u64) -> Result<()> {
             Ok(())
