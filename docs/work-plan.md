@@ -4,6 +4,20 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Registry roles (#325, P0, stormblock-registry#188) — IN PROGRESS 2026-11-18
+- TokenReview, SubjectAccessReview, SelfSubjectAccessReview and
+  LocalSubjectAccessReview already exist (#85, #59, #69); a `sc user create`
+  user is a ServiceAccount in `storm-users`, which TokenReview already answers.
+- [ ] ClusterRoles as OpenShift's bootstrap policy: `registry-viewer`,
+  `registry-editor`, `system:image-puller`, `system:image-pusher`,
+  `system:registry` over `image.openshift.io` (+ legacy `""`) imagestreams,
+  `imagestreams/layers` (get = pull, update = push), images, tags.
+- [ ] `view` reads image streams, `edit` holds `registry-editor`, so a project
+  admin may bind every registry role in their project (escalation, #98).
+- [ ] unit tests: the roles answer the registry's SARs; admin holds them.
+- Not here: the per-namespace `system:image-pullers` binding OpenShift's
+  controller makes (needs RBAC create in the controller-manager, against #176).
+
 ### fetch.sh: partial stage (#323) — COMPLETE 2026-11-18
 - [x] A binary with no golden at `<sha>` comes from the newest golden of its image at an ancestor (only when the stage ran at `<sha>`, i.e. some golden is there); MANIFEST names it; the refusal names the missing binary
 - [x] Verified: `fetch.sh 89bfa0e` delivered apiserver@89bfa0e + controller-manager/scheduler from bf51ae7's goldens; vm.sh's MANIFEST check passes on conform.g8.lo; `fetch.sh e4225a1` (no golden) still refused
