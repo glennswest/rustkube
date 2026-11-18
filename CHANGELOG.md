@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-18
+- **test:** #322 verified: `aggregation.sh` 0 failed in 3 of 3 runs on conform.g8.lo from the 89bfa0e apiserver golden; the bf51ae7 apiserver fails its 3 upgrade checks (501). fetch.sh could not deliver a stage that rebuilt only the apiserver (#323)
 - **feat:** A connection upgrade (WebSocket, SPDY) to an aggregated API is proxied: sent to the backend over HTTP/1.1 with its negotiation headers and the caller as X-Remote-User, the backend's `101` handed back and the connections spliced; a backend's refusal passes through. It answered 501 `NotImplemented` (#322)
 - **chore:** No stub markers left (#322): test fakes return a `Store` error instead of panicking; docs say where each gap is tracked (#246 watch default deadline, #3 scheduler parity, stormcos_qa#26) or that it was done since (goldens for conformance, #82/#83)
 - **test:** #321 verified: `test/e2e/scc-restricted.sh` 15/15 in 3 of 3 runs on conform.g8.lo from golden-rustkube-*-73e5e502d340 (bf51ae7); oc-adm, projects and resource-quota rigs 0 failed on the same goldens; the 34a8ee084049 apiserver fails 11
