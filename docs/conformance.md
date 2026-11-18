@@ -45,8 +45,14 @@ ssh conform@conform.g8.lo 'cd rustkube && git fetch -q && git checkout -q origin
 kube-scheduler from the rustkube-* stage goldens built at `<sha>` with
 `stormcentral component fetch rustkube --commit <sha>` (stormcentral#557),
 each checked against its build's sha256, and fastetcd from its newest golden
-(`RK_FASTETCD_COMMIT` picks another). A commit with no golden is refused —
-`stormcentral component build rustkube` makes one. It writes a `MANIFEST`
+(`RK_FASTETCD_COMMIT` picks another). A stage rebuilds only the images
+whose sources changed, so a commit that changed only the apiserver has only
+an apiserver golden: each binary with none at `<sha>` comes from the newest
+golden of its image at an ancestor of `<sha>` (the last
+`RK_FETCH_ANCESTORS`, default 300), and the MANIFEST says `at <ancestor>`
+for it (#323). A commit with no golden at all is refused —
+`stormcentral component build rustkube` makes one — and so is one where a
+binary is found nowhere, naming it. It writes a `MANIFEST`
 (the commit, the goldens read, every binary's sha256) and copies the
 directory to the VM over ssh. The VM needs no stormcentral token.
 `vm.sh` checks the directory against its MANIFEST and that it names `<sha>`,

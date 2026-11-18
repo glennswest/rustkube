@@ -4,9 +4,9 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### fetch.sh: partial stage (#323)
-- [ ] A binary with no golden at `<sha>` comes from the newest golden of its image at an ancestor (only when the stage ran at `<sha>`, i.e. some golden is there); MANIFEST names it; the refusal names the missing binary
-- [ ] Verified: `fetch.sh 89bfa0e` delivers apiserver@89bfa0e + controller-manager/scheduler from bf51ae7's goldens
+### fetch.sh: partial stage (#323) — COMPLETE 2026-11-18
+- [x] A binary with no golden at `<sha>` comes from the newest golden of its image at an ancestor (only when the stage ran at `<sha>`, i.e. some golden is there); MANIFEST names it; the refusal names the missing binary
+- [x] Verified: `fetch.sh 89bfa0e` delivered apiserver@89bfa0e + controller-manager/scheduler from bf51ae7's goldens; vm.sh's MANIFEST check passes on conform.g8.lo; `fetch.sh e4225a1` (no golden) still refused
 
 ### No stubs (#322, P-1) — COMPLETE 2026-11-18
 - [x] Aggregated-API connection upgrades spliced (was 501 NotImplemented); rig check in aggregation.sh
