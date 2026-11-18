@@ -4,6 +4,25 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### restricted-v2 on stormcos (#321, P0, stormstorefront#1 option A) — IN PROGRESS 2026-11-18
+OpenShift manifests (no runAsUser/fsGroup, no root) must run unchanged.
+- [ ] `scc.rs`: per-namespace `openshift.io/sa.scc.uid-range` /
+      `sa.scc.supplemental-groups` (OpenShift's 1000000000/10000 blocks) from a
+      monotonic cluster-wide allocator (`/registry/rangeallocations/scc-uid`,
+      CAS; never reused); on namespace create, lazily at pod admission, and a
+      boot backfill
+- [ ] Pod admission picks an SCC as OpenShift does: `anyuid` / `privileged`
+      when the requester or the pod's SA may `use` it
+      (`security.openshift.io` `securitycontextconstraints`, RBAC), else
+      `restricted-v2`: runAsUser (MustRunAsRange, first UID), runAsNonRoot,
+      fsGroup (first group), allowPrivilegeEscalation false, drop ALL,
+      seccomp RuntimeDefault; refusals in OpenShift's words; pod annotated
+      `openshift.io/scc`. Platform namespaces (kube-*, storm-*, openshift-*)
+      and `enforce: privileged` ones are exempt; mirror pods untouched
+- [ ] Bootstrap ClusterRoles `system:openshift:scc:{anyuid,privileged,restricted-v2}`
+- [ ] Units; e2e rig; README/docs/CHANGELOG; sc-build; golden; rig on a test machine
+- Kubelet side (fsGroup on claims/emptyDir) is rustkube-node#171
+
 ### ServiceAccount key files followed (#298, P2, stormcos#176) — COMPLETE 2026-11-06
 A promote onto a running master (stormcluster#67) or an SNO master join
 (stormcluster#21) installs the cluster's SA pair under a running apiserver,
