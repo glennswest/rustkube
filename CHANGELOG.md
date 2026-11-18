@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-11-18
+- **feat:** OpenShift's `restricted-v2` (#321, stormstorefront#1): every Namespace gets `openshift.io/sa.scc.uid-range` / `sa.scc.supplemental-groups` (OpenShift's 1000000000/10000 blocks, a never-reused cluster-wide counter at `/registry/rangeallocations/scc-uid`; on create, at boot, or lazily at pod admission). Pod admission picks an SCC as OpenShift does — `anyuid`, `restricted-v2`, `privileged`, by RBAC `use` of `security.openshift.io` `securitycontextconstraints` for the requester or the pod's ServiceAccount — and `restricted-v2` sets runAsUser (the range's first UID), runAsNonRoot, fsGroup, allowPrivilegeEscalation false, drop ALL and seccomp RuntimeDefault where the pod leaves them unset, refusing a UID/fsGroup outside the range, privileged, host namespaces/ports, added capabilities and other volume types in OpenShift's words; pods annotated `openshift.io/scc`. Platform namespaces (`kube-*`, `openshift*`, `storm-*`, `*-system`) and `enforce: privileged` ones are not governed. ClusterRoles `system:openshift:scc:{anyuid,privileged,restricted-v2}` bootstrapped. Rig `test/e2e/scc-restricted.sh` (day suite)
+
 ### 2026-11-13
 - **docs:** Docs refreshed from the code since 2026-11-06: README checked date, audit addendum 2026-11-06 to 2026-11-13 (only #298 changed code, already documented). No flag, port or default added; no docs promise found that the code does not keep.
 

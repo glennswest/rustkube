@@ -458,7 +458,8 @@ write fails, freed ones released once it lands. Delete frees both. Then the
 pod's default ServiceAccount and its projected
 `kube-api-access-*` token volume (unless the pod or ServiceAccount sets
 `automountServiceAccountToken: false`), the not-ready /
-unreachable tolerations, priority from its PriorityClass, a subset of
+unreachable tolerations, priority from its PriorityClass, OpenShift's
+security context constraints (#321, below), a subset of
 PodSecurity keyed on the namespace's `pod-security.kubernetes.io/enforce`
 label, CronJob schedule validation, PVC access-mode validation
 (`ReadWriteOncePod` may not be combined with another mode), ConfigMap and
@@ -478,6 +479,42 @@ ConfigMaps/Secrets and PriorityClass `value`; a PersistentVolumeClaim's
 spec is immutable but for growing `resources.requests.storage` on a Bound
 claim whose StorageClass has `allowVolumeExpansion` (403 otherwise; shrinking
 only back to `status.capacity`) — volume expansion, docs/storage.md.
+
+**Security context constraints, restricted-v2 (#321).** OpenShift manifests —
+no `runAsUser`, no `fsGroup`, no root — run unchanged. Every Namespace gets
+`openshift.io/sa.scc.uid-range` and `openshift.io/sa.scc.supplemental-groups`
+(`<start>/10000`, the same block for both, from OpenShift's pool
+1000000000–1999999999) when it is created, at boot if it was stored without
+them, or at its first pod's admission; blocks come from a counter at
+`/registry/rangeallocations/scc-uid` (compare-and-swap, never reused, resumed
+after the highest block a namespace holds if the record is missing). A
+namespace created with valid ranges keeps them. A pod created in a governed
+namespace — every namespace except `kube-*`, `openshift*`, `storm-*` and
+`*-system`, unless its `pod-security.kubernetes.io/enforce` label says
+`restricted`/`baseline` (governed) or `privileged` (not) — is admitted under
+the first SCC the requester or the pod's ServiceAccount may `use` (RBAC verb
+`use` on `security.openshift.io` `securitycontextconstraints`, by name) and the
+pod satisfies, in OpenShift's order: `anyuid`, `restricted-v2` (everyone),
+`privileged`. `restricted-v2` sets what the pod leaves unset — each
+container's `runAsUser` (the range's first UID) and `runAsNonRoot: true`,
+`allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`; the pod's
+`fsGroup` (the first supplemental group) and `seccompProfile: RuntimeDefault`
+— and refuses a UID or fsGroup outside the range, privileged containers,
+added capabilities other than `NET_BIND_SERVICE`, host network/PID/IPC, host
+ports, other seccomp profiles and volume types other than configMap, csi,
+downwardAPI, emptyDir, ephemeral, image, persistentVolumeClaim, projected and
+secret: 403 `pods "x" is forbidden: unable to validate against any security
+context constraint: [provider "anyuid": Forbidden: not usable by user or
+serviceaccount, provider restricted-v2: .containers[0].runAsUser: Invalid
+value: 0: must be in the ranges: [1000680000, 1000689999], …]`. The pod is
+annotated `openshift.io/scc`. So a pod a controller creates for a Deployment
+gets `restricted-v2`, while one `cluster-admin` or `system:masters` creates
+directly is admitted under `anyuid` unchanged, as on OpenShift. More than
+restricted-v2 for a ServiceAccount: a RoleBinding to the bootstrapped
+ClusterRole `system:openshift:scc:anyuid` (or `…:privileged`). Mirror pods
+and the apiserver's own writes (manifests) are not governed; SELinux levels
+are not assigned. The kubelet applying `fsGroup` to volumes is
+rustkube-node#171.
 
 **Admission webhooks** (#82) run after the built-in admission, on create
 (built-in and custom resources, server-side apply's upsert, `pods/eviction`),

@@ -73,6 +73,17 @@ pub fn subresource() -> Option<String> {
     REQUEST.try_with(|r| r.subresource.clone()).ok().flatten()
 }
 
+/// The attributes of the API write this task is serving, if any (#321:
+/// SCC admission asks RBAC whether the requester may `use` an SCC).
+pub fn current() -> Option<Arc<RequestAttrs>> {
+    REQUEST.try_with(Arc::clone).ok()
+}
+
+/// Whether the API write this task is serving is a dry run.
+pub fn dry_run() -> bool {
+    REQUEST.try_with(|r| r.dry_run).unwrap_or(false)
+}
+
 /// Who asked for a write, and what for: upstream's admission attributes.
 #[derive(Debug)]
 pub struct RequestAttrs {

@@ -15,6 +15,8 @@
 //! - **Service defaults** (mutating): port `protocol` and `targetPort`, and a
 //!   ClusterIP allocated from `--service-cidr`.
 //! - **Priority** (mutating): a Pod's `spec.priority` from its PriorityClass.
+//! - **SCC** (mutating, #321): OpenShift's `restricted-v2` / `anyuid` /
+//!   `privileged`, with UIDs from the namespace's range — see `scc`.
 //! - **PodSecurity** (validating): a subset of baseline/restricted, keyed on
 //!   the namespace's `pod-security.kubernetes.io/enforce` label.
 //! - **CronJob schedule** and **PVC access modes** (validating): a
@@ -54,6 +56,10 @@ pub async fn admit_create(
 
     if resource == "namespaces" {
         namespace_defaults(obj);
+        // UID and supplemental-group ranges (#321); a dry run takes no block.
+        if !crate::admission::dry_run() {
+            crate::scc::ensure_ranges(storage, obj).await?;
+        }
     }
     if resource == "jobs" {
         job_managed_by(None, obj)?;
@@ -105,6 +111,11 @@ pub async fn admit_create(
         }
         qos_class(obj);
         initial_phase(obj);
+        // SCC admission (#321): restricted-v2 runs the pod as a UID from the
+        // namespace's range — before PodSecurity, which then sees the result.
+        if let Some(ns_obj) = &ns_obj {
+            crate::scc::admit_pod(storage, ns_obj, obj).await?;
+        }
         // PodSecurity — validate against the namespace's enforce level.
         if let Some(ns_obj) = &ns_obj {
             let level = ns_obj["metadata"]["labels"]
@@ -440,7 +451,7 @@ async fn namespace_lifecycle(
 
 /// PodSecurity admission — a subset of the baseline/restricted checks, keyed on
 /// the namespace's `pod-security.kubernetes.io/enforce` level.
-fn pod_security(level: &str, obj: &Value) -> Result<(), ApiError> {
+pub(crate) fn pod_security(level: &str, obj: &Value) -> Result<(), ApiError> {
     if level.is_empty() || level == "privileged" {
         return Ok(());
     }

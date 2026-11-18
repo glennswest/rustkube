@@ -1001,6 +1001,7 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // Each reads every stored object of its kind (Namespaces, Secrets, the
     // kinds that carry quantities): timed apart from the bootstrap writes.
     backfill_namespace_defaults(&storage).await;
+    crate::scc::backfill(&storage).await;
     backfill_secret_string_data(&storage).await;
     backfill_quantity_strings(&storage).await;
     boot.done("backfill");
@@ -2152,7 +2153,11 @@ async fn bootstrap_rbac(
         crate::control_plane_rbac::scheduler_role(),
         // Not bound here: stormcos binds stormcert's identity (#264).
         crate::control_plane_rbac::forge_node_signer_role(),
-    ] {
+    ]
+    .into_iter()
+    // `use` of each SCC, for a RoleBinding to grant it (#321).
+    .chain(crate::control_plane_rbac::scc_roles())
+    {
         reconcile_bootstrap_role(storage, role).await;
     }
     for user in [crate::control_plane_rbac::CONTROLLER_MANAGER, crate::control_plane_rbac::SCHEDULER] {

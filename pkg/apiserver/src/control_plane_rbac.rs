@@ -42,6 +42,24 @@ fn cluster_role(name: &str, description: &str, rules: Vec<Value>) -> Value {
     })
 }
 
+/// `system:openshift:scc:<name>`: `use` of one SCC, as OpenShift names the
+/// roles that grant them (#321). Bound by a RoleBinding (or
+/// ClusterRoleBinding) to the users or ServiceAccounts that need more than
+/// `restricted-v2`; see `scc`.
+pub fn scc_roles() -> Vec<Value> {
+    ["anyuid", "privileged", "restricted-v2"]
+        .into_iter()
+        .map(|scc| {
+            cluster_role(
+                &format!("system:openshift:scc:{scc}"),
+                &format!("Admit pods under the {scc} security context constraint (#321)."),
+                vec![json!({"apiGroups": ["security.openshift.io"], "resources": ["securitycontextconstraints"],
+                            "resourceNames": [scc], "verbs": ["use"]})],
+            )
+        })
+        .collect()
+}
+
 pub fn controller_manager_role() -> Value {
     cluster_role(
         CONTROLLER_MANAGER,
