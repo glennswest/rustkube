@@ -7,11 +7,16 @@ Kept here whole, newest notes as they were. Write new intentions here.
 ### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — IN PROGRESS 2026-11-18
 - The owner chose a namespaced CRD `registry.storm.io/v1 Image` for the
   registry's object (stormblock-registry#187). Add the group to #325's roles:
-  - [ ] `system:registry`: `images` get/list/watch/create/update/patch,
+  - [x] `system:registry`: `images` get/list/watch/create/update/patch,
     `images/status` update/patch; `registry-viewer`: read; `registry-editor`:
     get/list/watch/create/update/patch/delete; `view`/`edit`/`admin` as for
-    image streams (edit holds both registry roles, so admin may bind them).
-  - [ ] unit tests; README, CHANGELOG; sc-build.
+    image streams (edit holds both registry roles, so admin may bind them). 02a9b41.
+  - [x] unit tests; README, CHANGELOG; sc-build bfd9284638 at 02a9b41: apiserver
+    366 passed, 0 build warnings, no clippy hits in project.rs (workspace
+    clippy debt is #263; #334/#335 closed as its duplicates).
+  - [ ] rig `registry-roles` extended: the Image CRD with printer columns,
+    `kube-system/registry` bound to `system:registry`, its SARs (images/status),
+    `oc get images -n shop`. `rigs` run b992b078e1 (pvetest2) at 02a9b41.
   - Binding `kube-system/registry` to `system:registry` is stormcos#1043.
 
 ### Registry roles (#325, P0, stormblock-registry#188) — COMPLETE 2026-11-18 (ships in a release)
