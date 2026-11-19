@@ -615,7 +615,13 @@ as OpenShift's, bound per project with
 `update` `imagestreams/layers` = push), `system:image-puller` (pull only, for
 another project's service accounts), `system:image-pusher` and
 `system:registry` (a node registry's own identity in its project), over
-`image.openshift.io` and its legacy core-group spelling. `view` reads image
+`image.openshift.io` and its legacy core-group spelling, and over the
+registry's own object, the namespaced CRD `registry.storm.io/v1 Image`
+(#333): `registry-viewer` and `view` read `images`, `registry-editor` also
+creates, changes and deletes them, and `system:registry` reads, creates and
+changes them and writes `images/status` (each node its own `status.nodes`
+line) but deletes none; the CRD and the `kube-system/registry` binding come
+from stormcos. `view` reads image
 streams but pulls nothing; `edit` (so `admin`) holds every registry role, so a
 project admin may bind them. A node's registry checks a login with a
 TokenReview and each pull or push with a SubjectAccessReview in the

@@ -547,6 +547,7 @@ fn view_rules() -> Vec<Value> {
     // Image streams, read-only, as OpenShift's view (#325) — not their
     // layers: pulling is `registry-viewer` or `system:image-puller`.
     rules.push(rule(IMAGE_GROUPS, IMAGE_KINDS, READ));
+    rules.push(rule(STORM_REGISTRY, STORM_IMAGES, READ));
     // `kubectl top pod` in the project, as upstream's view aggregates (#89).
     rules.push(rule(&["metrics.k8s.io"], &["pods"], &["get", "list"]));
     rules
@@ -574,11 +575,20 @@ const IMAGE_KINDS: &[&str] = &[
 
 const LAYERS: &[&str] = &["imagestreams/layers"];
 
+/// The registry's own object (stormblock-registry#187, #333): the owner chose
+/// a namespaced CRD `registry.storm.io/v1 Image`, in the repository's
+/// project, every node's registry its controller writing its own
+/// `status.nodes` line.
+const STORM_REGISTRY: &[&str] = &["registry.storm.io"];
+const STORM_IMAGES: &[&str] = &["images"];
+const STORM_IMAGE_STATUS: &[&str] = &["images/status"];
+
 /// Pull: read the project's images and their layers.
 fn registry_viewer_rules() -> Vec<Value> {
     vec![
         rule(IMAGE_GROUPS, IMAGE_KINDS, READ),
         rule(IMAGE_GROUPS, LAYERS, &["get"]),
+        rule(STORM_REGISTRY, STORM_IMAGES, READ),
         rule(&["project.openshift.io"], &["projects"], &["get"]),
     ]
 }
@@ -590,6 +600,7 @@ fn registry_editor_rules() -> Vec<Value> {
     vec![
         rule(IMAGE_GROUPS, &kinds, ALL),
         rule(IMAGE_GROUPS, LAYERS, &["get", "update"]),
+        rule(STORM_REGISTRY, STORM_IMAGES, &["get", "list", "watch", "create", "update", "patch", "delete"]),
         rule(&["project.openshift.io"], &["projects"], &["get"]),
     ]
 }
@@ -603,6 +614,10 @@ fn registry_service_rules() -> Vec<Value> {
         rule(IMAGE_GROUPS, IMAGE_KINDS, &["get", "list", "watch", "create", "update", "patch", "delete"]),
         rule(IMAGE_GROUPS, &["imagestreams/secrets"], &["get"]),
         rule(IMAGE_GROUPS, LAYERS, &["get", "update"]),
+        // Lists the objects, creates one for a push, and writes its own
+        // node's `status.nodes` line; it deletes none (#333).
+        rule(STORM_REGISTRY, STORM_IMAGES, &["get", "list", "watch", "create", "update", "patch"]),
+        rule(STORM_REGISTRY, STORM_IMAGE_STATUS, &["update", "patch"]),
     ]
 }
 
@@ -921,6 +936,28 @@ mod tests {
             assert!(allows("edit", "update", g, "imagestreams", Some("layers")));
         }
         assert!(allows("system:registry", "list", "", "resourcequotas", None));
+
+        // The registry's own Image CRD (#333, stormblock-registry#187).
+        let g = "registry.storm.io";
+        for v in ["get", "list", "watch", "create", "update", "patch"] {
+            assert!(allows("system:registry", v, g, "images", None), "system:registry {v}");
+        }
+        assert!(!allows("system:registry", "delete", g, "images", None));
+        assert!(allows("system:registry", "update", g, "images", Some("status")));
+        assert!(allows("system:registry", "patch", g, "images", Some("status")));
+
+        assert!(allows("registry-viewer", "watch", g, "images", None));
+        assert!(!allows("registry-viewer", "create", g, "images", None));
+        assert!(allows("registry-editor", "delete", g, "images", None));
+        assert!(!allows("registry-editor", "update", g, "images", Some("status")));
+
+        assert!(allows("view", "list", g, "images", None));
+        assert!(!allows("view", "create", g, "images", None));
+        for r in ["edit", "admin"] {
+            assert!(allows(r, "delete", g, "images", None), "{r}");
+            assert!(allows(r, "update", g, "images", Some("status")), "{r}");
+        }
+        assert!(!allows("system:image-puller", "get", g, "images", None));
         assert!(!allows("registry-editor", "get", "", "secrets", None));
     }
 

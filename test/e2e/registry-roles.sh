@@ -3,6 +3,9 @@
 # The registry roles and the reviews a node's registry asks (#325,
 # stormblock-registry#188), against a real apiserver on a real fastetcd.
 #
+# The registry's own object, `registry.storm.io/v1 Image` (a namespaced CRD,
+# stormblock-registry#187), is covered by the same roles (#333).
+#
 # A registry login is the user's token: the registry asks TokenReview who it
 # is, then a SubjectAccessReview in the repository's project for each
 # request — `get` on `imagestreams/layers` to pull, `update` to push. The
@@ -49,11 +52,12 @@ req() { # <method> <path> [json] — HTTP code; body in $W/out
 jq_() { python3 -c "import json,sys; d=json.load(open('$W/out')); print($1)"; }
 
 # sar <user> <groups-json> <namespace> <verb> <resource> [subresource] → true/false
+# (API group image.openshift.io, or $SAR_GROUP)
 sar() {
   req POST /apis/authorization.k8s.io/v1/subjectaccessreviews "{
     \"apiVersion\":\"authorization.k8s.io/v1\",\"kind\":\"SubjectAccessReview\",
     \"spec\":{\"user\":\"$1\",\"groups\":$2,\"resourceAttributes\":{
-      \"namespace\":\"$3\",\"verb\":\"$4\",\"group\":\"image.openshift.io\",
+      \"namespace\":\"$3\",\"verb\":\"$4\",\"group\":\"${SAR_GROUP:-image.openshift.io}\",
       \"resource\":\"$5\",\"subresource\":\"${6:-}\"}}}" >/dev/null
   jq_ 'str(d["status"].get("allowed", False)).lower()'
 }
@@ -174,5 +178,63 @@ REG_GROUPS='["system:serviceaccounts","system:serviceaccounts:shop","system:auth
 expect_sar true  "system:registry: writes images in shop" "$REG" "$REG_GROUPS" shop create images
 expect_sar true  "system:registry: push to shop" "$REG" "$REG_GROUPS" shop update imagestreams layers
 expect_sar false "system:registry: nothing in other" "$REG" "$REG_GROUPS" other create images
+
+
+# --- registry.storm.io Image: the registry's own object (#333) ---------------
+# stormcos ships the CRD and binds kube-system/registry to system:registry
+# (stormcos#1043); the rig does both as they will. Printer columns as
+# stormblock-registry's deploy/crd/images.registry.storm.io.yaml.
+adm apply -f - >/dev/null <<'YAML'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: {name: images.registry.storm.io}
+spec:
+  group: registry.storm.io
+  scope: Namespaced
+  names: {plural: images, singular: image, kind: Image, listKind: ImageList}
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Source, type: string, jsonPath: .spec.source.upstream}
+    - {name: Digest, type: string, jsonPath: .status.digest}
+    - {name: Nodes, type: string, jsonPath: .status.nodeNames}
+    - {name: Age, type: date, jsonPath: .metadata.creationTimestamp}
+    schema: {openAPIV3Schema: {type: object, x-kubernetes-preserve-unknown-fields: true}}
+YAML
+sleep 2 # discovery shows the new group
+adm create serviceaccount registry -n kube-system >/dev/null
+expect_ok "admin: add-cluster-role-to-user system:registry -z registry -n kube-system" \
+  adm adm policy add-cluster-role-to-user system:registry -z registry -n kube-system
+KREG=system:serviceaccount:kube-system:registry
+KREG_GROUPS='["system:serviceaccounts","system:serviceaccounts:kube-system","system:authenticated"]'
+export SAR_GROUP=registry.storm.io
+expect_sar true  "kube-system:registry: update images/status in shop" "$KREG" "$KREG_GROUPS" shop update images status
+expect_sar true  "kube-system:registry: patch images/status in shop" "$KREG" "$KREG_GROUPS" shop patch images status
+for v in list watch create update; do
+  expect_sar true "kube-system:registry: $v images in shop" "$KREG" "$KREG_GROUPS" shop "$v" images
+done
+expect_sar false "kube-system:registry: no delete of images" "$KREG" "$KREG_GROUPS" shop delete images
+expect_sar true  "alice (registry-editor): delete images in shop" "$ALICE_USER" "$SA_GROUPS" shop delete images
+expect_sar false "alice: no images in other" "$ALICE_USER" "$SA_GROUPS" other list images
+expect_sar true  "carol (registry-viewer): list images in shop" system:serviceaccount:storm-users:carol "$SA_GROUPS" shop list images
+expect_sar false "carol: no create of images in shop" system:serviceaccount:storm-users:carol "$SA_GROUPS" shop create images
+unset SAR_GROUP
+
+IMG='{"apiVersion":"registry.storm.io/v1","kind":"Image","metadata":{"name":"web-v1"},
+  "spec":{"source":{"upstream":"quay.io/x/web@sha256:abc"},"placement":{"all":true}}}'
+expect_ok "alice: create an Image in shop" as "$ALICE" alice create -n shop -f - <<<"$IMG"
+req POST /api/v1/namespaces/storm-users/serviceaccounts/carol/token \
+  '{"apiVersion":"authentication.k8s.io/v1","kind":"TokenRequest","spec":{}}' >/dev/null
+CAROL=$(jq_ 'd["status"]["token"]')
+expect_denied "carol: may not create an Image in shop" as "$CAROL" carol create -n shop -f - <<<"${IMG/web-v1/web-v2}"
+out=$(as "$ALICE" alice get images -n shop)
+if grep -qE '^NAME +SOURCE +DIGEST +NODES +AGE$' <<<"$out" && grep -qE '^web-v1 +quay.io/x/web@sha256:abc ' <<<"$out"; then
+  pass "alice: get images -n shop with the printer columns"
+else
+  fail "alice: get images -n shop: $out"
+fi
 
 report
