@@ -675,6 +675,12 @@ concurrent complete/paginated LISTs and exact WATCH replay after them; this
 does not upgrade any deployed datastore. The historical intermittent rig
 failures #153/#154 were closed unreproduced.
 
+Pods made by the workload controllers (ReplicaSet, ReplicationController,
+StatefulSet, DaemonSet, Job) carry their template's labels, annotations and
+finalizers, as upstream's `GetPodFromTemplate` (#256) — so
+`kubectl.kubernetes.io/restartedAt` from `rollout restart`, scrape hints and
+an operator's own template markers are on the pod.
+
 Deployment (rolling updates; old ReplicaSets scaled down by upstream's
 `reconcileOldReplicaSets` arithmetic, so `maxUnavailable` lets an old pod
 go while the surge pod is still pending, #266), ReplicaSet (a refused Pod

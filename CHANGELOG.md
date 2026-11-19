@@ -2,6 +2,9 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-11-19
+- **fix:** Pods made by the ReplicaSet/ReplicationController, DaemonSet, Job and StatefulSet controllers carry their template's `metadata.annotations` and `metadata.finalizers`, as upstream's `GetPodFromTemplate`; only labels were copied (#256). stormoptions' `options.storm.io/golden-digest` never reached an operator's pod, so no option became Ready (nextnfs-operator#2, stormcos-options#26), and `kubectl rollout restart`'s `restartedAt` was lost
+
 ### 2026-11-18
 - **test:** #333 verified: `registry-roles` 49/49 in `rigs` run b992b078e1 (pvetest2, 02a9b41), including the `kube-system/registry` SubjectAccessReview for `update` `images/status` in `registry.storm.io` and `oc get images -n shop` with the CRD's printer columns. hpa-metrics and vm-runstrategy failures in that run filed as #336
 - **feat:** Registry roles cover the registry's own object, the namespaced CRD `registry.storm.io/v1 Image` the owner chose (#333, stormblock-registry#187): `system:registry` gets `images` get/list/watch/create/update/patch and `images/status` update/patch; `registry-viewer` and `view` read `images`; `registry-editor` (so `edit`/`admin`) also creates, changes and deletes them. Rig `registry-roles`: the CRD with its printer columns, `kube-system/registry` bound to `system:registry` (as stormcos#1043 will), its SubjectAccessReviews, and `oc get images -n shop` listing an Image by its columns
