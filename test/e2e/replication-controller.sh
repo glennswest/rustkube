@@ -13,6 +13,9 @@
 # - a deleted Pod is replaced
 # - delete with orphan propagation leaves the Pods without the owner; a
 #   background delete (the GC conformance spec) removes them
+# - pods carry their template's annotations (#256; finalizers: unit tests): the RC's
+#   Pods, and a Deployment's (through its ReplicaSet), including
+#   kubectl.kubernetes.io/restartedAt after a `rollout restart`-style patch
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -48,7 +51,7 @@ def eventually(label, test, secs=30):
         time.sleep(0.3)
     check(False, label)
 def rc(name, replicas=None, selector=None):
-    spec = {"template": {"metadata": {"labels": {"app": name}},
+    spec = {"template": {"metadata": {"labels": {"app": name}, "annotations": {"e2e.storm.io/from": name}},
                          "spec": {"containers": [{"name": "c", "image": "pause"}]}}}
     if replicas is not None: spec["replicas"] = replicas
     if selector is not None: spec["selector"] = selector
@@ -65,6 +68,8 @@ p = pods("web", uid)
 o = p[0]["metadata"]["ownerReferences"][0] if p else {}
 check(o.get("kind") == "ReplicationController" and o.get("apiVersion") == "v1" and o.get("controller") is True,
       f"owner reference: kind ReplicationController, controller ({o})")
+a = p[0]["metadata"].get("annotations", {}) if p else {}
+check(a.get("e2e.storm.io/from") == "web", f"the RC's Pod carries its template's annotation ({a})")
 eventually("status replicas 2, fullyLabeledReplicas 2",
            lambda: (lambda s: s.get("replicas") == 2 and s.get("fullyLabeledReplicas") == 2 and "observedGeneration" in s)
                    (req("GET", NS + "/replicationcontrollers/web")[1].get("status", {})))
@@ -93,6 +98,29 @@ eventually("orphan delete: the Pods stay, without the owner",
            lambda: req("GET", NS + "/replicationcontrollers/orph")[0] == 404 and len(pods("orph")) == 2 and len(pods("orph", ouid)) == 0)
 req("DELETE", NS + "/replicationcontrollers/web", {"propagationPolicy": "Background"})
 eventually("background delete: the GC removes its Pods", lambda: len(pods("web")) == 0, 60)
+
+# #256: a Deployment's template annotations reach its Pods through the
+# ReplicaSet; so does `kubectl rollout restart`'s restartedAt.
+DEP = "/apis/apps/v1/namespaces/rc-e2e/deployments"
+code, _ = req("POST", DEP, {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "opt"},
+    "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "opt"}},
+             "template": {"metadata": {"labels": {"app": "opt"},
+                                       "annotations": {"options.storm.io/golden-digest": "17b6d634"}},
+                          "spec": {"containers": [{"name": "c", "image": "pause"}]}}}})
+check(code == 201, f"Deployment with a template annotation ({code})")
+def opt_pods(): return pods("opt")
+eventually("the Deployment's Pod carries its template's annotation",
+           lambda: any(x["metadata"].get("annotations", {}).get("options.storm.io/golden-digest") == "17b6d634"
+                       for x in opt_pods()))
+stamp = "2026-11-19T12:00:00Z"
+code, _ = req("PATCH", DEP + "/opt", {"spec": {"template": {"metadata": {"annotations": {
+    "kubectl.kubernetes.io/restartedAt": stamp}}}}}, "application/strategic-merge-patch+json")
+check(code == 200, f"rollout restart patch ({code})")
+eventually("the restarted Pod carries restartedAt and the template's annotation",
+           lambda: any(x["metadata"].get("annotations", {}).get("kubectl.kubernetes.io/restartedAt") == stamp
+                       and x["metadata"].get("annotations", {}).get("options.storm.io/golden-digest") == "17b6d634"
+                       for x in opt_pods()), 60)
+req("DELETE", DEP + "/opt", {"propagationPolicy": "Background"})
 sys.exit(failed)
 PY
 report
