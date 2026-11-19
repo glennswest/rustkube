@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-19
+- **test:** #256 verified: `replication-controller` rig 19/19 in `rigs` run 082dfba180 (pvetest1, 06a126f) — an RC's pods and a Deployment's pod (through its ReplicaSet) carry the template's annotation, and a `restartedAt` patch reaches the new pod. Its orphan-delete check flaked once on pvetest2 (5e29dd0334), filed #339
 - **fix:** Pods made by the ReplicaSet/ReplicationController, DaemonSet, Job and StatefulSet controllers carry their template's `metadata.annotations` and `metadata.finalizers`, as upstream's `GetPodFromTemplate`; only labels were copied (#256). stormoptions' `options.storm.io/golden-digest` never reached an operator's pod, so no option became Ready (nextnfs-operator#2, stormcos-options#26), and `kubectl rollout restart`'s `restartedAt` was lost
 
 ### 2026-11-18

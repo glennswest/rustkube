@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Pods keep their template's annotations (#256, P2; nextnfs-operator#2, stormcos-options#26) — IN PROGRESS 2026-11-19
+### Pods keep their template's annotations (#256, P2; nextnfs-operator#2, stormcos-options#26) — COMPLETE 2026-11-19 (ships in a release)
 - `build_pod_from_template` (ReplicaSet/RC) copies only `labels` + `spec`;
   DaemonSet, Job and StatefulSet pod builders do the same. Upstream
   (`GetPodFromTemplate`) copies labels, annotations and finalizers. Effect:
@@ -17,8 +17,12 @@ Kept here whole, newest notes as they were. Write new intentions here.
   the template annotation; a Deployment's pod (via its RS) carries
   `options.storm.io/golden-digest`, and `restartedAt` after a restart
   patch. 06a126f.
-- [ ] sc-build (controller-manager tests + clippy) at f19424c; `rigs` run
-  5e29dd0334 (pvetest2) at 06a126f.
+- [x] sc-build sc-build-88d86b1b13 at f19424c: controller-manager 125
+  passed, no clippy hits in the changed files (cronjob.rs's is #263).
+- [x] `rigs` at 06a126f: 082dfba180 (pvetest1) replication-controller 19/19;
+  5e29dd0334 (pvetest2) 18/19 with the old orphan-delete check flaking
+  (filed #339), the five #256 checks passing. Other failures not #256's:
+  status-put-latency (stormpump#153), hpa-metrics / vm-runstrategy (#336).
 
 ### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — COMPLETE 2026-11-18 (ships in a release)
 - The owner chose a namespaced CRD `registry.storm.io/v1 Image` for the
