@@ -4,6 +4,17 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Pods keep their template's annotations (#256, P2; nextnfs-operator#2, stormcos-options#26) — IN PROGRESS 2026-11-19
+- `build_pod_from_template` (ReplicaSet/RC) copies only `labels` + `spec`;
+  DaemonSet, Job and StatefulSet pod builders do the same. Upstream
+  (`GetPodFromTemplate`) copies labels, annotations and finalizers. Effect:
+  stormoptions' `options.storm.io/golden-digest` never reaches the operator
+  pod, so no option becomes Ready; `kubectl rollout restart`'s
+  `restartedAt` is lost too.
+- [ ] one helper in `owned.rs` copies `annotations` and `finalizers`; used by
+  all four builders; unit tests that a template annotation reaches the pod.
+- [ ] README/CHANGELOG; sc-build.
+
 ### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — COMPLETE 2026-11-18 (ships in a release)
 - The owner chose a namespaced CRD `registry.storm.io/v1 Image` for the
   registry's object (stormblock-registry#187). Add the group to #325's roles:
