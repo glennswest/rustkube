@@ -60,6 +60,26 @@ pub trait Controller: Send + Sync {
 }
 
 /// Every primary key: for a dependency relist, whose lost events are unknown.
+/// Give a pod its template's `metadata.annotations` and `metadata.finalizers`,
+/// as upstream's `GetPodFromTemplate` does for every workload controller
+/// (#256): a template annotation (`kubectl.kubernetes.io/restartedAt`,
+/// scrape hints, an operator's own marker) must be on the pod. Labels are
+/// copied by each builder, which adds its own.
+pub fn copy_template_metadata(template: &Value, pod: &mut Value) {
+    let Some(meta) = pod["metadata"].as_object_mut() else { return };
+    for field in ["annotations", "finalizers"] {
+        let value = &template["metadata"][field];
+        let present = match value {
+            Value::Object(m) => !m.is_empty(),
+            Value::Array(a) => !a.is_empty(),
+            _ => false,
+        };
+        if present {
+            meta.insert(field.into(), value.clone());
+        }
+    }
+}
+
 pub fn all_keys(primary: &Feed) -> Vec<Key> {
     primary.keys().unwrap_or_default()
 }

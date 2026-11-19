@@ -216,6 +216,7 @@ fn build_statefulset_pod(
             "phase": "Pending"
         }
     });
+    crate::owned::copy_template_metadata(template, &mut pod);
 
     // Set hostname and subdomain for stable network identity
     if let Some(spec) = pod["spec"].as_object_mut() {
@@ -261,5 +262,23 @@ impl crate::owned::Controller for StatefulSetController {
             .unwrap_or("default");
         self.reconcile_statefulset(namespace, object, children)
             .await
+    }
+}
+
+#[cfg(test)]
+mod template_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn a_pod_carries_its_template_s_annotations() {
+        // #256: upstream's GetPodFromTemplate copies annotations and finalizers.
+        let obj = json!({"spec": {"template": {"metadata": {"labels": {"app": "a"},
+            "annotations": {"kubectl.kubernetes.io/default-container": "c"},
+            "finalizers": ["example.com/keep"]},
+            "spec": {"containers": [{"name": "c", "image": "i"}]}}}});
+        let pod = build_statefulset_pod("ns", "s", "u", 0, "svc", &obj).unwrap();
+        assert_eq!(pod["metadata"]["annotations"]["kubectl.kubernetes.io/default-container"], "c");
+        assert_eq!(pod["metadata"]["finalizers"], json!(["example.com/keep"]));
+        assert_eq!(pod["metadata"]["labels"]["app"], "a");
     }
 }

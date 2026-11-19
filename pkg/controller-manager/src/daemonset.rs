@@ -452,7 +452,7 @@ fn build_daemonset_pod(
         }
     }
 
-    let pod = json!({
+    let mut pod = json!({
         "apiVersion": "v1",
         "kind": "Pod",
         "metadata": {
@@ -473,6 +473,7 @@ fn build_daemonset_pod(
             "phase": "Pending"
         }
     });
+    crate::owned::copy_template_metadata(template, &mut pod);
 
     Ok(pod)
 }
@@ -529,6 +530,16 @@ mod tests {
     /// *make* a node usable, so keeping their pods off a broken node keeps off
     /// exactly the pods that would fix it. Only `not-ready` was tolerated
     /// before.
+    #[test]
+    fn a_daemonset_pod_carries_its_template_s_annotations() {
+        let ds = json!({"metadata": {"name": "d", "namespace": "kube-system", "uid": "u"},
+            "spec": {"template": {"metadata": {"labels": {"a": "b"},
+                "annotations": {"prometheus.io/scrape": "true"}},
+                "spec": {"containers": [{"name": "c", "image": "i"}]}}}});
+        let pod = build_daemonset_pod("kube-system", "d", "u", "node1", &ds).unwrap();
+        assert_eq!(pod["metadata"]["annotations"]["prometheus.io/scrape"], "true");
+    }
+
     #[test]
     fn daemonset_pods_tolerate_every_node_condition() {
         let pod = build_daemonset_pod("kube-system", "d", "u", "node1", &ds(Value::Null)).unwrap();

@@ -335,7 +335,7 @@ fn build_pod_from_template(
         labels = json!({});
     }
 
-    let pod = json!({
+    let mut pod = json!({
         "apiVersion": "v1",
         "kind": "Pod",
         "metadata": {
@@ -356,6 +356,7 @@ fn build_pod_from_template(
             "phase": "Pending"
         }
     });
+    crate::owned::copy_template_metadata(template, &mut pod);
 
     Ok(pod)
 }
@@ -431,6 +432,28 @@ mod tests {
         assert_eq!(pod["metadata"]["labels"]["app"], "a");
         let rs = build_pod_from_template("ns", "web", "u1", &rc, &Kind::REPLICA_SET).unwrap();
         assert_eq!(rs["metadata"]["ownerReferences"][0]["kind"], "ReplicaSet");
+    }
+
+    #[test]
+    fn a_pod_carries_its_template_s_annotations_and_finalizers() {
+        // #256: stormoptions marks its operator's template with
+        // options.storm.io/golden-digest and waits for a pod that carries it.
+        let rs = json!({"spec": {"template": {"metadata": {
+            "labels": {"app": "a"},
+            "annotations": {"options.storm.io/golden-digest": "17b6d634",
+                            "kubectl.kubernetes.io/restartedAt": "2026-11-19T00:00:00Z"},
+            "finalizers": ["example.com/keep"]},
+            "spec": {"containers": [{"name": "c", "image": "i"}]}}}});
+        let pod = build_pod_from_template("ns", "web", "u1", &rs, &Kind::REPLICA_SET).unwrap();
+        assert_eq!(pod["metadata"]["annotations"]["options.storm.io/golden-digest"], "17b6d634");
+        assert_eq!(pod["metadata"]["annotations"]["kubectl.kubernetes.io/restartedAt"], "2026-11-19T00:00:00Z");
+        assert_eq!(pod["metadata"]["finalizers"], json!(["example.com/keep"]));
+        assert_eq!(pod["metadata"]["labels"]["app"], "a");
+        // A template with none adds neither field.
+        let bare = json!({"spec": {"template": {"metadata": {"labels": {"app": "a"}}, "spec": {}}}});
+        let pod = build_pod_from_template("ns", "web", "u1", &bare, &Kind::REPLICA_SET).unwrap();
+        assert!(pod["metadata"].get("annotations").is_none());
+        assert!(pod["metadata"].get("finalizers").is_none());
     }
 
     #[test]
