@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-19
+- **test:** `short`'s `replicaset-pod-bound` says why a ReplicaSet made no pod: whether the controller-manager observed it, its `ReplicaFailure` condition and Warning events. The first live `short` run (034b3dd344, pvetest2, 41af409) passed 4/5 and failed there with no reason to go on (#96)
 - **docs:** test/README and changes-since: stormcos_qa's rustkube scripts are removed there (stormcos_qa#25, bb3e03a), no longer "retirement pending"; the checks not ported are #232 (#96)
 - **test:** #173 verified: the night suite runs as a pod. `rigs-night` run ef4f9c31e3 (pvetest1, 1538895) ran all 10 night rigs in the test pod in ~1025 s of its 7200 s budget, 8 pass; the multi-master and serving-cert failures are #310 and #328. With the day suite already running there, no e2e rig runs in a build slot
 - **test:** #256 verified: `replication-controller` rig 19/19 in `rigs` run 082dfba180 (pvetest1, 06a126f) — an RC's pods and a Deployment's pod (through its ReplicaSet) carry the template's annotation, and a `restartedAt` patch reaches the new pod. Its orphan-delete check flaked once on pvetest2 (5e29dd0334), filed #339

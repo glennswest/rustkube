@@ -141,7 +141,19 @@ async fn replicaset_pod_bound(env: &Env, kube: &Kube) -> Result<Outcome> {
         }
         if start.elapsed() >= within {
             break if owned.is_empty() {
-                fail(format!("the ReplicaSet made no pod in {within:?}"))
+                // Say why (#96: the first live run on pvetest2 failed here
+                // with nothing to go on): read the ReplicaSet and its events
+                // before the delete below removes them.
+                let now = kube.get(&format!("{rss}/{name}")).await?;
+                let events = kube
+                    .get(&format!(
+                        "{}?fieldSelector=involvedObject.uid%3D{uid}",
+                        kube.path("", "v1", "events")
+                    ))
+                    .await?
+                    .and_then(|l| l["items"].as_array().cloned())
+                    .unwrap_or_default();
+                fail(no_pod_detail(now.as_ref(), &events, within))
             } else {
                 fail(format!("its pod was not bound to a node in {within:?}"))
             };
@@ -150,4 +162,84 @@ async fn replicaset_pod_bound(env: &Env, kube: &Kube) -> Result<Outcome> {
     };
     kube.delete(&format!("{rss}/{name}")).await?;
     outcome
+}
+
+/// What a ReplicaSet that made no pod shows: whether the controller-manager
+/// saw it at all (`status.observedGeneration`), its `ReplicaFailure`
+/// condition, and its `FailedCreate`-style Warning events — the reason a
+/// create was refused (admission, quota, a missing ServiceAccount).
+fn no_pod_detail(rs: Option<&Value>, events: &[Value], within: Duration) -> String {
+    let mut d = format!("the ReplicaSet made no pod in {within:?}");
+    let Some(rs) = rs else {
+        d.push_str("; it was gone before it could be read");
+        return d;
+    };
+    let observed = rs["status"]["observedGeneration"].as_i64();
+    match observed {
+        None => d.push_str("; the controller-manager never observed it (no status.observedGeneration)"),
+        Some(g) => d.push_str(&format!("; observed at generation {g}")),
+    }
+    if let Some(c) = rs["status"]["conditions"]
+        .as_array()
+        .and_then(|cs| cs.iter().find(|c| c["type"] == "ReplicaFailure" && c["status"] == "True"))
+    {
+        d.push_str(&format!(
+            "; ReplicaFailure {}: {}",
+            c["reason"].as_str().unwrap_or("?"),
+            c["message"].as_str().unwrap_or("")
+        ));
+    }
+    let warnings: Vec<String> = events
+        .iter()
+        .filter(|e| e["type"] == "Warning")
+        .map(|e| format!("{}: {}", e["reason"].as_str().unwrap_or("?"), e["message"].as_str().unwrap_or("")))
+        .collect();
+    if !warnings.is_empty() {
+        d.push_str(&format!("; events: {}", warnings.join(" | ")));
+    } else if observed.is_some() {
+        d.push_str("; no Warning event");
+    }
+    d
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const W: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn never_observed() {
+        let rs = json!({"metadata": {"name": "short-rs"}, "status": {}});
+        let d = no_pod_detail(Some(&rs), &[], W);
+        assert!(d.contains("never observed it"), "{d}");
+        assert!(!d.contains("no Warning event"), "{d}");
+    }
+
+    #[test]
+    fn refused_create_names_the_reason() {
+        let rs = json!({"status": {"observedGeneration": 1, "conditions": [
+            {"type": "ReplicaFailure", "status": "True", "reason": "FailedCreate", "message": "pods \"x\" is forbidden: exceeded quota"}]}});
+        let ev = vec![
+            json!({"type": "Normal", "reason": "Ignored", "message": "n"}),
+            json!({"type": "Warning", "reason": "FailedCreate", "message": "Error creating: forbidden"}),
+        ];
+        let d = no_pod_detail(Some(&rs), &ev, W);
+        assert!(d.contains("observed at generation 1"), "{d}");
+        assert!(d.contains("ReplicaFailure FailedCreate: pods \"x\" is forbidden: exceeded quota"), "{d}");
+        assert!(d.contains("events: FailedCreate: Error creating: forbidden"), "{d}");
+        assert!(!d.contains("Ignored"), "{d}");
+    }
+
+    #[test]
+    fn observed_but_silent() {
+        let rs = json!({"status": {"observedGeneration": 1, "replicas": 0}});
+        let d = no_pod_detail(Some(&rs), &[], W);
+        assert!(d.ends_with("observed at generation 1; no Warning event"), "{d}");
+    }
+
+    #[test]
+    fn gone() {
+        assert!(no_pod_detail(None, &[], W).contains("gone before it could be read"));
+    }
 }

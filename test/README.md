@@ -44,7 +44,7 @@ test failed, 2 the suite could not run (reported as a `could-not-run` skip).
 | `object-roundtrip` | a ConfigMap created, read back, updated (resourceVersion rises — the store's revision), a stale update is 409, deleted |
 | `watch-sees-writes` | a watch from the list's revision sees ADDED and DELETED |
 | `namespace-provisioned` | the controller-manager made the run namespace's `default` ServiceAccount and `kube-root-ca.crt` |
-| `replicaset-pod-bound` | a ReplicaSet's pod is created (controller-manager) and bound to a node (scheduler) within 60 s |
+| `replicaset-pod-bound` | a ReplicaSet's pod is created (controller-manager) and bound to a node (scheduler) within 60 s; with no pod, the failure says whether the controller-manager observed the ReplicaSet, its `ReplicaFailure` condition and its Warning events |
 
 **medium** (< 30 min) — features and failure paths, end to end. The checks of
 the `stormcos_qa/tests/rustkube/*.sh` scripts that fit a namespace (ported
