@@ -802,7 +802,7 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       51ef481a0b and on conform.g8.lo (apiserver golden 4fe0997b273e);
       control efbea2d fails 16 (200 `<plural>List`, writes stored). #110 closed
 
-### Kubernetes 1.36 API (#285, P2) — BUILT + RELEASED (12.58), pve suites PASS 2026-11-19, the Dell BLOCKED on stormcentral#1407
+### Kubernetes 1.36 API (#285, P2) — BUILT + RELEASED (12.58), pve suites PASS 2026-11-19, the Dell BLOCKED on stormuefi#76
 The issue's crate pair does not apply: nothing imports k8s-openapi (declared
 0.24 `v1_32` in apimachinery/apiserver/cloud, never `use`d — the only "1.32"
 here) and kube-rs is not used; the wire API is the release-1.36 protos +
@@ -852,7 +852,10 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
 - [ ] The Dell: C2NR0Q2 refuses runs, "its last install (12.81) ended
       cancelled: it runs no known release" — stormcentral#1407 (its local
       disk never boots a pallet). Proposed after it; then short + rigs there,
-      and close
+      and close. 2026-11-19 later: #1407 closed with a check only (80fa627:
+      an install that reboots into the network clone now fails); C2NR0Q2's
+      pallet itself fails "no kernel inside the kernel member" — stormuefi#76,
+      open. Same refusal today. Re-proposed after stormuefi#76
 
 ### Cold container start 1.49 s on 12.32-flowsdn (#284, P2) — CLOSED (not reproduced) 2026-10-21
 The issue: confirm on the next release before tracing. `testhost installs`

@@ -629,6 +629,9 @@
 
 ## [Unreleased]
 
+### 2026-11-19
+- **docs:** work plan — #285's last item (the Dell's suites) waits on stormuefi#76, not stormcentral#1407
+
 ### 2026-10-06
 - **chore:** test-fixture credentials marked `not a secret` (inline, or `.github/secret_scanning.yml` for files that cannot hold a comment) — owner
 
