@@ -30,7 +30,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
   has template annotations. pvetest1 runs 12.95, without the fix, and its
   `cilium` pod lacks the template's `kubectl.kubernetes.io/default-container`.
   Re-shipped `--commit f19424c` with a proof every cilium install has a
-  subject for: `on any:cilium` kube-system pods carry
+  subject for: `on pvetest1` (cilium flavor) kube-system pods carry
   `"kubectl.kubernetes.io/default-container":"cilium-agent"`.
 
 ### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — COMPLETE 2026-11-18 (ships in a release)
