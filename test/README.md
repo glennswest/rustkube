@@ -26,7 +26,10 @@ leader-election Leases) are reported as a skip. It talks HTTPS to
 `$STORM_API`, verified with the ServiceAccount's `ca.crt`, with its token.
 
 The pods the suites create run this same image as `/test idle` (unprivileged,
-8Mi, no API token), so nothing is pulled from outside the cluster.
+8Mi, no API token), so nothing is pulled from outside the cluster. Their
+UID: where the run's namespace is under SecurityContextConstraints (the test
+pod carries `openshift.io/scc`), none is set and `restricted-v2` assigns one
+from the namespace's range, as on OpenShift; elsewhere they run as 65532.
 `/test idle 0` exits at once; a Job's pod runs that.
 
 Output: one JSON object per test on stdout —

@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-19
+- **fix(test):** The suites' pods leave `runAsUser` to SCC when the run's namespace is governed (the test pod carries `openshift.io/scc`): the pinned 65532 is outside the namespace's UID range, so `restricted-v2` (#321) refused every pod a controller made for them — `replicaset-pod-bound` failed in live `short` run e038b12606 with `ReplicaFailure FailedCreate … 403 Forbidden`. Elsewhere 65532 stays (the image's user is root) (#96)
 - **test:** `short`'s `replicaset-pod-bound` says why a ReplicaSet made no pod: whether the controller-manager observed it, its `ReplicaFailure` condition and Warning events. The first live `short` run (034b3dd344, pvetest2, 41af409) passed 4/5 and failed there with no reason to go on (#96)
 - **docs:** test/README and changes-since: stormcos_qa's rustkube scripts are removed there (stormcos_qa#25, bb3e03a), no longer "retirement pending"; the checks not ported are #232 (#96)
 - **test:** #173 verified: the night suite runs as a pod. `rigs-night` run ef4f9c31e3 (pvetest1, 1538895) ran all 10 night rigs in the test pod in ~1025 s of its 7200 s budget, 8 pass; the multi-master and serving-cert failures are #310 and #328. With the day suite already running there, no e2e rig runs in a build slot

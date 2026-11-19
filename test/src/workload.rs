@@ -6,7 +6,14 @@
 use crate::kube::Kube;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 use std::time::Duration;
+
+/// Whether the run's namespace is governed by SecurityContextConstraints
+/// (rustkube's `restricted-v2`, #321): this pod was admitted with an
+/// `openshift.io/scc` annotation. Recorded by [`own_image`], which every
+/// suite calls before it builds a template.
+static SCC: OnceLock<bool> = OnceLock::new();
 
 /// This pod's own image, as its spec names it. `RUSTKUBE_TEST_IMAGE`
 /// overrides, for a run by hand.
@@ -22,6 +29,7 @@ pub async fn own_image(kube: &Kube) -> Result<String> {
     let pods = kube.path("", "v1", "pods");
     if let Ok(h) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
         if let Some(p) = kube.get(&format!("{pods}/{}", h.trim())).await? {
+            let _ = SCC.set(scc_admitted(&p));
             if let Some(i) = image_of(&p) {
                 return Ok(i);
             }
@@ -31,12 +39,18 @@ pub async fn own_image(kube: &Kube) -> Result<String> {
         .get(&format!("{pods}?labelSelector=storm.io%2Fcomponent%3Drustkube"))
         .await?
         .context("listing the run's pods")?;
-    list["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
+    let items = list["items"].as_array().cloned().unwrap_or_default();
+    if let Some(p) = items.iter().find(|p| image_of(p).is_some()) {
+        let _ = SCC.set(scc_admitted(p));
+    }
+    items
+        .iter()
         .find_map(image_of)
         .ok_or_else(|| anyhow!("cannot find this pod's own image (set RUSTKUBE_TEST_IMAGE)"))
+}
+
+fn scc_admitted(pod: &Value) -> bool {
+    pod["metadata"]["annotations"]["openshift.io/scc"].as_str().is_some_and(|s| !s.is_empty())
 }
 
 fn image_of(pod: &Value) -> Option<String> {
@@ -45,13 +59,23 @@ fn image_of(pod: &Value) -> Option<String> {
 
 /// A pod template running `/test idle`: unprivileged, small, quick to stop,
 /// with no API credentials (it needs none).
+///
+/// Under SCC the pod leaves `runAsUser` unset and `restricted-v2` gives it
+/// the namespace's UID (a pinned UID outside the range is refused, as on
+/// OpenShift; the first live `short` run, 034b3dd344, hit exactly that).
+/// Elsewhere it pins 65532, since the image's own user is root.
 pub fn template(run: &str, image: &str, app: &str) -> Value {
+    template_for(run, image, app, SCC.get().copied().unwrap_or(false))
+}
+
+fn template_for(run: &str, image: &str, app: &str, scc: bool) -> Value {
+    let pod_sc = if scc { json!({"runAsNonRoot": true}) } else { json!({"runAsNonRoot": true, "runAsUser": 65532}) };
     json!({
         "metadata": {"labels": {"storm.io/test-run": run, "app": app}},
         "spec": {
             "terminationGracePeriodSeconds": 2,
             "automountServiceAccountToken": false,
-            "securityContext": {"runAsNonRoot": true, "runAsUser": 65532},
+            "securityContext": pod_sc,
             "containers": [{
                 "name": "idle",
                 "image": image,
@@ -102,12 +126,28 @@ mod tests {
 
     #[test]
     fn the_template_runs_this_image_idle_and_unprivileged() {
-        let t = template("r1", "test-rustkube-short:abc", "web");
+        let t = template_for("r1", "test-rustkube-short:abc", "web", false);
         let c = &t["spec"]["containers"][0];
         assert_eq!(c["image"], "test-rustkube-short:abc");
         assert_eq!(c["command"][0], "/test");
         assert_eq!(c["args"][0], "idle");
         assert_eq!(t["spec"]["securityContext"]["runAsNonRoot"], true);
+        assert_eq!(t["spec"]["securityContext"]["runAsUser"], 65532);
         assert_eq!(t["metadata"]["labels"]["storm.io/test-run"], "r1");
+    }
+
+    #[test]
+    fn under_scc_the_uid_is_left_to_the_namespace() {
+        let t = template_for("r1", "i", "web", true);
+        assert_eq!(t["spec"]["securityContext"]["runAsNonRoot"], true);
+        assert!(t["spec"]["securityContext"].get("runAsUser").is_none());
+        assert!(t["spec"]["containers"][0]["securityContext"].get("runAsUser").is_none());
+    }
+
+    #[test]
+    fn scc_admission_is_read_from_the_pod() {
+        assert!(scc_admitted(&json!({"metadata": {"annotations": {"openshift.io/scc": "restricted-v2"}}})));
+        assert!(!scc_admitted(&json!({"metadata": {"annotations": {}}})));
+        assert!(!scc_admitted(&json!({"metadata": {}})));
     }
 }
