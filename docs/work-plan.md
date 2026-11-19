@@ -1221,7 +1221,7 @@ at N; Exact → store at N; continuation → store pinned to the token's rev.
 - [x] In every golden since 2026-10-07 (latest be6ddd9ee998); marked
       `shipped` — server1 GET p99 < 20 ms (#187) after a release has it
 
-### e2e rigs as pods on the test machines (#173, P2) — night run QUEUED 2026-11-06
+### e2e rigs as pods on the test machines (#173, P2) — COMPLETE 2026-11-19
 Owner (#162): "Persistent tests should be pods, and should live on forge."
 - [x] 68e3260/f3cea50: test/build.sh stages binaries + upstream tools;
       `/test rigs` / `/test rigs-night` exec `test/rigs.sh`; requires.toml
@@ -1254,6 +1254,12 @@ Owner (#162): "Persistent tests should be pods, and should live on forge."
       forge fetch works now, but the Job started while the node's registry
       was still `building` the image → ImagePullBackOff (stormcentral#512,
       evidence posted). Proposed after #512; close after a night run passes
+- [x] First rigs-night pod run: ef4f9c31e3 (pvetest1, 1538895, 2026-11-07)
+      ran all 10 night rigs in the pod, ~1025 s of the 7200 s budget: 8 pass;
+      multi-master (KeyError 'items') is #310, serving-cert (renewal exit 1)
+      is #328, both rig results, not pod faults. da598f8d8c ended `no VM
+      3102` (pvetest2 not installed). stormcentral#512 closed 2026-11-19.
+      #173 closed
 
 ### CR metadata.generation (#198, P2) — COMPLETE 2026-10-06
 Nothing set or bumped `generation` on custom resources, so no controller could
