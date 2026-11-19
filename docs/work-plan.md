@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — IN PROGRESS 2026-11-18
+### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — COMPLETE 2026-11-18 (ships in a release)
 - The owner chose a namespaced CRD `registry.storm.io/v1 Image` for the
   registry's object (stormblock-registry#187). Add the group to #325's roles:
   - [x] `system:registry`: `images` get/list/watch/create/update/patch,
@@ -14,9 +14,12 @@ Kept here whole, newest notes as they were. Write new intentions here.
   - [x] unit tests; README, CHANGELOG; sc-build bfd9284638 at 02a9b41: apiserver
     366 passed, 0 build warnings, no clippy hits in project.rs (workspace
     clippy debt is #263; #334/#335 closed as its duplicates).
-  - [ ] rig `registry-roles` extended: the Image CRD with printer columns,
+  - [x] rig `registry-roles` extended: the Image CRD with printer columns,
     `kube-system/registry` bound to `system:registry`, its SARs (images/status),
-    `oc get images -n shop`. `rigs` run b992b078e1 (pvetest2) at 02a9b41.
+    `oc get images -n shop`. `rigs` run b992b078e1 (pvetest2) at 02a9b41:
+    registry-roles 49/49. Other failures not #333's: status-put-latency
+    (stormpump#153), hpa-metrics and vm-runstrategy (passed on pvetest1 at
+    860029e; filed #336).
   - Binding `kube-system/registry` to `system:registry` is stormcos#1043.
 
 ### Registry roles (#325, P0, stormblock-registry#188) — COMPLETE 2026-11-18 (ships in a release)

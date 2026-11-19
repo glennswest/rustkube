@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-18
+- **test:** #333 verified: `registry-roles` 49/49 in `rigs` run b992b078e1 (pvetest2, 02a9b41), including the `kube-system/registry` SubjectAccessReview for `update` `images/status` in `registry.storm.io` and `oc get images -n shop` with the CRD's printer columns. hpa-metrics and vm-runstrategy failures in that run filed as #336
 - **feat:** Registry roles cover the registry's own object, the namespaced CRD `registry.storm.io/v1 Image` the owner chose (#333, stormblock-registry#187): `system:registry` gets `images` get/list/watch/create/update/patch and `images/status` update/patch; `registry-viewer` and `view` read `images`; `registry-editor` (so `edit`/`admin`) also creates, changes and deletes them. Rig `registry-roles`: the CRD with its printer columns, `kube-system/registry` bound to `system:registry` (as stormcos#1043 will), its SubjectAccessReviews, and `oc get images -n shop` listing an Image by its columns
 - **test:** #325 verified: `registry-roles` 34/34 in `rigs` run 97a837819d (pvetest1, 860029e). The `namespace-order` failure in that run is a teardown timing flake, filed as #329
 - **test:** `registry-roles` rig (#325): `oc describe rolebinding` checked line by line (Kind and Name are separate lines); `oc auth can-i` asks `--subresource=layers` (a `/x` is a resource name) against a CRD standing in for the registry's `image.openshift.io` — without discovery oc sends the resource literally in the core group and the answer is `no`
