@@ -4,6 +4,16 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — IN PROGRESS 2026-11-18
+- The owner chose a namespaced CRD `registry.storm.io/v1 Image` for the
+  registry's object (stormblock-registry#187). Add the group to #325's roles:
+  - [ ] `system:registry`: `images` get/list/watch/create/update/patch,
+    `images/status` update/patch; `registry-viewer`: read; `registry-editor`:
+    get/list/watch/create/update/patch/delete; `view`/`edit`/`admin` as for
+    image streams (edit holds both registry roles, so admin may bind them).
+  - [ ] unit tests; README, CHANGELOG; sc-build.
+  - Binding `kube-system/registry` to `system:registry` is stormcos#1043.
+
 ### Registry roles (#325, P0, stormblock-registry#188) — COMPLETE 2026-11-18 (ships in a release)
 - TokenReview, SubjectAccessReview, SelfSubjectAccessReview and
   LocalSubjectAccessReview already exist (#85, #59, #69); a `sc user create`
