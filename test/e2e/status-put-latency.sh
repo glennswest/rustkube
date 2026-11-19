@@ -104,7 +104,8 @@ api POST /apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations "
 sleep 2 # the configuration reaches the watch-cache view
 pod=$(curl -sk -H "Authorization: Bearer $ADMIN" "$API$P/lat")
 body=$(echo "$pod" | python3 -c 'import json,sys; p=json.load(sys.stdin); p["status"]["message"]="slow"; print(json.dumps(p))')
-read -r code secs < <(api PUT $P/lat/status "$body")
+out=$(api PUT $P/lat/status "$body") # no `< <(…)`: the test pod has no /dev/fd
+read -r code secs <<<"$out"
 echo "webhooked PUT: $code in ${secs}s"
 line=$(plain | grep 'slow write' | grep 'pods/default/lat' | tail -1)
 wh=$(echo "$line" | sed -n 's/.*webhooks_ms="\{0,1\}\([0-9.]*\).*/\1/p')

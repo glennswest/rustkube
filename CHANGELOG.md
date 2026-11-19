@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-19
+- **fix(test):** The e2e rigs need no `/dev/fd`, which the test pod on a stormcos node lacks: `lib.sh` tees the rig's output through a FIFO instead of `exec > >(tee …)` (every rig in the `rigs` runs printed `/dev/fd/63: No such file or directory`, kept no `rig.out`, and so reported failures with an empty detail), and `status-put-latency` reads its PUT's code without `< <(…)` — it failed on pvetest1 and pvetest2 (082dfba180, 5e29dd0334) for that alone (#285)
 - **test:** #96 live: at d1113e3 `short` 5/5 (af0d4ad73e, pvetest2) and `medium` 18 pass + 1 skip (5f6401cc18, pvetest1) through stormcentral, the first live results of both suites; `long` (f17b3ce04a) waits for the night window
 - **fix(test):** The suites' pods leave `runAsUser` to SCC when the run's namespace is governed (the test pod carries `openshift.io/scc`): the pinned 65532 is outside the namespace's UID range, so `restricted-v2` (#321) refused every pod a controller made for them — `replicaset-pod-bound` failed in live `short` run e038b12606 with `ReplicaFailure FailedCreate … 403 Forbidden`. Elsewhere 65532 stays (the image's user is root) (#96)
 - **test:** `short`'s `replicaset-pod-bound` says why a ReplicaSet made no pod: whether the controller-manager observed it, its `ReplicaFailure` condition and Warning events. The first live `short` run (034b3dd344, pvetest2, 41af409) passed 4/5 and failed there with no reason to go on (#96)

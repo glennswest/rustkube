@@ -42,9 +42,23 @@ W=$(mktemp -d)
 # every `FAIL  …` line — the bash checks' and the ones the rigs' Python
 # prints — at the very end, where sc-build's excerpt and title look (#181).
 # fd 3 is the real stdout: cleanup() puts it back so tee sees EOF and exits.
+# A FIFO, not `exec > >(tee …)`: process substitution needs /dev/fd, which
+# the test pod on a stormcos node does not have (#285: every rig in `rigs`
+# printed `/dev/fd/63: No such file or directory` and kept no rig.out, so a
+# failure's detail was empty). tee is stopped last, and given 2 s to drain.
 exec 3>&1
-exec > >(tee -a "$W/rig.out")
-cleanup() { exec 1>&3; kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; rm -rf "$W"; }
+mkfifo "$W/.out"
+tee -a "$W/rig.out" <"$W/.out" >&3 &
+RIG_TEE=$!
+exec >"$W/.out"
+cleanup() {
+  exec 1>&3
+  local p
+  for p in $(jobs -p); do [ "$p" = "$RIG_TEE" ] || kill "$p" 2>/dev/null; done
+  for p in $(jobs -p); do [ "$p" = "$RIG_TEE" ] || wait "$p" 2>/dev/null; done
+  for _ in $(seq 20); do kill -0 "$RIG_TEE" 2>/dev/null || break; sleep 0.1; done
+  kill "$RIG_TEE" 2>/dev/null; wait 2>/dev/null; rm -rf "$W"
+}
 trap cleanup EXIT
 
 FAIL=0
