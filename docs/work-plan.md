@@ -802,7 +802,7 @@ requests are proxied (metrics-server or a stub). Consumers: metrics.k8s.io
       51ef481a0b and on conform.g8.lo (apiserver golden 4fe0997b273e);
       control efbea2d fails 16 (200 `<plural>List`, writes stored). #110 closed
 
-### Kubernetes 1.36 API (#285, P2) — BUILT + RELEASED (12.58), suites BLOCKED on stormcentral#512, 2026-11-06
+### Kubernetes 1.36 API (#285, P2) — BUILT + RELEASED (12.58), pve suites PASS 2026-11-19, the Dell BLOCKED on stormcentral#1407
 The issue's crate pair does not apply: nothing imports k8s-openapi (declared
 0.24 `v1_32` in apimachinery/apiserver/cloud, never `use`d — the only "1.32"
 here) and kube-rs is not used; the wire API is the release-1.36 protos +
@@ -844,9 +844,15 @@ served; MAP v1 (#119, CEL #234), DRA v1 (#137), ServiceCIDR (#134),
       (537e195), CM/scheduler dfb448b7c686 (5074b54). Rigs on the ebd156a
       goldens (2026-11-06): builtin-generation 14/14, job-managed-by 10/10,
       namespace-order 8/8
-- [ ] The issue's "test suites on pve and the Dell": test pods
-      ImagePullBackOff before the node's registry seals the image
-      (stormcentral#512; eb5b18ef34, 5e9f2f7a9c). Proposed after it; then close
+- [x] pve (2026-11-19, stormcentral#512 closed): short 5/5 on pvetest2
+      (af0d4ad73e, d1113e3) and pvetest1 (e13daa5548, 407da31); rigs 74/74 on
+      pvetest2 (10e311c1a3, 407da31) incl. the three 1.36 rigs, after 407da31
+      took /dev/fd out of the rigs (lib.sh FIFO tee; status-put-latency had
+      failed on both VMs for it alone)
+- [ ] The Dell: C2NR0Q2 refuses runs, "its last install (12.81) ended
+      cancelled: it runs no known release" — stormcentral#1407 (its local
+      disk never boots a pallet). Proposed after it; then short + rigs there,
+      and close
 
 ### Cold container start 1.49 s on 12.32-flowsdn (#284, P2) — CLOSED (not reproduced) 2026-10-21
 The issue: confirm on the next release before tracing. `testhost installs`

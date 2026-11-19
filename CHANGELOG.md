@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-19
+- **test:** #285 on pve: `short` 5/5 on pvetest1 (e13daa5548) and pvetest2 (af0d4ad73e); `rigs` **74/74** on pvetest2 (10e311c1a3, 407da31) — `builtin-generation` 14, `job-managed-by` 10, `namespace-order` 8. The Dell (C2NR0Q2) runs no release (stormcentral#1407)
 - **fix(test):** The e2e rigs need no `/dev/fd`, which the test pod on a stormcos node lacks: `lib.sh` tees the rig's output through a FIFO instead of `exec > >(tee …)` (every rig in the `rigs` runs printed `/dev/fd/63: No such file or directory`, kept no `rig.out`, and so reported failures with an empty detail), and `status-put-latency` reads its PUT's code without `< <(…)` — it failed on pvetest1 and pvetest2 (082dfba180, 5e29dd0334) for that alone (#285)
 - **test:** #96 live: at d1113e3 `short` 5/5 (af0d4ad73e, pvetest2) and `medium` 18 pass + 1 skip (5f6401cc18, pvetest1) through stormcentral, the first live results of both suites; `long` (f17b3ce04a) waits for the night window
 - **fix(test):** The suites' pods leave `runAsUser` to SCC when the run's namespace is governed (the test pod carries `openshift.io/scc`): the pinned 65532 is outside the namespace's UID range, so `restricted-v2` (#321) refused every pod a controller made for them — `replicaset-pod-bound` failed in live `short` run e038b12606 with `ReplicaFailure FailedCreate … 403 Forbidden`. Elsewhere 65532 stays (the image's user is root) (#96)
