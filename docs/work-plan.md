@@ -23,6 +23,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
   5e29dd0334 (pvetest2) 18/19 with the old orphan-delete check flaking
   (filed #339), the five #256 checks passing. Other failures not #256's:
   status-put-latency (stormpump#153), hpa-metrics / vm-runstrategy (#336).
+- [x] First ship-proof failed, not the fix: it asked for nfsop pods on
+  pvetest2 (12.96-flowsdn), which carries the fix but has no option
+  installed (`nextnfs-system` empty). Read 2026-11-19: pvetest2's
+  controller-manager is stage 401979970229 (the fix), and no workload there
+  has template annotations. pvetest1 runs 12.95, without the fix, and its
+  `cilium` pod lacks the template's `kubectl.kubernetes.io/default-container`.
+  Re-shipped `--commit f19424c` with a proof every cilium install has a
+  subject for: `on any:cilium` kube-system pods carry
+  `"kubectl.kubernetes.io/default-container":"cilium-agent"`.
 
 ### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — COMPLETE 2026-11-18 (ships in a release)
 - The owner chose a namespaced CRD `registry.storm.io/v1 Image` for the
