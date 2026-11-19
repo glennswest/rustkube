@@ -98,7 +98,7 @@ Corrections made in this pass, from the code and the linked issues:
   collision is gone, and #92's provisioner check remains (#174, #175).
 - Snapshot CRD/controller install moved from stormpump#28 to stormcos#170
   (open); stormblock#111 is answered — CreateSnapshot maps onto CoW snapshots.
-- stormcos_qa's rustkube scripts are ported, not yet retired (stormcos_qa#25).
+- stormcos_qa's rustkube scripts are ported and removed there (stormcos_qa#25, bb3e03a); the checks not ported are #232.
 - #140 is answered "Goldens": conformance binaries come from goldens
   (`test/conformance/fetch.sh`, since 2026-10-21). Persistent tests as pods on forge is #173.
 - How it ships: nodes run the stormd goldens that stormcos's stage build

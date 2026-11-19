@@ -48,7 +48,8 @@ test failed, 2 the suite could not run (reported as a `could-not-run` skip).
 
 **medium** (< 30 min) — features and failure paths, end to end. The checks of
 the `stormcos_qa/tests/rustkube/*.sh` scripts that fit a namespace (ported
-here; their retirement there is stormcos_qa#25, still open), and the
+here; stormcos_qa removed them in bb3e03a for stormcos_qa#25, and the
+checks not ported are rustkube#232), and the
 regressions fixed since:
 
 | test | what it proves |
