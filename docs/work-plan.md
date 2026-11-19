@@ -11,9 +11,14 @@ Kept here whole, newest notes as they were. Write new intentions here.
   stormoptions' `options.storm.io/golden-digest` never reaches the operator
   pod, so no option becomes Ready; `kubectl rollout restart`'s
   `restartedAt` is lost too.
-- [ ] one helper in `owned.rs` copies `annotations` and `finalizers`; used by
-  all four builders; unit tests that a template annotation reaches the pod.
-- [ ] README/CHANGELOG; sc-build.
+- [x] `owned::copy_template_metadata` copies `annotations` and `finalizers`;
+  used by all four builders; unit tests per builder. f19424c.
+- [x] README/CHANGELOG 09ef47e. Rig `replication-controller`: RC pods carry
+  the template annotation; a Deployment's pod (via its RS) carries
+  `options.storm.io/golden-digest`, and `restartedAt` after a restart
+  patch. 06a126f.
+- [ ] sc-build (controller-manager tests + clippy) at f19424c; `rigs` run
+  5e29dd0334 (pvetest2) at 06a126f.
 
 ### Registry roles: registry.storm.io (#333, P0, stormblock-registry#187) — COMPLETE 2026-11-18 (ships in a release)
 - The owner chose a namespaced CRD `registry.storm.io/v1 Image` for the
