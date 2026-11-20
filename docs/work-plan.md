@@ -4,17 +4,21 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Resource fit counts every scalar resource (#297) — IN PROGRESS 2026-11-20
+### Resource fit counts every scalar resource (#297) — rig run pending 2026-11-20
 Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
-- [ ] `NodeUsage.scalar`: ephemeral-storage, extended resources, hugepages,
-  charged/uncharged from one rule (`filter::pod_scalar_requests`: containers
-  with init/sidecar rules, pod-level, overhead, status max).
-- [ ] Resource fit: `Insufficient <name>`; an extended resource the node does
+- [x] `NodeUsage.scalar` (6b9875e): ephemeral-storage, extended resources,
+  hugepages, charged/uncharged from one rule (`filter::pod_scalar_requests`:
+  containers with init/sidecar rules, pod-level, overhead, status max).
+- [x] Resource fit: `Insufficient <name>`; an extended resource the node does
   not advertise is 0 (upstream); ephemeral-storage checked only when the node
   reports it, as cpu/memory are. Preemption inherits it (same filters).
-- [ ] Units: fit, accounting, preemption on `example.com/foo`. Rig
-  `extended-resources` in the day suite.
-- [ ] sc-build, stage, close.
+- [x] Units (5 filter + 1 preemption on `scheduling.k8s.io/foo`). Rig
+  `extended-resources` in the day suite (24be4ee).
+- [x] sc-build 165db40 passed: build, all tests (scheduler 72), clippy -D
+  warnings on apimachinery + scheduler. Along the way: MSRV 1.75 → 1.82
+  (#354 closed), apimachinery lints (#355 closed), scheduler lints; the
+  apiserver/controller-manager lints are #356 (open, commented).
+- [ ] Rig run 2882f2953e (pvetest2, rigs, 165db40) → stage, close.
 
 ### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
