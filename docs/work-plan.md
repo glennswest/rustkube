@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Protobuf /openapi/v2 (#343) — fixing the served Content-Type (2026-11-19)
+### Protobuf /openapi/v2 (#343) — WAITING on a pve install carrying 1c0b6bb, then rigs (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:
   application/com.github.proto-openapi.spec.v2@v1.0+protobuf` answered JSON;
   client-go failed `proto: cannot parse invalid wire-format data`
@@ -22,7 +22,8 @@ Kept here whole, newest notes as they were. Write new intentions here.
   content after media subtype`: we answered `Content-Type: …spec.v2@v1.0+protobuf`;
   Go's `mime.ParseMediaType` refuses `@` (tspecial). Upstream answers the
   dotted `…spec.v2.v1.0+protobuf` whatever spelling was asked.
-- [ ] Serve the dotted spelling (`openapi_v2::CONTENT_TYPE`; `ACCEPT_TYPE` is the `@` one), rig expects it; sc-build, then `rigs` again; then ship with a proof.
+- [x] Serve the dotted spelling (`openapi_v2::CONTENT_TYPE`; `ACCEPT_TYPE` is the `@` one), rig expects it — 1c0b6bb; sc-build passed; stage build 4d697378aee0.
+- [ ] `rigs` at 1c0b6bb: no machine could take it (pvetest1/2 mid-install of 12.97). Held `--after-install rustkube>=1c0b6bb@any:pve`; then run rigs, close on crd-openapi 16/16.
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
   that is the built-in-schemas gap, #342, not this issue.
