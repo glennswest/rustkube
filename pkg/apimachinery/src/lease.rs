@@ -181,7 +181,7 @@ mod tests {
     async fn a_hung_renewal_cannot_outlive_the_term() {
         let gate = leading();
         let began = TermInstant::now();
-        hold(&gate, RETRY, || std::future::pending::<bool>()).await;
+        hold(&gate, RETRY, std::future::pending::<bool>).await;
         assert!(gate.budget().is_err());
         assert!(began.elapsed() <= RENEW_DEADLINE, "{:?}", began.elapsed());
     }

@@ -219,7 +219,7 @@ impl Hub {
                             let weak = weak.clone();
                             tokio::select! {
                                 _ = crate::reflector::run_events(client.clone(), url.clone(), move |event| {
-                                    weak.upgrade().map_or(true, |feed| feed.receive(event))
+                                    weak.upgrade().is_none_or(|feed| feed.receive(event))
                                 }) => return,
                                 _ = relist.notified() => {},
                             }

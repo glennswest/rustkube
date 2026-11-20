@@ -216,6 +216,28 @@ pub fn requeue_at_time(timestamp: chrono::DateTime<chrono::Utc>) {
     }
 }
 
+/// Tokio task locals are not inherited by spawn; use this for bounded child
+/// tasks which perform part of the same reconciliation.
+pub fn inherit<T>(future: impl Future<Output = T>) -> impl Future<Output = T> {
+    let current = CURRENT.try_with(Arc::clone).ok();
+    async move {
+        match current {
+            Some(state) => CURRENT.scope(state, future).await,
+            None => future.await,
+        }
+    }
+}
+
+pub fn requeue_deadline(start: chrono::DateTime<chrono::Utc>, seconds: u64) {
+    if let Some(at) = i64::try_from(seconds)
+        .ok()
+        .and_then(chrono::Duration::try_seconds)
+        .and_then(|delta| start.checked_add_signed(delta))
+    {
+        requeue_at_time(at);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,27 +268,5 @@ mod tests {
         assert!(tokio::time::timeout(Duration::from_secs(1), worker.next())
             .await
             .is_ok());
-    }
-}
-
-/// Tokio task locals are not inherited by spawn; use this for bounded child
-/// tasks which perform part of the same reconciliation.
-pub fn inherit<T>(future: impl Future<Output = T>) -> impl Future<Output = T> {
-    let current = CURRENT.try_with(Arc::clone).ok();
-    async move {
-        match current {
-            Some(state) => CURRENT.scope(state, future).await,
-            None => future.await,
-        }
-    }
-}
-
-pub fn requeue_deadline(start: chrono::DateTime<chrono::Utc>, seconds: u64) {
-    if let Some(at) = i64::try_from(seconds)
-        .ok()
-        .and_then(chrono::Duration::try_seconds)
-        .and_then(|delta| start.checked_add_signed(delta))
-    {
-        requeue_at_time(at);
     }
 }
