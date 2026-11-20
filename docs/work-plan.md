@@ -4,6 +4,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### PodSecurity on pod updates (#361, review 6fcd683fb638) — IN PROGRESS 2026-11-20
+Reviewed at ee19cd5, before #350's `pod_update` (which already freezes every
+field `pod_security` reads). Added upstream's update rule anyway:
+`pod_security_update` in `builtin_update` (no subresource) when
+`pod_security_significant` (images, container count, ephemeral containers,
+seccomp annotations), against the namespace's current enforce level.
+- [x] Code + units (`pod_security_update_tests`), rig `scc-restricted`.
+- [ ] sc-build; stage; close.
+
 ### Concurrent evictions vs PDB (#360, review 6d98e18d1259 + b8d6824b0231) — DONE 2026-11-20
 - [x] eviction.rs: reserve in PDB status by `guaranteed_update` CAS
   (`reserve_in`: processed? allowed > 0? decrement + disruptedPods[pod]);

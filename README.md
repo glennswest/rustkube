@@ -477,7 +477,10 @@ pod's default ServiceAccount and its projected
 unreachable tolerations, priority from its PriorityClass, OpenShift's
 security context constraints (#321, below), a subset of
 PodSecurity keyed on the namespace's `pod-security.kubernetes.io/enforce`
-label, CronJob schedule validation, PVC access-mode validation
+label — on create, and on a significant pod update (an image, a container
+added, an ephemeral container, a seccomp annotation) against the
+namespace's current level, as upstream; subresource writes are not checked,
+#361 — CronJob schedule validation, PVC access-mode validation
 (`ReadWriteOncePod` may not be combined with another mode), ConfigMap and
 Secret data-key validation, pod sysctl-name validation, a pod's
 `status.qosClass` (a container with a limit and no request gets the limit as

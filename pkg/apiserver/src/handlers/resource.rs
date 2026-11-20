@@ -640,6 +640,11 @@ pub(crate) async fn builtin_update(
         if crate::admission::current().is_some() {
             let resize = crate::admission::subresource().as_deref() == Some("resize");
             crate::builtin_admission::pod_update(existing, body, resize)?;
+            // PodSecurity on the update (review finding 6fcd683fb638); a
+            // subresource write is not checked, as upstream.
+            if crate::admission::subresource().is_none() {
+                crate::builtin_admission::pod_security_update(storage, existing, body).await?;
+            }
         }
     }
     if key.starts_with("/registry/jobs/") {

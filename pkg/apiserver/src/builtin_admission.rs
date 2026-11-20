@@ -569,6 +569,58 @@ async fn namespace_lifecycle(
     }
 }
 
+/// PodSecurity on a Pod update (review finding 6fcd683fb638), as upstream's
+/// admission: a significant update is checked against the namespace's
+/// **current** enforce level, so a pod admitted before the namespace was
+/// labelled `restricted` cannot take a new image without meeting it.
+///
+/// Significant is upstream's `isSignificantPodUpdate`: a container's or init
+/// container's image, their number, an ephemeral container added or changed,
+/// or a seccomp annotation. Every other spec field a client may change
+/// (tolerations, deadline, gates, the bind's `nodeName`, `/resize`'s
+/// resources) is one this check does not read, and [`pod_update`] refuses the
+/// rest, privileged and host access among them; a subresource write is not
+/// checked, as upstream.
+pub(crate) async fn pod_security_update(storage: &ResourceStorage, old: &Value, new: &Value) -> Result<(), ApiError> {
+    if !pod_security_significant(old, new) {
+        return Ok(());
+    }
+    let Some(ns) = new["metadata"]["namespace"].as_str().or(old["metadata"]["namespace"].as_str()) else {
+        return Ok(());
+    };
+    let level = match storage.get(&ResourceStorage::cluster_key("namespaces", ns)).await {
+        Ok(n) => n["metadata"]["labels"]["pod-security.kubernetes.io/enforce"].as_str().unwrap_or("").to_string(),
+        Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    pod_security(&level, new)
+}
+
+/// Upstream's `isSignificantPodUpdate`.
+pub(crate) fn pod_security_significant(old: &Value, new: &Value) -> bool {
+    const POD_SECCOMP: &str = "seccomp.security.alpha.kubernetes.io/pod";
+    const CONTAINER_SECCOMP: &str = "container.seccomp.security.alpha.kubernetes.io/";
+    let ann = |p: &Value, k: &str| p["metadata"]["annotations"][k].clone();
+    if ann(old, POD_SECCOMP) != ann(new, POD_SECCOMP) {
+        return true;
+    }
+    let list = |p: &Value, l: &str| p["spec"][l].as_array().cloned().unwrap_or_default();
+    let container_changed = |n: &Value, o: &Value| {
+        let key = format!("{CONTAINER_SECCOMP}{}", n["name"].as_str().unwrap_or(""));
+        n["image"] != o["image"] || ann(new, &key) != ann(old, &key)
+    };
+    for l in ["containers", "initContainers"] {
+        let (now, was) = (list(new, l), list(old, l));
+        if now.len() != was.len() || now.iter().zip(&was).any(|(n, o)| container_changed(n, o)) {
+            return true;
+        }
+    }
+    let was = list(old, "ephemeralContainers");
+    list(new, "ephemeralContainers")
+        .iter()
+        .any(|n| was.iter().find(|o| o["name"] == n["name"]).is_none_or(|o| container_changed(n, o)))
+}
+
 /// PodSecurity admission — a subset of the baseline/restricted checks, keyed on
 /// the namespace's `pod-security.kubernetes.io/enforce` level.
 pub(crate) fn pod_security(level: &str, obj: &Value) -> Result<(), ApiError> {
@@ -1509,6 +1561,61 @@ mod job_managed_by_tests {
         assert_eq!(job_managed_by(Some(&old), &job(json!("acme.io/b"))).unwrap_err().message,
                    r#"spec.managedBy: Invalid value: "acme.io/b": field is immutable"#);
         assert!(job_managed_by(Some(&json!({"spec": {}})), &job(json!("acme.io/a"))).is_err(), "cannot be added later");
+    }
+}
+
+#[cfg(test)]
+mod pod_security_update_tests {
+    //! Review finding 6fcd683fb638: PodSecurity on updates.
+    use super::*;
+    use crate::test_store::MemStore;
+    use std::sync::Arc;
+
+    fn pod(image: &str) -> Value {
+        json!({"metadata": {"name": "p", "namespace": "shop"},
+               "spec": {"hostNetwork": true, "containers": [{"name": "c", "image": image}]}})
+    }
+
+    #[test]
+    fn significant_is_upstreams() {
+        let old = pod("a:1");
+        assert!(!pod_security_significant(&old, &old));
+        assert!(pod_security_significant(&old, &pod("a:2")), "an image");
+        let mut tol = old.clone();
+        tol["spec"]["tolerations"] = json!([{"key": "k", "operator": "Exists"}]);
+        assert!(!pod_security_significant(&old, &tol), "tolerations are not");
+        let mut more = old.clone();
+        more["spec"]["containers"].as_array_mut().unwrap().push(json!({"name": "d", "image": "b"}));
+        assert!(pod_security_significant(&old, &more), "a container added");
+        let mut eph = old.clone();
+        eph["spec"]["ephemeralContainers"] = json!([{"name": "dbg", "image": "busybox"}]);
+        assert!(pod_security_significant(&old, &eph), "an ephemeral container added");
+        let mut sec = old.clone();
+        sec["metadata"]["annotations"] = json!({"container.seccomp.security.alpha.kubernetes.io/c": "unconfined"});
+        assert!(pod_security_significant(&old, &sec), "a container's seccomp annotation");
+    }
+
+    #[tokio::test]
+    async fn an_update_meets_the_namespaces_current_level() {
+        // Admitted with hostNetwork while `shop` enforced nothing; the
+        // namespace is `baseline` now.
+        let storage = ResourceStorage::new(Arc::new(MemStore::default()));
+        storage.create(&ResourceStorage::cluster_key("namespaces", "shop"), json!({"metadata": {"name": "shop",
+            "labels": {"pod-security.kubernetes.io/enforce": "baseline"}}})).await.unwrap();
+        let old = pod("a:1");
+        let e = pod_security_update(&storage, &old, &pod("a:2")).await.unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::FORBIDDEN);
+        assert!(e.message.contains("hostNetwork is not allowed"), "{}", e.message);
+        // Not significant: the bind, a toleration — allowed, as upstream.
+        let mut bound = old.clone();
+        bound["spec"]["nodeName"] = json!("n1");
+        assert!(pod_security_update(&storage, &old, &bound).await.is_ok());
+        // A compliant pod takes its new image.
+        let mut fine = pod("a:1");
+        fine["spec"].as_object_mut().unwrap().remove("hostNetwork");
+        let mut fine2 = fine.clone();
+        fine2["spec"]["containers"][0]["image"] = json!("a:2");
+        assert!(pod_security_update(&storage, &fine, &fine2).await.is_ok());
     }
 }
 

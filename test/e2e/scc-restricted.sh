@@ -18,6 +18,10 @@
 #   198fa7c65883): a PUT making it privileged as UID 0, a merge patch turning
 #   on hostNetwork, an ephemeral container added by PUT and the mirror-pod
 #   annotation are 422 and leave it as it was; a new image is allowed
+# - PodSecurity on updates (#361, review finding 6fcd683fb638): a hostNetwork
+#   pod admitted while its namespace enforced `privileged` cannot take a new
+#   image once the namespace enforces `baseline` (403, unchanged); adding a
+#   toleration, which PodSecurity does not consider, still works
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -156,6 +160,22 @@ check(code == 201 and SCC not in out["metadata"].get("annotations", {}), f"storm
 namespace("open", {"pod-security.kubernetes.io/enforce": "privileged"})
 code, out = req("ALICE", "POST", "/api/v1/namespaces/open/pods", pod("root", csc={"runAsUser": 0}))
 check(code == 201, f"enforce=privileged namespace is not governed ({code})")
+
+# PodSecurity on updates (#361): the namespace's level now, on a significant update.
+HP = "/api/v1/namespaces/open/pods/hostnet"
+code, out = req("ADMIN", "POST", "/api/v1/namespaces/open/pods", pod("hostnet", {"hostNetwork": True}))
+check(code == 201, f"a hostNetwork pod under enforce=privileged ({code})")
+code, _ = req("ADMIN", "PATCH", "/api/v1/namespaces/open", {"metadata": {"labels": {"pod-security.kubernetes.io/enforce": "baseline"}}},
+              "application/merge-patch+json")
+check(code == 200, f"the namespace now enforces baseline ({code})")
+code, out = req("ADMIN", "PATCH", HP, {"spec": {"containers": [{"name": "app", "image": "registry.example/app:2"}]}},
+                "application/strategic-merge-patch+json")
+img = req("ADMIN", "GET", HP)[1]["spec"]["containers"][0]["image"]
+check(code == 403 and "hostNetwork is not allowed" in str(out) and img == "registry.example/app:1",
+      f"a new image must meet baseline now: 403, unchanged ({code} {img})")
+code, out = req("ADMIN", "PATCH", HP, {"spec": {"tolerations": [{"key": "k", "operator": "Exists"}]}},
+                "application/strategic-merge-patch+json")
+check(code == 200, f"a toleration, which PodSecurity does not consider, is still allowed ({code})")
 sys.exit(failed)
 PY
 report
