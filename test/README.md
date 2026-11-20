@@ -540,7 +540,8 @@ controller-manager) the 403 is upstream's, reason `Forbidden` with the
 `Expired` with an inconsistent token in `metadata.continue`, which lists the
 rest (including an object created after the first page) at one newer
 revision; an `Exact` LIST at the old revision and a WATCH from below the
-compaction are 410 `Expired`; `apiserver_storage_compacted_revision` moves.
+compaction are 410 `Expired`; `apiserver_storage_compacted_revision` moves. A continue token whose key lies outside the listed prefix is a 400 with no
+items (#358).
 
 `e2e/status-rv.sh` (#78, suite `rigs`): `PUT …/status` for a Node, a PVC,
 a custom resource and CSR `/approval` lands with the current resourceVersion,

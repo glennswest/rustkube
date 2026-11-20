@@ -14,6 +14,9 @@
 # - a WATCH from below the compaction gets an ERROR event, 410 `Expired`,
 #   which is what makes client-go relist (#127)
 # - the compacted revision is exported as apiserver_storage_compacted_revision
+# - a continue token whose key lies outside the listed prefix is a 400 and
+#   lists nothing: it would resume the datastore scan before the prefix, over
+#   other resources' and namespaces' keys (#358, review finding e59512281f8c)
 #
 # Exit status is the number of failed checks.
 RK_APISERVER_ARGS="${RK_APISERVER_ARGS:-} --etcd-compaction-interval=3s"
@@ -99,6 +102,14 @@ check(ev.get("type") == "ERROR" and obj.get("code") == 410 and obj.get("reason")
 code, metrics = req("GET", "/metrics")
 rev = [l for l in (metrics if isinstance(metrics, str) else "").splitlines() if l.startswith("apiserver_storage_compacted_revision")]
 check(rev and float(rev[0].split()[-1]) > int(first_rv), f"apiserver_storage_compacted_revision past the first page ({rev})")
+
+# Forged continue keys (#358): before the prefix, and another namespace's.
+code, out = req("GET", "/api/v1/namespaces/default/secrets?limit=1")
+live_rv = (out or {}).get("metadata", {}).get("resourceVersion", "1") if isinstance(out, dict) else "1"
+for forged in [f"{live_rv}:/registry/", "/registry/", f"{live_rv}:/registry/configmaps/kube-system/x"]:
+    code, out = req("GET", f"{CM}?limit=50&continue={q(forged)}")
+    items = out.get("items") if isinstance(out, dict) else None
+    check(code == 400 and not items, f"continue key {forged!r} outside the list: 400, no items ({code})")
 sys.exit(failed)
 PY
 report

@@ -4,6 +4,14 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Continue tokens outside the prefix (#358, P0, review e59512281f8c) — DONE 2026-11-20
+The review ran at ee19cd5, before #350's fix 7e729d2 (adapter `list_at` and
+apiserver `list_pinned` refuse a continue key not starting with the prefix:
+`Invalid` / 400). Audited the other token paths: the watch cache's `list`
+holds one resource; `read_page` is called with no key and stops at the
+sub-prefix; every store read goes through the adapter's check. Unit tests
+passed in sc-build dfcd941. Added a `compaction` rig check (live 400).
+
 ### CSR client-supplied Approved status (#357, P0, review 27b84965dcae) — DONE 2026-11-20
 The review ran at ee19cd5 (2026-10-14), before #350's fix (1097827: `on_create`
 empties `status`). Main still had a way around it: a server-side apply create
