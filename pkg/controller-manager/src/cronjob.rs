@@ -516,6 +516,30 @@ fn last_completion(jobs: &[&Value]) -> Option<String> {
         .map(str::to_owned)
 }
 
+#[async_trait::async_trait]
+impl crate::owned::Controller for CronJobController {
+    fn name(&self) -> &'static str {
+        "cronjob"
+    }
+    fn primary(&self) -> &'static str {
+        "/apis/batch/v1/cronjobs"
+    }
+    fn children(&self) -> Option<&'static str> {
+        Some("/apis/batch/v1/jobs")
+    }
+    async fn reconcile(
+        &self,
+        object: &Value,
+        children: &[Value],
+        _deps: &crate::owned::Deps,
+    ) -> anyhow::Result<()> {
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("default");
+        self.reconcile_cronjob(namespace, object, children).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,29 +717,5 @@ mod tests {
 
         assert!(controller.reconcile_cronjob("ns", &cj, &[]).await.is_err());
         assert!(scheduled(&api.status_puts.lock().unwrap()).is_empty());
-    }
-}
-
-#[async_trait::async_trait]
-impl crate::owned::Controller for CronJobController {
-    fn name(&self) -> &'static str {
-        "cronjob"
-    }
-    fn primary(&self) -> &'static str {
-        "/apis/batch/v1/cronjobs"
-    }
-    fn children(&self) -> Option<&'static str> {
-        Some("/apis/batch/v1/jobs")
-    }
-    async fn reconcile(
-        &self,
-        object: &Value,
-        children: &[Value],
-        _deps: &crate::owned::Deps,
-    ) -> anyhow::Result<()> {
-        let namespace = object["metadata"]["namespace"]
-            .as_str()
-            .unwrap_or("default");
-        self.reconcile_cronjob(namespace, object, children).await
     }
 }
