@@ -730,7 +730,13 @@ that name the Pod does not own is left alone with a Warning Event, #94),
 ResourceQuota (`status.hard` and `status.used` per quota from
 its namespace's objects — Pods' compute and counts, Services, Secrets,
 ConfigMaps, PVCs and per-class storage, RCs, quotas, `count/<resource>` —
-honouring scopes; recomputed on change and every 5 minutes, #124), Service (Endpoints and EndpointSlices; for a Service with no
+honouring scopes; recomputed on change and every 5 minutes, #124), Service (Endpoints and EndpointSlices from the selected Pods, as upstream:
+a named `targetPort` resolved per Pod against its container ports and
+protocol — a Pod without it backs no such port — one Endpoints subset and
+one EndpointSlice per resolved port set; a Pod not Ready is a
+`notReadyAddresses` entry and `ready: false` unless
+`publishNotReadyAddresses`; a terminating one is in the slices only, as
+`terminating`; #362; for a Service with no
 selector, EndpointSlices mirrored from its hand-written Endpoints, as
 upstream's EndpointSliceMirroring does — one per address type and port set,
 owned by the Endpoints, `managed-by: endpointslicemirroring-controller.k8s.io`,

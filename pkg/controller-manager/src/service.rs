@@ -36,6 +36,7 @@ impl ServiceController {
         namespace: &str,
         svc: &Value,
         all_pods: &[Value],
+        existing_slices: &[Value],
     ) -> anyhow::Result<()> {
         let svc_name = svc["metadata"]["name"]
             .as_str()
@@ -46,71 +47,33 @@ impl ServiceController {
         if !mirroring::has_selector(svc) {
             return Ok(());
         }
-        let selector = &svc["spec"]["selector"];
+        let groups = backends(svc, all_pods);
 
-        let selector_map = selector.as_object().unwrap();
-
-        // Find matching pods
-        let matching_pods: Vec<&Value> = all_pods
+        let owner = json!([{
+            "apiVersion": "v1",
+            "kind": "Service",
+            "name": svc_name,
+            "uid": svc_uid,
+            "controller": true,
+            "blockOwnerDeletion": true
+        }]);
+        let subsets: Vec<Value> = groups
             .iter()
-            .filter(|pod| {
-                let labels = pod["metadata"]["labels"].as_object();
-                match labels {
-                    Some(pod_labels) => selector_map
-                        .iter()
-                        .all(|(k, v)| pod_labels.get(k) == Some(v)),
-                    None => false,
+            .map(|g| {
+                let mut subset = json!({"ports": g.ports});
+                let addr = |b: &Backend| b.address(namespace);
+                let ready: Vec<Value> = g.backends.iter().filter(|b| b.in_endpoints && b.ready).map(addr).collect();
+                let not_ready: Vec<Value> = g.backends.iter().filter(|b| b.in_endpoints && !b.ready).map(addr).collect();
+                if !ready.is_empty() {
+                    subset["addresses"] = json!(ready);
                 }
+                if !not_ready.is_empty() {
+                    subset["notReadyAddresses"] = json!(not_ready);
+                }
+                subset
             })
-            .filter(|pod| {
-                // Only include Running pods with a pod IP
-                let phase = pod["status"]["phase"].as_str().unwrap_or("Pending");
-                phase == "Running" && pod["status"]["podIP"].as_str().is_some()
-            })
+            .filter(|s| s.get("addresses").is_some() || s.get("notReadyAddresses").is_some())
             .collect();
-
-        // Build endpoints addresses
-        let addresses: Vec<Value> = matching_pods
-            .iter()
-            .map(|pod| {
-                json!({
-                    "ip": pod["status"]["podIP"].as_str().unwrap_or(""),
-                    "nodeName": pod["spec"]["nodeName"].as_str().unwrap_or(""),
-                    "targetRef": {
-                        "kind": "Pod",
-                        "name": pod["metadata"]["name"].as_str().unwrap_or(""),
-                        "namespace": namespace,
-                        "uid": pod["metadata"]["uid"].as_str().unwrap_or("")
-                    }
-                })
-            })
-            .collect();
-
-        // Build port list from the Service spec
-        let ports: Vec<Value> = svc["spec"]["ports"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|port| {
-                json!({
-                    "name": port["name"].as_str().unwrap_or(""),
-                    "port": port["targetPort"].as_u64()
-                        .or_else(|| port["port"].as_u64())
-                        .unwrap_or(0),
-                    "protocol": port["protocol"].as_str().unwrap_or("TCP")
-                })
-            })
-            .collect();
-
-        let subsets = if addresses.is_empty() {
-            vec![]
-        } else {
-            vec![json!({
-                "addresses": addresses,
-                "ports": ports
-            })]
-        };
 
         let endpoints = json!({
             "apiVersion": "v1",
@@ -119,14 +82,7 @@ impl ServiceController {
                 "name": svc_name,
                 "namespace": namespace,
                 "labels": {"endpointslice.kubernetes.io/skip-mirror": "true"},
-                "ownerReferences": [{
-                    "apiVersion": "v1",
-                    "kind": "Service",
-                    "name": svc_name,
-                    "uid": svc_uid,
-                    "controller": true,
-                    "blockOwnerDeletion": true
-                }]
+                "ownerReferences": owner
             },
             "subsets": subsets
         });
@@ -135,50 +91,56 @@ impl ServiceController {
         let ep_path = format!("/api/v1/namespaces/{namespace}/endpoints/{svc_name}");
         self.upsert(&ep_path, endpoints, &["subsets"], false).await?;
 
-        // Mirror the same backends into an EndpointSlice (discovery.k8s.io/v1) —
-        // Cilium / kube-proxy-replacement use slices as the modern default (#22).
-        // One IPv4 slice per service, labeled with the service name so consumers
-        // find it. (Dual-stack would need a slice per addressType — follow-up.)
-        let slice_endpoints: Vec<Value> = addresses
-            .iter()
-            .map(|a| {
-                json!({
-                    "addresses": [a["ip"].as_str().unwrap_or("")],
-                    "conditions": { "ready": true },
-                    "nodeName": a["nodeName"].clone(),
-                    "targetRef": a["targetRef"].clone()
-                })
-            })
-            .collect();
-        let slice = json!({
-            "apiVersion": "discovery.k8s.io/v1",
-            "kind": "EndpointSlice",
-            "metadata": {
-                "name": svc_name,
-                "namespace": namespace,
-                // `managed-by` is how consumers (and the conformance suite)
-                // tell the controller's slices from hand-made ones.
-                "labels": {
-                    "kubernetes.io/service-name": svc_name,
-                    "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io"
+        // The same backends as EndpointSlices (discovery.k8s.io/v1) — Cilium /
+        // kube-proxy-replacement read slices (#22). One slice per resolved
+        // port set (#362), as upstream's: the first keeps the Service's name,
+        // the others are named by their ports; with no backend, one empty
+        // slice. IPv4 only (dual-stack would need a slice per addressType).
+        let mut wanted: Vec<(String, Value)> = Vec::new();
+        let slices: Vec<(&Vec<Value>, Vec<Value>)> = if groups.is_empty() {
+            vec![(&EMPTY_PORTS, Vec::new())]
+        } else {
+            groups.iter().map(|g| (&g.ports, g.backends.iter().map(|b| b.slice_endpoint(namespace)).collect())).collect()
+        };
+        for (i, (ports, endpoints)) in slices.into_iter().enumerate() {
+            let name = if i == 0 { svc_name.to_string() } else { format!("{svc_name}-{}", port_set_hash(ports)) };
+            let slice = json!({
+                "apiVersion": "discovery.k8s.io/v1",
+                "kind": "EndpointSlice",
+                "metadata": {
+                    "name": name,
+                    "namespace": namespace,
+                    // `managed-by` is how consumers (and the conformance suite)
+                    // tell the controller's slices from hand-made ones.
+                    "labels": {
+                        "kubernetes.io/service-name": svc_name,
+                        "endpointslice.kubernetes.io/managed-by": MANAGED_BY
+                    },
+                    "ownerReferences": owner
                 },
-                "ownerReferences": [{
-                    "apiVersion": "v1",
-                    "kind": "Service",
-                    "name": svc_name,
-                    "uid": svc_uid,
-                    "controller": true,
-                    "blockOwnerDeletion": true
-                }]
-            },
-            "addressType": "IPv4",
-            "endpoints": slice_endpoints,
-            "ports": ports
-        });
-        let slice_path =
-            format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices/{svc_name}");
-        self.upsert(&slice_path, slice, &["addressType", "endpoints", "ports"], false)
-            .await?;
+                "addressType": "IPv4",
+                "endpoints": endpoints,
+                "ports": ports
+            });
+            wanted.push((name, slice));
+        }
+        // Slices it made for port sets no longer served.
+        for slice in existing_slices {
+            let name = slice["metadata"]["name"].as_str().unwrap_or("");
+            let ours = slice["metadata"]["labels"]["endpointslice.kubernetes.io/managed-by"].as_str() == Some(MANAGED_BY)
+                && slice["metadata"]["ownerReferences"].as_array().is_some_and(|refs| {
+                    refs.iter().any(|r| r["controller"] == true && r["uid"].as_str() == Some(svc_uid))
+                });
+            if ours && !wanted.iter().any(|(n, _)| n == name) {
+                self.api
+                    .delete_observed(&format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices/{name}"), slice)
+                    .await?;
+            }
+        }
+        for (name, slice) in wanted {
+            let slice_path = format!("/apis/discovery.k8s.io/v1/namespaces/{namespace}/endpointslices/{name}");
+            self.upsert(&slice_path, slice, &["addressType", "endpoints", "ports"], false).await?;
+        }
 
         Ok(())
     }
@@ -306,10 +268,14 @@ impl Controller for ServiceController {
                 .as_str()
                 .cmp(&b["metadata"]["uid"].as_str())
         });
+        // The slices it owns, so one for a port set no longer served goes.
+        let uid = svc["metadata"]["uid"].as_str().unwrap_or("").to_string();
+        let slices = deps.feed(1).select(&Index::Owner(uid))?;
         self.reconcile_service(
             svc["metadata"]["namespace"].as_str().unwrap_or("default"),
             svc,
             &pods,
+            &slices,
         )
         .await
     }
@@ -371,6 +337,143 @@ impl Controller for ServiceController {
         }
         Ok(())
     }
+}
+
+/// The `managed-by` label of the slices this controller writes.
+const MANAGED_BY: &str = "endpointslice-controller.k8s.io";
+static EMPTY_PORTS: Vec<Value> = Vec::new();
+
+/// One selected Pod as a Service backend (#362).
+#[derive(Debug, Clone)]
+struct Backend {
+    ip: String,
+    node: Value,
+    name: String,
+    uid: String,
+    /// Published as ready: its Ready condition, or `publishNotReadyAddresses`.
+    ready: bool,
+    /// Its Ready condition alone: an EndpointSlice's `serving`.
+    serving: bool,
+    terminating: bool,
+    /// In the Endpoints: a terminating Pod is only under
+    /// `publishNotReadyAddresses` (it stays in the slices, `terminating`).
+    in_endpoints: bool,
+}
+
+impl Backend {
+    fn target_ref(&self, namespace: &str) -> Value {
+        json!({"kind": "Pod", "name": self.name, "namespace": namespace, "uid": self.uid})
+    }
+    fn address(&self, namespace: &str) -> Value {
+        json!({"ip": self.ip, "nodeName": self.node, "targetRef": self.target_ref(namespace)})
+    }
+    fn slice_endpoint(&self, namespace: &str) -> Value {
+        json!({
+            "addresses": [self.ip],
+            "conditions": {"ready": self.ready, "serving": self.serving, "terminating": self.terminating},
+            "nodeName": self.node,
+            "targetRef": self.target_ref(namespace)
+        })
+    }
+}
+
+/// Backends that resolved the same ports.
+#[derive(Debug)]
+struct Group {
+    ports: Vec<Value>,
+    backends: Vec<Backend>,
+}
+
+/// The selected Pods as backends, grouped by the ports they resolve to, as
+/// upstream's endpoints and EndpointSlice controllers (#362, review findings
+/// 7a974852b70e, 7d20cd929fba, 7ada61477e9f):
+///
+/// - a Pod is a backend once it has an IP and is not finished (a
+///   `restartPolicy: Never` Pod that Succeeded or Failed, an `OnFailure` one
+///   that Succeeded); a terminating one only in the slices (`terminating`),
+///   or in the Endpoints too under `publishNotReadyAddresses`;
+/// - it is ready when its `Ready` condition is True (or the Service says
+///   `publishNotReadyAddresses`), never while terminating unless that is set;
+///   an unready one is a `notReadyAddresses` entry and `ready: false`;
+/// - each Service port's `targetPort` is resolved per Pod: a number is
+///   itself, a name is the container port of that name and protocol (a Pod
+///   without one does not back that port), and none is the Service port.
+///
+/// Groups are ordered by their ports, backends by their Pod's order.
+fn backends(svc: &Value, pods: &[Value]) -> Vec<Group> {
+    let publish = svc["spec"]["publishNotReadyAddresses"].as_bool() == Some(true);
+    let svc_ports = svc["spec"]["ports"].as_array().cloned().unwrap_or_default();
+    let mut groups: std::collections::BTreeMap<String, Group> = std::collections::BTreeMap::new();
+    for pod in pods {
+        let Some(ip) = pod["status"]["podIP"].as_str().filter(|ip| !ip.is_empty()) else { continue };
+        let phase = pod["status"]["phase"].as_str().unwrap_or("");
+        let finished = match pod["spec"]["restartPolicy"].as_str() {
+            Some("Never") => matches!(phase, "Succeeded" | "Failed"),
+            Some("OnFailure") => phase == "Succeeded",
+            _ => false,
+        };
+        if finished {
+            continue;
+        }
+        let terminating = !pod["metadata"]["deletionTimestamp"].is_null();
+        let serving = pod["status"]["conditions"]
+            .as_array()
+            .is_some_and(|cs| cs.iter().any(|c| c["type"] == "Ready" && c["status"] == "True"));
+        let ready = publish || (serving && !terminating);
+        let ports: Vec<Value> = svc_ports.iter().filter_map(|p| resolve_port(p, pod)).collect();
+        if ports.is_empty() && !svc_ports.is_empty() {
+            continue; // backs none of the Service's ports
+        }
+        let backend = Backend {
+            ip: ip.to_string(),
+            node: pod["spec"]["nodeName"].clone(),
+            name: pod["metadata"]["name"].as_str().unwrap_or("").to_string(),
+            uid: pod["metadata"]["uid"].as_str().unwrap_or("").to_string(),
+            ready,
+            serving,
+            terminating,
+            in_endpoints: !terminating || publish,
+        };
+        let key = Value::Array(ports.clone()).to_string();
+        groups.entry(key).or_insert_with(|| Group { ports, backends: Vec::new() }).backends.push(backend);
+    }
+    groups.into_values().collect()
+}
+
+/// A Service port as one Pod serves it: `{name, port, protocol}` (and
+/// `appProtocol`), or None when its named `targetPort` is no container port
+/// of the Pod with that protocol.
+fn resolve_port(svc_port: &Value, pod: &Value) -> Option<Value> {
+    let protocol = svc_port["protocol"].as_str().unwrap_or("TCP");
+    let port = match &svc_port["targetPort"] {
+        Value::Number(n) => n.as_u64()?,
+        Value::String(name) => match name.parse::<u64>() {
+            Ok(n) => n,
+            Err(_) => pod["spec"]["containers"]
+                .as_array()?
+                .iter()
+                .flat_map(|c| c["ports"].as_array().into_iter().flatten())
+                .find(|cp| cp["name"].as_str() == Some(name) && cp["protocol"].as_str().unwrap_or("TCP") == protocol)?
+                ["containerPort"]
+                .as_u64()?,
+        },
+        _ => svc_port["port"].as_u64()?,
+    };
+    let mut out = json!({"name": svc_port["name"].as_str().unwrap_or(""), "port": port, "protocol": protocol});
+    if let Some(app) = svc_port["appProtocol"].as_str() {
+        out["appProtocol"] = json!(app);
+    }
+    Some(out)
+}
+
+/// A short, stable name suffix for a port set (FNV-1a).
+fn port_set_hash(ports: &[Value]) -> String {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in Value::Array(ports.to_vec()).to_string().bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    format!("{h:08x}")
 }
 
 /// The mirroring controller's slices for Service `name` in `namespace`.
@@ -435,5 +538,74 @@ mod tests {
         let mirrored = json!({"metadata": {"ownerReferences": [{"kind": "Endpoints", "name": "web", "uid": "ep-uid"}]}});
         let d = service_owned(&Delta { old: Some(mirrored), new: None, affected: Default::default() });
         assert_eq!(d.old.unwrap()["metadata"]["ownerReferences"], json!([]));
+    }
+
+    fn svc(ports: Value, publish: bool) -> Value {
+        json!({"spec": {"selector": {"app": "web"}, "ports": ports, "publishNotReadyAddresses": publish}})
+    }
+    fn pod(name: &str, ip: &str, ready: bool, http: Option<u64>) -> Value {
+        let ports: Vec<Value> = http.map(|p| json!({"name": "http", "containerPort": p})).into_iter().collect();
+        json!({"metadata": {"name": name, "uid": name},
+               "spec": {"nodeName": "n1", "containers": [{"name": "c", "ports": ports}]},
+               "status": {"phase": "Running", "podIP": ip,
+                          "conditions": [{"type": "Ready", "status": if ready { "True" } else { "False" }}]}})
+    }
+    fn ips(g: &Group, pick: impl Fn(&Backend) -> bool) -> Vec<String> {
+        g.backends.iter().filter(|b| pick(b)).map(|b| b.ip.clone()).collect()
+    }
+
+    /// Review findings 7a974852b70e / 7d20cd929fba: a named targetPort is
+    /// each Pod's own container port, not the Service port.
+    #[test]
+    fn a_named_target_port_resolves_per_pod_and_groups_by_port() {
+        let s = svc(json!([{"name": "web", "port": 80, "targetPort": "http"}]), false);
+        let pods = [pod("a", "10.0.0.1", true, Some(8080)), pod("b", "10.0.0.2", true, Some(9090)),
+                    pod("c", "10.0.0.3", true, Some(8080)), pod("none", "10.0.0.4", true, None)];
+        let groups = backends(&s, &pods);
+        let got: Vec<(u64, Vec<String>)> = groups.iter()
+            .map(|g| (g.ports[0]["port"].as_u64().unwrap(), ips(g, |_| true))).collect();
+        assert_eq!(got, vec![(8080, vec!["10.0.0.1".into(), "10.0.0.3".into()]), (9090, vec!["10.0.0.2".into()])],
+                   "no Pod falls back to port 80, and one without the port backs nothing");
+        // Numbers, numeric strings and no targetPort.
+        let p = pod("a", "10.0.0.1", true, Some(8080));
+        assert_eq!(resolve_port(&json!({"port": 80, "targetPort": 8443}), &p).unwrap()["port"], 8443);
+        assert_eq!(resolve_port(&json!({"port": 80, "targetPort": "8443"}), &p).unwrap()["port"], 8443);
+        assert_eq!(resolve_port(&json!({"port": 80}), &p).unwrap()["port"], 80);
+        // The protocol must match the container port's.
+        assert!(resolve_port(&json!({"port": 53, "targetPort": "http", "protocol": "UDP"}), &p).is_none());
+    }
+
+    /// Review finding 7ada61477e9f: readiness is the Pod's Ready condition.
+    #[test]
+    fn an_unready_pod_is_not_a_ready_backend() {
+        let ports = json!([{"name": "web", "port": 80, "targetPort": 8080}]);
+        let mut gone = pod("gone", "10.0.0.5", true, None);
+        gone["metadata"]["deletionTimestamp"] = json!("2026-11-20T00:00:00Z");
+        let mut done = pod("done", "10.0.0.6", false, None);
+        done["spec"]["restartPolicy"] = json!("Never");
+        done["status"]["phase"] = json!("Succeeded");
+        let mut pending = pod("pending", "", false, None);
+        pending["status"]["phase"] = json!("Pending");
+        let pods = [pod("up", "10.0.0.1", true, None), pod("down", "10.0.0.2", false, None), gone, done, pending];
+        let g = &backends(&svc(ports.clone(), false), &pods)[0];
+        assert_eq!(ips(g, |b| b.in_endpoints && b.ready), ["10.0.0.1"]);
+        assert_eq!(ips(g, |b| b.in_endpoints && !b.ready), ["10.0.0.2"], "notReadyAddresses");
+        assert_eq!(ips(g, |_| true), ["10.0.0.1", "10.0.0.2", "10.0.0.5"], "the terminating one stays in the slices");
+        let gone = g.backends.iter().find(|b| b.ip == "10.0.0.5").unwrap();
+        assert_eq!(gone.slice_endpoint("ns")["conditions"], json!({"ready": false, "serving": true, "terminating": true}));
+        let down = g.backends.iter().find(|b| b.ip == "10.0.0.2").unwrap();
+        assert_eq!(down.slice_endpoint("ns")["conditions"]["ready"], false);
+        // publishNotReadyAddresses: every one is ready, terminating included.
+        let g = &backends(&svc(ports, true), &pods)[0];
+        assert_eq!(ips(g, |b| b.in_endpoints && b.ready), ["10.0.0.1", "10.0.0.2", "10.0.0.5"]);
+    }
+
+    #[test]
+    fn slice_names_for_port_sets_are_stable() {
+        let a = vec![json!({"name": "web", "port": 8080, "protocol": "TCP"})];
+        let b = vec![json!({"name": "web", "port": 9090, "protocol": "TCP"})];
+        assert_eq!(port_set_hash(&a), port_set_hash(&a.clone()));
+        assert_ne!(port_set_hash(&a), port_set_hash(&b));
+        assert_eq!(port_set_hash(&a).len(), 8);
     }
 }

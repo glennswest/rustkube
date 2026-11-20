@@ -362,6 +362,12 @@ full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
 loses its nominatedNodeName; Never and equal priority preempt nothing; a
 PDB-protected Pod is spared for an unprotected victim.
 
+`e2e/service-endpoints.sh` (#362, suite `rigs`): a Service with
+`targetPort: http` over Pods naming http 8080 (not Ready), 9090 (Ready) and
+none: an Endpoints subset and an EndpointSlice per resolved port, the
+unready Pod under `notReadyAddresses` / `ready: false`, the portless Pod
+nowhere; readiness turning, and a Pod leaving removing its port's slice.
+
 `e2e/pdb-eviction.sh` (#360, suite `rigs`): four Ready Pods under
 `minAvailable: 2`; four simultaneous evictions are two 201 and two 429
 (`DisruptionBudget`), two Pods left, and the controller's recount keeps the
