@@ -860,7 +860,12 @@ exists.
   containers, init containers and sidecars added as upstream's PodRequests,
   #285 — a `restartPolicy: Always` init container adds to the pod, an
   ordinary one runs beside the sidecars before it; the same total for
-  ResourceQuota usage and LimitRanger's Pod limits),
+  ResourceQuota usage and LimitRanger's Pod limits; every resource beyond
+  cpu and memory — `ephemeral-storage`, `hugepages-*`, extended resources
+  such as `nvidia.com/gpu` — is charged to the node too and refused as
+  `Insufficient <name>` when it exceeds what is free, an extended resource
+  the node does not advertise counting as 0 and `ephemeral-storage` checked
+  only on a node that reports it, #297; preemption makes room by the same rule),
   Pod count: at most `allocatable.pods` non-terminal Pods per node, bound or
   with a bind in flight (#194); a VMI takes one through its launcher Pod
   (#203), not itself,

@@ -314,7 +314,7 @@ mod tests {
         let result = crate::filter::run_filters(
             &shim,
             &node,
-            crate::filter::NodeUsage::default(),
+            &crate::filter::NodeUsage::default(),
             &state,
             std::slice::from_ref(&node),
         );
@@ -341,13 +341,13 @@ mod tests {
         let nodes = std::slice::from_ref(&node);
         // Empty node: it fits.
         assert!(matches!(
-            crate::filter::run_filters(&shim, &node, crate::filter::NodeUsage::default(), &state, nodes),
+            crate::filter::run_filters(&shim, &node, &crate::filter::NodeUsage::default(), &state, nodes),
             crate::filter::FilterResult::Pass
         ));
         // With 12 GiB already promised, it does not.
-        let used = crate::filter::NodeUsage { cpu_milli: 0, mem_bytes: 12 * 1024 * 1024 * 1024, pods: 0 };
+        let used = crate::filter::NodeUsage { mem_bytes: 12 * 1024 * 1024 * 1024, ..Default::default() };
         assert!(matches!(
-            crate::filter::run_filters(&shim, &node, used, &state, nodes),
+            crate::filter::run_filters(&shim, &node, &used, &state, nodes),
             crate::filter::FilterResult::Fail(_)
         ));
     }
@@ -373,11 +373,11 @@ mod tests {
         let nodes = std::slice::from_ref(&node);
         let u = crate::filter::NodeUsage::default();
         assert!(matches!(
-            crate::filter::run_filters(&plain, &node, u, &state, nodes),
+            crate::filter::run_filters(&plain, &node, &u, &state, nodes),
             crate::filter::FilterResult::Fail(_)
         ));
         assert!(matches!(
-            crate::filter::run_filters(&tolerant, &node, u, &state, nodes),
+            crate::filter::run_filters(&tolerant, &node, &u, &state, nodes),
             crate::filter::FilterResult::Pass
         ));
     }
@@ -399,12 +399,12 @@ mod tests {
         let u = crate::filter::NodeUsage::default();
         let spinning = mk(json!({"disk": "hdd"}));
         assert!(matches!(
-            crate::filter::run_filters(&shim, &spinning, u, &state, std::slice::from_ref(&spinning)),
+            crate::filter::run_filters(&shim, &spinning, &u, &state, std::slice::from_ref(&spinning)),
             crate::filter::FilterResult::Fail(_)
         ));
         let fast = mk(json!({"disk": "nvme"}));
         assert!(matches!(
-            crate::filter::run_filters(&shim, &fast, u, &state, std::slice::from_ref(&fast)),
+            crate::filter::run_filters(&shim, &fast, &u, &state, std::slice::from_ref(&fast)),
             crate::filter::FilterResult::Pass
         ));
     }

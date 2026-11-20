@@ -44,17 +44,11 @@ pub fn may_preempt(pod: &Value) -> bool {
 }
 
 fn sub(u: &mut NodeUsage, pod: &Value) {
-    let (cpu, mem) = filter::pod_requests(pod);
-    u.cpu_milli = u.cpu_milli.saturating_sub(cpu);
-    u.mem_bytes = u.mem_bytes.saturating_sub(mem);
-    u.pods = u.pods.saturating_sub(1);
+    u.uncharge(pod, true);
 }
 
 fn add(u: &mut NodeUsage, pod: &Value) {
-    let (cpu, mem) = filter::pod_requests(pod);
-    u.cpu_milli += cpu;
-    u.mem_bytes += mem;
-    u.pods += 1;
+    u.charge(pod, true);
 }
 
 fn fits(pod: &Value, node: &Value, state: &ClusterState, nodes: &[Value]) -> bool {
@@ -228,5 +222,29 @@ mod tests {
         let c = on_node(&pod("high", 100, "1"), &nodes[0], &s, &nodes, &[pdb]).unwrap();
         assert_eq!(c.victims.iter().map(|v| name(v)).collect::<Vec<_>>(), vec!["plain"], "the higher-priority but unprotected one goes");
         assert_eq!(c.pdb_violations, 0);
+    }
+
+    #[test]
+    fn an_extended_resource_is_made_room_for() {
+        // #297, conformance's "pod disruption condition is added to the
+        // preempted pod": the node has 1 scheduling.k8s.io/foo, the victim
+        // holds it, the preemptor asks for it. Counting only cpu and memory,
+        // the preemptor "fit" beside the victim and nothing was preempted.
+        let mut n = node("a", "8");
+        n["status"]["allocatable"]["scheduling.k8s.io/foo"] = json!("1");
+        let foo = |name: &str, prio: i64| {
+            let mut p = pod(name, prio, "100m");
+            p["spec"]["containers"][0]["resources"]["requests"]["scheduling.k8s.io/foo"] = json!("1");
+            p
+        };
+        let nodes = vec![n];
+        let s = state(vec![("a", foo("victim", 10))]);
+        let high = foo("high", 100);
+        assert!(!fits(&high, &nodes[0], &s, &nodes), "the resource is taken");
+        let refs: Vec<&Value> = nodes.iter().collect();
+        let c = select(&high, &refs, &nodes, &s, &[]).unwrap();
+        assert_eq!(c.victims.iter().map(|v| name(v)).collect::<Vec<_>>(), vec!["victim"]);
+        // A Pod that does not want the resource needs no room made.
+        assert!(fits(&pod("plain", 100, "100m"), &nodes[0], &s, &nodes));
     }
 }

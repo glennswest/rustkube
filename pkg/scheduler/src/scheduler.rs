@@ -337,11 +337,8 @@ pub struct ClusterState {
 
 impl ClusterState {
     /// What a node has already promised.
-    pub fn used(&self, node: &Value) -> NodeUsage {
-        self.usage
-            .get(node_name_of(node))
-            .copied()
-            .unwrap_or_default()
+    pub fn used(&self, node: &Value) -> &NodeUsage {
+        self.usage.get(node_name_of(node)).unwrap_or(&filter::NO_USAGE)
     }
 }
 
@@ -1453,19 +1450,11 @@ struct SchedulingState {
 /// Charge a placed workload to its node: its requests, and a Pod slot
 /// unless it is a VMI (#194).
 fn charge(usage: &mut HashMap<String, NodeUsage>, vm: bool, node: String, pod: &Value) {
-    let (cpu, mem) = filter::pod_requests(pod);
-    let used = usage.entry(node).or_default();
-    used.cpu_milli += cpu;
-    used.mem_bytes += mem;
-    used.pods += u64::from(!vm);
+    usage.entry(node).or_default().charge(pod, !vm);
 }
 /// The inverse of `charge`.
 fn uncharge(usage: &mut HashMap<String, NodeUsage>, vm: bool, node: String, pod: &Value) {
-    let (cpu, mem) = filter::pod_requests(pod);
-    let used = usage.entry(node).or_default();
-    used.cpu_milli -= cpu;
-    used.mem_bytes -= mem;
-    used.pods -= u64::from(!vm);
+    usage.entry(node).or_default().uncharge(pod, !vm);
 }
 /// A Pod held back by `spec.schedulingGates` (#87).
 fn gated(pod: &Value) -> bool {

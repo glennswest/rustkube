@@ -117,7 +117,8 @@ acceptance runs. No such run has been completed here.
 
 ✅ filters: node Ready, unschedulable, taints, `nodeSelector`, required node
 affinity, `nodeName`, inter-pod affinity/anti-affinity, topology spread,
-resource fit (pod-level requests, #73), volume binding (PV node affinity,
+resource fit (pod-level requests, #73; ephemeral-storage, hugepages and
+extended resources, #297), volume binding (PV node affinity,
 `CSIStorageCapacity`, `ReadWriteOncePod`). ✅ scores: least requested, image
 locality, node affinity, pod affinity, topology spread. ✅ priority sort.
 

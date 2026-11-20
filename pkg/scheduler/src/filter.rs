@@ -19,7 +19,7 @@ pub enum FilterResult {
 /// as its `allocatable` forever: nothing ever fills up, every pod fits
 /// everywhere, and a cluster overcommits without limit while reporting that
 /// each node is empty.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NodeUsage {
     pub cpu_milli: u64,
     pub mem_bytes: u64,
@@ -27,6 +27,51 @@ pub struct NodeUsage {
     /// `allocatable.pods` (#194). A VMI takes no slot itself: a pod-network
     /// VMI's launcher Pod (#203) is the Pod that counts.
     pub pods: u64,
+    /// Every other resource requested, by name: `ephemeral-storage`,
+    /// `hugepages-*` and extended resources (`nvidia.com/gpu`,
+    /// `example.com/foo`), in their base unit (#297). Upstream's
+    /// NodeResourcesFit charges all of them; counting only cpu and memory put
+    /// a Pod asking for 2 GPUs on a node that had none left.
+    pub scalar: std::collections::BTreeMap<String, u64>,
+}
+
+/// Nothing promised: what a node with no Pods on it has used.
+pub static NO_USAGE: NodeUsage = NodeUsage {
+    cpu_milli: 0,
+    mem_bytes: 0,
+    pods: 0,
+    scalar: std::collections::BTreeMap::new(),
+};
+
+impl NodeUsage {
+    /// Charge a placed workload: its requests, and a Pod slot when `slot`
+    /// (a VMI takes none, #194).
+    pub fn charge(&mut self, pod: &Value, slot: bool) {
+        let (cpu, mem) = pod_requests(pod);
+        self.cpu_milli += cpu;
+        self.mem_bytes += mem;
+        self.pods += u64::from(slot);
+        for (k, v) in pod_scalar_requests(pod) {
+            *self.scalar.entry(k).or_default() += v;
+        }
+    }
+
+    /// The inverse of `charge`. Saturating: a pod whose spec changed between
+    /// its charge and uncharge (an in-place resize) must not wrap a count.
+    pub fn uncharge(&mut self, pod: &Value, slot: bool) {
+        let (cpu, mem) = pod_requests(pod);
+        self.cpu_milli = self.cpu_milli.saturating_sub(cpu);
+        self.mem_bytes = self.mem_bytes.saturating_sub(mem);
+        self.pods = self.pods.saturating_sub(u64::from(slot));
+        for (k, v) in pod_scalar_requests(pod) {
+            if let Some(e) = self.scalar.get_mut(&k) {
+                *e = e.saturating_sub(v);
+                if *e == 0 {
+                    self.scalar.remove(&k);
+                }
+            }
+        }
+    }
 }
 
 /// The upstream NodeResourcesFit "pods" check: a node holds at most
@@ -38,7 +83,7 @@ pub struct NodeUsage {
 /// a BestEffort Pod still takes a slot, and that shortcut is how 1,000 of
 /// them landed on a 110-pod node. A node with no `allocatable.pods` is not
 /// limited.
-pub fn pod_count_filter(node: &Value, used: NodeUsage) -> FilterResult {
+pub fn pod_count_filter(node: &Value, used: &NodeUsage) -> FilterResult {
     let limit = match &node["status"]["allocatable"]["pods"] {
         Value::String(s) => s.trim().parse::<u64>().ok(),
         Value::Number(n) => n.as_u64(),
@@ -57,7 +102,7 @@ pub const TOO_MANY_PODS: &str = "Too many pods";
 pub fn run_filters(
     pod: &Value,
     node: &Value,
-    used: NodeUsage,
+    used: &NodeUsage,
     state: &crate::scheduler::ClusterState,
     nodes: &[Value],
 ) -> FilterResult {
@@ -203,19 +248,39 @@ fn node_selector_filter(pod: &Value, node: &Value) -> FilterResult {
 }
 
 /// Check that node has sufficient resources for the pod.
-fn resource_fit_filter(pod: &Value, node: &Value, used: NodeUsage) -> FilterResult {
+fn resource_fit_filter(pod: &Value, node: &Value, used: &NodeUsage) -> FilterResult {
     // The same rule the node accounting charges by (#73). Reading only the
     // container sum here let a pod that states its requests at pod level pass
     // as requesting nothing, and then be charged its real size once bound.
     let (total_cpu_milli, total_mem_bytes) = pod_requests(pod);
+    let scalar = pod_scalar_requests(pod);
 
     // Requests nothing, so it fits anywhere.
-    if total_cpu_milli == 0 && total_mem_bytes == 0 {
+    if total_cpu_milli == 0 && total_mem_bytes == 0 && scalar.is_empty() {
         return FilterResult::Pass;
     }
 
-    // Check node allocatable
     let allocatable = &node["status"]["allocatable"];
+
+    // Every other resource (#297), as upstream's NodeResourcesFit: a resource
+    // the node does not advertise has 0 allocatable, so a Pod asking for a GPU
+    // never lands on a node without one. `ephemeral-storage` is the exception
+    // here, held to the rule cpu and memory follow below: checked only when
+    // the node reports it, because a node that reports no figure is not known
+    // to have none.
+    for (name, &want) in &scalar {
+        let have = &allocatable[name.as_str()];
+        if name == "ephemeral-storage" && have.is_null() {
+            continue;
+        }
+        let have = quantity(have);
+        let free = have.saturating_sub(used.scalar.get(name).copied().unwrap_or(0));
+        if want > free {
+            return FilterResult::Fail(format!("Insufficient {name}"));
+        }
+    }
+
+    // Check node allocatable
     if allocatable.is_null() {
         return FilterResult::Pass; // No allocatable info = assume it fits
     }
@@ -315,6 +380,54 @@ fn requests_without_overhead(pod: &Value) -> (u64, u64) {
     (cpu, mem)
 }
 
+/// A Pod's requests of every resource but cpu, memory and pods (#297), in
+/// base units: `ephemeral-storage` and `hugepages-*` in bytes, extended
+/// resources as counts. Only resources asked for in a non-zero amount.
+///
+/// The rule `pod_requests` follows: containers summed, init containers by
+/// their maximum with sidecars (`containers_total`); pod-level requests win
+/// for what they name (upstream allows cpu, memory and hugepages there);
+/// the larger of spec and a container's reported `resources` /
+/// `allocatedResources`; plus `spec.overhead`.
+pub fn pod_scalar_requests(pod: &Value) -> std::collections::BTreeMap<String, u64> {
+    let scalar = |k: &str| !matches!(k, "cpu" | "memory" | "pods");
+    let mut total = apimachinery::pod_resources::containers_total(pod, "requests", |k, v| {
+        if scalar(k) { quantity(v) } else { 0 }
+    });
+    if let Some(pod_level) = pod["spec"]["resources"]["requests"].as_object() {
+        for (k, v) in pod_level.iter().filter(|(k, _)| scalar(k.as_str())) {
+            total.insert(k.clone(), quantity(v));
+        }
+    }
+    for cs in pod["status"]["containerStatuses"].as_array().into_iter().flatten() {
+        for field in ["resources", "allocatedResources"] {
+            for (k, v) in cs[field]["requests"].as_object().into_iter().flatten() {
+                if scalar(k.as_str()) {
+                    let e = total.entry(k.clone()).or_default();
+                    *e = (*e).max(quantity(v));
+                }
+            }
+        }
+    }
+    for (k, v) in pod["spec"]["overhead"].as_object().into_iter().flatten() {
+        if scalar(k.as_str()) {
+            *total.entry(k.clone()).or_default() += quantity(v);
+        }
+    }
+    total.retain(|_, v| *v > 0);
+    total
+}
+
+/// A quantity in its base unit, written as a string (`2`, `1Gi`) or, as some
+/// writers store it, a JSON number (#292). Anything else is 0.
+fn quantity(v: &Value) -> u64 {
+    match v {
+        Value::String(s) => parse_memory_bytes(s),
+        Value::Number(n) => n.as_u64().or_else(|| n.as_f64().map(|f| f.max(0.0) as u64)).unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// Parse Kubernetes CPU notation to millicores.
 pub fn parse_cpu_millis(s: &str) -> u64 {
     apimachinery::quantity::parse_cpu_millis(s)
@@ -333,14 +446,14 @@ mod tests {
     fn pod_count_stops_at_allocatable_pods() {
         let node = |pods: Value| json!({"status": {"allocatable": {"pods": pods}}});
         let used = |pods| NodeUsage { pods, ..Default::default() };
-        assert!(matches!(pod_count_filter(&node(json!("110")), used(109)), FilterResult::Pass));
+        assert!(matches!(pod_count_filter(&node(json!("110")), &used(109)), FilterResult::Pass));
         assert!(matches!(
-            pod_count_filter(&node(json!("110")), used(110)),
+            pod_count_filter(&node(json!("110")), &used(110)),
             FilterResult::Fail(r) if r == TOO_MANY_PODS
         ));
-        assert!(matches!(pod_count_filter(&node(json!(2)), used(2)), FilterResult::Fail(_)));
+        assert!(matches!(pod_count_filter(&node(json!(2)), &used(2)), FilterResult::Fail(_)));
         // No allocatable.pods reported: not limited.
-        assert!(matches!(pod_count_filter(&json!({}), used(1000)), FilterResult::Pass));
+        assert!(matches!(pod_count_filter(&json!({}), &used(1000)), FilterResult::Pass));
     }
 
     #[test]
@@ -448,7 +561,7 @@ mod tests {
             "containers": [{"name": "app"}]
         }});
         assert!(matches!(
-            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
+            resource_fit_filter(&pod, &full_node(), &NodeUsage::default()),
             FilterResult::Fail(_)
         ));
         // And it fits once the node has room, so it is the size being read.
@@ -457,7 +570,7 @@ mod tests {
             "containers": [{"name": "app"}]
         }});
         assert!(matches!(
-            resource_fit_filter(&small, &full_node(), NodeUsage::default()),
+            resource_fit_filter(&small, &full_node(), &NodeUsage::default()),
             FilterResult::Pass
         ));
     }
@@ -478,7 +591,7 @@ mod tests {
             "containers": [{"name": "app", "resources": {"requests": {"memory": "1Gi"}}}]
         }});
         assert!(matches!(
-            resource_fit_filter(&pod, &full_node(), NodeUsage::default()),
+            resource_fit_filter(&pod, &full_node(), &NodeUsage::default()),
             FilterResult::Fail(_)
         ));
     }
@@ -638,5 +751,96 @@ mod affinity_tests {
         assert!(matches!(node_affinity_filter(&arch_pod(&["amd64","arm64"]), &node("arm64")), FilterResult::Pass));
         // no affinity → passes.
         assert!(matches!(node_affinity_filter(&json!({"spec":{}}), &node("arm64")), FilterResult::Pass));
+    }
+}
+
+#[cfg(test)]
+mod scalar_tests {
+    //! #297: every resource beyond cpu, memory and pods is counted.
+    use super::*;
+    use serde_json::json;
+
+    fn node(alloc: Value) -> Value {
+        json!({"metadata":{"name":"n1"},
+               "status":{"conditions":[{"type":"Ready","status":"True"}],"allocatable":alloc}})
+    }
+    fn wants(res: Value) -> Value {
+        json!({"spec":{"containers":[{"name":"c","resources":{"requests":res}}]}})
+    }
+    fn reason(r: FilterResult) -> String {
+        match r {
+            FilterResult::Pass => "pass".into(),
+            FilterResult::Fail(s) => s,
+        }
+    }
+
+    #[test]
+    fn an_extended_resource_the_node_lacks_does_not_fit() {
+        let pod = wants(json!({"example.com/foo": "1"}));
+        assert_eq!(reason(resource_fit_filter(&pod, &node(json!({"cpu":"4"})), &NO_USAGE)), "Insufficient example.com/foo");
+        // No allocatable at all: still none of it.
+        let bare = json!({"metadata":{"name":"n1"},"status":{}});
+        assert_eq!(reason(resource_fit_filter(&pod, &bare, &NO_USAGE)), "Insufficient example.com/foo");
+        assert_eq!(reason(resource_fit_filter(&pod, &node(json!({"example.com/foo":"1"})), &NO_USAGE)), "pass");
+        // A JSON number, as some writers store it (#292).
+        assert_eq!(reason(resource_fit_filter(&pod, &node(json!({"example.com/foo":1})), &NO_USAGE)), "pass");
+    }
+
+    #[test]
+    fn two_fit_and_the_third_waits() {
+        // The issue's rig in miniature: a node with 2, Pods of 1.
+        let n = node(json!({"cpu":"4","memory":"4Gi","example.com/foo":"2"}));
+        let pod = wants(json!({"example.com/foo": "1"}));
+        let mut used = NodeUsage::default();
+        for _ in 0..2 {
+            assert_eq!(reason(resource_fit_filter(&pod, &n, &used)), "pass");
+            used.charge(&pod, true);
+        }
+        assert_eq!(used.scalar.get("example.com/foo"), Some(&2));
+        assert_eq!(reason(resource_fit_filter(&pod, &n, &used)), "Insufficient example.com/foo");
+        used.uncharge(&pod, true);
+        assert_eq!(reason(resource_fit_filter(&pod, &n, &used)), "pass");
+        used.uncharge(&pod, true);
+        assert_eq!(used, NodeUsage::default(), "uncharge leaves no empty entries");
+    }
+
+    #[test]
+    fn ephemeral_storage_is_checked_when_the_node_reports_it() {
+        let pod = wants(json!({"ephemeral-storage": "2Gi"}));
+        assert_eq!(reason(resource_fit_filter(&pod, &node(json!({"ephemeral-storage":"1Gi"})), &NO_USAGE)), "Insufficient ephemeral-storage");
+        assert_eq!(reason(resource_fit_filter(&pod, &node(json!({"ephemeral-storage":"10Gi"})), &NO_USAGE)), "pass");
+        assert_eq!(reason(resource_fit_filter(&pod, &node(json!({"cpu":"4"})), &NO_USAGE)), "pass");
+    }
+
+    #[test]
+    fn scalar_requests_follow_the_pod_requests_rule() {
+        // Init containers by their max, app containers summed, overhead added.
+        let pod = json!({"spec":{
+            "initContainers":[
+                {"name":"i1","resources":{"requests":{"example.com/foo":"3"}}},
+                {"name":"i2","resources":{"requests":{"example.com/foo":"1"}}}],
+            "containers":[
+                {"name":"a","resources":{"requests":{"example.com/foo":"1","cpu":"1"}}},
+                {"name":"b","resources":{"requests":{"example.com/foo":"1","ephemeral-storage":"1Ki"}}}],
+            "overhead":{"ephemeral-storage":"1Ki","cpu":"100m"}}});
+        let r = pod_scalar_requests(&pod);
+        assert_eq!(r.get("example.com/foo"), Some(&3));
+        assert_eq!(r.get("ephemeral-storage"), Some(&2048));
+        assert!(!r.contains_key("cpu"));
+        // A sidecar runs beside the app containers: added, not maxed.
+        let side = json!({"spec":{
+            "initContainers":[{"name":"s","restartPolicy":"Always","resources":{"requests":{"example.com/foo":"1"}}}],
+            "containers":[{"name":"a","resources":{"requests":{"example.com/foo":"1"}}}]}});
+        assert_eq!(pod_scalar_requests(&side).get("example.com/foo"), Some(&2));
+        // Requests of zero are no request.
+        assert!(pod_scalar_requests(&wants(json!({"example.com/foo":"0"}))).is_empty());
+    }
+
+    #[test]
+    fn a_pod_requesting_only_an_extended_resource_is_not_best_effort_here() {
+        // The "requests nothing, fits anywhere" shortcut must not pass it.
+        let pod = wants(json!({"nvidia.com/gpu": "2"}));
+        let n = node(json!({"cpu":"64","memory":"256Gi","nvidia.com/gpu":"1"}));
+        assert_eq!(reason(resource_fit_filter(&pod, &n, &NO_USAGE)), "Insufficient nvidia.com/gpu");
     }
 }

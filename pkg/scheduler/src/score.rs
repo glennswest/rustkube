@@ -10,7 +10,7 @@ use serde_json::Value;
 pub fn score_node(
     pod: &Value,
     node: &Value,
-    used: NodeUsage,
+    used: &NodeUsage,
     state: &crate::scheduler::ClusterState,
     nodes: &[Value],
 ) -> i64 {
@@ -31,7 +31,7 @@ pub fn score_node(
 }
 
 /// Prefer nodes with more available resources (balanced allocation).
-fn least_requested_score(_pod: &Value, node: &Value, used: NodeUsage) -> i64 {
+fn least_requested_score(_pod: &Value, node: &Value, used: &NodeUsage) -> i64 {
     let allocatable = &node["status"]["allocatable"];
     if allocatable.is_null() {
         return 50; // Default mid-score if no resource info
@@ -180,10 +180,10 @@ mod accounting_tests {
         let st = ClusterState::default();
         let pod = json!({"spec":{"containers":[]}});
 
-        let empty = score_node(&pod, &big, NodeUsage::default(), &st, &[]);
+        let empty = score_node(&pod, &big, &NodeUsage::default(), &st, &[]);
         let half = score_node(
             &pod, &big,
-            NodeUsage { cpu_milli: 4000, mem_bytes: 8 * 1024 * 1024 * 1024, pods: 0 },
+            &NodeUsage { cpu_milli: 4000, mem_bytes: 8 * 1024 * 1024 * 1024, ..Default::default() },
             &st, &[],
         );
         assert!(half < empty, "a half-full node must score lower ({half} vs {empty})");
@@ -195,10 +195,10 @@ mod accounting_tests {
         // capacity is. Scoring on size alone made the largest node a magnet.
         let st = ClusterState::default();
         let pod = json!({"spec":{"containers":[]}});
-        let small_empty = score_node(&pod, &node("s", "2", "4Gi"), NodeUsage::default(), &st, &[]);
+        let small_empty = score_node(&pod, &node("s", "2", "4Gi"), &NodeUsage::default(), &st, &[]);
         let big_full = score_node(
             &pod, &node("b", "64", "256Gi"),
-            NodeUsage { cpu_milli: 63_000, mem_bytes: 250 * 1024 * 1024 * 1024, pods: 0 },
+            &NodeUsage { cpu_milli: 63_000, mem_bytes: 250 * 1024 * 1024 * 1024, ..Default::default() },
             &st, &[],
         );
         assert!(small_empty > big_full, "{small_empty} should beat {big_full}");
