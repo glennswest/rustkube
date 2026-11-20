@@ -19,7 +19,11 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [ ] sc-build; `rigs` run on a test machine; ship with a proof.
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
-  that is the separate built-in-schemas gap, not this issue.
+  that is the built-in-schemas gap, #342, not this issue.
+- sc-build at ec978d7 passed (sc-build `cargo build && cargo test`). The
+  first runs: c092306 missed a trait import (#345), its test named two CRDs
+  alike (#346), `is_none_or` is past MSRV (#349; the other MSRV and clippy
+  hits there are #263's). `rigs` run c04777d587 on pvetest1 at ec978d7.
 
 ### Pods keep their template's annotations (#256, P2; nextnfs-operator#2, stormcos-options#26) — COMPLETE 2026-11-19 (ships in a release)
 - `build_pod_from_template` (ReplicaSet/RC) copies only `labels` + `spec`;
