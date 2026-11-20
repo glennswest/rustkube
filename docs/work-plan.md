@@ -4,22 +4,22 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Review findings, 5 critical (#350) — IN PROGRESS 2026-11-20
+### Review findings, 5 critical (#350) — fixes pushed, sc-build at 3cef5d0 running 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
-- [ ] 198fa7c65883 — a Pod update (PUT/PATCH/apply, any requester) may
+- [x] 198fa7c65883 (3cef5d0) — a Pod update (PUT/PATCH/apply, any requester) may
   change only what upstream's `ValidatePodUpdate` allows (images,
   activeDeadlineSeconds down, tolerations added, gates removed, the bind
   setting `nodeName` once); resources only through `/resize`; the
   `kubernetes.io/config.mirror` annotation never changes. Re-checked after
   the mutating webhooks. Internal writes (manifests, no request) exempt.
-- [ ] f5ae1c953cf4 — the mirror annotation exempts a pod from SCC only when
+- [x] f5ae1c953cf4 (dd4b24f) — the mirror annotation exempts a pod from SCC only when
   its node creates it: requester in `system:nodes`, `system:node:<n>` with
   `spec.nodeName == <n>`.
-- [ ] 27b84965dcae — CSR create drops the client's `status`.
-- [ ] 77f265e40744 — kubelet-client auto-approval only for a node renewing
+- [x] 27b84965dcae (1097827) — CSR create drops the client's `status`.
+- [x] 77f265e40744 (a65ee0f) — kubelet-client auto-approval only for a node renewing
   its own identity (PKCS#10 O=[system:nodes], CN=system:node:<n> ==
   spec.username, requester in system:nodes, no SANs, client-auth usages).
-- [ ] e59512281f8c — a continue key outside the listed prefix is a 400
+- [x] e59512281f8c (7e729d2) — a continue key outside the listed prefix is a 400
   (apiserver) / `Invalid` (store adapter).
 
 ### Protobuf /openapi/v2 (#343) — WAITING on a pve install carrying 1c0b6bb, then rigs (2026-11-19)
