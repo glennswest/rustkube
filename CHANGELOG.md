@@ -4,6 +4,7 @@
 
 ### 2026-11-20
 - **build:** `rust-version` 1.75 → 1.82: the code already used `Option::is_none_or` (1.82), so the declared minimum was false and `cargo clippy -D warnings` failed `incompatible_msrv` in `apimachinery` (#354)
+- **build:** The `scheduler` crate is clippy clean (`-D warnings`, all targets): `sort_by_key`, `checked_div`, redundant closures, an array for a test's `vec!`; `schedule_pod`'s eight arguments allowed (#354)
 - **build:** Clippy clean in `apimachinery` at the raised MSRV: `is_none_or` for `map_or(true, …)`, a redundant closure, `reactor`'s test module last (#354)
 - **test:** Rig `extended-resources` (suite `rigs`): extended resources, an unadvertised one and ephemeral-storage refused with their `Insufficient` reasons, and preemption making room for an extended resource (#297)
 - **fix:** The scheduler counts every resource a Pod requests, not only cpu, memory and the Pod count: `ephemeral-storage`, `hugepages-*` and extended resources (`nvidia.com/gpu`, `example.com/foo`) are charged to the node from the same rule as cpu (containers, init containers and sidecars, pod-level requests, overhead) and a Pod is refused `Insufficient <name>` where too little is free — an extended resource the node does not advertise is 0, `ephemeral-storage` is checked where the node reports it. A Pod asking for a GPU was placed on a node with none, and conformance's SchedulerPreemption specs (`scheduling.k8s.io/foo`) timed out because the preemptor "fit" beside its victim; preemption now makes room by the same rule (#297)

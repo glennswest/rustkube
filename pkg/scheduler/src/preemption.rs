@@ -188,10 +188,10 @@ mod tests {
         let c = select(&high, &refs, &nodes, &s, &[]).unwrap();
         // a needs one victim (a1, priority 10); b needs b1 (priority 5): lower highest-victim wins.
         assert_eq!(c.node, "b");
-        assert_eq!(c.victims.iter().map(|v| name(v)).collect::<Vec<_>>(), vec!["b1"]);
+        assert_eq!(c.victims.iter().map(name).collect::<Vec<_>>(), vec!["b1"]);
         // On a alone, only the lower of the two goes.
         let on_a = on_node(&high, &nodes[0], &s, &nodes, &[]).unwrap();
-        assert_eq!(on_a.victims.iter().map(|v| name(v)).collect::<Vec<_>>(), vec!["a1"]);
+        assert_eq!(on_a.victims.iter().map(name).collect::<Vec<_>>(), vec!["a1"]);
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
         let pdb = json!({"metadata": {"name": "pdb", "namespace": "d"}, "spec": {"selector": {"matchLabels": {"app": "guarded"}}},
                          "status": {"disruptionsAllowed": 0}});
         let c = on_node(&pod("high", 100, "1"), &nodes[0], &s, &nodes, &[pdb]).unwrap();
-        assert_eq!(c.victims.iter().map(|v| name(v)).collect::<Vec<_>>(), vec!["plain"], "the higher-priority but unprotected one goes");
+        assert_eq!(c.victims.iter().map(name).collect::<Vec<_>>(), vec!["plain"], "the higher-priority but unprotected one goes");
         assert_eq!(c.pdb_violations, 0);
     }
 
@@ -243,7 +243,7 @@ mod tests {
         assert!(!fits(&high, &nodes[0], &s, &nodes), "the resource is taken");
         let refs: Vec<&Value> = nodes.iter().collect();
         let c = select(&high, &refs, &nodes, &s, &[]).unwrap();
-        assert_eq!(c.victims.iter().map(|v| name(v)).collect::<Vec<_>>(), vec!["victim"]);
+        assert_eq!(c.victims.iter().map(name).collect::<Vec<_>>(), vec!["victim"]);
         // A Pod that does not want the resource needs no room made.
         assert!(fits(&pod("plain", 100, "100m"), &nodes[0], &s, &nodes));
     }

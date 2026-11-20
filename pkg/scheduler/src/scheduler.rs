@@ -888,7 +888,7 @@ impl Scheduler {
                 )
             })
             .collect();
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|s| std::cmp::Reverse(s.1));
         let chosen = scored[0].0["metadata"]["name"].as_str().unwrap_or("");
         if chosen.is_empty() {
             warn!("the chosen node for {ns}/{name} has no name");
@@ -1200,6 +1200,7 @@ impl Scheduler {
         format!("{why} Preemption: {evicted} pod(s) evicted on node {}.", c.node)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn schedule_pod(
         &self,
         namespace: &str,
@@ -1273,7 +1274,7 @@ impl Scheduler {
             .collect();
 
         // Sort by score descending
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|s| std::cmp::Reverse(s.1));
 
         let chosen = scored[0].0;
         let chosen_name = chosen["metadata"]["name"]
@@ -1808,7 +1809,7 @@ mod priority_tests {
                 json!({"metadata":{"name":name,"creationTimestamp":ts},"spec":spec}),
             )
         };
-        let mut v = vec![
+        let mut v = [
             mk("low", Some(0), "2026-01-01T00:00:02Z"),
             mk("high", Some(1000), "2026-01-01T00:00:03Z"),
             mk("old-default", None, "2026-01-01T00:00:00Z"),

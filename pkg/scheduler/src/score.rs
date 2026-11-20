@@ -54,8 +54,8 @@ fn least_requested_score(_pod: &Value, node: &Value, used: &NodeUsage) -> i64 {
     // whole behaviour.
     let free_cpu = cpu.saturating_sub(used.cpu_milli);
     let free_mem = mem.saturating_sub(used.mem_bytes);
-    let cpu_score = if cpu == 0 { 0 } else { (free_cpu * 50 / cpu) as i64 };
-    let mem_score = if mem == 0 { 0 } else { (free_mem * 50 / mem) as i64 };
+    let cpu_score = (free_cpu * 50).checked_div(cpu).unwrap_or(0) as i64;
+    let mem_score = (free_mem * 50).checked_div(mem).unwrap_or(0) as i64;
 
     cpu_score + mem_score
 }
