@@ -10,7 +10,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [x] Server-assigned `uid`/`creationTimestamp` on every API create (POST,
   apply-create, CR create, events.k8s.io), kept across admission; token
   regression (recreate with the old uid does not revive the token).
-- [ ] `/finalize`: body uid/resourceVersion preconditions (409), the observed
+- [x] `/finalize`: body uid/resourceVersion preconditions (409), the observed
   revision as CAS for the update and the delete; the namespace controller
   returns the finalize error so it is retried.
 - [ ] sc-build; rigs `admission-webhook`, `namespace-order` on a test machine

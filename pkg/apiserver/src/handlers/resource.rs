@@ -1120,6 +1120,15 @@ pub(crate) async fn terminate_namespace(
 /// is actually removed from storage (the namespace controller calls this after
 /// purging all contained resources). Mirrors the upstream `/finalize`
 /// subresource. (#28)
+///
+/// The request is about the namespace it names by uid and resourceVersion,
+/// as any update is (#366, review finding f33be8cc42cb): a body uid that is
+/// not the stored one, or a resourceVersion that is not the current one, is a
+/// 409 and changes nothing. The namespace controller sends both, so a
+/// delayed request can no longer clear the finalizers of — or delete — a
+/// namespace of the same name made since, nor one changed since it looked.
+/// The write itself, update or delete, is conditional on the revision read,
+/// so nothing that lands between the read and the write is lost either.
 pub async fn finalize_namespace(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -1127,6 +1136,23 @@ pub async fn finalize_namespace(
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::cluster_key("namespaces", &name);
     let mut obj = state.storage.get(&key).await?;
+    let stored_uid = obj["metadata"]["uid"].as_str().unwrap_or("").to_string();
+    let stored_rv = obj["metadata"]["resourceVersion"].as_str().unwrap_or("").to_string();
+    if let Some(u) = body["metadata"]["uid"].as_str().filter(|u| !u.is_empty()) {
+        if u != stored_uid {
+            return Err(ApiError::conflict(&format!(
+                "Precondition failed: UID in precondition: {u}, UID in object meta: {stored_uid}"
+            )));
+        }
+    }
+    if let Some(rv) = body["metadata"]["resourceVersion"].as_str().filter(|rv| !rv.is_empty()) {
+        if rv != stored_rv {
+            return Err(ApiError::conflict(&format!(
+                "Operation cannot be fulfilled on namespaces \"{name}\": the object has been modified; please apply your changes to the latest version and try again"
+            )));
+        }
+    }
+    let prev_rev = stored_rv.parse::<u64>().ok();
 
     // Apply the caller's finalizer list verbatim.
     let submitted = body["spec"]["finalizers"].clone();
@@ -1145,13 +1171,10 @@ pub async fn finalize_namespace(
         .unwrap_or(true);
     let terminating = obj["metadata"]["deletionTimestamp"].as_str().is_some();
     if empty && terminating {
-        state.storage.delete(&key, None).await?;
+        state.storage.delete(&key, prev_rev).await?;
         return Ok(Json(obj));
     }
 
-    let prev_rev = obj["metadata"]["resourceVersion"]
-        .as_str()
-        .and_then(|r| r.parse::<u64>().ok());
     let updated = state.storage.update(&key, obj, prev_rev).await?;
     Ok(Json(updated))
 }
@@ -3382,5 +3405,105 @@ mod identity_tests {
         // Not an object: nothing to do, and no panic.
         let mut bad = json!([1]);
         new_identity(&mut bad, "x", None).keep(&mut bad, "x", None);
+    }
+}
+
+#[cfg(test)]
+mod finalize_tests {
+    //! #366, review finding f33be8cc42cb: `/finalize` honours the uid and
+    //! resourceVersion it is sent, and writes on the revision it read.
+    use super::*;
+
+    const KEY: &str = "/registry/namespaces/gone";
+
+    fn ns(uid: &str, terminating: bool) -> Value {
+        let mut o = json!({"apiVersion": "v1", "kind": "Namespace",
+            "metadata": {"name": "gone", "uid": uid}, "spec": {"finalizers": ["kubernetes"]}});
+        if terminating {
+            o["metadata"]["deletionTimestamp"] = json!("2026-11-20T00:00:00Z");
+        }
+        o
+    }
+    fn request(of: &Value) -> Value {
+        json!({"apiVersion": "v1", "kind": "Namespace",
+            "metadata": {"name": "gone", "uid": of["metadata"]["uid"], "resourceVersion": of["metadata"]["resourceVersion"]},
+            "spec": {"finalizers": []}})
+    }
+    async fn finalize(s: &AppState, body: Value) -> Result<Value, ApiError> {
+        finalize_namespace(State(s.clone()), Path("gone".into()), Json(body)).await.map(|r| {
+            let r = r.into_response();
+            assert!(r.status().is_success());
+            Value::Null
+        })
+    }
+
+    #[test]
+    fn the_key_is_the_namespace_s() {
+        assert_eq!(ResourceStorage::cluster_key("namespaces", "gone"), KEY);
+    }
+
+    #[tokio::test]
+    async fn a_request_for_a_namespace_since_replaced_changes_nothing() {
+        let s = super::status_put_tests::state();
+        let first = s.storage.create(KEY, ns("uid-1", true)).await.unwrap();
+        let late = request(&first); // what the controller observed
+        // Deleted and made again under the same name, terminating in its turn.
+        s.storage.delete(KEY, None).await.unwrap();
+        s.storage.create(KEY, ns("uid-2", true)).await.unwrap();
+        let e = finalize(&s, late).await.unwrap_err();
+        assert_eq!(e.status, StatusCode::CONFLICT, "{}", e.message);
+        assert!(e.message.contains("UID in precondition: uid-1"), "{}", e.message);
+        let now = s.storage.get(KEY).await.expect("the replacement was deleted");
+        assert_eq!((now["metadata"]["uid"].clone(), now["spec"]["finalizers"].clone()), (json!("uid-2"), json!(["kubernetes"])));
+    }
+
+    #[tokio::test]
+    async fn a_request_older_than_the_namespace_changes_nothing() {
+        let s = super::status_put_tests::state();
+        let seen = s.storage.create(KEY, ns("uid-1", false)).await.unwrap();
+        // Changed after the controller looked: still the same namespace.
+        let mut changed = seen.clone();
+        changed["metadata"]["labels"] = json!({"x": "y"});
+        changed["metadata"]["deletionTimestamp"] = json!("2026-11-20T00:00:00Z");
+        let rv = seen["metadata"]["resourceVersion"].as_str().unwrap().parse().ok();
+        s.storage.update(KEY, changed, rv).await.unwrap();
+        let e = finalize(&s, request(&seen)).await.unwrap_err();
+        assert_eq!(e.status, StatusCode::CONFLICT, "{}", e.message);
+        assert!(e.message.contains("the object has been modified"), "{}", e.message);
+        let now = s.storage.get(KEY).await.expect("deleted on a stale request");
+        assert_eq!(now["spec"]["finalizers"], json!(["kubernetes"]));
+        assert_eq!(now["metadata"]["labels"], json!({"x": "y"}));
+
+        // The current one, with its uid and version: finalized and gone.
+        finalize(&s, request(&now)).await.unwrap();
+        assert!(s.storage.get(KEY).await.is_err(), "the terminating namespace was finalized");
+    }
+
+    #[tokio::test]
+    async fn a_current_request_updates_and_one_without_preconditions_still_works() {
+        let s = super::status_put_tests::state();
+        let seen = s.storage.create(KEY, ns("uid-1", false)).await.unwrap();
+        finalize(&s, request(&seen)).await.unwrap();
+        let now = s.storage.get(KEY).await.unwrap();
+        assert_eq!(now["spec"]["finalizers"], json!([]), "not terminating: updated, not deleted");
+        let mut body = request(&now);
+        body["metadata"] = json!({"name": "gone"});
+        body["spec"]["finalizers"] = json!(["kubernetes"]);
+        finalize(&s, body).await.unwrap();
+        assert_eq!(s.storage.get(KEY).await.unwrap()["spec"]["finalizers"], json!(["kubernetes"]));
+    }
+
+    /// The write is on the revision read: the store refuses a delete or an
+    /// update at any other one, which is what keeps a change between the read
+    /// and the write.
+    #[tokio::test]
+    async fn the_store_refuses_a_write_on_a_stale_revision() {
+        let s = super::status_put_tests::state();
+        let seen = s.storage.create(KEY, ns("uid-1", true)).await.unwrap();
+        let rv: u64 = seen["metadata"]["resourceVersion"].as_str().unwrap().parse().unwrap();
+        s.storage.update(KEY, seen.clone(), Some(rv)).await.unwrap();
+        assert_eq!(s.storage.delete(KEY, Some(rv)).await.unwrap_err().status, StatusCode::CONFLICT);
+        assert_eq!(s.storage.update(KEY, seen, Some(rv)).await.unwrap_err().status, StatusCode::CONFLICT);
+        assert!(s.storage.get(KEY).await.is_ok());
     }
 }

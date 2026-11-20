@@ -141,9 +141,10 @@ async fn terminate_namespace(
             "metadata": { "name": namespace, "uid": observed["metadata"]["uid"], "resourceVersion": observed["metadata"]["resourceVersion"] },
             "spec": { "finalizers": [] }
         });
-        let _ = api
-            .update(&format!("/api/v1/namespaces/{namespace}/finalize"), &body)
-            .await;
+        // A refusal (409: the namespace was replaced or changed since it was
+        // observed, #366) fails the pass, so it is retried on what is there now.
+        api.update(&format!("/api/v1/namespaces/{namespace}/finalize"), &body)
+            .await?;
         info!("Namespace {namespace} terminated (finalized)");
     } else {
         debug!("Namespace {namespace} terminating: purged {remaining} resource(s) this pass");
