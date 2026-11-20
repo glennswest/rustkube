@@ -304,11 +304,14 @@ mod tests {
                 "mode": {"type": "string", "enum": ["a", "b"]},
                 "tags": {"type": "array", "items": {"type": "string"}, "x-kubernetes-list-type": "set"},
                 "labels": {"type": "object", "additionalProperties": {"type": "string"}}}}}});
-        let doc = crate::discovery::openapi_v2_document(&[def(Some(schema)), def(None)]);
+        let mut empty = def(None);
+        empty.kind = "E2eTestEmpty".into();
+        let doc = crate::discovery::openapi_v2_document(&[def(Some(schema)), empty]);
         let pb = apimachinery::openapi_v2::encode_document(&doc).expect("the served document encodes");
         assert!(!pb.starts_with(b"{"));
         let has = |needle: &[u8]| pb.windows(needle.len()).any(|w| w == needle);
         assert!(has(b"com.example.crd-publish-openapi-test-foo.v1.E2eTestFoo"));
+        assert!(has(b"com.example.crd-publish-openapi-test-foo.v1.E2eTestEmpty"));
         assert!(has(b"x-kubernetes-group-version-kind") && has(b"\"kind\":\"E2eTestFoo\""));
         assert!(has(b"Foo CRD for Testing") && has(b"APIVersion defines"));
     }
