@@ -8,7 +8,8 @@
 //!
 //! - **On create** `spec.username` and `spec.groups` are the authenticated
 //!   requester's, over whatever the body says (`spec.uid` and `spec.extra`,
-//!   which this apiserver has no source for, are dropped).
+//!   which this apiserver has no source for, are dropped), and `status` is
+//!   emptied: a request cannot arrive approved or signed.
 //! - **On update** `spec` is kept as stored; a main-resource update also
 //!   keeps `status`; `/approval` keeps `status.certificate`.
 //! - **`/approval`** needs `approve` on `signers` named the CSR's signerName
@@ -86,6 +87,11 @@ pub fn on_create(user: &UserInfo, object: &mut Value) -> Result<(), ApiError> {
     spec.insert("groups".into(), json!(user.groups));
     spec.remove("uid");
     spec.remove("extra");
+    // Status is the approver's and the signer's, never the requester's: a
+    // create carrying `Approved` (or a certificate) was stored as sent and
+    // the signer issued it (review finding 27b84965dcae). Upstream's
+    // PrepareForCreate resets it the same way.
+    object["status"] = json!({});
     Ok(())
 }
 
@@ -212,6 +218,17 @@ mod tests {
         assert_eq!(csr["spec"]["groups"], json!(["system:bootstrappers", "system:authenticated"]));
         assert!(csr["spec"].get("uid").is_none() && csr["spec"].get("extra").is_none());
         assert_eq!(csr["spec"]["request"], "x");
+    }
+
+    #[test]
+    fn create_drops_a_client_supplied_status() {
+        // Review finding 27b84965dcae: an Approved condition (or a
+        // certificate) in the create body was stored as sent.
+        let mut csr = json!({"spec": {"signerName": "kubernetes.io/kube-apiserver-client", "request": "x"},
+            "status": {"conditions": [{"type": "Approved", "status": "True", "reason": "Self"}],
+                       "certificate": "Zm9yZ2Vk"}});
+        on_create(&node(), &mut csr).unwrap();
+        assert_eq!(csr["status"], json!({}));
     }
 
     #[test]
