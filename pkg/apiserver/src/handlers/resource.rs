@@ -383,14 +383,14 @@ pub async fn create_cluster_resource(
 ) -> Result<impl IntoResponse, ApiError> {
     let name = object_name(&mut body)?;
 
-    ensure_metadata(&mut body, &name, None);
+    let id = new_identity(&mut body, &name, None);
 
     crate::builtin_admission::admit_create(
         &state.storage, &resource, None, &mut body, &state.service_cidr,
     )
     .await?;
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
-    ensure_metadata(&mut body, &name, None);
+    id.keep(&mut body, &name, None);
     crate::generation::on_create(&resource, &mut body); // #285
 
     let key = ResourceStorage::cluster_key(&resource, &name);
@@ -407,7 +407,7 @@ pub async fn create_namespaced_resource(
     let name = object_name(&mut body)?;
 
     check_body_namespace(&body, &namespace)?;
-    ensure_metadata(&mut body, &name, Some(&namespace));
+    let id = new_identity(&mut body, &name, Some(&namespace));
 
     // Built-in admission (NamespaceLifecycle, ServiceAccount, DefaultTolerationSeconds).
     crate::builtin_admission::admit_create(
@@ -420,7 +420,7 @@ pub async fn create_namespaced_resource(
     let created = async {
         // Admission webhooks (#82); a patch cannot move the object.
         crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
-        ensure_metadata(&mut body, &name, Some(&namespace));
+        id.keep(&mut body, &name, Some(&namespace));
         crate::generation::on_create(&resource, &mut body); // #285
         let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
         state.storage.create(&key, body).await
@@ -1762,7 +1762,7 @@ pub(crate) async fn patch_stored_object(
                 let mut obj = crate::apply::server_side_apply(json!({}), &applied, &field_manager, &now, true)
                     .expect("create apply cannot conflict");
                 url_identity(&obj["metadata"], name, namespace)?; // #357
-                ensure_metadata(&mut obj, name, namespace);
+                let id = new_identity(&mut obj, name, namespace);
                 if let Some(ns) = namespace {
                     crate::builtin_admission::admit_create(
                         &state.storage, resource, Some(ns), &mut obj, &state.service_cidr,
@@ -1772,7 +1772,7 @@ pub(crate) async fn patch_stored_object(
                 let claims = (resource == "services").then(|| obj.clone()); // #132
                 let created = async {
                     crate::admission::admit(state, crate::admission::Operation::Create, Some(&mut obj), None).await?;
-                    ensure_metadata(&mut obj, name, namespace);
+                    id.keep(&mut obj, name, namespace);
                     if status == Strategy::BuiltIn {
                         crate::generation::on_create(resource, &mut obj); // #285
                     }
@@ -2175,6 +2175,46 @@ fn apply_status_patch(existing: &mut Value, content_type: &str, body: &[u8]) -> 
         }
     }
     Ok(())
+}
+
+/// What the server alone decides about a new object: its `uid` and
+/// `creationTimestamp` (#366, review finding fc9c16b6b9e0).
+///
+/// Assigned on every API create, whatever the body says, as upstream's
+/// `FillObjectMetaSystemFields`. A client-supplied uid used to be kept, so
+/// whoever could recreate a deleted Pod or ServiceAccount could give the new
+/// one the old uid — and a token bound to the deleted object (its name and
+/// uid) was good again, and an ownerReference naming the old object named
+/// the new one. `keep` puts them back after admission: a mutating webhook
+/// does not choose them either.
+pub(crate) struct Identity {
+    uid: Value,
+    created: Value,
+}
+
+/// Assign a new object's identity (see [`Identity`]) and the rest of its
+/// metadata (`ensure_metadata`).
+pub(crate) fn new_identity(obj: &mut Value, name: &str, namespace: Option<&str>) -> Identity {
+    if let Some(meta) = obj.get_mut("metadata").and_then(Value::as_object_mut) {
+        meta.remove("uid");
+        meta.remove("creationTimestamp");
+    }
+    ensure_metadata(obj, name, namespace);
+    Identity {
+        uid: obj["metadata"]["uid"].clone(),
+        created: obj["metadata"]["creationTimestamp"].clone(),
+    }
+}
+
+impl Identity {
+    /// The metadata again after admission, with this identity.
+    pub(crate) fn keep(&self, obj: &mut Value, name: &str, namespace: Option<&str>) {
+        if let Some(meta) = obj.get_mut("metadata").and_then(Value::as_object_mut) {
+            meta.insert("uid".into(), self.uid.clone());
+            meta.insert("creationTimestamp".into(), self.created.clone());
+        }
+        ensure_metadata(obj, name, namespace);
+    }
 }
 
 /// Public version of ensure_metadata for use by other modules (e.g. CRD handlers).
@@ -2815,7 +2855,7 @@ mod status_put_tests {
     use std::future::Future;
     use std::sync::Arc;
 
-    fn state() -> AppState {
+    pub(super) fn state() -> AppState {
         AppState {
             storage: Arc::new(ResourceStorage::new(Arc::new(MemStore::default()))),
             crd_registry: Arc::new(CrdRegistry::new()),
@@ -3284,5 +3324,63 @@ mod immutable_tests {
         assert!(check_immutable(k, &old, &json!({"value": 1000, "preemptionPolicy": "Never"})).is_err());
         // Absent is the default, both ways round.
         assert!(check_immutable(k, &json!({"value": 1}), &json!({"value": 1, "preemptionPolicy": "PreemptLowerPriority"})).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    //! #366, review finding fc9c16b6b9e0: a new object's uid and
+    //! creationTimestamp are the server's, whatever the body says.
+    use super::*;
+
+    const OLD: &str = "2000-01-01T00:00:00Z";
+
+    fn fresh(o: &Value) {
+        let uid = o["metadata"]["uid"].as_str().unwrap_or("");
+        assert!(!uid.is_empty() && uid != "old-uid", "uid {uid}");
+        let ts = o["metadata"]["creationTimestamp"].as_str().unwrap_or("");
+        assert!(!ts.is_empty() && ts != OLD, "creationTimestamp {ts}");
+    }
+
+    #[tokio::test]
+    async fn post_and_apply_create_assign_a_new_uid_and_timestamp() {
+        let s = super::status_put_tests::state();
+        let meta = json!({"uid": "old-uid", "creationTimestamp": OLD});
+        let ns = json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "default", "uid": meta["uid"], "creationTimestamp": OLD}});
+        let r = create_cluster_resource(State(s.clone()), Path("namespaces".into()), Json(ns)).await.into_response();
+        assert_eq!(r.status(), StatusCode::CREATED);
+        fresh(&s.storage.get(&ResourceStorage::cluster_key("namespaces", "default")).await.unwrap());
+
+        let cm = json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "uid": "old-uid", "creationTimestamp": OLD}});
+        let r = create_namespaced_resource(State(s.clone()), Path(("default".into(), "configmaps".into())), Json(cm))
+            .await.into_response();
+        assert_eq!(r.status(), StatusCode::CREATED);
+        fresh(&s.storage.get(&ResourceStorage::namespaced_key("configmaps", "default", "c")).await.unwrap());
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::CONTENT_TYPE, "application/apply-patch+yaml".parse().unwrap());
+        let key = ResourceStorage::namespaced_key("configmaps", "default", "a");
+        let out = patch_stored_object(&s, &key, "configmaps", "a", Some("default"), &headers, "fieldManager=t",
+            format!("apiVersion: v1\nkind: ConfigMap\nmetadata: {{name: a, uid: old-uid, creationTimestamp: '{OLD}'}}\n").as_bytes(),
+            Strategy::BuiltIn).await.unwrap();
+        fresh(&out);
+        fresh(&s.storage.get(&key).await.unwrap());
+    }
+
+    #[test]
+    fn keep_restores_the_identity_after_admission() {
+        let mut o = json!({"metadata": {"name": "x", "uid": "old-uid", "creationTimestamp": OLD}});
+        let id = new_identity(&mut o, "x", Some("d"));
+        fresh(&o);
+        let assigned = o["metadata"]["uid"].clone();
+        // What a mutating webhook might leave.
+        o["metadata"]["uid"] = json!("old-uid");
+        o["metadata"]["creationTimestamp"] = json!(OLD);
+        id.keep(&mut o, "x", Some("d"));
+        assert_eq!(o["metadata"]["uid"], assigned);
+        fresh(&o);
+        // Not an object: nothing to do, and no panic.
+        let mut bad = json!([1]);
+        new_identity(&mut bad, "x", None).keep(&mut bad, "x", None);
     }
 }

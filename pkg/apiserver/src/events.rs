@@ -5,7 +5,7 @@
 //! way in and out (#48).
 
 use crate::error::ApiError;
-use crate::handlers::resource::{apply_patch_body, ensure_metadata_pub};
+use crate::handlers::resource::apply_patch_body;
 use crate::handlers::AppState;
 use crate::storage::ResourceStorage;
 use crate::watch::{self, WatchParams};
@@ -134,7 +134,7 @@ pub async fn create(
 ) -> Result<impl IntoResponse, ApiError> {
     let mut core = events_to_core(body);
     let name = crate::handlers::resource::object_name(&mut core)?;
-    ensure_metadata_pub(&mut core, &name, Some(&namespace));
+    crate::handlers::resource::new_identity(&mut core, &name, Some(&namespace)); // #366
     let key = ResourceStorage::namespaced_key(RESOURCE, &namespace, &name);
     let stored = state.storage.create(&key, core).await?;
     Ok((StatusCode::CREATED, Json(core_to_events(stored))))

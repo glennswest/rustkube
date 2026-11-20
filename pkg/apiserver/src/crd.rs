@@ -777,9 +777,9 @@ pub async fn crd_create_ns(
     let mut body = decode_body(&raw, validation)?;
     let name = crate::handlers::resource::object_name(&mut body)?;
     crate::handlers::resource::check_body_namespace(&body, &namespace)?;
-    crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
+    let id = crate::handlers::resource::new_identity(&mut body, &name, Some(&namespace)); // #366
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
-    crate::handlers::resource::ensure_metadata_pub(&mut body, &name, Some(&namespace));
+    id.keep(&mut body, &name, Some(&namespace));
     let strategy = state.crd_registry.strategy_for(&group, &version, &resource, validation).await;
     if strategy == Strategy::BuiltIn {
         crate::generation::on_create(&resource, &mut body); // a grouped built-in (#285)
@@ -1128,9 +1128,9 @@ pub async fn crd_create_cluster(
     let validation = crate::schema::FieldValidation::from_query(query.as_deref().unwrap_or(""));
     let mut body = decode_body(&raw, validation)?;
     let name = crate::handlers::resource::object_name(&mut body)?;
-    crate::handlers::resource::ensure_metadata_pub(&mut body, &name, None);
+    let id = crate::handlers::resource::new_identity(&mut body, &name, None); // #366
     crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
-    crate::handlers::resource::ensure_metadata_pub(&mut body, &name, None);
+    id.keep(&mut body, &name, None);
     let key = ResourceStorage::cluster_key(&storage_resource(&group, &resource), &name);
 
     // Special handling: if this is a CRD being created, establish it (populate

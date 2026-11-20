@@ -554,6 +554,42 @@ mod tests {
         assert!(keys.authenticate(&token, &[]).await.is_none());
     }
 
+    /// #366, review finding fc9c16b6b9e0: a Pod or ServiceAccount recreated
+    /// through the API with the deleted one's uid in its body gets a new uid,
+    /// so the tokens bound to the deleted one stay dead.
+    #[tokio::test]
+    async fn recreating_with_the_old_uid_does_not_revive_a_token() {
+        use crate::handlers::resource::create_namespaced_resource;
+        let (state, keys) = cluster().await;
+        state.storage.create(&ResourceStorage::cluster_key("namespaces", "n"),
+            json!({"kind": "Namespace", "metadata": {"name": "n", "uid": "ns-1"}, "status": {"phase": "Active"}}))
+            .await.unwrap();
+        let pod_token = request(&state, &keys, json!({"boundObjectRef": pod_ref()})).await.unwrap()
+            ["status"]["token"].as_str().unwrap().to_string();
+        let sa_token = request(&state, &keys, json!({})).await.unwrap()["status"]["token"].as_str().unwrap().to_string();
+        assert!(keys.authenticate(&pod_token, &[]).await.is_some());
+
+        let pod_key = ResourceStorage::namespaced_key("pods", "n", "p");
+        state.storage.delete(&pod_key, None).await.unwrap();
+        let pod = json!({"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p", "uid": "pod-1"},
+            "spec": {"serviceAccountName": "app", "containers": [{"name": "c", "image": "x"}]}});
+        let r = create_namespaced_resource(State(state.clone()), Path(("n".into(), "pods".into())), Json(pod))
+            .await.into_response();
+        assert_eq!(r.status(), axum::http::StatusCode::CREATED);
+        let uid = state.storage.get(&pod_key).await.unwrap()["metadata"]["uid"].clone();
+        assert!(uid.as_str().is_some_and(|u| !u.is_empty() && u != "pod-1"), "{uid}");
+        assert!(keys.authenticate(&pod_token, &[]).await.is_none(), "the deleted pod's token is back");
+
+        let sa_key = ResourceStorage::namespaced_key("serviceaccounts", "n", "app");
+        state.storage.delete(&sa_key, None).await.unwrap();
+        let sa = json!({"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "app", "uid": "sa-1"}});
+        let r = create_namespaced_resource(State(state.clone()), Path(("n".into(), "serviceaccounts".into())), Json(sa))
+            .await.into_response();
+        assert_eq!(r.status(), axum::http::StatusCode::CREATED);
+        assert_ne!(state.storage.get(&sa_key).await.unwrap()["metadata"]["uid"], "sa-1");
+        assert!(keys.authenticate(&sa_token, &[]).await.is_none(), "the deleted ServiceAccount's token is back");
+    }
+
     #[tokio::test]
     async fn a_bound_token_without_a_store_to_check_is_refused() {
         let (state, keys) = cluster().await;

@@ -7,7 +7,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 ### resource.rs review findings (#366: f8ad6d24b615, fc9c16b6b9e0, f33be8cc42cb) — IN PROGRESS 2026-11-20
 - [x] Job `managedBy` re-checked in `admission::after_mutating` (create,
   update; not `/status`). Unit + rig `admission-webhook` (/jobbad, /jobmove).
-- [ ] Server-assigned `uid`/`creationTimestamp` on every API create (POST,
+- [x] Server-assigned `uid`/`creationTimestamp` on every API create (POST,
   apply-create, CR create, events.k8s.io), kept across admission; token
   regression (recreate with the old uid does not revive the token).
 - [ ] `/finalize`: body uid/resourceVersion preconditions (409), the observed

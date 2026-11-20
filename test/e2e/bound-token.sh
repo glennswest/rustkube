@@ -4,7 +4,9 @@
 # fastetcd: TokenRequest honours audiences, expirationSeconds and
 # boundObjectRef; the token authenticates to the apiserver only while its
 # pod (and ServiceAccount) is the one it was issued for; TokenReview checks
-# audiences and reports the pod and its node.
+# audiences and reports the pod and its node. A pod or ServiceAccount
+# recreated with the deleted one's uid in its body is given a new uid, and
+# the old tokens stay refused (#366, review finding fc9c16b6b9e0).
 #
 #   test/e2e/bound-token.sh          # from the checkout; builds what it runs
 #
@@ -56,8 +58,9 @@ req POST /api/v1/namespaces/$NS/serviceaccounts '{"apiVersion":"v1","kind":"Serv
 SA_UID=$(jq_ 'd["metadata"]["uid"]')
 req POST /api/v1/nodes '{"apiVersion":"v1","kind":"Node","metadata":{"name":"node-a"}}' >/dev/null
 NODE_UID=$(jq_ 'd["metadata"]["uid"]')
-pod() { # <name> <sa>
-  req POST /api/v1/namespaces/$NS/pods "{\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"metadata\":{\"name\":\"$1\"},
+pod() { # <name> <sa> [uid to ask for]
+  local u=""; [ -n "${3:-}" ] && u=",\"uid\":\"$3\""
+  req POST /api/v1/namespaces/$NS/pods "{\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"metadata\":{\"name\":\"$1\"$u},
     \"spec\":{\"serviceAccountName\":\"$2\",\"nodeName\":\"node-a\",\"containers\":[{\"name\":\"c\",\"image\":\"x\"}]}}" >/dev/null
   jq_ 'd["metadata"]["uid"]'
 }
@@ -127,14 +130,16 @@ await "deleted pod: token refused" "$POD_TOK" 401
 review "$POD_TOK" '[]'
 [ "$(jq_ 'd["status"]["authenticated"]')" = False ] && pass "TokenReview: deleted pod's token not authenticated" \
   || fail "review after delete: $(cat "$W/out")"
-NEW_UID=$(pod p app)
-[ -n "$NEW_UID" ] && [ "$NEW_UID" != "$POD_UID" ] && pass "pod recreated under the same name" || fail "recreate: $NEW_UID"
+NEW_UID=$(pod p app "$POD_UID")
+[ -n "$NEW_UID" ] && [ "$NEW_UID" != "$POD_UID" ] && pass "pod recreated under the same name, asking for the old uid: a new one" || fail "recreate: $NEW_UID"
 sleep 1
 [ "$(as "$POD_TOK")" = 401 ] && pass "recreated pod: old token still refused" || fail "after recreate: $(as "$POD_TOK")"
 
 # --- the ServiceAccount goes: every token of it goes -------------------------
 req DELETE /api/v1/namespaces/$NS/serviceaccounts/app >/dev/null
-req POST /api/v1/namespaces/$NS/serviceaccounts '{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"app"}}' >/dev/null
+req POST /api/v1/namespaces/$NS/serviceaccounts "{\"apiVersion\":\"v1\",\"kind\":\"ServiceAccount\",\"metadata\":{\"name\":\"app\",\"uid\":\"$SA_UID\"}}" >/dev/null
+SA_NEW=$(jq_ 'd["metadata"]["uid"]')
+[ -n "$SA_NEW" ] && [ "$SA_NEW" != "$SA_UID" ] && pass "ServiceAccount recreated asking for the old uid: a new one" || fail "SA recreate uid: $SA_NEW"
 await "ServiceAccount recreated: unbound token refused" "$UNBOUND" 401
 
 report
