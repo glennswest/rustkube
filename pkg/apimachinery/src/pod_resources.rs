@@ -18,14 +18,23 @@ pub fn containers_total<T>(pod: &Value, kind: &str, amount: impl Fn(&str, &Value
 where
     T: Copy + Default + PartialOrd + std::ops::Add<Output = T>,
 {
-    let each = |c: &Value| -> BTreeMap<String, T> {
+    aggregate(pod, |c| {
         c["resources"][kind]
             .as_object()
             .into_iter()
             .flatten()
             .map(|(k, v)| (k.clone(), amount(k, v)))
             .collect()
-    };
+    })
+}
+
+/// The same rule over amounts the caller reads per container (`each`): the
+/// scheduler's, which raises a container's requests to what its status says
+/// it still holds (#365).
+pub fn aggregate<T>(pod: &Value, each: impl Fn(&Value) -> BTreeMap<String, T>) -> BTreeMap<String, T>
+where
+    T: Copy + Default + PartialOrd + std::ops::Add<Output = T>,
+{
     let add = |into: &mut BTreeMap<String, T>, from: &BTreeMap<String, T>| {
         for (k, v) in from {
             let e = into.entry(k.clone()).or_default();

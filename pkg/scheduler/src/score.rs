@@ -37,14 +37,15 @@ fn least_requested_score(_pod: &Value, node: &Value, used: &NodeUsage) -> i64 {
         return 50; // Default mid-score if no resource info
     }
 
-    let cpu = allocatable["cpu"]
-        .as_str()
-        .map(parse_cpu_millis)
-        .unwrap_or(1000);
-    let mem = allocatable["memory"]
-        .as_str()
-        .map(parse_memory_bytes)
-        .unwrap_or(1024 * 1024 * 1024);
+    // Strings or JSON numbers, as resource fit reads them (#365).
+    let cpu = match &allocatable["cpu"] {
+        Value::Null => 1000,
+        v => apimachinery::quantity::cpu_millis(v),
+    };
+    let mem = match &allocatable["memory"] {
+        Value::Null => 1024 * 1024 * 1024,
+        v => apimachinery::quantity::base_units(v),
+    };
 
     // The *fraction* free, which is what "least requested" means. Scoring raw
     // allocatable — as this did — is "most resources wins", and it is not a
@@ -149,14 +150,6 @@ fn node_affinity_score(pod: &Value, node: &Value) -> i64 {
     }
 
     score
-}
-
-fn parse_cpu_millis(s: &str) -> u64 {
-    apimachinery::quantity::parse_cpu_millis(s)
-}
-
-fn parse_memory_bytes(s: &str) -> u64 {
-    apimachinery::quantity::parse_bytes(s)
 }
 
 #[cfg(test)]

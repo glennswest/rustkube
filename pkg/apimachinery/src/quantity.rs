@@ -15,9 +15,15 @@
 /// exponent form (`1e9`). An unparseable quantity is 0 — the caller reads
 /// that as "asks for nothing", which fails closed for capacity comparisons.
 pub fn parse_bytes(s: &str) -> u64 {
+    parse_quantity(s).map(|v| v.max(0.0) as u64).unwrap_or(0)
+}
+
+/// A quantity's value in its base unit (`100m` → 0.1, `1k` → 1000, `1Gi` →
+/// 1073741824), or None when it is not one.
+pub fn parse_quantity(s: &str) -> Option<f64> {
     let s = s.trim();
     if s.is_empty() {
-        return 0;
+        return None;
     }
     // Binary (power-of-two) suffixes first: "Mi" ends in 'i', so it must be
     // tested before the decimal "M".
@@ -31,7 +37,7 @@ pub fn parse_bytes(s: &str) -> u64 {
     ];
     for (suffix, mult) in BINARY {
         if let Some(num) = s.strip_suffix(suffix) {
-            return scale(num, *mult);
+            return num.parse::<f64>().ok().map(|v| v * mult);
         }
     }
     const DECIMAL: &[(&str, f64)] = &[
@@ -50,28 +56,41 @@ pub fn parse_bytes(s: &str) -> u64 {
         // `1e9` ends in no suffix but contains 'E'/'e'; only strip a suffix
         // when what is left still parses as a number.
         if let Some(num) = s.strip_suffix(suffix) {
-            if num.parse::<f64>().is_ok() {
-                return scale(num, *mult);
+            if let Ok(v) = num.parse::<f64>() {
+                return Some(v * mult);
             }
         }
     }
-    s.parse::<f64>().map(|v| v.max(0.0) as u64).unwrap_or(0)
+    s.parse::<f64>().ok()
 }
 
-fn scale(num: &str, mult: f64) -> u64 {
-    match num.parse::<f64>() {
-        Ok(v) if v > 0.0 => (v * mult) as u64,
+/// Parse a CPU quantity to millicores: `250m`, `2`, `0.5`, and the SI
+/// suffixes a canonicalized number gets (`1000` is stored as `1k`, #365).
+pub fn parse_cpu_millis(s: &str) -> u64 {
+    let s = s.trim();
+    if let Some(Ok(v)) = s.strip_suffix('m').map(str::parse::<f64>) {
+        return v.max(0.0) as u64;
+    }
+    parse_quantity(s).map(|v| (v.max(0.0) * 1000.0).round() as u64).unwrap_or(0)
+}
+
+/// A CPU quantity written as a string or, as some writers store it, a JSON
+/// number (`cpu: 2`), in millicores. Anything else is 0.
+pub fn cpu_millis(v: &serde_json::Value) -> u64 {
+    match v {
+        serde_json::Value::String(s) => parse_cpu_millis(s),
+        serde_json::Value::Number(n) => n.as_f64().map(|f| (f.max(0.0) * 1000.0).round() as u64).unwrap_or(0),
         _ => 0,
     }
 }
 
-/// Parse a CPU quantity to millicores.
-pub fn parse_cpu_millis(s: &str) -> u64 {
-    let s = s.trim();
-    if let Some(stripped) = s.strip_suffix('m') {
-        stripped.parse::<f64>().map(|v| v.max(0.0) as u64).unwrap_or(0)
-    } else {
-        s.parse::<f64>().map(|v| (v.max(0.0) * 1000.0) as u64).unwrap_or(0)
+/// Any other quantity, string or JSON number, in its base unit (bytes,
+/// counts). Anything else is 0.
+pub fn base_units(v: &serde_json::Value) -> u64 {
+    match v {
+        serde_json::Value::String(s) => parse_bytes(s),
+        serde_json::Value::Number(n) => n.as_u64().or_else(|| n.as_f64().map(|f| f.max(0.0) as u64)).unwrap_or(0),
+        _ => 0,
     }
 }
 
@@ -244,6 +263,28 @@ mod tests {
         match v {
             serde_json::Value::Number(n) => canonical_number(&n),
             other => panic!("{other} is not a number"),
+        }
+    }
+
+    /// #365: a canonicalized number reads back as the number it was, and a
+    /// JSON number reads as its quoted form.
+    #[test]
+    fn canonical_forms_and_numbers_read_back() {
+        use serde_json::json;
+        assert_eq!(parse_cpu_millis("1k"), 1_000_000);
+        assert_eq!(parse_cpu_millis("250m"), 250);
+        assert_eq!(parse_cpu_millis("0.1"), 100);
+        assert_eq!(parse_cpu_millis("2"), 2000);
+        assert_eq!(parse_cpu_millis("x"), 0);
+        assert_eq!(cpu_millis(&json!(2)), cpu_millis(&json!("2")));
+        assert_eq!(cpu_millis(&json!(0.5)), 500);
+        assert_eq!(base_units(&json!(1000)), base_units(&json!("1k")));
+        assert_eq!(base_units(&json!("1Gi")), 1 << 30);
+        assert_eq!(parse_quantity("1k"), Some(1000.0));
+        assert_eq!(parse_quantity("pods"), None);
+        for n in [json!(1), json!(0.5), json!(1000), json!(1500), json!(2.5)] {
+            let s = canon(n.clone());
+            assert_eq!(parse_cpu_millis(&s), cpu_millis(&n), "{n} as {s}");
         }
     }
 

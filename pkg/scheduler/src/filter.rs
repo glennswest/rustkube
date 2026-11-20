@@ -4,6 +4,7 @@
 //! A node passes all filters to be eligible for scheduling.
 
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// Result of running filters on a node.
 #[derive(Debug)]
@@ -47,11 +48,11 @@ impl NodeUsage {
     /// Charge a placed workload: its requests, and a Pod slot when `slot`
     /// (a VMI takes none, #194).
     pub fn charge(&mut self, pod: &Value, slot: bool) {
-        let (cpu, mem) = pod_requests(pod);
+        let (cpu, mem, scalar) = split(pod_request_map(pod));
         self.cpu_milli += cpu;
         self.mem_bytes += mem;
         self.pods += u64::from(slot);
-        for (k, v) in pod_scalar_requests(pod) {
+        for (k, v) in scalar {
             *self.scalar.entry(k).or_default() += v;
         }
     }
@@ -59,11 +60,11 @@ impl NodeUsage {
     /// The inverse of `charge`. Saturating: a pod whose spec changed between
     /// its charge and uncharge (an in-place resize) must not wrap a count.
     pub fn uncharge(&mut self, pod: &Value, slot: bool) {
-        let (cpu, mem) = pod_requests(pod);
+        let (cpu, mem, scalar) = split(pod_request_map(pod));
         self.cpu_milli = self.cpu_milli.saturating_sub(cpu);
         self.mem_bytes = self.mem_bytes.saturating_sub(mem);
         self.pods = self.pods.saturating_sub(u64::from(slot));
-        for (k, v) in pod_scalar_requests(pod) {
+        for (k, v) in scalar {
             if let Some(e) = self.scalar.get_mut(&k) {
                 *e = e.saturating_sub(v);
                 if *e == 0 {
@@ -83,9 +84,13 @@ impl NodeUsage {
 /// a BestEffort Pod still takes a slot, and that shortcut is how 1,000 of
 /// them landed on a 110-pod node. A node with no `allocatable.pods` is not
 /// limited.
+///
+/// Read as a quantity, not a bare integer (#365): the apiserver stores a
+/// numeric `pods: 1000` as upstream's canonical `"1k"`, which `parse::<u64>`
+/// refused, and the node lost its limit.
 pub fn pod_count_filter(node: &Value, used: &NodeUsage) -> FilterResult {
     let limit = match &node["status"]["allocatable"]["pods"] {
-        Value::String(s) => s.trim().parse::<u64>().ok(),
+        Value::String(s) => apimachinery::quantity::parse_quantity(s).map(|v| v.max(0.0) as u64),
         Value::Number(n) => n.as_u64(),
         _ => None,
     };
@@ -252,8 +257,7 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: &NodeUsage) -> FilterRes
     // The same rule the node accounting charges by (#73). Reading only the
     // container sum here let a pod that states its requests at pod level pass
     // as requesting nothing, and then be charged its real size once bound.
-    let (total_cpu_milli, total_mem_bytes) = pod_requests(pod);
-    let scalar = pod_scalar_requests(pod);
+    let (total_cpu_milli, total_mem_bytes, scalar) = split(pod_request_map(pod));
 
     // Requests nothing, so it fits anywhere.
     if total_cpu_milli == 0 && total_mem_bytes == 0 && scalar.is_empty() {
@@ -285,10 +289,10 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: &NodeUsage) -> FilterRes
         return FilterResult::Pass; // No allocatable info = assume it fits
     }
 
-    if let Some(cpu_str) = allocatable["cpu"].as_str() {
+    if !allocatable["cpu"].is_null() {
         // Free, not total: what the node can still promise after the pods
         // already bound to it.
-        let node_cpu = parse_cpu_millis(cpu_str).saturating_sub(used.cpu_milli);
+        let node_cpu = amount("cpu", &allocatable["cpu"]).saturating_sub(used.cpu_milli);
         if total_cpu_milli > node_cpu {
             // Upstream's text, without the amounts: the reasons are counted
             // into a Pod's PodScheduled message, which is rewritten whenever
@@ -297,8 +301,8 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: &NodeUsage) -> FilterRes
         }
     }
 
-    if let Some(mem_str) = allocatable["memory"].as_str() {
-        let node_mem = parse_memory_bytes(mem_str).saturating_sub(used.mem_bytes);
+    if !allocatable["memory"].is_null() {
+        let node_mem = amount("memory", &allocatable["memory"]).saturating_sub(used.mem_bytes);
         if total_mem_bytes > node_mem {
             return FilterResult::Fail("Insufficient memory".into());
         }
@@ -316,116 +320,119 @@ fn resource_fit_filter(pod: &Value, node: &Value, used: &NodeUsage) -> FilterRes
 /// handful of init containers can make a pod unschedulable that would run.
 ///
 /// This is the only definition. Resource fit, the per-node accounting and
-/// preemption all read requests through it, because three copies of the rule
-/// drifted apart once already (#73).
-///
-/// Plus `spec.overhead`, what the Pod's RuntimeClass costs beyond its
-/// containers (#135), as upstream adds it.
+/// preemption all read requests through `pod_request_map`, because three
+/// copies of the rule drifted apart once already (#73).
 pub fn pod_requests(pod: &Value) -> (u64, u64) {
-    let (cpu, mem) = requests_without_overhead(pod);
-    let o = &pod["spec"]["overhead"];
-    (
-        cpu + o["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0),
-        mem + o["memory"].as_str().map(parse_memory_bytes).unwrap_or(0),
-    )
-}
-
-fn requests_without_overhead(pod: &Value) -> (u64, u64) {
-    // Pod-level requests win outright when present.
-    //
-    // `spec.resources` on the pod (beta-on since v1.34) is the pod's total, and
-    // upstream uses it in place of the container sum rather than in addition to
-    // it. Summing both would double-count every pod that sets it.
-    let pod_level = &pod["spec"]["resources"]["requests"];
-    if !pod_level.is_null() {
-        let cpu = pod_level["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0);
-        let mem = pod_level["memory"].as_str().map(parse_memory_bytes).unwrap_or(0);
-        if cpu != 0 || mem != 0 {
-            return (cpu, mem);
-        }
-    }
-    // Containers, init containers and sidecars (#285): upstream's PodRequests.
-    let total = apimachinery::pod_resources::containers_total(pod, "requests", |k, v| match (k, v.as_str()) {
-        ("cpu", Some(q)) => parse_cpu_millis(q),
-        ("memory", Some(q)) => parse_memory_bytes(q),
-        _ => 0,
-    });
-    let mut cpu = total.get("cpu").copied().unwrap_or(0);
-    let mut mem = total.get("memory").copied().unwrap_or(0);
-
-    // What the pod actually holds, which is not always what its spec asks for.
-    //
-    // In-place pod resize is GA-locked as of v1.35, so `spec` is a *request to
-    // become* that size and the kubelet actuates it asynchronously. On a shrink
-    // the pod still holds the larger amount until it does, and a scheduler that
-    // believes the spec will hand the difference to somebody else and overcommit
-    // the node. Upstream's rule is the maximum of the desired, the actuated and
-    // the allocated — the pessimistic one, which is the only safe direction when
-    // the three disagree.
-    for (i, cs) in pod["status"]["containerStatuses"]
-        .as_array().map(|v| v.as_slice()).unwrap_or(&[]).iter().enumerate()
-    {
-        let _ = i;
-        for field in ["resources", "allocatedResources"] {
-            let r = &cs[field]["requests"];
-            if r.is_null() {
-                continue;
-            }
-            // Per container, so this is a floor on the total rather than an
-            // exact sum — which is the safe side of the same argument.
-            cpu = cpu.max(r["cpu"].as_str().map(parse_cpu_millis).unwrap_or(0));
-            mem = mem.max(r["memory"].as_str().map(parse_memory_bytes).unwrap_or(0));
-        }
-    }
+    let (cpu, mem, _) = split(pod_request_map(pod));
     (cpu, mem)
 }
 
 /// A Pod's requests of every resource but cpu, memory and pods (#297), in
 /// base units: `ephemeral-storage` and `hugepages-*` in bytes, extended
 /// resources as counts. Only resources asked for in a non-zero amount.
+pub fn pod_scalar_requests(pod: &Value) -> BTreeMap<String, u64> {
+    split(pod_request_map(pod)).2
+}
+
+/// cpu, memory, and the rest asked for in a non-zero amount (`pods` is not a
+/// request: a Pod's slot is counted on its own, #194).
+fn split(mut all: BTreeMap<String, u64>) -> (u64, u64, BTreeMap<String, u64>) {
+    let cpu = all.remove("cpu").unwrap_or(0);
+    let mem = all.remove("memory").unwrap_or(0);
+    all.remove("pods");
+    all.retain(|_, v| *v > 0);
+    (cpu, mem, all)
+}
+
+/// Every resource a Pod requests: cpu in millicores, the rest in base units.
+/// Upstream's `PodRequests` with status resources (#365):
 ///
-/// The rule `pod_requests` follows: containers summed, init containers by
-/// their maximum with sidecars (`containers_total`); pod-level requests win
-/// for what they name (upstream allows cpu, memory and hugepages there);
-/// the larger of spec and a container's reported `resources` /
-/// `allocatedResources`; plus `spec.overhead`.
-pub fn pod_scalar_requests(pod: &Value) -> std::collections::BTreeMap<String, u64> {
-    let scalar = |k: &str| !matches!(k, "cpu" | "memory" | "pods");
-    let mut total = apimachinery::pod_resources::containers_total(pod, "requests", |k, v| {
-        if scalar(k) { quantity(v) } else { 0 }
-    });
-    if let Some(pod_level) = pod["spec"]["resources"]["requests"].as_object() {
-        for (k, v) in pod_level.iter().filter(|(k, _)| scalar(k.as_str())) {
-            total.insert(k.clone(), quantity(v));
+/// 1. Each regular container and each sidecar (a restartable init container)
+///    is charged, per resource, the largest of its spec request, its
+///    actuated `status.resources.requests` and its `allocatedResources` — its
+///    status matched by container name. In-place resize is asynchronous: on
+///    a shrink the container still holds the larger amount until the kubelet
+///    actuates it, and a reservation the kubelet has allocated but not yet
+///    actuated is held too. An ordinary init container is charged its spec.
+/// 2. Those are aggregated as `containers_total` adds containers up: regular
+///    containers and sidecars summed, the pod needing the larger of that and
+///    its busiest init step. (This took the largest single container's status
+///    against the whole pod's total, so two containers each still holding 2
+///    CPUs while shrinking to 500m were charged 2 CPUs, not 4; and it read
+///    `allocatedResources.requests`, which does not exist.)
+/// 3. Pod-level `spec.resources.requests` replace the total for the
+///    resources they name — cpu, memory and hugepages, the ones upstream
+///    allows there — and only those, an explicit zero included. (A pod-level
+///    cpu used to erase the containers' memory.)
+/// 4. Plus `spec.overhead`, what the Pod's RuntimeClass costs beyond its
+///    containers (#135).
+///
+/// A quantity is read as a string or a JSON number (`cpu: 2` is 2000m, not 0).
+pub fn pod_request_map(pod: &Value) -> BTreeMap<String, u64> {
+    let statuses: BTreeMap<&str, &Value> = ["containerStatuses", "initContainerStatuses"]
+        .iter()
+        .flat_map(|f| pod["status"][*f].as_array().into_iter().flatten())
+        .map(|cs| (cs["name"].as_str().unwrap_or(""), cs))
+        .collect();
+    let ordinary_init = |c: &Value| {
+        let name = c["name"].as_str();
+        c["restartPolicy"].as_str() != Some("Always")
+            && pod["spec"]["initContainers"]
+                .as_array()
+                .is_some_and(|ics| ics.iter().any(|i| i["name"].as_str() == name))
+    };
+    let mut total = apimachinery::pod_resources::aggregate(pod, |c| {
+        let mut mine = read_map(&c["resources"]["requests"]);
+        if ordinary_init(c) {
+            return mine;
         }
-    }
-    for cs in pod["status"]["containerStatuses"].as_array().into_iter().flatten() {
-        for field in ["resources", "allocatedResources"] {
-            for (k, v) in cs[field]["requests"].as_object().into_iter().flatten() {
-                if scalar(k.as_str()) {
-                    let e = total.entry(k.clone()).or_default();
-                    *e = (*e).max(quantity(v));
+        if let Some(cs) = statuses.get(c["name"].as_str().unwrap_or("")) {
+            for held in [read_map(&cs["resources"]["requests"]), read_map(&cs["allocatedResources"])] {
+                for (k, v) in held {
+                    let e = mine.entry(k).or_default();
+                    *e = (*e).max(v);
                 }
             }
         }
-    }
-    for (k, v) in pod["spec"]["overhead"].as_object().into_iter().flatten() {
-        if scalar(k.as_str()) {
-            *total.entry(k.clone()).or_default() += quantity(v);
+        mine
+    });
+    if let Some(pod_level) = pod["spec"]["resources"]["requests"].as_object() {
+        for (k, v) in pod_level {
+            if matches!(k.as_str(), "cpu" | "memory") || k.starts_with("hugepages-") {
+                total.insert(k.clone(), amount(k, v));
+            }
         }
     }
-    total.retain(|_, v| *v > 0);
+    for (k, v) in read_map(&pod["spec"]["overhead"]) {
+        *total.entry(k).or_default() += v;
+    }
     total
 }
 
-/// A quantity in its base unit, written as a string (`2`, `1Gi`) or, as some
-/// writers store it, a JSON number (#292). Anything else is 0.
-fn quantity(v: &Value) -> u64 {
-    match v {
-        Value::String(s) => parse_memory_bytes(s),
-        Value::Number(n) => n.as_u64().or_else(|| n.as_f64().map(|f| f.max(0.0) as u64)).unwrap_or(0),
-        _ => 0,
+/// A resource map (`requests`, `allocatedResources`, `overhead`) read by
+/// `amount`.
+fn read_map(m: &Value) -> BTreeMap<String, u64> {
+    m.as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| (k.clone(), amount(k, v)))
+        .collect()
+}
+
+/// One quantity of resource `name` in the unit the scheduler counts it in:
+/// millicores for cpu, base units for the rest. A string (`2`, `1Gi`) or, as
+/// some writers store it, a JSON number (#292, #365). Anything else is 0.
+fn amount(name: &str, v: &Value) -> u64 {
+    if name == "cpu" {
+        apimachinery::quantity::cpu_millis(v)
+    } else {
+        quantity(v)
     }
+}
+
+/// A quantity in its base unit, string or JSON number.
+fn quantity(v: &Value) -> u64 {
+    apimachinery::quantity::base_units(v)
 }
 
 /// Parse Kubernetes CPU notation to millicores.
@@ -623,6 +630,148 @@ mod tests {
             "containers": [{"name": "app", "resources": req("400m")}]
         }});
         assert_eq!(pod_requests(&plain).0, 400, "an ordinary init container is maxed");
+    }
+}
+
+#[cfg(test)]
+mod request_tests {
+    //! #365: what a Pod is charged — resize status per container, numeric
+    //! quantities, pod-level requests per resource, a canonical pod limit.
+    use super::*;
+    use serde_json::json;
+
+    const GI: u64 = 1 << 30;
+
+    fn node(alloc: Value) -> Value {
+        json!({"metadata":{"name":"n1"},
+               "status":{"conditions":[{"type":"Ready","status":"True"}],"allocatable":alloc}})
+    }
+    fn reason(r: FilterResult) -> String {
+        match r {
+            FilterResult::Pass => "pass".into(),
+            FilterResult::Fail(s) => s,
+        }
+    }
+
+    /// 93be2afaffe2: two containers shrinking from 2 CPUs to 500m each still
+    /// hold 4 CPUs until the kubelet actuates the resize.
+    #[test]
+    fn every_shrinking_container_is_charged_what_it_still_holds() {
+        let c = |n: &str| json!({"name": n, "resources": {"requests": {"cpu": "500m"}}});
+        let s = |n: &str| json!({"name": n, "resources": {"requests": {"cpu": "2"}}});
+        let pod = json!({"spec": {"containers": [c("a"), c("b")]},
+                         "status": {"containerStatuses": [s("a"), s("b")]}});
+        assert_eq!(pod_requests(&pod).0, 4000);
+        // And the node it is on has nothing to give the next 2-CPU Pod.
+        let mut used = NodeUsage::default();
+        used.charge(&pod, true);
+        let next = json!({"spec": {"containers": [{"name": "x", "resources": {"requests": {"cpu": "2"}}}]}});
+        assert_eq!(reason(resource_fit_filter(&next, &node(json!({"cpu": "5"})), &used)), "Insufficient cpu");
+        // Once actuated, the shrink frees it.
+        let done = json!({"spec": {"containers": [c("a"), c("b")]},
+                          "status": {"containerStatuses": [
+                              {"name": "a", "resources": {"requests": {"cpu": "500m"}}},
+                              {"name": "b", "resources": {"requests": {"cpu": "500m"}}}]}});
+        assert_eq!(pod_requests(&done).0, 1000);
+    }
+
+    /// 93be2afaffe2: `allocatedResources` is the resource map itself; a
+    /// reservation allocated and not yet actuated is held.
+    #[test]
+    fn an_allocation_only_reservation_is_held() {
+        let pod = json!({"spec": {"containers": [{"name": "a", "resources": {"requests": {"cpu": "500m", "memory": "1Gi"}}}]},
+                         "status": {"containerStatuses": [{"name": "a", "allocatedResources": {"cpu": "1", "memory": "2Gi", "example.com/foo": "1"}}]}});
+        assert_eq!(pod_requests(&pod), (1000, 2 * GI));
+        assert_eq!(pod_scalar_requests(&pod).get("example.com/foo"), Some(&1));
+    }
+
+    /// A status is its own container's, matched by name: a small container
+    /// growing is added to the large one, not compared against the total.
+    #[test]
+    fn statuses_are_matched_to_their_containers_by_name() {
+        let pod = json!({"spec": {"containers": [
+                {"name": "big", "resources": {"requests": {"cpu": "2"}}},
+                {"name": "small", "resources": {"requests": {"cpu": "100m"}}}]},
+            "status": {"containerStatuses": [
+                {"name": "small", "resources": {"requests": {"cpu": "1"}}},
+                {"name": "gone", "resources": {"requests": {"cpu": "8"}}}]}});
+        assert_eq!(pod_requests(&pod).0, 3000);
+    }
+
+    /// A sidecar's status counts like a container's; an ordinary init
+    /// container, finished, is charged its spec.
+    #[test]
+    fn sidecar_status_counts_and_ordinary_init_status_does_not() {
+        let pod = json!({"spec": {
+                "initContainers": [
+                    {"name": "setup", "resources": {"requests": {"cpu": "100m"}}},
+                    {"name": "proxy", "restartPolicy": "Always", "resources": {"requests": {"cpu": "100m"}}}],
+                "containers": [{"name": "app", "resources": {"requests": {"cpu": "1"}}}]},
+            "status": {"initContainerStatuses": [
+                {"name": "setup", "allocatedResources": {"cpu": "4"}},
+                {"name": "proxy", "resources": {"requests": {"cpu": "1"}}}]}});
+        assert_eq!(pod_requests(&pod).0, 2000);
+    }
+
+    /// aaa4c9a1bf6c: `cpu: 2` is 2 CPUs, as `"2"` is — in containers, pod
+    /// level, overhead and the node's allocatable.
+    #[test]
+    fn numeric_quantities_are_charged_as_their_strings() {
+        let numeric = json!({"spec": {"containers": [{"name": "a", "resources": {"requests": {"cpu": 2, "memory": 1073741824, "example.com/foo": 1}}}],
+                                      "overhead": {"cpu": 0.25}}});
+        let quoted = json!({"spec": {"containers": [{"name": "a", "resources": {"requests": {"cpu": "2", "memory": "1Gi", "example.com/foo": "1"}}}],
+                                     "overhead": {"cpu": "250m"}}});
+        assert_eq!(pod_request_map(&numeric), pod_request_map(&quoted));
+        assert_eq!(pod_requests(&numeric), (2250, GI));
+        assert_eq!(pod_requests(&json!({"spec": {"resources": {"requests": {"cpu": 1}}, "containers": [{"name": "a"}]}})).0, 1000);
+        // Refused by a node too small for it, where it used to fit as zero.
+        assert_eq!(reason(resource_fit_filter(&numeric, &node(json!({"cpu": "1", "memory": "4Gi", "example.com/foo": "1"})), &NO_USAGE)), "Insufficient cpu");
+        assert_eq!(reason(resource_fit_filter(&numeric, &node(json!({"cpu": 4, "memory": 4294967296u64, "example.com/foo": 1})), &NO_USAGE)), "pass");
+        assert_eq!(reason(resource_fit_filter(&quoted, &node(json!({"cpu": 2, "memory": "4Gi", "example.com/foo": 1})), &NO_USAGE)), "Insufficient cpu");
+        // Admission's normalization (#292) stores the numbers as canonical
+        // strings; those read back as the same amounts.
+        let mut stored = numeric.clone();
+        assert!(apimachinery::quantity::numbers_to_strings("pods", &mut stored));
+        assert_eq!(pod_request_map(&stored), pod_request_map(&numeric));
+        let mut big = json!({"spec": {"containers": [{"name": "a", "resources": {"requests": {"cpu": 1000, "memory": 1000}}}]}});
+        let before = pod_request_map(&big);
+        assert!(apimachinery::quantity::numbers_to_strings("pods", &mut big));
+        assert_eq!(big["spec"]["containers"][0]["resources"]["requests"]["cpu"], "1k");
+        assert_eq!(pod_request_map(&big), before);
+        assert_eq!(before.get("cpu"), Some(&1_000_000));
+    }
+
+    /// cc73c69e0514: a pod-level request replaces only the resource it names.
+    #[test]
+    fn pod_level_requests_override_per_resource() {
+        let pod = |pod_level: Value| json!({"spec": {"resources": {"requests": pod_level},
+            "containers": [{"name": "a", "resources": {"requests": {"cpu": "500m", "memory": "2Gi"}}}]}});
+        assert_eq!(pod_requests(&pod(json!({"cpu": "1"}))), (1000, 2 * GI), "cpu-only keeps the containers' memory");
+        assert_eq!(pod_requests(&pod(json!({"memory": "1Gi"}))), (500, GI), "memory-only keeps the containers' cpu");
+        assert_eq!(pod_requests(&pod(json!({"cpu": "0"}))), (0, 2 * GI), "an explicit zero is a value");
+        assert_eq!(pod_requests(&pod(json!({}))), (500, 2 * GI));
+        // The node short of memory refuses the cpu-only pod-level Pod.
+        assert_eq!(reason(resource_fit_filter(&pod(json!({"cpu": "1"})), &node(json!({"cpu": "8", "memory": "1Gi"})), &NO_USAGE)), "Insufficient memory");
+        // Only cpu, memory and hugepages are pod-level resources.
+        let ext = json!({"spec": {"resources": {"requests": {"example.com/foo": "0", "hugepages-2Mi": "4Mi"}},
+            "containers": [{"name": "a", "resources": {"requests": {"example.com/foo": "2", "hugepages-2Mi": "2Mi"}}}]}});
+        let r = pod_scalar_requests(&ext);
+        assert_eq!(r.get("example.com/foo"), Some(&2));
+        assert_eq!(r.get("hugepages-2Mi"), Some(&(4 << 20)));
+    }
+
+    /// a5b072e00d6c: `allocatable.pods: 1000` is stored as `"1k"`; it is
+    /// still a 1000-Pod limit.
+    #[test]
+    fn a_canonical_pod_capacity_still_limits() {
+        let used = |pods| NodeUsage { pods, ..Default::default() };
+        let n = node(json!({"pods": "1k"}));
+        assert_eq!(reason(pod_count_filter(&n, &used(1000))), TOO_MANY_PODS);
+        assert_eq!(reason(pod_count_filter(&n, &used(999))), "pass");
+        let mut stored = node(json!({"pods": 1000}));
+        assert!(apimachinery::quantity::numbers_to_strings("nodes", &mut stored));
+        assert_eq!(stored["status"]["allocatable"]["pods"], "1k");
+        assert_eq!(reason(pod_count_filter(&stored, &used(1000))), TOO_MANY_PODS);
     }
 }
 
