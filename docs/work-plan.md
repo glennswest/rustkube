@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Protobuf /openapi/v2 (#343) — WAITING on rigs run c04777d587 (2026-11-19)
+### Protobuf /openapi/v2 (#343) — fixing the served Content-Type (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:
   application/com.github.proto-openapi.spec.v2@v1.0+protobuf` answered JSON;
   client-go failed `proto: cannot parse invalid wire-format data`
@@ -17,7 +17,12 @@ Kept here whole, newest notes as they were. Write new intentions here.
   document with CRDs). Rig `crd-openapi`: protobuf answer, 406, `kubectl
   explain --output=plaintext-openapiv2`.
 - [x] sc-build ec978d7 passed; clippy clean in the changed files; stage 7fa5a92f9f2b requested.
-- [ ] `rigs` c04777d587 (pvetest1, queued): crd-openapi protobuf + explain checks; then ship with a proof (`get` of /openapi/v2 under the protobuf Accept).
+- [x] `rigs` c04777d587 (pvetest1, ec978d7): 73/74; `crd-openapi` 14/16 —
+  both `explain --output=plaintext-openapiv2` checks failed `mime: unexpected
+  content after media subtype`: we answered `Content-Type: …spec.v2@v1.0+protobuf`;
+  Go's `mime.ParseMediaType` refuses `@` (tspecial). Upstream answers the
+  dotted `…spec.v2.v1.0+protobuf` whatever spelling was asked.
+- [ ] Serve the dotted spelling (`openapi_v2::CONTENT_TYPE`; `ACCEPT_TYPE` is the `@` one), rig expects it; sc-build, then `rigs` again; then ship with a proof.
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
   that is the built-in-schemas gap, #342, not this issue.

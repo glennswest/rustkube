@@ -883,7 +883,9 @@ pub(crate) async fn builtin_lists() -> &'static std::collections::BTreeMap<(Stri
 /// `openapi.v2.Document` under
 /// `application/com.github.proto-openapi.spec.v2@v1.0+protobuf` (what
 /// client-go's `OpenAPISchema()` sends — `kubectl explain -o
-/// plaintext-openapiv2`). An Accept offering neither is a 406.
+/// plaintext-openapiv2`) or `…spec.v2.v1.0+protobuf`, answered under the
+/// latter as upstream answers: Go's MIME parser refuses the `@` spelling as a
+/// Content-Type. An Accept offering neither is a 406.
 pub async fn openapi_v2(
     axum::extract::State(state): axum::extract::State<crate::handlers::AppState>,
     headers: axum::http::HeaderMap,
@@ -897,7 +899,7 @@ pub async fn openapi_v2(
             Json(json!({
                 "kind": "Status", "apiVersion": "v1", "metadata": {}, "status": "Failure",
                 "reason": "NotAcceptable", "code": 406,
-                "message": format!("only application/json and {} are served", v2::CONTENT_TYPE)
+                "message": format!("only application/json and {} are served", v2::ACCEPT_TYPE)
             })),
         )
             .into_response();

@@ -202,7 +202,8 @@ resources, #120). `/openapi/v2` is JSON, or gnostic's protobuf
 `openapi.v2.Document` (from the vendored `OpenAPIv2.proto`, gnostic-models
 v0.7.0) when the Accept asks for
 `application/com.github.proto-openapi.spec.v2@v1.0+protobuf`, as client-go's
-`OpenAPISchema()` does — so `kubectl explain --output=plaintext-openapiv2`
+`OpenAPISchema()` does (or the `…spec.v2.v1.0+protobuf` spelling, which is
+the Content-Type it is answered with, as upstream answers) — so `kubectl explain --output=plaintext-openapiv2`
 works on custom resources; an Accept offering neither is 406 (#343).
 
 **Bodies and field validation** (#122). A write's body may be JSON,

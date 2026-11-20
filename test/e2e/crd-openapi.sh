@@ -112,13 +112,15 @@ else:
 
 # The protobuf /openapi/v2 (#343): what client-go's OpenAPISchema() asks for.
 PB = "application/com.github.proto-openapi.spec.v2@v1.0+protobuf"
+# Served under upstream's spelling: Go's mime.ParseMediaType refuses '@'.
+PB_SERVED = "application/com.github.proto-openapi.spec.v2.v1.0+protobuf"
 def raw_get(path, accept):
     c = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=30)
     c.request("GET", path, headers={"Authorization": "Bearer " + os.environ["ADMIN"], "Accept": accept})
     r = c.getresponse(); body = r.read(); c.close()
     return r.status, r.getheader("Content-Type", ""), body
 code, ct, body = raw_get("/openapi/v2", PB)
-check(code == 200 and ct == PB and not body.lstrip().startswith(b"{") and b"E2eTestFoo" in body and b"2.0" in body,
+check(code == 200 and ct == PB_SERVED and not body.lstrip().startswith(b"{") and b"E2eTestFoo" in body and b"2.0" in body,
       f"/openapi/v2 under the protobuf Accept is protobuf ({code}, {ct!r}, {body[:16]!r})")
 code, ct, _ = raw_get("/openapi/v2", "application/vnd.kubernetes.protobuf")
 check(code == 406, f"/openapi/v2 under an Accept it cannot serve is a 406 ({code}, {ct!r})")

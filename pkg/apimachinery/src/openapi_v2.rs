@@ -3,7 +3,9 @@
 //! client-go's `OpenAPISchema()` (behind `kubectl explain -o
 //! plaintext-openapiv2`, kubectl's v2 validation fallback and older clients)
 //! asks for `application/com.github.proto-openapi.spec.v2@v1.0+protobuf` and
-//! parses the body as a gnostic `openapi.v2.Document`. Upstream's apiserver
+//! parses the body as a gnostic `openapi.v2.Document`. It is served, as
+//! upstream serves it, under the `…spec.v2.v1.0+protobuf` spelling: Go's MIME
+//! parser refuses `@` in a Content-Type. Upstream's apiserver
 //! builds that message from the Swagger JSON with gnostic's compiler; this
 //! module does the same for the parts of Swagger 2.0 the document rustkube
 //! serves uses: `swagger`, `info`, `host`, `basePath`, `schemes`, `consumes`,
@@ -25,10 +27,15 @@ use prost::Message as _;
 use prost_reflect::{DynamicMessage, MessageDescriptor, ReflectMessage, Value as PbValue};
 use serde_json::{Map, Value};
 
-/// The media type client-go sends (and upstream answers with).
-pub const CONTENT_TYPE: &str = "application/com.github.proto-openapi.spec.v2@v1.0+protobuf";
-/// The older spelling upstream's handler also accepts.
-pub const CONTENT_TYPE_LEGACY: &str = "application/com.github.proto-openapi.spec.v2.v1.0+protobuf";
+/// The media type client-go's `OpenAPISchema()` sends in `Accept`. Upstream
+/// accepts it but never answers with it: `@` is a MIME tspecial, so Go's
+/// `mime.ParseMediaType` refuses it as a response `Content-Type` ("mime:
+/// unexpected content after media subtype", #343).
+pub const ACCEPT_TYPE: &str = "application/com.github.proto-openapi.spec.v2@v1.0+protobuf";
+/// The media type the protobuf document is served under — the spelling
+/// upstream's kube-openapi handler answers with whichever one was asked for,
+/// and also accepts in `Accept`.
+pub const CONTENT_TYPE: &str = "application/com.github.proto-openapi.spec.v2.v1.0+protobuf";
 
 /// What an `Accept` header asks `/openapi/v2` for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +69,7 @@ pub fn negotiate(accept: Option<&str>) -> Option<Format> {
             continue;
         }
         let format = match mt.as_str() {
-            CONTENT_TYPE | CONTENT_TYPE_LEGACY => Format::Protobuf,
+            ACCEPT_TYPE | CONTENT_TYPE => Format::Protobuf,
             "application/json" | "application/*" | "*/*" => Format::Json,
             _ => continue,
         };
@@ -290,15 +297,30 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The served Content-Type must parse as a MIME type in Go's
+    /// `mime.ParseMediaType` (RFC 2045 token: no tspecials), or client-go
+    /// fails "mime: unexpected content after media subtype" (#343).
+    #[test]
+    fn served_content_type_is_a_mime_token() {
+        let (ty, sub) = CONTENT_TYPE.split_once('/').unwrap();
+        let token = |s: &str| {
+            !s.is_empty()
+                && s.chars().all(|c| c.is_ascii_graphic() && !"()<>@,;:\\\"/[]?=".contains(c))
+        };
+        assert!(token(ty) && token(sub), "{CONTENT_TYPE} is not a MIME token pair");
+        assert!(!token(ACCEPT_TYPE.split_once('/').unwrap().1), "the Accept spelling has '@'");
+    }
+
     #[test]
     fn negotiation_follows_accept() {
         assert_eq!(negotiate(None), Some(Format::Json));
         assert_eq!(negotiate(Some("")), Some(Format::Json));
         assert_eq!(negotiate(Some("*/*")), Some(Format::Json));
         assert_eq!(negotiate(Some("application/json")), Some(Format::Json));
-        // What client-go's OpenAPISchema() sends, and only that.
+        // What client-go's OpenAPISchema() sends, and the served spelling.
+        assert_eq!(negotiate(Some(ACCEPT_TYPE)), Some(Format::Protobuf));
         assert_eq!(negotiate(Some(CONTENT_TYPE)), Some(Format::Protobuf));
-        assert_eq!(negotiate(Some(CONTENT_TYPE_LEGACY)), Some(Format::Protobuf));
+        assert_eq!(negotiate(Some(&format!("{ACCEPT_TYPE}, application/json"))), Some(Format::Protobuf));
         assert_eq!(negotiate(Some(&format!("{CONTENT_TYPE}, application/json"))), Some(Format::Protobuf));
         assert_eq!(negotiate(Some(&format!("application/json, {CONTENT_TYPE}"))), Some(Format::Json));
         assert_eq!(negotiate(Some(&format!("application/json;q=0.5, {CONTENT_TYPE}"))), Some(Format::Protobuf));
