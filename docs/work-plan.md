@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Resource fit counts every scalar resource (#297) — rig run pending 2026-11-20
+### Resource fit counts every scalar resource (#297) — WAITING on stormcluster#128, then the rig (2026-11-20)
 Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
 - [x] `NodeUsage.scalar` (6b9875e): ephemeral-storage, extended resources,
   hugepages, charged/uncharged from one rule (`filter::pod_scalar_requests`:
@@ -18,7 +18,11 @@ Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
   warnings on apimachinery + scheduler. Along the way: MSRV 1.75 → 1.82
   (#354 closed), apimachinery lints (#355 closed), scheduler lints; the
   apiserver/controller-manager lints are #356 (open, commented).
-- [ ] Rig run 2882f2953e (pvetest2, rigs, 165db40) → stage, close.
+- [x] Stage requested: build 66b75601b500.
+- [ ] Rig `extended-resources`: runs 2882f2953e (pvetest2) and 0b04739c2f
+  (pvetest1) ended `infrastructure` (stormcluster/stormlb APIs down on every
+  pve test machine, stormcluster#128). Proposed --after stormcluster#128; then
+  `stormcentral test run rustkube rigs --tag pvetest1 --commit 165db40`, close.
 
 ### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
