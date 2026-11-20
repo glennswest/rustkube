@@ -228,7 +228,14 @@ and field selectors on every generic collection path and for custom resources
 strategic merge patch (fixed merge-key table; a Service's ports merge on port
 and protocol, a container's on containerPort, #150) and
 server-side apply with `managedFields` ownership and conflicts. The `/status`
-subresource; pod `eviction` gated by PodDisruptionBudgets; pod `resize`
+subresource; pod `eviction` gated by PodDisruptionBudgets as upstream (one
+budget per pod; a terminating, finished or Pending pod needs none; a
+not-Ready one goes under `IfHealthyBudget` when the budget is met, or
+`AlwaysAllow`; otherwise the disruption is reserved in the PDB's status —
+`disruptionsAllowed` decremented and the pod recorded in `disruptedPods` — by
+one compare-and-swap before the pod is deleted, so concurrent evictions on
+any apiserver cannot spend one disruption twice; 429 when none is left,
+#360); pod `resize`
 (in-place resize, #136: GET/PUT/PATCH change only containers' and sidecars'
 `resources`/`resizePolicy`, validated as upstream — QoS class kept, cpu and
 memory only, nothing removed, non-sidecar init containers fixed; a Pod with a
@@ -734,7 +741,9 @@ missing past 40 s — also one that died before the controller started; with
 no Lease, the Ready heartbeat — sets every condition `Unknown`, keeping
 `lastHeartbeatTime`, and the `unreachable` NoSchedule/NoExecute taints;
 a fresh heartbeat with Ready=False gets `not-ready`; Ready=True clears both;
-pods are evicted when their toleration, 300 s by default, runs out; #267), PodDisruptionBudget status, garbage collection
+pods are evicted when their toleration, 300 s by default, runs out; #267), PodDisruptionBudget status (a pod an eviction recorded in
+`disruptedPods` counts as not healthy until it goes or two minutes pass;
+terminating pods are not healthy, #360), garbage collection
 (background, foreground and orphan, driven by discovery), PersistentVolume
 (binding, phases, protection finalizers, reclaim), attach/detach
 (VolumeAttachment), the stormblock provisioner for the in-kubelet blank-clone

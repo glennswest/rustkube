@@ -4,6 +4,18 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Concurrent evictions vs PDB (#360, review 6d98e18d1259 + b8d6824b0231) — IN PROGRESS 2026-11-20
+- [x] eviction.rs: reserve in PDB status by `guaranteed_update` CAS
+  (`reserve_in`: processed? allowed > 0? decrement + disruptedPods[pod]);
+  release on a failed delete; upstream's canIgnorePDB, one-PDB rule,
+  unhealthy-pod policy, matchExpressions.
+- [x] pdb.rs: `live_disruptions` — recorded pods not healthy until gone or
+  120 s; terminating pods not healthy; requeue at expiry.
+- [x] Units (reserve/release, unprocessed, multi-thread race through
+  `create_eviction` for budgets 1 and 3, two-PDB 500, unready path; controller
+  expiry). Rig `pdb-eviction` (day suite).
+- [ ] sc-build; stage; rig with the next `rigs` run; close.
+
 ### A refused write's reason in events (#340) — DONE 2026-11-20
 - [x] `apimachinery::api_status`: `check(response)` → `ApiStatusError` (code,
   Status reason/message, URL; Display = the message); `status_of` for code
