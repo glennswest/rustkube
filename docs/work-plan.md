@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### resource.rs review findings (#366: f8ad6d24b615, fc9c16b6b9e0, f33be8cc42cb) — IN PROGRESS 2026-11-20
+### resource.rs review findings (#366: f8ad6d24b615, fc9c16b6b9e0, f33be8cc42cb) — DONE 2026-11-20
 - [x] Job `managedBy` re-checked in `admission::after_mutating` (create,
   update; not `/status`). Unit + rig `admission-webhook` (/jobbad, /jobmove).
 - [x] Server-assigned `uid`/`creationTimestamp` on every API create (POST,
@@ -13,8 +13,11 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [x] `/finalize`: body uid/resourceVersion preconditions (409), the observed
   revision as CAS for the update and the delete; the namespace controller
   returns the finalize error so it is retried.
-- [ ] sc-build; rigs `admission-webhook`, `namespace-order` on a test machine
-  if possible; close.
+- [x] sc-build 9052ddb: build + all tests passed (the new units included);
+  clippy -D warnings on apiserver/controller-manager fails on older lints
+  only (#376, #370). Rigs `admission-webhook`, `bound-token`,
+  `namespace-finalize` (day suite) extended/added, not yet run on a test
+  machine. Staged. Closed.
 
 ### Scheduler request accounting (#365, review 93be2afaffe2, aaa4c9a1bf6c, cc73c69e0514, a5b072e00d6c) — DONE 2026-11-20
 - [x] filter.rs: `pod_request_map` — statuses matched by name,
