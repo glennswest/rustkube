@@ -7,6 +7,8 @@
 #   /deny     refuses, 403 "no thanks"
 #   /mutate   allows with a JSONPatch adding label mutated=yes, and a warning
 #   /allow    allows
+#   /jobbad   allows with a JSONPatch setting spec.managedBy to "no-slash"
+#   /jobmove  allows with a JSONPatch setting spec.managedBy to "acme.io/moved"
 #
 #   - validating, objectSelector deny=yes on ConfigMap CREATE: a labelled
 #     create is refused with upstream's message and code, nothing stored; an
@@ -23,6 +25,10 @@
 #     calling webhook"), is passed over under Ignore
 #   - an unreachable Fail webhook on admissionregistration objects does not
 #     stop its own configuration being deleted
+#   - a Job's spec.managedBy is checked after the mutating webhooks (#366):
+#     one setting an invalid manager on create is a 422 and nothing stored;
+#     one moving a Job to another manager on PUT and on PATCH is a 422
+#     (immutable) and the Job keeps its manager
 #   - after the configurations are deleted, the refused create is stored
 #
 # Exit status is the number of failed checks.
@@ -59,6 +65,11 @@ class H(http.server.BaseHTTPRequestHandler):
             resp["patchType"] = "JSONPatch"
             resp["patch"] = base64.b64encode(json.dumps(op).encode()).decode()
             resp["warnings"] = ["mutated by the e2e webhook"]
+        elif self.path in ("/jobbad", "/jobmove"):
+            value = "no-slash" if self.path == "/jobbad" else "acme.io/moved"
+            op = [{"op": "add", "path": "/spec/managedBy", "value": value}]
+            resp["patchType"] = "JSONPatch"
+            resp["patch"] = base64.b64encode(json.dumps(op).encode()).decode()
         body = json.dumps({"apiVersion": "admission.k8s.io/v1", "kind": "AdmissionReview", "response": resp}).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -206,6 +217,35 @@ config validating lockout "[$LOCKOUT]"
 settle
 c=$(k DELETE /apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations/lockout)
 [ "$c" = 200 ] && pass "a Fail webhook on webhook configurations cannot block its own removal" || fail "lockout delete: $c $(cat "$W/out")"
+
+# --- a Job's managedBy after the mutating webhooks (#366) ----------------------
+JOBS=/apis/batch/v1/namespaces/wh-off/jobs
+jobrule() { printf '[{"operations":["%s"],"apiGroups":["batch"],"apiVersions":["v1"],"resources":["jobs"]}]' "$1"; }
+config mutating job-manager "[$(hook jobbad.e2e.rustkube.io /jobbad "$(jobrule CREATE)" ',"objectSelector":{"matchLabels":{"jm":"bad"}}'),$(hook jobmove.e2e.rustkube.io /jobmove "$(jobrule UPDATE)" ',"objectSelector":{"matchLabels":{"jm":"move"}}')]"
+settle
+job() { # <name> <label jm> <managedBy json or empty>
+  local m=""; [ -n "$3" ] && m="\"managedBy\":$3,"
+  printf '{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"%s","labels":{"jm":"%s"}},"spec":{%s"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"c","image":"pause"}]}}}}' "$1" "$2" "$m"
+}
+c=$(k POST $JOBS "$(job badmgr bad '')")
+if [ "$c" = 422 ] && grep -q 'must be a domain-prefixed path' "$W/out"; then
+  pass "webhook setting an invalid managedBy on create: 422"
+else fail "webhook invalid managedBy: $c $(cat "$W/out")"; fi
+c=$(k GET $JOBS/badmgr); [ "$c" = 404 ] && pass "Job with the webhook's invalid manager not stored" || fail "badmgr: GET $c"
+c=$(k POST $JOBS "$(job moveme move '"acme.io/a"')"); [ "$c" = 201 ] || fail "setup: Job moveme: $c $(cat "$W/out")"
+k GET $JOBS/moveme >/dev/null; cp "$W/out" "$W/moveme.json"
+c=$(k PUT $JOBS/moveme "$(cat "$W/moveme.json")")
+if [ "$c" = 422 ] && grep -q 'field is immutable' "$W/out"; then
+  pass "webhook moving a Job's manager on PUT: 422 immutable"
+else fail "webhook managedBy PUT: $c $(cat "$W/out")"; fi
+c=$(k PATCH $JOBS/moveme '{"metadata":{"labels":{"touched":"yes"}}}' application/merge-patch+json)
+if [ "$c" = 422 ] && grep -q 'field is immutable' "$W/out"; then
+  pass "webhook moving a Job's manager on PATCH: 422 immutable"
+else fail "webhook managedBy PATCH: $c $(cat "$W/out")"; fi
+k GET $JOBS/moveme >/dev/null
+python3 -c 'import json,sys; o=json.load(open(sys.argv[1])); sys.exit(o["spec"].get("managedBy")!="acme.io/a" or "touched" in o["metadata"]["labels"])' "$W/out" \
+  && pass "Job keeps its manager" || fail "moveme after: $(cat "$W/out")"
+k DELETE /apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations/job-manager >/dev/null
 
 # --- configurations removed: back to no webhooks -------------------------------
 for v in deny-labelled deny-node-status deny-keep-delete dead; do

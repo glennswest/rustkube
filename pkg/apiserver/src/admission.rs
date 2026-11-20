@@ -344,7 +344,8 @@ pub async fn admit(
 /// What the apiserver itself decides about an object once the mutating
 /// webhooks are done with it, before the validating ones: the
 /// `storage.storm.io` requester stamp (#210), CSR requester/signer admission
-/// (#264), then RBAC escalation prevention (#98).
+/// (#264), a Job's `spec.managedBy` (#366), a Pod's update rules, then RBAC
+/// escalation prevention (#98).
 async fn after_mutating(
     request: &RequestAttrs,
     op: Operation,
@@ -360,6 +361,18 @@ async fn after_mutating(
     }
     if request.group == crate::csr_admission::GROUP && request.resource == crate::csr_admission::RESOURCE {
         crate::csr_admission::admit(request, op, object, old).await?;
+    }
+    // A Job's `spec.managedBy` as stored, not as sent (review finding
+    // f8ad6d24b615): a mutating webhook that set an invalid manager, or moved
+    // a Job to another controller, was past the check the handler ran before
+    // it. A `/status` write is left alone: its spec is put back from the
+    // stored Job after admission.
+    if (request.group.as_str(), request.resource.as_str()) == ("batch", "jobs") && request.subresource.is_none() {
+        match (op, old) {
+            (Operation::Create, _) => crate::builtin_admission::job_managed_by(None, object)?,
+            (Operation::Update, Some(stored)) => crate::builtin_admission::job_managed_by(Some(stored), object)?,
+            _ => {}
+        }
     }
     // A mutating webhook may change a Pod too; what it may change is what a
     // client may (review finding 198fa7c65883).
@@ -1086,5 +1099,29 @@ mod tests {
     #[test]
     fn warnings_are_quoted_printable_ascii() {
         assert_eq!(warning_header("say \"hi\"\n"), "299 - \"say \\\"hi\\\" \"");
+    }
+    /// #366, review finding f8ad6d24b615: what a mutating webhook left in a
+    /// Job's `spec.managedBy` is checked as a client's would be — an invalid
+    /// manager on create, any change on update — and a `/status` write is not.
+    #[tokio::test]
+    async fn a_job_s_manager_is_checked_after_the_mutating_webhooks() {
+        let user = || UserInfo { username: "u".into(), groups: vec![] };
+        let attrs = |path: &str, method: axum::http::Method| RequestAttrs::of(path, &method, None, user()).unwrap();
+        let job = |m: Value| json!({"metadata": {"name": "j", "namespace": "n"}, "spec": {"managedBy": m}});
+        let create = attrs("/apis/batch/v1/namespaces/n/jobs", axum::http::Method::POST);
+        let e = after_mutating(&create, Operation::Create, &mut job(json!("no-slash")), None).await.unwrap_err();
+        assert_eq!(e.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(e.message.contains("must be a domain-prefixed path"), "{}", e.message);
+        after_mutating(&create, Operation::Create, &mut job(json!("acme.io/a")), None).await.unwrap();
+
+        let stored = job(json!("acme.io/a"));
+        for method in [axum::http::Method::PUT, axum::http::Method::PATCH] {
+            let update = attrs("/apis/batch/v1/namespaces/n/jobs/j", method);
+            let e = after_mutating(&update, Operation::Update, &mut job(json!("acme.io/b")), Some(&stored)).await.unwrap_err();
+            assert!(e.message.contains("field is immutable"), "{}", e.message);
+            after_mutating(&update, Operation::Update, &mut job(json!("acme.io/a")), Some(&stored)).await.unwrap();
+        }
+        let status = attrs("/apis/batch/v1/namespaces/n/jobs/j/status", axum::http::Method::PUT);
+        after_mutating(&status, Operation::Update, &mut job(json!("acme.io/b")), Some(&stored)).await.unwrap();
     }
 }
