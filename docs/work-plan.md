@@ -4,13 +4,14 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Service endpoints: named ports, readiness (#362, review 7a974852b70e, 7d20cd929fba, 7ada61477e9f) — IN PROGRESS 2026-11-20
+### Service endpoints: named ports, readiness (#362, review 7a974852b70e, 7d20cd929fba, 7ada61477e9f) — DONE 2026-11-20
 - [x] service.rs: `backends` (upstream inclusion, readiness, per-pod
   `resolve_port`, groups by port set); Endpoints subsets with
   notReadyAddresses; a slice per port set (first keeps the Service's name,
   others `<svc>-<fnv8>`), stale ones deleted; empty placeholder slice.
 - [x] Units; rig `service-endpoints` (day suite).
-- [ ] sc-build; stage; close.
+- [x] sc-build 245004c passed; no lint in service.rs. Staged. Closed;
+  `service-endpoints` runs with the next `rigs` run.
 
 ### PodSecurity on pod updates (#361, review 6fcd683fb638) — DONE 2026-11-20
 Reviewed at ee19cd5, before #350's `pod_update` (which already freezes every
