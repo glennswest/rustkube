@@ -196,9 +196,16 @@ impl KvStore for EtcdStore {
         let mut client = self.client.clone();
 
         // Prefix scan over [start_key, range_end). On continuation, resume just
-        // after the last key seen (token + \0).
+        // after the last key seen (token + \0). The token comes from a
+        // client: a key outside `prefix` would start the range before it
+        // and read other resources' keys (review finding e59512281f8c).
         let start_key = match continue_token {
             Some(token) => {
+                if !continue_key_valid(prefix, token) {
+                    return Err(Error::Invalid(format!(
+                        "continue key {token:?} is not within the listed prefix {prefix:?}"
+                    )));
+                }
                 let mut k = token.as_bytes().to_vec();
                 k.push(0);
                 k
@@ -425,6 +432,12 @@ impl KvStore for EtcdStore {
     }
 }
 
+/// A continue key resumes a scan of `prefix` only from inside it: a client's
+/// key before the prefix would widen the range over other keys.
+fn continue_key_valid(prefix: &str, token: &str) -> bool {
+    token.starts_with(prefix)
+}
+
 /// Compute the exclusive `range_end` for a prefix scan: the prefix with its
 /// last byte incremented (etcd's standard prefix-range convention). An empty
 /// prefix scans the whole keyspace.
@@ -442,6 +455,17 @@ fn prefix_range_end(prefix: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_continue_key_outside_the_prefix_is_refused() {
+        // Review finding e59512281f8c: listing one namespace's pods with a
+        // key before that prefix ranged over secrets and everything else.
+        assert!(continue_key_valid("/registry/pods/a/", "/registry/pods/a/p1"));
+        assert!(!continue_key_valid("/registry/pods/a/", "/registry/"));
+        assert!(!continue_key_valid("/registry/pods/a/", "/registry/configmaps/a/x"));
+        assert!(!continue_key_valid("/registry/pods/a/", "/registry/pods/"));
+        assert!(!continue_key_valid("/registry/pods/a/", ""));
+    }
 
     /// Endpoint for integration tests. These require a running etcd/fastetcd
     /// (e.g. `docker run -p 2379:2379 fastetcd`) and are ignored by default.

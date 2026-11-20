@@ -2,6 +2,8 @@
 
 ## Unreleased — turbomode (runtime acceptance pending)
 
+### 2026-11-20
+- **fix(security):** A list's `continue` key must lie inside the list's own prefix: `?continue=` with a key before it (`1:/registry/`) resumed the etcd range scan there and returned other resources' objects, Secrets included, to anyone who could list one namespace's pods. The apiserver answers 400 `invalid continue token`; the store adapter refuses it too (review finding e59512281f8c, #350)
 ### 2026-11-19
 - **fix:** The protobuf `/openapi/v2` is answered with `Content-Type: application/com.github.proto-openapi.spec.v2.v1.0+protobuf`, as upstream's kube-openapi answers, not the `@v1.0` spelling client-go asks with: `@` is a MIME tspecial, so client-go's `mime.ParseMediaType` failed `mime: unexpected content after media subtype` and `kubectl explain --output=plaintext-openapiv2` printed an InternalError (rigs c04777d587, pvetest1, `crd-openapi` 14/16). Both spellings stay accepted in `Accept`; a unit test checks the served type is a MIME token pair (#343)
 - **fix:** `/openapi/v2` honours a protobuf Accept (#343): under `application/com.github.proto-openapi.spec.v2@v1.0+protobuf` (client-go's `OpenAPISchema()`) it answers gnostic's `openapi.v2.Document` — encoded from the same document by `apimachinery::openapi_v2` against the vendored gnostic-models v0.7.0 `OpenAPIv2.proto` — instead of JSON, which client-go failed on (`proto: cannot parse invalid wire-format data`; `oc explain vm -o plaintext-openapiv2`). An Accept offering neither JSON nor that type is 406. Rig `crd-openapi`: the protobuf answer, the 406, and `kubectl explain --output=plaintext-openapiv2` on a CRD

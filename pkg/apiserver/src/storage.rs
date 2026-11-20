@@ -159,6 +159,13 @@ impl ResourceStorage {
         continue_token: Option<&str>,
         pinned: Option<u64>,
     ) -> Result<ListPage, ApiError> {
+        // The key is the client's: one outside `prefix` would resume the scan
+        // before it, over other resources' keys (review finding e59512281f8c).
+        if let Some(key) = continue_token.filter(|k| !k.starts_with(prefix)) {
+            return Err(ApiError::bad_request(&format!(
+                "invalid continue token: key {key:?} is not within the requested list"
+            )));
+        }
         let _timer = apimachinery::metrics::StoreTimer::new("list", Self::resource_of(prefix));
         // An API server's local recent-write table cannot establish freshness
         // for writes accepted by another master. Read the shared datastore,
@@ -584,6 +591,21 @@ mod compacted_continue_tests {
         async fn compact(&self, _: u64) -> Result<()> {
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn a_continue_key_outside_the_list_is_400() {
+        // Review finding e59512281f8c: `?continue=1:/registry/` on a list of
+        // one namespace's pods read keys before that prefix.
+        let storage = ResourceStorage::new(Arc::new(Compacted));
+        for token in ["20:/registry/", "20:/registry/configmaps/a/x", "/registry/pods/", "20:/registry/pods/b/x"] {
+            let err = match storage.list_page("/registry/pods/a/", 10, Some(token)).await {
+                Err(e) => e,
+                Ok(_) => panic!("{token} must not list"),
+            };
+            assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST, "{token}");
+        }
+        assert!(storage.list_page("/registry/pods/a/", 10, Some("20:/registry/pods/a/p1")).await.is_ok());
     }
 
     #[tokio::test]
