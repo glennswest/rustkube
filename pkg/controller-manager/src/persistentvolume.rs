@@ -275,7 +275,7 @@ impl PersistentVolumeController {
                 .await;
             return self.set_claim_phase(&path, pvc, "Lost").await;
         }
-        let pv: Value = resp.error_for_status()?.json().await?;
+        let pv: Value = apimachinery::api_status::check(resp).await?.json().await?;
 
         // The volume may name a different claim — a stale volumeName on a
         // claim that was rebuilt. That is Lost too, not a silent share.

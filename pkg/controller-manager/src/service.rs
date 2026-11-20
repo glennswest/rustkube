@@ -228,7 +228,7 @@ impl ServiceController {
                 .await?;
             return Ok(());
         }
-        let current: Value = response.error_for_status()?.json().await?;
+        let current: Value = apimachinery::api_status::check(response).await?.json().await?;
         let owner = &desired["metadata"]["ownerReferences"][0]["uid"];
         anyhow::ensure!(
             current["metadata"]["ownerReferences"]
@@ -319,7 +319,7 @@ impl Controller for ServiceController {
         let response = self.api.get(&path).await?;
         let name_free = response.status().as_u16() == 404;
         if !name_free {
-            let current: Value = response.error_for_status()?.json().await?;
+            let current: Value = apimachinery::api_status::check(response).await?.json().await?;
             anyhow::ensure!(
                 current["metadata"]["uid"].as_str() != Some(&key.uid),
                 "Service still exists"

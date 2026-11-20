@@ -5,6 +5,7 @@
 //! waiting. No k8s-openapi types: objects are `serde_json::Value` throughout.
 
 pub mod error;
+pub mod api_status;
 pub mod store;
 pub mod watch;
 pub mod meta;

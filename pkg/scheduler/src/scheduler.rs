@@ -157,15 +157,13 @@ impl ApiClient {
                 ),
             );
             let result = async {
-                Ok(self
+                let response = self
                     .client
                     .get(&url)
                     .timeout(std::time::Duration::from_secs(30))
                     .send()
-                    .await?
-                    .error_for_status()?
-                    .json()
-                    .await?)
+                    .await?;
+                Ok(apimachinery::api_status::check(response).await?.json().await?)
             }
             .await;
             return apimachinery::reactor::check(result);
@@ -177,16 +175,14 @@ impl ApiClient {
     pub async fn update(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .put(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -196,7 +192,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// Raw GET returning the response (so callers can distinguish 404).
@@ -227,17 +223,15 @@ impl ApiClient {
     pub async fn patch(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .patch(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .header("content-type", "application/strategic-merge-patch+json")
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -247,7 +241,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// PATCH with a **merge** patch (RFC 7386).
@@ -260,17 +254,15 @@ impl ApiClient {
     pub async fn patch_merge(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .patch(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .header("content-type", "application/merge-patch+json")
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -280,23 +272,21 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// POST (create) returning the decoded body.
     pub async fn create(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .post(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -306,7 +296,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 }
 

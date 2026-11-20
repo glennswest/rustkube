@@ -4,6 +4,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### A refused write's reason in events (#340) — IN PROGRESS 2026-11-20
+- [x] `apimachinery::api_status`: `check(response)` → `ApiStatusError` (code,
+  Status reason/message, URL; Display = the message); `status_of` for code
+  checks (runner's create, replicaset's `gone`).
+- [x] Replaced every `error_for_status()`: controller-manager runner, gc,
+  persistentvolume, service; scheduler client; reflector LIST/WATCH.
+- [x] ReplicaSet FailedCreate event: `Error creating: <reason>` (upstream's).
+- [ ] sc-build; stage; close.
+
 ### RS/RC adoption and release (#295, P2) — WAITING on stormcluster f1de3f6 installed, then the rig (2026-11-20)
 - [x] `replicaset::claim` (keep / release / adopt) and `claim_pods` (merge
   patches with the Pod's resourceVersion; uncached owner read before adopting;

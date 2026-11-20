@@ -205,7 +205,7 @@ impl ReplicaSetController {
                                     rs,
                                     "Warning",
                                     "FailedCreate",
-                                    &format!("Error creating pod: {e}"),
+                                    &create_failure(&e),
                                 )
                                 .await;
                         }
@@ -356,11 +356,16 @@ impl ReplicaSetController {
     }
 }
 
+/// A refused create's event message, upstream's: `Error creating: ` and the
+/// apiserver's own reason (#340), e.g. `pods "x" is forbidden: unable to
+/// validate against any security context constraint: …`.
+fn create_failure(e: &anyhow::Error) -> String {
+    format!("Error creating: {e}")
+}
+
 /// A write to a Pod that no longer exists.
 fn gone(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<reqwest::Error>()
-        .and_then(reqwest::Error::status)
-        .is_some_and(|s| s == reqwest::StatusCode::NOT_FOUND)
+    apimachinery::api_status::status_of(e) == Some(reqwest::StatusCode::NOT_FOUND)
 }
 
 fn owner_refs(pod: &Value) -> Vec<Value> {
@@ -606,6 +611,20 @@ mod tests {
         // No usable selector: keep what it controls, claim nothing.
         let plan = claim("rs", None, &children, &candidates);
         assert_eq!((names(&plan.keep), plan.release.len(), plan.adopt.len()), (vec!["mine".to_string(), "relabelled".to_string()], 0, 0));
+    }
+
+    #[test]
+    fn a_refused_create_says_why() {
+        // #340: the event and the ReplicaFailure condition carry the
+        // apiserver's Status message, not "403 Forbidden for url".
+        let msg = "pods \"web-1\" is forbidden: unable to validate against any security context constraint: [runAsUser: Invalid value: 0]";
+        let body = json!({"kind": "Status", "reason": "Forbidden", "code": 403, "message": msg}).to_string();
+        let e = anyhow::Error::from(apimachinery::api_status::ApiStatusError::from_body(
+            reqwest::StatusCode::FORBIDDEN, "https://a:6443/api/v1/namespaces/n/pods", body.as_bytes()));
+        assert_eq!(create_failure(&e), format!("Error creating: {msg}"));
+        let conditions = failure_conditions(&json!([]), Some(&("FailedCreate", e.to_string())), true);
+        assert_eq!(conditions[0]["message"], msg);
+        assert_eq!(conditions[0]["reason"], "FailedCreate");
     }
 
     #[test]

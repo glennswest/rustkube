@@ -671,7 +671,7 @@ impl Controller for Collection<'_> {
                 .get(&resource.object_path(objects[0].namespace(), name))
                 .await?;
             if response.status().as_u16() != 404 {
-                let current: Value = response.error_for_status()?.json().await?;
+                let current: Value = apimachinery::api_status::check(response).await?.json().await?;
                 if current["metadata"]["uid"] == owner["uid"] {
                     live.insert(owner["uid"].as_str().unwrap_or("").into());
                 }

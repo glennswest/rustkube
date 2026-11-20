@@ -238,15 +238,13 @@ impl ApiClient {
                 ),
             );
             let result = async {
-                Ok(self
+                let response = self
                     .client
                     .get(&url)
                     .timeout(std::time::Duration::from_secs(30))
                     .send()
-                    .await?
-                    .error_for_status()?
-                    .json()
-                    .await?)
+                    .await?;
+                Ok(apimachinery::api_status::check(response).await?.json().await?)
             }
             .await;
             return apimachinery::reactor::check(result);
@@ -309,9 +307,7 @@ impl ApiClient {
         let result = self.send_create(&pending.path, &pending.body).await;
         let definitive = match &result {
             Ok(_) => true,
-            Err(error) => error
-                .downcast_ref::<reqwest::Error>()
-                .and_then(|e| e.status())
+            Err(error) => apimachinery::api_status::status_of(error)
                 .is_some_and(|s| {
                     s.is_client_error()
                         && (s.as_u16() != 409 || previous.is_none())
@@ -343,16 +339,14 @@ impl ApiClient {
     ) -> anyhow::Result<serde_json::Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .post(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -362,7 +356,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// PUT (update) a resource.
@@ -373,16 +367,14 @@ impl ApiClient {
     ) -> anyhow::Result<serde_json::Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .put(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -392,7 +384,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// PUT a resource's **status only**, through the `/status` subresource.
@@ -414,16 +406,14 @@ impl ApiClient {
     ) -> anyhow::Result<serde_json::Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .put(format!("{}{}/status", self.base_url, path))
                 .timeout(budget)
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -433,7 +423,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// PATCH a resource.
@@ -444,17 +434,15 @@ impl ApiClient {
     ) -> anyhow::Result<serde_json::Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .patch(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .header("content-type", "application/strategic-merge-patch+json")
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -464,7 +452,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// DELETE a resource.
@@ -497,7 +485,7 @@ impl ApiClient {
                 if response.status().as_u16() == 404 {
                     return Ok(response);
                 }
-                Ok(response.error_for_status()?)
+                Ok(apimachinery::api_status::check(response).await?)
             }
             .await,
         )
@@ -536,17 +524,15 @@ impl ApiClient {
     ) -> anyhow::Result<serde_json::Value> {
         let started = std::time::Instant::now();
         let budget = apimachinery::reactor::check(self.write_gate.budget())?;
-        let result: reqwest::Result<serde_json::Value> = async {
-            self.client
+        let result: anyhow::Result<serde_json::Value> = async {
+            let response = self.client
                 .patch(format!("{}{}", self.base_url, path))
                 .timeout(budget)
                 .header("content-type", "application/merge-patch+json")
                 .json(body)
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await
+                .await?;
+            Ok(apimachinery::api_status::check(response).await?.json().await?)
         }
         .await;
         if let Ok(value) = &result {
@@ -556,7 +542,7 @@ impl ApiClient {
                 apimachinery::reactor::failed();
             }
         }
-        apimachinery::reactor::check(result.map_err(anyhow::Error::from))
+        apimachinery::reactor::check(result)
     }
 
     /// DELETE a resource, carrying `meta/v1` DeleteOptions.

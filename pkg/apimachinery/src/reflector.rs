@@ -22,7 +22,7 @@ pub async fn list(client: &reqwest::Client, url: &str) -> anyhow::Result<Value> 
         if !token.is_empty() {
             request = request.query(&[("continue", &token)]);
         }
-        let page: Value = request.send().await?.error_for_status()?.json().await?;
+        let page: Value = crate::api_status::check(request.send().await?).await?.json().await?;
         let page_items = page["items"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("LIST has no items array: {url}"))?;
@@ -337,7 +337,7 @@ async fn watch(
         observed.revision.clear();
         anyhow::bail!("watch revision expired");
     }
-    let mut stream = response.error_for_status()?.bytes_stream();
+    let mut stream = crate::api_status::check(response).await?.bytes_stream();
     changed(Change::Connected);
     let mut frames = Frames::default();
     loop {
