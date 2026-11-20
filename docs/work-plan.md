@@ -4,6 +4,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Scheduler request accounting (#365, review 93be2afaffe2, aaa4c9a1bf6c, cc73c69e0514, a5b072e00d6c) — IN PROGRESS 2026-11-20
+- [ ] filter.rs: one request map (`pod_request_map`) — container statuses
+  matched by name, `allocatedResources` read as the map it is, per-container
+  max of spec/actuated/allocated, aggregated by `containers_total` rules;
+  pod-level requests override only the keys they name; JSON numbers read.
+- [ ] quantity.rs: `parse_cpu_millis` takes SI suffixes (`1k`); `parse_quantity`.
+- [ ] pod_count_filter reads `allocatable.pods` as a quantity (`1k`).
+- [ ] Units; sc-build; close.
+
 ### CronJob failed Job create consumes the run (#364, review f522089c5539) — DONE 2026-11-20
 - [x] cronjob.rs: `create_job` returns the error; AlreadyExists accepted
   only for a Job owned by this CronJob; Job named `<cj>-<unix minutes>` of
