@@ -341,13 +341,16 @@ impl Provider {
 /// Run SCC admission over a pod being created in `ns` (already read, by
 /// NamespaceLifecycle). Mutates the pod; an `Err` refuses it.
 pub async fn admit_pod(storage: &ResourceStorage, ns: &Value, pod: &mut Value) -> Result<(), ApiError> {
-    if !governs(ns) || pod["metadata"]["annotations"][MIRROR].is_string() {
+    if !governs(ns) {
         return Ok(());
     }
     // Writes the apiserver makes for itself carry no request.
     let Some(request) = crate::admission::current() else {
         return Ok(());
     };
+    if node_mirror_pod(&request.user, pod) {
+        return Ok(());
+    }
     let ns = namespace_with_ranges(storage, ns.clone()).await?;
     let Some((uid, groups)) = namespace_ranges(&ns) else {
         return Err(ApiError::internal("namespace has no UID range"));
@@ -362,6 +365,23 @@ pub async fn admit_pod(storage: &ResourceStorage, ns: &Value, pod: &mut Value) -
         usable.push((p, ok));
     }
     choose(pod, uid, &groups, &usable)
+}
+
+/// A static pod's mirror, created by the node that runs it: the one pod the
+/// `kubernetes.io/config.mirror` annotation exempts. The annotation is the
+/// client's to write, so on its own it exempted any pod from SCC — a user
+/// who set it ran privileged, as root, on the host's namespaces (review
+/// finding f5ae1c953cf4). The requester must be the node, `system:node:<n>`
+/// in `system:nodes`, and the pod bound to `<n>`, as upstream's
+/// NodeRestriction holds a node to its own mirror pods.
+pub fn node_mirror_pod(user: &UserInfo, pod: &Value) -> bool {
+    if !pod["metadata"]["annotations"][MIRROR].is_string() {
+        return false;
+    }
+    let Some(node) = user.username.strip_prefix("system:node:").filter(|n| !n.is_empty()) else {
+        return false;
+    };
+    user.groups.iter().any(|g| g == "system:nodes") && pod["spec"]["nodeName"].as_str() == Some(node)
 }
 
 /// The pod's ServiceAccount as an RBAC subject.
@@ -729,6 +749,54 @@ mod tests {
         let mut body = json!({"metadata": {"name": "a", "annotations": {UID_RANGE: "5000/10", SUPPLEMENTAL_GROUPS: "5000/10"}}});
         keep_ranges(&stored, &mut body);
         assert_eq!(body["metadata"]["annotations"][UID_RANGE], "5000/10");
+    }
+
+    fn user(name: &str, groups: &[&str]) -> UserInfo {
+        UserInfo { username: name.into(), groups: groups.iter().map(|g| g.to_string()).collect() }
+    }
+
+    fn mirror(node: &str) -> Value {
+        json!({"metadata": {"name": "web", "annotations": {MIRROR: "abc"}},
+               "spec": {"nodeName": node, "hostNetwork": true,
+                        "containers": [{"name": "c", "securityContext": {"privileged": true, "runAsUser": 0}}]}})
+    }
+
+    #[test]
+    fn only_its_node_exempts_a_mirror_pod() {
+        let n1 = user("system:node:n1", &["system:nodes", "system:authenticated"]);
+        assert!(node_mirror_pod(&n1, &mirror("n1")));
+        // Review finding f5ae1c953cf4: the annotation alone exempted it.
+        assert!(!node_mirror_pod(&n1, &mirror("n2")), "another node's pod");
+        assert!(!node_mirror_pod(&n1, &mirror("")), "unbound");
+        assert!(!node_mirror_pod(&user("alice", &["system:authenticated"]), &mirror("n1")));
+        assert!(!node_mirror_pod(&user("system:node:n1", &["system:authenticated"]), &mirror("n1")), "not in system:nodes");
+        assert!(!node_mirror_pod(&user("system:node:", &["system:nodes"]), &mirror("")));
+        let mut plain = mirror("n1");
+        plain["metadata"]["annotations"] = json!({});
+        assert!(!node_mirror_pod(&n1, &plain), "no annotation");
+    }
+
+    #[tokio::test]
+    async fn a_users_mirror_annotation_does_not_bypass_admission() {
+        let storage = ResourceStorage::new(Arc::new(MemStore::default()));
+        let mut ns = json!({"metadata": {"name": "app"}});
+        set_ranges(&mut ns, 7);
+        // No RBAC engine: only restricted-v2 is usable by anyone here.
+        let attrs = |u: UserInfo| {
+            crate::admission::RequestAttrs::of("/api/v1/namespaces/app/pods", &axum::http::Method::POST, None, u)
+                .unwrap()
+        };
+        let alice = user("alice", &["system:authenticated"]);
+        let mut pod = mirror("n1");
+        let r = crate::admission::with_request(attrs(alice), admit_pod(&storage, &ns, &mut pod)).await;
+        let e = r.expect_err("a privileged pod a user annotated as a mirror is refused");
+        assert_eq!(e.status, axum::http::StatusCode::FORBIDDEN, "{}", e.message);
+
+        let n1 = user("system:node:n1", &["system:nodes", "system:authenticated"]);
+        let mut pod = mirror("n1");
+        let before = pod.clone();
+        crate::admission::with_request(attrs(n1), admit_pod(&storage, &ns, &mut pod)).await.unwrap();
+        assert_eq!(pod, before, "the node's own mirror pod is left as its manifest says");
     }
 
     #[tokio::test]

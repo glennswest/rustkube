@@ -519,8 +519,11 @@ annotated `openshift.io/scc`. So a pod a controller creates for a Deployment
 gets `restricted-v2`, while one `cluster-admin` or `system:masters` creates
 directly is admitted under `anyuid` unchanged, as on OpenShift. More than
 restricted-v2 for a ServiceAccount: a RoleBinding to the bootstrapped
-ClusterRole `system:openshift:scc:anyuid` (or `…:privileged`). Mirror pods
-and the apiserver's own writes (manifests) are not governed; SELinux levels
+ClusterRole `system:openshift:scc:anyuid` (or `…:privileged`). A mirror pod
+its node creates (`kubernetes.io/config.mirror`, requester `system:node:<n>`
+in `system:nodes`, `spec.nodeName` `<n>`) and the apiserver's own writes
+(manifests) are not governed — the annotation from anyone else exempts
+nothing (#350); SELinux levels
 are not assigned. The kubelet applying `fsGroup` to volumes is
 rustkube-node#171.
 

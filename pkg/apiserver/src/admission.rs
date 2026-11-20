@@ -153,6 +153,13 @@ pub fn warn(message: String) {
     let _ = REQUEST.try_with(|r| r.warnings.lock().unwrap().push(message));
 }
 
+/// Run `f` as if serving the API write `attrs` (tests of the admission
+/// that reads [`current`]).
+#[cfg(test)]
+pub async fn with_request<F: Future>(attrs: RequestAttrs, f: F) -> F::Output {
+    REQUEST.scope(Arc::new(attrs), f).await
+}
+
 /// Run a request's handler with its admission attributes, and return the
 /// webhooks' warnings as `Warning` headers, as upstream does.
 pub async fn in_request(
