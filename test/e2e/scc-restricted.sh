@@ -14,6 +14,10 @@
 # - the admin's own pod is admitted under anyuid, unchanged; a pod whose
 #   ServiceAccount is bound to system:openshift:scc:anyuid runs as UID 0
 # - storm-* and an enforce=privileged namespace are not governed
+# - alice's admitted pod cannot be updated around SCC (#359, review finding
+#   198fa7c65883): a PUT making it privileged as UID 0, a merge patch turning
+#   on hostNetwork, an ephemeral container added by PUT and the mirror-pod
+#   annotation are 422 and leave it as it was; a new image is allowed
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -33,10 +37,10 @@ def check(ok, what):
     print(("PASS  " if ok else "FAIL  ") + what, flush=True)
     failed += 0 if ok else 1
 
-def req(who, method, path, body=None):
+def req(who, method, path, body=None, ctype="application/json"):
     conn = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=30)
     conn.request(method, path, body=None if body is None else json.dumps(body),
-                 headers={"Authorization": "Bearer " + os.environ[who], "Content-Type": "application/json"})
+                 headers={"Authorization": "Bearer " + os.environ[who], "Content-Type": ctype})
     r = conn.getresponse(); raw = r.read(); conn.close()
     try: return r.status, json.loads(raw)
     except ValueError: return r.status, raw
@@ -103,6 +107,30 @@ check(code == 403 and "unable to validate against any security context constrain
       and f"must be in the ranges: [{first}, {first + 9999}]" in msg, f"alice's UID 0 refused ({code} {msg})")
 code, out = req("ALICE", "POST", "/api/v1/namespaces/shop/pods", pod("inrange", csc={"runAsUser": first + 5}))
 check(code == 201 and out["spec"]["containers"][0]["securityContext"]["runAsUser"] == first + 5, f"a UID in the range is kept ({code})")
+
+# Updates cannot undo what SCC admitted (#359, review finding 198fa7c65883).
+IP = "/api/v1/namespaces/shop/pods/inrange"
+admitted = req("ALICE", "GET", IP)[1]
+def unchanged():
+    now = req("ALICE", "GET", IP)[1]
+    return now["spec"] == admitted["spec"] and now["metadata"].get("annotations") == admitted["metadata"].get("annotations")
+escalated = json.loads(json.dumps(admitted))
+escalated["spec"]["containers"][0]["securityContext"] = {"privileged": True, "runAsUser": 0}
+code, out = req("ALICE", "PUT", IP, escalated)
+check(code == 422 and "pod updates may not change fields" in str(out) and unchanged(), f"PUT to privileged UID 0: 422, unchanged ({code})")
+code, out = req("ALICE", "PATCH", IP, {"spec": {"hostNetwork": True}}, "application/merge-patch+json")
+check(code == 422 and unchanged(), f"merge patch hostNetwork: 422, unchanged ({code})")
+debug = json.loads(json.dumps(admitted))
+debug["spec"]["ephemeralContainers"] = [{"name": "debug", "image": "busybox", "securityContext": {"privileged": True}}]
+code, out = req("ALICE", "PUT", IP, debug)
+check(code == 422 and unchanged(), f"ephemeral container added by PUT: 422, unchanged ({code})")
+code, out = req("ALICE", "PATCH", IP, {"metadata": {"annotations": {"kubernetes.io/config.mirror": "x"}}}, "application/merge-patch+json")
+check(code == 422 and unchanged(), f"mirror-pod annotation added: 422, unchanged ({code})")
+code, out = req("ALICE", "PATCH", IP, {"spec": {"containers": [{"name": "app", "image": "registry.example/app:2"}]}},
+                "application/strategic-merge-patch+json")
+check(code == 200 and out["spec"]["containers"][0]["image"] == "registry.example/app:2"
+      and out["spec"]["containers"][0]["securityContext"] == admitted["spec"]["containers"][0]["securityContext"],
+      f"a new image is allowed, its securityContext kept ({code})")
 code, out = req("ALICE", "POST", "/api/v1/namespaces/shop/pods", pod("priv", csc={"privileged": True}))
 check(code == 403 and "Privileged containers are not allowed" in str(out), f"privileged refused ({code})")
 

@@ -4,6 +4,17 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Pod updates around SCC (#359, P0, review 198fa7c65883) — DONE 2026-11-20
+The review ran at 112d7e1 (2026-11-18), before #350's fix 3cef5d0
+(`builtin_admission::pod_update`, upstream's `ValidatePodUpdate`, in
+`builtin_update` for every client write and again after mutating webhooks).
+Audited: `/status` PUT and PATCH put the stored spec back; `/resize` may
+change only resources/resizePolicy; `pods/ephemeralcontainers` is not served
+and `ephemeralContainers` through PUT/PATCH is a spec change, refused.
+AppArmor annotations (mutable here, immutable upstream) cannot escalate:
+rustkube-node applies no profile and refuses a pod asking for one. Added
+update checks to the `scc-restricted` rig.
+
 ### Continue tokens outside the prefix (#358, P0, review e59512281f8c) — DONE 2026-11-20
 The review ran at ee19cd5, before #350's fix 7e729d2 (adapter `list_at` and
 apiserver `list_pinned` refuse a continue key not starting with the prefix:

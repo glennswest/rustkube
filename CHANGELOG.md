@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-20
+- **test:** Rig `scc-restricted`: a pod admitted under restricted-v2 cannot be updated around it — a PUT to privileged UID 0, a merge patch turning on `hostNetwork`, an ephemeral container added by PUT and the `kubernetes.io/config.mirror` annotation are 422 and leave it unchanged; a new image is allowed with its `securityContext` kept (#359, review finding 198fa7c65883, fixed in 3cef5d0 for #350)
 - **test:** Rig `compaction`: forged continue keys — before the listed prefix (`/registry/`, revision-pinned and bare) and another namespace's — are a 400 with no items against a live apiserver (#358, review finding e59512281f8c, fixed in 7e729d2 for #350)
 - **fix(security):** A server-side apply that creates an object refuses a body naming another object (or namespace) than its URL, 400 as upstream and as PUT already did. Admission matches its object by name, so `PATCH …/certificatesigningrequests/x` with `metadata.name: y` skipped it: the CSR was stored at `x` with the client's `Approved` status and its own `spec.username` — the self-approval #350 closed for POST, through apply. `csr-signers` rig: a forged `Approved` dropped on POST and on apply create, neither signed, the mismatched apply a 400 (#357, review finding 27b84965dcae)
 - **build:** `rust-version` 1.75 → 1.82: the code already used `Option::is_none_or` (1.82), so the declared minimum was false and `cargo clippy -D warnings` failed `incompatible_msrv` in `apimachinery` (#354)
