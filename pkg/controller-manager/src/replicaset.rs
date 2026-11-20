@@ -263,7 +263,7 @@ impl ReplicaSetController {
         let fully_labeled = active
             .iter()
             .filter(|pod| {
-                template_labels.map_or(true, |want| {
+                template_labels.is_none_or(|want| {
                     want.iter().all(|(k, v)| pod["metadata"]["labels"].get(k) == Some(v))
                 })
             })
