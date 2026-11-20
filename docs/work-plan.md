@@ -4,16 +4,18 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### CSR client-supplied Approved status (#357, P0, review 27b84965dcae) — IN PROGRESS 2026-11-20
+### CSR client-supplied Approved status (#357, P0, review 27b84965dcae) — DONE 2026-11-20
 The review ran at ee19cd5 (2026-10-14), before #350's fix (1097827: `on_create`
 empties `status`). Main still had a way around it: a server-side apply create
 whose body names another object than the URL skipped admission
 (`admission::admit` matches the object by name) and was stored at the URL's
 key with the client's status and spec.
-- [ ] `url_identity` (from `put_object`) checked on the apply-create path: 400.
-- [ ] Unit (resource.rs status tests) + `csr-signers` rig: forged Approved on
+- [x] `url_identity` (from `put_object`) checked on the apply-create path: 400 (dfcd941).
+- [x] Unit (resource.rs status tests) + `csr-signers` rig: forged Approved on
   POST and on apply create dropped and unsigned; mismatched apply 400.
-- [ ] sc-build, stage, close. (#297 back in line, waiting on stormcluster#128.)
+- [x] sc-build dfcd941 passed (all tests; apiserver clippy: no new lint, #356).
+  Stage 97e53ab5e952. Closed. The rig additions run with the next `rigs` run
+  (pve test machines down, stormcluster#128). #297 back in line.
 
 ### Resource fit counts every scalar resource (#297) — WAITING on stormcluster#128, then the rig (2026-11-20)
 Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
