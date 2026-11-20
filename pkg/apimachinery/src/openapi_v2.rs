@@ -22,7 +22,7 @@
 //! version Kubernetes 1.36 pins), so field numbers come from upstream's file.
 
 use prost::Message as _;
-use prost_reflect::{DynamicMessage, MessageDescriptor, Value as PbValue};
+use prost_reflect::{DynamicMessage, MessageDescriptor, ReflectMessage, Value as PbValue};
 use serde_json::{Map, Value};
 
 /// The media type client-go sends (and upstream answers with).
