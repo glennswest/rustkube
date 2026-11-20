@@ -4,12 +4,13 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### StatefulSet lowest missing ordinal (#363, review c1b3be631b68) — IN PROGRESS 2026-11-20
+### StatefulSet lowest missing ordinal (#363, review c1b3be631b68) — DONE 2026-11-20
 - [x] statefulset.rs: `plan` (Create lowest missing / WaitFor unready lower /
   Delete highest condemned / Settled), `ordinal_of` (`<sts>-N` only), a
   finished Pod deleted first.
 - [x] Units; rig `statefulset-ordinals` (day suite).
-- [ ] sc-build; stage; close.
+- [x] sc-build 3c86abc passed; no lint in statefulset.rs. Staged. Closed;
+  `statefulset-ordinals` runs with the next `rigs` run.
 
 ### Service endpoints: named ports, readiness (#362, review 7a974852b70e, 7d20cd929fba, 7ada61477e9f) — DONE 2026-11-20
 - [x] service.rs: `backends` (upstream inclusion, readiness, per-pod
