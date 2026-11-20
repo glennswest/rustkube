@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Review findings, 5 critical (#350) — fixes pushed, sc-build at 3cef5d0 running 2026-11-20
+### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
 - [x] 198fa7c65883 (3cef5d0) — a Pod update (PUT/PATCH/apply, any requester) may
   change only what upstream's `ValidatePodUpdate` allows (images,
@@ -19,6 +19,11 @@ One commit per finding, the finding id in each; a unit test each.
 - [x] 77f265e40744 (a65ee0f) — kubelet-client auto-approval only for a node renewing
   its own identity (PKCS#10 O=[system:nodes], CN=system:node:<n> ==
   spec.username, requester in system:nodes, no SANs, client-auth usages).
+- [x] sc-build 4f6159e passed (cargo build + test, 375 apiserver tests,
+  clippy clean in the changed code); 692e762 (a test's clippy lint) passed
+  too. 3cef5d0 failed one new test (`pod_update` inserted a null
+  `initContainers` through `IndexMut`), fixed in 4f6159e; #352 closed by it.
+- [x] Stage requested: build f9d196778b35. Issue closed.
 - [x] e59512281f8c (7e729d2) — a continue key outside the listed prefix is a 400
   (apiserver) / `Invalid` (store adapter).
 
