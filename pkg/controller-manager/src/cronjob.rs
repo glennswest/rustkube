@@ -66,15 +66,7 @@ impl CronJobController {
         }
 
         // Find jobs owned by this CronJob
-        let owned_jobs: Vec<&Value> = all_jobs
-            .iter()
-            .filter(|job| {
-                job["metadata"]["ownerReferences"]
-                    .as_array()
-                    .map(|refs| refs.iter().any(|r| r["uid"].as_str() == Some(cj_uid)))
-                    .unwrap_or(false)
-            })
-            .collect();
+        let owned_jobs: Vec<&Value> = all_jobs.iter().filter(|job| owned_by(job, cj_uid)).collect();
 
         // Categorize jobs
         let mut active_jobs: Vec<&Value> = Vec::new();
@@ -206,7 +198,8 @@ impl CronJobController {
                                 )
                                 .await;
                         } else {
-                            self.create_job(namespace, cj_name, cj_uid, cj).await?;
+                            self.create_job(namespace, cj_name, cj_uid, cj, scheduled_for)
+                                .await?;
                         }
                     }
                     "Replace" => {
@@ -225,34 +218,42 @@ impl CronJobController {
                                     .await;
                             }
                         }
-                        self.create_job(namespace, cj_name, cj_uid, cj).await?;
-                        self.recorder
-                            .event(
-                                cj,
-                                "Normal",
-                                "SuccessfulCreate",
-                                &format!(
-                                    "Replaced the running job and started the \
-                                     {scheduled_for} run"
-                                ),
-                            )
-                            .await;
+                        if self
+                            .create_job(namespace, cj_name, cj_uid, cj, scheduled_for)
+                            .await?
+                        {
+                            self.recorder
+                                .event(
+                                    cj,
+                                    "Normal",
+                                    "SuccessfulCreate",
+                                    &format!(
+                                        "Replaced the running job and started the \
+                                         {scheduled_for} run"
+                                    ),
+                                )
+                                .await;
+                        }
                     }
                     _ => {
                         // Allow
-                        self.create_job(namespace, cj_name, cj_uid, cj).await?;
                         // Says which scheduled time this run is for, not just
                         // that a job appeared: a catch-up run and an on-time
                         // one are indistinguishable otherwise, and telling
                         // them apart is most of what the history is for.
-                        self.recorder
-                            .event(
-                                cj,
-                                "Normal",
-                                "SuccessfulCreate",
-                                &format!("Started the job for the {scheduled_for} run"),
-                            )
-                            .await;
+                        if self
+                            .create_job(namespace, cj_name, cj_uid, cj, scheduled_for)
+                            .await?
+                        {
+                            self.recorder
+                                .event(
+                                    cj,
+                                    "Normal",
+                                    "SuccessfulCreate",
+                                    &format!("Started the job for the {scheduled_for} run"),
+                                )
+                                .await;
+                        }
                     }
                 }
 
@@ -381,15 +382,30 @@ impl CronJobController {
             .await;
     }
 
+    /// Create the Job for the run scheduled at `scheduled_for`, answering
+    /// whether this call made it (`false`: it was already there).
+    ///
+    /// An error is returned, not logged and swallowed: the caller records
+    /// `lastScheduleTime` only after this succeeds, so a refused or failed
+    /// create leaves the run owed and the pass fails into the runner's
+    /// backoff, which tries it again (#364). Swallowed, a transient apiserver
+    /// or datastore failure consumed the scheduled run with no Job made.
+    ///
+    /// The name is the scheduled minute, as upstream's (`<cronjob>-<unix
+    /// minutes>`), so one run has one name: a create that committed while
+    /// its status write failed answers AlreadyExists on the retry, and that
+    /// Job — when it is this CronJob's — is the run, not a reason to make a
+    /// second one.
     async fn create_job(
         &self,
         namespace: &str,
         cj_name: &str,
         cj_uid: &str,
         cj: &Value,
-    ) -> anyhow::Result<()> {
-        let timestamp = chrono::Utc::now().timestamp();
-        let job_name = format!("{cj_name}-{timestamp}");
+        scheduled_for: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<bool> {
+        let job_name = job_name(cj_name, scheduled_for);
+        let path = format!("/apis/batch/v1/namespaces/{namespace}/jobs");
 
         let job_template = &cj["spec"]["jobTemplate"];
         let job = json!({
@@ -411,20 +427,29 @@ impl CronJobController {
             "spec": job_template["spec"]
         });
 
-        match self
-            .api
-            .create(&format!("/apis/batch/v1/namespaces/{namespace}/jobs"), &job)
-            .await
-        {
+        match self.api.create(&path, &job).await {
             Ok(_) => {
                 info!("CronJob {cj_name}: created Job {namespace}/{job_name}");
+                Ok(true)
+            }
+            Err(e) if apimachinery::api_status::status_of(&e).map(|s| s.as_u16()) == Some(409) => {
+                let response = self.api.get(&format!("{path}/{job_name}")).await?;
+                let existing: Value = apimachinery::api_status::check(response).await?.json().await?;
+                anyhow::ensure!(
+                    owned_by(&existing, cj_uid),
+                    "CronJob {namespace}/{cj_name}: Job {job_name} for the {scheduled_for} run \
+                     exists and is not this CronJob's"
+                );
+                info!("CronJob {cj_name}: Job {namespace}/{job_name} already exists for the {scheduled_for} run");
+                Ok(false)
             }
             Err(e) => {
-                warn!("CronJob {cj_name}: failed to create Job: {e}");
+                warn!("CronJob {cj_name}: failed to create Job {namespace}/{job_name}: {e}");
+                Err(e.context(format!(
+                    "CronJob {namespace}/{cj_name}: creating the Job for the {scheduled_for} run"
+                )))
             }
         }
-
-        Ok(())
     }
 
     /// Trim the retained Jobs to the history limit, returning how many were
@@ -473,6 +498,17 @@ fn written(resp: anyhow::Result<Value>) -> Option<Value> {
         .then_some(v)
 }
 
+/// The Job of the run scheduled at `scheduled_for`: one name per run.
+fn job_name(cj_name: &str, scheduled_for: chrono::DateTime<chrono::Utc>) -> String {
+    format!("{cj_name}-{}", scheduled_for.timestamp().div_euclid(60))
+}
+
+fn owned_by(job: &Value, uid: &str) -> bool {
+    job["metadata"]["ownerReferences"]
+        .as_array()
+        .is_some_and(|refs| refs.iter().any(|r| r["uid"].as_str() == Some(uid)))
+}
+
 fn last_completion(jobs: &[&Value]) -> Option<String> {
     jobs.iter()
         .filter_map(|j| j["status"]["completionTime"].as_str())
@@ -498,6 +534,165 @@ mod tests {
             "reason": "Conflict", "code": 409, "metadata": {},
         });
         assert_eq!(written(Ok(conflict)), None);
+    }
+
+    #[test]
+    fn a_run_has_one_job_name_its_scheduled_minute() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-11-20T10:05:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(job_name("c", at), format!("c-{}", at.timestamp() / 60));
+        assert_eq!(job_name("c", at + chrono::Duration::seconds(59)), job_name("c", at));
+        assert_ne!(job_name("c", at + chrono::Duration::seconds(60)), job_name("c", at));
+    }
+
+    /// A fake apiserver for one CronJob pass: the Job create answers
+    /// `create_status` (201 makes the Job), and every status PUT is kept.
+    mod fake {
+        use axum::{
+            body::Bytes,
+            extract::State,
+            http::{Method, StatusCode, Uri},
+            response::{IntoResponse, Response},
+            Json, Router,
+        };
+        use serde_json::{json, Value};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        pub struct Api {
+            pub create_status: Mutex<u16>,
+            pub creates: Mutex<Vec<Value>>,
+            pub existing: Mutex<Option<Value>>,
+            pub status_puts: Mutex<Vec<Value>>,
+        }
+
+        async fn handle(State(api): State<Arc<Api>>, method: Method, uri: Uri, body: Bytes) -> Response {
+            let path = uri.path();
+            let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+            if method == Method::POST && path.ends_with("/jobs") {
+                api.creates.lock().unwrap().push(body.clone());
+                let code = *api.create_status.lock().unwrap();
+                if code == 201 {
+                    *api.existing.lock().unwrap() = Some(body.clone());
+                    return (StatusCode::CREATED, Json(body)).into_response();
+                }
+                let reason = if code == 409 { "AlreadyExists" } else { "ServiceUnavailable" };
+                let status = json!({"kind":"Status","apiVersion":"v1","status":"Failure",
+                    "reason":reason,"code":code,"message":"refused by the fake"});
+                return (StatusCode::from_u16(code).unwrap(), Json(status)).into_response();
+            }
+            if method == Method::GET && path.contains("/jobs/") {
+                return match api.existing.lock().unwrap().clone() {
+                    Some(job) => Json(job).into_response(),
+                    None => StatusCode::NOT_FOUND.into_response(),
+                };
+            }
+            if method == Method::PUT && path.ends_with("/status") {
+                api.status_puts.lock().unwrap().push(body.clone());
+                let mut stored = body;
+                stored["metadata"]["resourceVersion"] = json!("2");
+                return Json(stored).into_response();
+            }
+            // Events and anything else: accepted.
+            (StatusCode::CREATED, Json(json!({"kind":"Event","metadata":{"resourceVersion":"1"}}))).into_response()
+        }
+
+        pub async fn serve(api: Arc<Api>) -> String {
+            let app = Router::new().fallback(handle).with_state(api);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            format!("http://{addr}")
+        }
+    }
+
+    /// A minutely CronJob made three minutes ago with no run yet: one start
+    /// is owed.
+    fn owed_cronjob() -> Value {
+        let created = chrono::Utc::now() - chrono::Duration::minutes(3);
+        json!({
+            "apiVersion": "batch/v1", "kind": "CronJob",
+            "metadata": {
+                "name": "c", "namespace": "ns", "uid": "cj-uid", "resourceVersion": "1",
+                "creationTimestamp": created.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            },
+            "spec": {
+                "schedule": "* * * * *",
+                "jobTemplate": {"spec": {"template": {"spec": {"containers": [{"name": "x", "image": "x"}]}}}},
+            },
+        })
+    }
+
+    /// The distinct `lastScheduleTime`s written (the stats write repeats the
+    /// one the scheduling write stored).
+    fn scheduled(puts: &[Value]) -> Vec<String> {
+        let mut marks: Vec<String> = puts
+            .iter()
+            .filter_map(|p| p["status"]["lastScheduleTime"].as_str().map(str::to_owned))
+            .collect();
+        marks.dedup();
+        marks
+    }
+
+    #[tokio::test]
+    async fn a_failed_job_create_leaves_the_run_owed_and_the_retry_makes_it() {
+        let api = Arc::new(fake::Api::default());
+        *api.create_status.lock().unwrap() = 503;
+        let url = fake::serve(api.clone()).await;
+        let controller = CronJobController::new(Arc::new(ApiClient::new(&url)));
+        let cj = owed_cronjob();
+
+        let failed = controller.reconcile_cronjob("ns", &cj, &[]).await;
+        assert!(failed.is_err(), "a refused Job create must fail the pass");
+        assert_eq!(api.creates.lock().unwrap().len(), 1);
+        assert!(
+            scheduled(&api.status_puts.lock().unwrap()).is_empty(),
+            "lastScheduleTime must not advance for a run with no Job"
+        );
+
+        // The apiserver recovers; the retried pass makes the same run's Job.
+        *api.create_status.lock().unwrap() = 201;
+        controller.reconcile_cronjob("ns", &cj, &[]).await.unwrap();
+        let creates = api.creates.lock().unwrap().clone();
+        assert_eq!(creates.len(), 2);
+        assert_eq!(creates[0]["metadata"]["name"], creates[1]["metadata"]["name"]);
+        let marks = scheduled(&api.status_puts.lock().unwrap());
+        assert_eq!(marks.len(), 1, "one scheduling write, for the run made");
+        let at = chrono::DateTime::parse_from_rfc3339(&marks[0]).unwrap().with_timezone(&chrono::Utc);
+        assert_eq!(creates[1]["metadata"]["name"], json!(job_name("c", at)));
+    }
+
+    #[tokio::test]
+    async fn an_existing_job_of_this_cronjob_is_the_run() {
+        let api = Arc::new(fake::Api::default());
+        *api.create_status.lock().unwrap() = 409;
+        let url = fake::serve(api.clone()).await;
+        let controller = CronJobController::new(Arc::new(ApiClient::new(&url)));
+        let cj = owed_cronjob();
+        *api.existing.lock().unwrap() = Some(json!({
+            "kind": "Job",
+            "metadata": {"name": "whatever", "ownerReferences": [{"kind": "CronJob", "uid": "cj-uid"}]},
+        }));
+
+        controller.reconcile_cronjob("ns", &cj, &[]).await.unwrap();
+        assert_eq!(scheduled(&api.status_puts.lock().unwrap()).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_existing_job_of_someone_else_is_not_the_run() {
+        let api = Arc::new(fake::Api::default());
+        *api.create_status.lock().unwrap() = 409;
+        let url = fake::serve(api.clone()).await;
+        let controller = CronJobController::new(Arc::new(ApiClient::new(&url)));
+        let cj = owed_cronjob();
+        *api.existing.lock().unwrap() = Some(json!({
+            "kind": "Job",
+            "metadata": {"name": "whatever", "ownerReferences": [{"kind": "CronJob", "uid": "other"}]},
+        }));
+
+        assert!(controller.reconcile_cronjob("ns", &cj, &[]).await.is_err());
+        assert!(scheduled(&api.status_puts.lock().unwrap()).is_empty());
     }
 }
 

@@ -4,6 +4,13 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### CronJob failed Job create consumes the run (#364, review f522089c5539) — IN PROGRESS 2026-11-20
+- [x] cronjob.rs: `create_job` returns the error; AlreadyExists accepted
+  only for a Job owned by this CronJob; Job named `<cj>-<unix minutes>` of
+  the scheduled time; `lastScheduleTime` written only after.
+- [x] Units against a fake apiserver (503 then 201; 409 ours; 409 not ours).
+- [ ] sc-build; close.
+
 ### StatefulSet lowest missing ordinal (#363, review c1b3be631b68) — DONE 2026-11-20
 - [x] statefulset.rs: `plan` (Create lowest missing / WaitFor unready lower /
   Delete highest condemned / Settled), `ordinal_of` (`<sts>-N` only), a

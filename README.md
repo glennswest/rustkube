@@ -726,7 +726,7 @@ create defaults selector, labels and replicas from the template; `/scale`
 served, #125), StatefulSet (`OrderedReady`: the lowest missing ordinal is
 made once every lower Pod is Ready, the highest beyond `replicas` removed
 when none is missing, a finished Pod deleted and made again, #363), DaemonSet (every
-eligible node, Ready or not; places pods itself), Job (one whose `spec.managedBy` names another controller is left to it, #285; the field is validated and immutable), CronJob, ephemeral volumes (a Pod's generic ephemeral volume gets its
+eligible node, Ready or not; places pods itself), Job (one whose `spec.managedBy` names another controller is left to it, #285; the field is validated and immutable), CronJob (a run's Job is named `<cronjob>-<unix minutes of the scheduled time>`, as upstream; `lastScheduleTime` advances only once that Job is created, or already exists owned by the CronJob — a failed create fails the pass and is retried, #364), ephemeral volumes (a Pod's generic ephemeral volume gets its
 `<pod>-<volume>` PVC from `volumeClaimTemplate`, owned by the Pod; a claim of
 that name the Pod does not own is left alone with a Warning Event, #94),
 ResourceQuota (`status.hard` and `status.used` per quota from
