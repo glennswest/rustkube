@@ -883,7 +883,13 @@ exists.
 - **Filters:** node Ready, not unschedulable, taints/tolerations,
   `nodeSelector`, required node affinity (which is how `kubernetes.io/arch`
   is enforced), `nodeName`, inter-pod affinity and anti-affinity, topology
-  spread (`DoNotSchedule`), resource fit (pod-level requests honoured, #73;
+  spread (`DoNotSchedule`), resource fit (pod-level requests replace the
+  container total for the resources they name — cpu, memory, hugepages —
+  and only those, #73, #365; a regular container or sidecar is charged the
+  largest of its spec request, its status `resources.requests` and its
+  `allocatedResources`, status matched by name, so a shrink not yet
+  actuated still holds the larger size, #365; quantities read as strings or
+  JSON numbers;
   containers, init containers and sidecars added as upstream's PodRequests,
   #285 — a `restartPolicy: Always` init container adds to the pod, an
   ordinary one runs beside the sidecars before it; the same total for
@@ -893,7 +899,8 @@ exists.
   `Insufficient <name>` when it exceeds what is free, an extended resource
   the node does not advertise counting as 0 and `ephemeral-storage` checked
   only on a node that reports it, #297; preemption makes room by the same rule),
-  Pod count: at most `allocatable.pods` non-terminal Pods per node, bound or
+  Pod count: at most `allocatable.pods` (a quantity: `1k` is 1000, #365)
+  non-terminal Pods per node, bound or
   with a bind in flight (#194); a VMI takes one through its launcher Pod
   (#203), not itself,
   and volume binding: PV node affinity, `CSIStorageCapacity`,

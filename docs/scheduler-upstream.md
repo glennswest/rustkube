@@ -63,10 +63,13 @@ the kubelet will do.
 1. **`max(spec, actuated, allocated)` resource accounting.** In-place pod
    resize is GA-*locked* in v1.35, so accounting from `spec.requests` alone is
    wrong on a shrink — the pod still holds the larger amount until the kubelet
-   actuates. Also pod-level requests (beta-on in v1.34). *Done, approximately,
-   in v0.14.1 (#73): `filter::pod_requests` takes pod-level requests when set,
-   and the larger of spec and `status.containerStatuses[].resources` /
-   `allocatedResources` per container.*
+   actuates. Also pod-level requests (beta-on in v1.34). *Done (#73, made
+   upstream's rule in #365): `filter::pod_request_map` charges each regular
+   container and sidecar the per-resource maximum of its spec, its status
+   `resources.requests` and its `allocatedResources` (status matched by
+   name), aggregates them as `PodRequests` does, then lets pod-level requests
+   replace the resources they name. Upstream's infeasible-resize case (spec
+   ignored) is not taken: the spec still counts, the pessimistic side.*
 2. **NUMA taints + `TopologyAffinityError` backoff**, per above.
 3. **Topology spread rather than anti-affinity for spreading.** *Done
    (`spread.rs`).* The argument is
