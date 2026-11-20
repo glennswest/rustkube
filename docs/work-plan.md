@@ -4,15 +4,18 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### RS/RC adoption and release (#295, P2) — IN PROGRESS 2026-11-20
+### RS/RC adoption and release (#295, P2) — WAITING on stormcluster f1de3f6 installed, then the rig (2026-11-20)
 - [x] `replicaset::claim` (keep / release / adopt) and `claim_pods` (merge
   patches with the Pod's resourceVersion; uncached owner read before adopting;
   a refused write fails the pass rather than making a replacement).
 - [x] Pods dependency routed by `pod_membership`; `pod_selector` covers
   ReplicaSet and ReplicationController (RC selector defaults to template labels).
 - [x] Units (claim, selectors), rig `replication-controller` (RC + RS).
-- [ ] sc-build; stage; rig with the next `rigs` run (pve machines wait for
-  stormcluster f1de3f6); close.
+- [x] sc-build caa709b passed (all tests); a1ffe89 (a clippy lint, #356)
+  controller-manager tests passed. Stage 1931fbd6b23b.
+- [ ] Rig `replication-controller` with the next `rigs` run. Proposed
+  `--after-install stormcluster>=f1de3f6`; then run `rigs` on main and close
+  (#297 waits on the same run).
 
 ### Pod updates around SCC (#359, P0, review 198fa7c65883) — DONE 2026-11-20
 The review ran at 112d7e1 (2026-11-18), before #350's fix 3cef5d0
