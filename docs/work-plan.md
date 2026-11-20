@@ -53,8 +53,10 @@ Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
 - [x] Stage requested: build 66b75601b500.
 - [ ] Rig `extended-resources`: runs 2882f2953e (pvetest2) and 0b04739c2f
   (pvetest1) ended `infrastructure` (stormcluster/stormlb APIs down on every
-  pve test machine, stormcluster#128). Proposed --after stormcluster#128; then
-  `stormcentral test run rustkube rigs --tag pvetest1 --commit 165db40`, close.
+  pve test machine, stormcluster#128). #128's fix is stormcluster f1de3f6, not
+  in 12.97: proposed `--after-install stormcluster>=f1de3f6` (19:19Z). Then
+  `stormcentral test run rustkube rigs --tag <that machine> --commit <main>`,
+  which also runs #357/#358/#359's rig checks; close.
 
 ### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
