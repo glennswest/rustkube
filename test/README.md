@@ -342,7 +342,9 @@ dryRun not forwarded, 409/404 cases, `edit` allowed and `view` refused.
 
 `e2e/replication-controller.sh` (#125, suite `rigs`): defaults from the
 template, Pods owned by kind ReplicationController, status, `/scale` GET /
-PUT / PATCH, a deleted Pod replaced, orphan and background deletes.
+PUT / PATCH, a deleted Pod replaced, orphan and background deletes; for an
+RC and a ReplicaSet, a matching orphan Pod adopted with no extra Pod made,
+then relabelled, released (kept) and replaced (#295).
 
 `e2e/service-nodeport.sh` (#132, suite `rigs`): node ports for NodePort
 and LoadBalancer, named/taken/out-of-range/ClusterIP-named ports, TCP+UDP on

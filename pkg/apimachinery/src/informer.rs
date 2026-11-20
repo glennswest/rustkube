@@ -201,12 +201,19 @@ fn indexes(object: &Value, key: &Key) -> HashSet<Index> {
 /// Normalize the two Pod selector schemas without conflating absent and empty.
 pub fn pod_selector(object: &Value) -> Option<Value> {
     let selector = &object["spec"]["selector"];
-    if !selector.is_object() {
-        return None;
-    }
     match object["kind"].as_str() {
+        // An RC's selector defaults to its template's labels, as upstream's
+        // defaulting does (#295).
+        Some("ReplicationController") => {
+            let labels = match selector.as_object() {
+                Some(m) if !m.is_empty() => selector,
+                _ => &object["spec"]["template"]["metadata"]["labels"],
+            };
+            labels.is_object().then(|| serde_json::json!({"matchLabels": labels}))
+        }
+        _ if !selector.is_object() => None,
         Some("Service") => Some(serde_json::json!({"matchLabels": selector})),
-        Some("PodDisruptionBudget") => Some(selector.clone()),
+        Some("PodDisruptionBudget" | "ReplicaSet") => Some(selector.clone()),
         _ => None,
     }
 }
@@ -548,6 +555,21 @@ mod tests {
         assert!(store
             .acknowledge_since(object("new", "new-rv", "owner"), std::time::Instant::now())
             .is_ok());
+    }
+
+    #[test]
+    fn workload_selectors_are_pod_selectors() {
+        // #295: ReplicaSets and ReplicationControllers are indexed by the
+        // Pods they select, so an orphan's change wakes its would-be owner.
+        let rs = json!({"kind":"ReplicaSet","spec":{"selector":{"matchLabels":{"app":"a"}}}});
+        assert_eq!(pod_selector(&rs), Some(json!({"matchLabels":{"app":"a"}})));
+        let rc = json!({"kind":"ReplicationController","spec":{"selector":{"app":"a"}}});
+        assert_eq!(pod_selector(&rc), Some(json!({"matchLabels":{"app":"a"}})));
+        // Upstream defaults an RC's selector to its template's labels.
+        let rc = json!({"kind":"ReplicationController","spec":{"template":{"metadata":{"labels":{"app":"b"}}}}});
+        assert_eq!(pod_selector(&rc), Some(json!({"matchLabels":{"app":"b"}})));
+        assert_eq!(pod_selector(&json!({"kind":"ReplicationController","spec":{}})), None);
+        assert_eq!(pod_selector(&json!({"kind":"Deployment","spec":{"selector":{"matchLabels":{"app":"a"}}}})), None);
     }
 
     #[test]

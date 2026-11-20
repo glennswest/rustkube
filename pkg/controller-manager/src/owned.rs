@@ -246,7 +246,12 @@ pub fn selected_pods(object: &Value, pods: &Feed) -> anyhow::Result<Vec<Value>> 
         return Ok(Vec::new());
     };
     let ns = object["metadata"]["namespace"].as_str().unwrap_or("");
-    let anchors = apimachinery::informer::selector_anchors(&selector);
+    pods_matching(&selector, ns, pods)
+}
+
+/// The Pods of `ns` a label selector matches, read as [`selected_pods`] does.
+pub fn pods_matching(selector: &Value, ns: &str, pods: &Feed) -> anyhow::Result<Vec<Value>> {
+    let anchors = apimachinery::informer::selector_anchors(selector);
     let candidates = if anchors.is_empty() {
         pods.select(&Index::Namespace(ns.into()))?
     } else {
@@ -261,7 +266,7 @@ pub fn selected_pods(object: &Value, pods: &Feed) -> anyhow::Result<Vec<Value>> 
         .into_iter()
         .filter(|pod| {
             pod["metadata"]["namespace"].as_str().unwrap_or("") == ns
-                && apimachinery::selector::matches(&selector, &pod["metadata"]["labels"])
+                && apimachinery::selector::matches(selector, &pod["metadata"]["labels"])
                 && Key::of(pod).is_ok_and(|key| seen.insert(key))
         })
         .collect())

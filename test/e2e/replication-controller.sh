@@ -16,6 +16,10 @@
 # - pods carry their template's annotations (#256; finalizers: unit tests): the RC's
 #   Pods, and a Deployment's (through its ReplicaSet), including
 #   kubectl.kubernetes.io/restartedAt after a `rollout restart`-style patch
+# - adoption and release (#295), for an RC and a ReplicaSet: an orphan Pod
+#   matching a new controller's selector is adopted (its controller
+#   ownerReference) and no extra Pod is made; relabelled so it no longer
+#   matches, it is released (the reference gone, the Pod kept) and replaced
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -98,6 +102,38 @@ eventually("orphan delete: the Pods stay, without the owner",
            lambda: req("GET", NS + "/replicationcontrollers/orph")[0] == 404 and len(pods("orph")) == 2 and len(pods("orph", ouid)) == 0)
 req("DELETE", NS + "/replicationcontrollers/web", {"propagationPolicy": "Background"})
 eventually("background delete: the GC removes its Pods", lambda: len(pods("web")) == 0, 60)
+
+# #256 is below; first #295, as the conformance specs "should adopt matching
+# pods on creation" and "should release no longer matching pods" do.
+def orphan(name, app):
+    code, out = req("POST", NS + "/pods", {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "labels": {"app": app}},
+                                           "spec": {"containers": [{"name": "c", "image": "pause"}]}})
+    if code != 201: print(f"setup {name}: {code} {out}"); sys.exit(100)
+def controlled_by(name, owner):
+    code, o = req("GET", f"{NS}/pods/{name}")
+    return code == 200 and any(r["uid"] == owner and r.get("controller") for r in o["metadata"].get("ownerReferences", []))
+def adopt_and_release(what, path, body, app):
+    orphan(f"{app}-orphan", app)
+    code, owner = req("POST", path, body)
+    if code != 201: return check(False, f"{what}: create ({code} {owner})")
+    ouid = owner["metadata"]["uid"]
+    eventually(f"{what}: the matching orphan Pod is adopted", lambda: controlled_by(f"{app}-orphan", ouid))
+    time.sleep(3)
+    check(len(pods(app, ouid)) == 1, f"{what}: no extra Pod beside the adopted one ({len(pods(app, ouid))})")
+    code, _ = req("PATCH", f"{NS}/pods/{app}-orphan", {"metadata": {"labels": {"app": app + "-gone"}}}, "application/merge-patch+json")
+    check(code == 200, f"{what}: relabel ({code})")
+    eventually(f"{what}: the relabelled Pod is released and kept",
+               lambda: req("GET", f"{NS}/pods/{app}-orphan")[0] == 200 and not controlled_by(f"{app}-orphan", ouid))
+    eventually(f"{what}: …and replaced", lambda: len(pods(app, ouid)) == 1)
+    req("DELETE", f"{path}/{body['metadata']['name']}", {"propagationPolicy": "Background"})
+    req("DELETE", f"{NS}/pods/{app}-orphan")
+tmpl = lambda app: {"metadata": {"labels": {"app": app}}, "spec": {"containers": [{"name": "c", "image": "pause"}]}}
+adopt_and_release("RC", NS + "/replicationcontrollers",
+                  {"apiVersion": "v1", "kind": "ReplicationController", "metadata": {"name": "adopt"},
+                   "spec": {"replicas": 1, "selector": {"app": "adopt"}, "template": tmpl("adopt")}}, "adopt")
+adopt_and_release("ReplicaSet", "/apis/apps/v1/namespaces/rc-e2e/replicasets",
+                  {"apiVersion": "apps/v1", "kind": "ReplicaSet", "metadata": {"name": "rsadopt"},
+                   "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "rsadopt"}}, "template": tmpl("rsadopt")}}, "rsadopt")
 
 # #256: a Deployment's template annotations reach its Pods through the
 # ReplicaSet; so does `kubectl rollout restart`'s restartedAt.

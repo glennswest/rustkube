@@ -703,7 +703,10 @@ Deployment (rolling updates; old ReplicaSets scaled down by upstream's
 go while the surge pod is still pending, #266), ReplicaSet (a refused Pod
 create or delete sets `ReplicaFailure` True with reason `FailedCreate` /
 `FailedDelete` and the API's message, kept until a pass is not refused or the
-count is reached, as upstream; RCs too, #125), ReplicationController (the
+count is reached, as upstream; RCs too, #125; each pass first claims its
+Pods as upstream's `ClaimPods`: a matching orphan Pod not being deleted is
+adopted, after an uncached read of the owner, and a Pod it controls whose
+labels stopped matching is released and replaced, #295), ReplicationController (the
 ReplicaSet reconcile over core/v1, Pods owned by kind `ReplicationController`;
 create defaults selector, labels and replicas from the template; `/scale`
 served, #125), StatefulSet, DaemonSet (every

@@ -8,8 +8,13 @@
 //! selector, as upstream's own controller treats it: the same reconcile runs
 //! over `/api/v1/replicationcontrollers` ([`Kind::REPLICATION_CONTROLLER`]),
 //! its Pods owned by kind `ReplicationController`, its status written to
-//! `replicationcontrollers/status`. Pods are found by controller
-//! ownerReference, so the selector's shape does not matter here.
+//! `replicationcontrollers/status`.
+//!
+//! Each pass claims its Pods first (#295), as upstream's
+//! `ControllerRefManager.ClaimPods`: a Pod it controls whose labels no longer
+//! match the selector is released (its ownerReference removed), and an
+//! orphan Pod (no controller) that matches, and is not being deleted, is
+//! adopted. Only what it then controls is counted.
 
 use crate::backoff::CreateBackoff;
 use crate::runner::ApiClient;
@@ -74,7 +79,8 @@ impl ReplicaSetController {
         &self,
         namespace: &str,
         rs: &Value,
-        all_pods: &[Value],
+        children: &[Value],
+        candidates: &[Value],
     ) -> anyhow::Result<()> {
         let rs_name = rs["metadata"]["name"]
             .as_str()
@@ -90,16 +96,9 @@ impl ReplicaSetController {
         }
         let desired = rs["spec"]["replicas"].as_u64().unwrap_or(1) as usize;
 
-        // All pods owned by this ReplicaSet (by controller ownerReference).
-        let owned: Vec<&Value> = all_pods
-            .iter()
-            .filter(|pod| {
-                pod["metadata"]["ownerReferences"]
-                    .as_array()
-                    .map(|refs| refs.iter().any(|r| r["uid"].as_str() == Some(rs_uid)))
-                    .unwrap_or(false)
-            })
-            .collect();
+        // The Pods it controls, after adopting and releasing (#295).
+        let owned_pods = self.claim_pods(namespace, rs, children, candidates).await?;
+        let owned: Vec<&Value> = owned_pods.iter().collect();
 
         // Partition into active (counts toward `replicas`) and terminal. A pod
         // already being deleted (deletionTimestamp set) is going away, so it is
@@ -298,6 +297,151 @@ impl ReplicaSetController {
     }
 }
 
+impl ReplicaSetController {
+    /// Release, then adopt, as upstream's `ClaimPods` (#295); the Pods it
+    /// controls afterwards. A write refused for any reason but the Pod being
+    /// gone fails the pass, which is retried: counting a Pod it failed to
+    /// adopt as missing would make a replacement for it.
+    async fn claim_pods(
+        &self,
+        namespace: &str,
+        rs: &Value,
+        children: &[Value],
+        candidates: &[Value],
+    ) -> anyhow::Result<Vec<Value>> {
+        let rs_uid = rs["metadata"]["uid"].as_str().unwrap_or("");
+        let rs_name = rs["metadata"]["name"].as_str().unwrap_or("");
+        let selector = workload_selector(&self.kind, rs);
+        let plan = claim(rs_uid, selector.as_ref(), children, candidates);
+        let mut owned: Vec<Value> = plan.keep.into_iter().cloned().collect();
+        let pod_path = |pod: &Value| {
+            format!("/api/v1/namespaces/{namespace}/pods/{}", pod["metadata"]["name"].as_str().unwrap_or(""))
+        };
+        for pod in plan.release {
+            let refs: Vec<Value> = owner_refs(pod).into_iter().filter(|r| r["uid"].as_str() != Some(rs_uid)).collect();
+            let patch = json!({"metadata": {"resourceVersion": pod["metadata"]["resourceVersion"], "ownerReferences": refs}});
+            match self.api.patch_merge(&pod_path(pod), &patch).await {
+                Ok(_) => info!("Released pod {} from {} {namespace}/{rs_name}: its labels no longer match", pod_path(pod), self.kind.kind),
+                Err(e) if gone(&e) => {}
+                Err(e) => return Err(e.context(format!("releasing {}", pod_path(pod)))),
+            }
+        }
+        if plan.adopt.is_empty() {
+            return Ok(owned);
+        }
+        // Upstream checks the owner itself, uncached, before adopting: a
+        // ReplicaSet deleted or recreated since the feed saw it must not
+        // take Pods.
+        let path = format!("{}/namespaces/{namespace}/{}/{rs_name}", self.kind.base, self.kind.plural);
+        let fresh: Value = self.api.get(&path).await?.json().await?;
+        if fresh["metadata"]["uid"].as_str() != Some(rs_uid) || !fresh["metadata"]["deletionTimestamp"].is_null() {
+            debug!("{} {namespace}/{rs_name} changed before adopting; not adopting", self.kind.kind);
+            return Ok(owned);
+        }
+        let ours = owner_ref(&self.kind, rs_name, rs_uid);
+        for pod in plan.adopt {
+            let mut refs = owner_refs(pod);
+            refs.push(ours.clone());
+            let patch = json!({"metadata": {"resourceVersion": pod["metadata"]["resourceVersion"], "ownerReferences": refs}});
+            match self.api.patch_merge(&pod_path(pod), &patch).await {
+                Ok(adopted) => {
+                    info!("Adopted pod {} into {} {namespace}/{rs_name}", pod_path(pod), self.kind.kind);
+                    owned.push(adopted);
+                }
+                Err(e) if gone(&e) => {}
+                Err(e) => return Err(e.context(format!("adopting {}", pod_path(pod)))),
+            }
+        }
+        Ok(owned)
+    }
+}
+
+/// A write to a Pod that no longer exists.
+fn gone(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<reqwest::Error>()
+        .and_then(reqwest::Error::status)
+        .is_some_and(|s| s == reqwest::StatusCode::NOT_FOUND)
+}
+
+fn owner_refs(pod: &Value) -> Vec<Value> {
+    pod["metadata"]["ownerReferences"].as_array().cloned().unwrap_or_default()
+}
+
+/// The uid of the Pod's controller, if it has one.
+fn controller_uid(pod: &Value) -> Option<&str> {
+    pod["metadata"]["ownerReferences"]
+        .as_array()?
+        .iter()
+        .find(|r| r["controller"].as_bool() == Some(true))
+        .and_then(|r| r["uid"].as_str())
+}
+
+/// The controller reference a ReplicaSet's Pods carry.
+fn owner_ref(kind: &Kind, rs_name: &str, rs_uid: &str) -> Value {
+    json!({
+        "apiVersion": kind.api_version,
+        "kind": kind.kind,
+        "name": rs_name,
+        "uid": rs_uid,
+        "controller": true,
+        "blockOwnerDeletion": true
+    })
+}
+
+/// The label selector its Pods match (#295): a ReplicaSet's
+/// `spec.selector`; an RC's label map, or its template's labels when it names
+/// none. Read by this controller's kind, not the object's `kind` field. None
+/// for an empty selector, which would claim every Pod in the namespace.
+fn workload_selector(kind: &Kind, rs: &Value) -> Option<Value> {
+    let mut typed = rs.clone();
+    typed["kind"] = json!(kind.kind);
+    let selector = apimachinery::informer::pod_selector(&typed)?;
+    let empty = |field: &str| match &selector[field] {
+        Value::Object(m) => m.is_empty(),
+        Value::Array(a) => a.is_empty(),
+        _ => true,
+    };
+    (!(empty("matchLabels") && empty("matchExpressions"))).then_some(selector)
+}
+
+/// What one pass does with the Pods (#295), as upstream's `ClaimObject`.
+#[derive(Debug, Default)]
+struct Claim<'a> {
+    /// Controlled by it and still matching.
+    keep: Vec<&'a Value>,
+    /// Controlled by it, labels no longer matching: its reference goes.
+    release: Vec<&'a Value>,
+    /// No controller, matching, not being deleted: it becomes the controller.
+    adopt: Vec<&'a Value>,
+}
+
+/// `children` name it as an owner; `candidates` match its selector. A Pod
+/// another controller controls is left alone either way. Without a usable
+/// selector it keeps what it controls and claims nothing.
+fn claim<'a>(rs_uid: &str, selector: Option<&Value>, children: &'a [Value], candidates: &'a [Value]) -> Claim<'a> {
+    let mut plan = Claim::default();
+    let matches = |pod: &Value| selector.is_some_and(|s| apimachinery::selector::matches(s, &pod["metadata"]["labels"]));
+    for pod in children {
+        if rs_uid.is_empty() || controller_uid(pod) != Some(rs_uid) {
+            continue;
+        }
+        if selector.is_none() || matches(pod) {
+            plan.keep.push(pod);
+        } else {
+            plan.release.push(pod);
+        }
+    }
+    if rs_uid.is_empty() {
+        return plan;
+    }
+    for pod in candidates {
+        if controller_uid(pod).is_none() && pod["metadata"]["deletionTimestamp"].is_null() && matches(pod) {
+            plan.adopt.push(pod);
+        }
+    }
+    plan
+}
+
 /// The status conditions after a pass, as upstream's calculateStatus (#125):
 /// a refused create or delete adds `ReplicaFailure` (True, its reason and the
 /// API's message) unless one is there already, which keeps its transition
@@ -342,14 +486,7 @@ fn build_pod_from_template(
             "name": pod_name,
             "namespace": namespace,
             "labels": labels,
-            "ownerReferences": [{
-                "apiVersion": kind.api_version,
-                "kind": kind.kind,
-                "name": rs_name,
-                "uid": rs_uid,
-                "controller": true,
-                "blockOwnerDeletion": true
-            }]
+            "ownerReferences": [owner_ref(kind, rs_name, rs_uid)]
         },
         "spec": template["spec"],
         "status": {
@@ -383,16 +520,28 @@ impl crate::owned::Controller for ReplicaSetController {
     fn children(&self) -> Option<&'static str> {
         Some("/api/v1/pods")
     }
+    /// Pods by selector, for adoption (#295): an orphan's change wakes the
+    /// ReplicaSets that select it.
+    fn dependencies(&self) -> Vec<crate::owned::Dependency> {
+        vec![crate::owned::Dependency {
+            path: "/api/v1/pods".into(),
+            route: Arc::new(crate::owned::pod_membership),
+        }]
+    }
     async fn reconcile(
         &self,
         object: &Value,
         children: &[Value],
-        _deps: &crate::owned::Deps,
+        deps: &crate::owned::Deps,
     ) -> anyhow::Result<()> {
         let namespace = object["metadata"]["namespace"]
             .as_str()
             .unwrap_or("default");
-        self.reconcile_replicaset(namespace, object, children).await
+        let candidates = match workload_selector(&self.kind, object) {
+            Some(selector) => crate::owned::pods_matching(&selector, namespace, deps.feed(0))?,
+            None => Vec::new(),
+        };
+        self.reconcile_replicaset(namespace, object, children, &candidates).await
     }
 }
 
@@ -418,6 +567,58 @@ mod tests {
             }
         }
         (active, terminal)
+    }
+
+    fn pod(name: &str, labels: Value, controller: Option<&str>) -> Value {
+        let refs: Vec<Value> = controller
+            .map(|uid| json!({"kind": "ReplicaSet", "name": "x", "uid": uid, "controller": true}))
+            .into_iter()
+            .collect();
+        json!({"metadata": {"name": name, "uid": name, "labels": labels, "ownerReferences": refs}})
+    }
+    fn names(v: &[&Value]) -> Vec<String> {
+        v.iter().map(|p| p["metadata"]["name"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn claim_adopts_orphans_releases_strays_and_leaves_others_alone() {
+        // #295, upstream's ClaimPods.
+        let sel = json!({"matchLabels": {"app": "a"}});
+        let children = vec![
+            pod("mine", json!({"app": "a"}), Some("rs")),
+            pod("relabelled", json!({"app": "b"}), Some("rs")),
+            // A non-controller reference to it: not its Pod.
+            json!({"metadata": {"name": "referenced", "labels": {"app": "a"},
+                "ownerReferences": [{"uid": "rs", "controller": false}]}}),
+        ];
+        let mut deleting = pod("deleting-orphan", json!({"app": "a"}), None);
+        deleting["metadata"]["deletionTimestamp"] = json!("2026-11-20T00:00:00Z");
+        let candidates = vec![
+            pod("mine", json!({"app": "a"}), Some("rs")),
+            pod("orphan", json!({"app": "a"}), None),
+            pod("theirs", json!({"app": "a"}), Some("other")),
+            deleting,
+        ];
+        let plan = claim("rs", Some(&sel), &children, &candidates);
+        assert_eq!(names(&plan.keep), ["mine"]);
+        assert_eq!(names(&plan.release), ["relabelled"]);
+        assert_eq!(names(&plan.adopt), ["orphan"]);
+        // No usable selector: keep what it controls, claim nothing.
+        let plan = claim("rs", None, &children, &candidates);
+        assert_eq!((names(&plan.keep), plan.release.len(), plan.adopt.len()), (vec!["mine".to_string(), "relabelled".to_string()], 0, 0));
+    }
+
+    #[test]
+    fn workload_selectors_by_kind() {
+        let rs = json!({"spec": {"selector": {"matchLabels": {"app": "a"}}}});
+        assert_eq!(workload_selector(&Kind::REPLICA_SET, &rs), Some(json!({"matchLabels": {"app": "a"}})));
+        // An empty selector would claim the whole namespace.
+        assert_eq!(workload_selector(&Kind::REPLICA_SET, &json!({"spec": {"selector": {}}})), None);
+        assert_eq!(workload_selector(&Kind::REPLICA_SET, &json!({"spec": {"selector": {"matchLabels": {}}}})), None);
+        let rc = json!({"spec": {"selector": {"app": "a"}}});
+        assert_eq!(workload_selector(&Kind::REPLICATION_CONTROLLER, &rc), Some(json!({"matchLabels": {"app": "a"}})));
+        let rc = json!({"spec": {"template": {"metadata": {"labels": {"app": "t"}}}}});
+        assert_eq!(workload_selector(&Kind::REPLICATION_CONTROLLER, &rc), Some(json!({"matchLabels": {"app": "t"}})));
     }
 
     #[test]
