@@ -4,6 +4,18 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Resource fit counts every scalar resource (#297) — IN PROGRESS 2026-11-20
+Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
+- [ ] `NodeUsage.scalar`: ephemeral-storage, extended resources, hugepages,
+  charged/uncharged from one rule (`filter::pod_scalar_requests`: containers
+  with init/sidecar rules, pod-level, overhead, status max).
+- [ ] Resource fit: `Insufficient <name>`; an extended resource the node does
+  not advertise is 0 (upstream); ephemeral-storage checked only when the node
+  reports it, as cpu/memory are. Preemption inherits it (same filters).
+- [ ] Units: fit, accounting, preemption on `example.com/foo`. Rig
+  `extended-resources` in the day suite.
+- [ ] sc-build, stage, close.
+
 ### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
 - [x] 198fa7c65883 (3cef5d0) — a Pod update (PUT/PATCH/apply, any requester) may
