@@ -15,6 +15,7 @@ pub mod kubevirt;
 pub mod taint;
 pub mod metrics;
 pub mod protobuf;
+pub mod openapi_v2;
 pub mod quantity;
 pub mod pod_resources;
 pub mod quota;

@@ -15,6 +15,12 @@ This mirrors how `k8s.io/apimachinery` + `k8s.io/api` hold the codec used by bot
   `kubernetes/apiextensions-apiserver` repos), branch `release-1.36`.
   Licensed Apache-2.0.
 - `gogoproto/gogo.proto` — https://github.com/gogo/protobuf. Licensed BSD-3-Clause.
+- `github.com/google/gnostic-models/openapiv2/OpenAPIv2.proto` —
+  https://github.com/google/gnostic-models, tag `v0.7.0` (the version
+  Kubernetes `release-1.36` pins in `go.mod`). Licensed Apache-2.0. The
+  `openapi.v2.Document` the protobuf `/openapi/v2` is encoded as (#343,
+  `apimachinery::openapi_v2`); it imports `google/protobuf/any.proto`,
+  which ships with `protoc`.
 
 `authentication/v1`, `authorization/v1` and `node/v1` were added from the
 same branch on 2026-09-27 (#67).
@@ -29,7 +35,7 @@ from `release-1.34` (#137), `networking/v1` from `release-1.36` (#134).
 `autoscaling/v1` (HorizontalPodAutoscaler v1, and the `Scale` of every
 `/scale` subresource) was added from `release-1.36` (#123).
 
-`google/protobuf/descriptor.proto` is not vendored; it ships with `protoc`.
+`google/protobuf/descriptor.proto` and `any.proto` are not vendored; they ship with `protoc`.
 
 ## Updating
 Re-fetch the `generated.proto` for a group from the matching Kubernetes release

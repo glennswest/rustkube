@@ -291,4 +291,25 @@ mod tests {
         assert!(def(None).schema.is_none() && definition(&def(None), false)["x-kubernetes-preserve-unknown-fields"] == true);
         assert!(definition(&def(None), true).get("x-kubernetes-preserve-unknown-fields").is_none(), "v2: an object, as upstream");
     }
+
+    /// The document `/openapi/v2` serves encodes as gnostic's protobuf
+    /// (#343): a CRD with a schema (metadata inline, defaults, int-or-string)
+    /// and one without; the definition and its GVK extension are in it.
+    #[test]
+    fn the_served_v2_document_encodes_as_protobuf() {
+        let schema = json!({"type": "object", "description": "Foo CRD for Testing", "properties": {
+            "spec": {"type": "object", "required": ["size"], "properties": {
+                "size": {"type": "integer", "format": "int32", "minimum": 1, "default": 3},
+                "port": {"x-kubernetes-int-or-string": true, "anyOf": [{"type": "integer"}, {"type": "string"}]},
+                "mode": {"type": "string", "enum": ["a", "b"]},
+                "tags": {"type": "array", "items": {"type": "string"}, "x-kubernetes-list-type": "set"},
+                "labels": {"type": "object", "additionalProperties": {"type": "string"}}}}}});
+        let doc = crate::discovery::openapi_v2_document(&[def(Some(schema)), def(None)]);
+        let pb = apimachinery::openapi_v2::encode_document(&doc).expect("the served document encodes");
+        assert!(!pb.starts_with(b"{"));
+        let has = |needle: &[u8]| pb.windows(needle.len()).any(|w| w == needle);
+        assert!(has(b"com.example.crd-publish-openapi-test-foo.v1.E2eTestFoo"));
+        assert!(has(b"x-kubernetes-group-version-kind") && has(b"\"kind\":\"E2eTestFoo\""));
+        assert!(has(b"Foo CRD for Testing") && has(b"APIVersion defines"));
+    }
 }

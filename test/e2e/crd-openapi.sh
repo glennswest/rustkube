@@ -10,6 +10,10 @@
 # - /openapi/v3 lists `apis/<group>/<version>`; that document has the schema
 #   (with its GVK) and the resource's paths
 # - kubectl explain prints the CRD's description and fields (openapi v3)
+# - /openapi/v2 under client-go's protobuf Accept is protobuf, not JSON;
+#   an Accept offering neither is a 406; `kubectl explain
+#   --output=plaintext-openapiv2` (which reads that protobuf) prints the
+#   CRD's description and fields (#343)
 # - two versions: one renamed → the new name published, the old gone; one
 #   made unserved → its definition removed (and it is no longer served)
 # - CRD deleted → its definitions gone
@@ -105,6 +109,27 @@ if os.environ.get("KUBECTL"):
     check("List of Bars and their specs." in out and "Name of Bar." in out, f"kubectl explain e2etestfoos.spec.bars ({out[:160]!r})")
 else:
     print("SKIP  kubectl explain (no kubectl)")
+
+# The protobuf /openapi/v2 (#343): what client-go's OpenAPISchema() asks for.
+PB = "application/com.github.proto-openapi.spec.v2@v1.0+protobuf"
+def raw_get(path, accept):
+    c = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=30)
+    c.request("GET", path, headers={"Authorization": "Bearer " + os.environ["ADMIN"], "Accept": accept})
+    r = c.getresponse(); body = r.read(); c.close()
+    return r.status, r.getheader("Content-Type", ""), body
+code, ct, body = raw_get("/openapi/v2", PB)
+check(code == 200 and ct == PB and not body.lstrip().startswith(b"{") and b"E2eTestFoo" in body and b"2.0" in body,
+      f"/openapi/v2 under the protobuf Accept is protobuf ({code}, {ct!r}, {body[:16]!r})")
+code, ct, _ = raw_get("/openapi/v2", "application/vnd.kubernetes.protobuf")
+check(code == 406, f"/openapi/v2 under an Accept it cannot serve is a 406 ({code}, {ct!r})")
+if os.environ.get("KUBECTL"):
+    r = subprocess.run([os.environ["KUBECTL"], "--kubeconfig", os.environ["W"] + "/admin.kubeconfig", "explain", "e2etestfoos",
+                        "--output=plaintext-openapiv2"], capture_output=True, text=True)
+    check(r.returncode == 0 and "Foo CRD for Testing" in r.stdout and "Specification of Foo" in r.stdout,
+          f"kubectl explain --output=plaintext-openapiv2 reads the protobuf ({(r.stdout + r.stderr)[:200]!r})")
+    r = subprocess.run([os.environ["KUBECTL"], "--kubeconfig", os.environ["W"] + "/admin.kubeconfig", "explain", "e2etestfoos.spec.bars",
+                        "--output=plaintext-openapiv2"], capture_output=True, text=True)
+    check(r.returncode == 0 and "Name of Bar." in r.stdout, f"…and e2etestfoos.spec.bars ({(r.stdout + r.stderr)[:200]!r})")
 
 # Versions: rename one, unserve one.
 G3 = "crd-publish-openapi-test-multi.example.com"

@@ -40,6 +40,11 @@ static POOL: Lazy<DescriptorPool> = Lazy::new(|| {
     DescriptorPool::decode(bytes.as_ref()).expect("vendored k8s descriptor set is valid")
 });
 
+/// The descriptor pool, for the other wire formats built from it (#343).
+pub(crate) fn pool() -> &'static DescriptorPool {
+    &POOL
+}
+
 /// runtime.Unknown envelope (hand-declared: it is tiny and fixed).
 #[derive(Clone, PartialEq, prost::Message)]
 struct Unknown {

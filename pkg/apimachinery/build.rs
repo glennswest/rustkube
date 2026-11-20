@@ -36,6 +36,8 @@ const PROTOS: &[&str] = &[
     "k8s.io/api/events/v1/generated.proto",
     "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1/generated.proto",
     "k8s.io/apimachinery/pkg/apis/meta/v1/generated.proto",
+    // gnostic's Swagger 2.0 message: the protobuf `/openapi/v2` (#343).
+    "github.com/google/gnostic-models/openapiv2/OpenAPIv2.proto",
 ];
 
 fn main() {

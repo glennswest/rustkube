@@ -4,6 +4,23 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Protobuf /openapi/v2 (#343) — IN PROGRESS 2026-11-19
+- `GET /openapi/v2` under client-go's `Accept:
+  application/com.github.proto-openapi.spec.v2@v1.0+protobuf` answered JSON;
+  client-go failed `proto: cannot parse invalid wire-format data`
+  (`oc explain vm -o plaintext-openapiv2`, pvetest1, 12.95).
+- [x] Vendor gnostic-models v0.7.0 `openapiv2/OpenAPIv2.proto` into the
+  descriptor set; `apimachinery::openapi_v2` negotiates the Accept and
+  encodes the Swagger JSON as `openapi.v2.Document` (extensions/defaults/
+  enums as `Any.yaml`, as gnostic); 406 when nothing acceptable.
+- [x] Unit tests (negotiation, decode of the encoded message, the served
+  document with CRDs). Rig `crd-openapi`: protobuf answer, 406, `kubectl
+  explain --output=plaintext-openapiv2`.
+- [ ] sc-build; `rigs` run on a test machine; ship with a proof.
+- Built-in kinds still have no v2 definitions (upstream-feature-inventory:
+  empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
+  that is the separate built-in-schemas gap, not this issue.
+
 ### Pods keep their template's annotations (#256, P2; nextnfs-operator#2, stormcos-options#26) — COMPLETE 2026-11-19 (ships in a release)
 - `build_pod_from_template` (ReplicaSet/RC) copies only `labels` + `spec`;
   DaemonSet, Job and StatefulSet pod builders do the same. Upstream

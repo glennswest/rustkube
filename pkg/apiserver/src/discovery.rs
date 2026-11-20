@@ -878,19 +878,60 @@ pub(crate) async fn builtin_lists() -> &'static std::collections::BTreeMap<(Stri
 ///
 /// Custom resources are published: one definition per served CRD version,
 /// from its schema (#120, `openapi_crd.rs`).
+///
+/// Encoded as the `Accept` asks (#343): JSON, or gnostic's protobuf
+/// `openapi.v2.Document` under
+/// `application/com.github.proto-openapi.spec.v2@v1.0+protobuf` (what
+/// client-go's `OpenAPISchema()` sends — `kubectl explain -o
+/// plaintext-openapiv2`). An Accept offering neither is a 406.
 pub async fn openapi_v2(
     axum::extract::State(state): axum::extract::State<crate::handlers::AppState>,
-) -> impl IntoResponse {
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use apimachinery::openapi_v2::{self as v2, Format};
+    use axum::http::{header, StatusCode};
+    let accept = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok());
+    let Some(format) = v2::negotiate(accept) else {
+        return (
+            StatusCode::NOT_ACCEPTABLE,
+            Json(json!({
+                "kind": "Status", "apiVersion": "v1", "metadata": {}, "status": "Failure",
+                "reason": "NotAcceptable", "code": 406,
+                "message": format!("only application/json and {} are served", v2::CONTENT_TYPE)
+            })),
+        )
+            .into_response();
+    };
     let defs = state.crd_registry.all_versions().await;
-    Json(json!({
+    let doc = openapi_v2_document(&defs);
+    match format {
+        Format::Json => Json(doc).into_response(),
+        Format::Protobuf => match v2::encode_document(&doc) {
+            Ok(pb) => ([(header::CONTENT_TYPE, v2::CONTENT_TYPE)], pb).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "kind": "Status", "apiVersion": "v1", "metadata": {}, "status": "Failure",
+                    "reason": "InternalError", "code": 500,
+                    "message": format!("encoding /openapi/v2 as protobuf: {e}")
+                })),
+            )
+                .into_response(),
+        },
+    }
+}
+
+/// The Swagger 2.0 document `/openapi/v2` serves, in either encoding.
+pub(crate) fn openapi_v2_document(defs: &[crate::crd::CrdDefinition]) -> serde_json::Value {
+    json!({
         "swagger": "2.0",
         "info": {
             "title": "Kubernetes",
             "version": format!("v1.36.0-rustkube+{}", apimachinery::VERSION)
         },
         "paths": {},
-        "definitions": crate::openapi_crd::v2_definitions(&defs)
-    }))
+        "definitions": crate::openapi_crd::v2_definitions(defs)
+    })
 }
 
 /// GET /openapi/v3 — the OpenAPI v3 group-version index kubectl fetches first.
