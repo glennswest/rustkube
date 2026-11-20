@@ -3,6 +3,7 @@
 ## Unreleased — turbomode (runtime acceptance pending)
 
 ### 2026-11-20
+- **fix(security):** A server-side apply that creates an object refuses a body naming another object (or namespace) than its URL, 400 as upstream and as PUT already did. Admission matches its object by name, so `PATCH …/certificatesigningrequests/x` with `metadata.name: y` skipped it: the CSR was stored at `x` with the client's `Approved` status and its own `spec.username` — the self-approval #350 closed for POST, through apply. `csr-signers` rig: a forged `Approved` dropped on POST and on apply create, neither signed, the mismatched apply a 400 (#357, review finding 27b84965dcae)
 - **build:** `rust-version` 1.75 → 1.82: the code already used `Option::is_none_or` (1.82), so the declared minimum was false and `cargo clippy -D warnings` failed `incompatible_msrv` in `apimachinery` (#354)
 - **build:** The `scheduler` crate is clippy clean (`-D warnings`, all targets): `sort_by_key`, `checked_div`, redundant closures, an array for a test's `vec!`; `schedule_pod`'s eight arguments allowed (#354)
 - **build:** Clippy clean in `apimachinery` at the raised MSRV: `is_none_or` for `map_or(true, …)`, a redundant closure, `reactor`'s test module last (#354)

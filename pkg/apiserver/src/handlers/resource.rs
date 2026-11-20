@@ -520,6 +520,28 @@ pub async fn update_cluster_resource(
     Ok(Json(obj))
 }
 
+/// A body naming another object than its URL is a 400, as upstream's
+/// handlers answer. Checked before admission: `admission::admit` matches
+/// the request to its object by name, so a mismatched one would skip it —
+/// a server-side apply create named `x` with `metadata.name: y` was stored
+/// at `x` with no CSR status reset and no requester stamp (#357, review
+/// finding 27b84965dcae).
+fn url_identity(meta: &Value, name: &str, namespace: Option<&str>) -> Result<(), ApiError> {
+    if let Some(n) = meta["name"].as_str().filter(|n| !n.is_empty() && *n != name) {
+        return Err(ApiError::bad_request(&format!(
+            "the name of the object ({n}) does not match the name on the URL ({name})"
+        )));
+    }
+    if let (Some(ns), Some(want)) = (meta["namespace"].as_str().filter(|n| !n.is_empty()), namespace) {
+        if ns != want {
+            return Err(ApiError::bad_request(&format!(
+                "the namespace of the object ({ns}) does not match the namespace on the URL ({want})"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// PUT of a whole object: the body replaces the stored one, **except for what
 /// the server owns**.
 ///
@@ -550,25 +572,7 @@ pub(crate) async fn put_object(
         body["metadata"] = json!({});
     }
     let meta = &body["metadata"];
-    let bad_request = |message: String| ApiError {
-        status: StatusCode::BAD_REQUEST,
-        reason: "BadRequest".into(),
-        message,
-        continue_token: None,
-        details: None,
-    };
-    if let Some(n) = meta["name"].as_str().filter(|n| !n.is_empty() && *n != name) {
-        return Err(bad_request(format!(
-            "the name of the object ({n}) does not match the name on the URL ({name})"
-        )));
-    }
-    if let (Some(ns), Some(want)) = (meta["namespace"].as_str().filter(|n| !n.is_empty()), namespace) {
-        if ns != want {
-            return Err(bad_request(format!(
-                "the namespace of the object ({ns}) does not match the namespace on the URL ({want})"
-            )));
-        }
-    }
+    url_identity(meta, name, namespace)?;
     let stored_uid = existing["metadata"]["uid"].clone();
     if let Some(u) = meta["uid"].as_str().filter(|u| !u.is_empty()) {
         if Some(u) != stored_uid.as_str() {
@@ -1752,6 +1756,7 @@ pub(crate) async fn patch_stored_object(
                 // No existing owners on a create, so this never conflicts.
                 let mut obj = crate::apply::server_side_apply(json!({}), &applied, &field_manager, &now, true)
                     .expect("create apply cannot conflict");
+                url_identity(&obj["metadata"], name, namespace)?; // #357
                 ensure_metadata(&mut obj, name, namespace);
                 if let Some(ns) = namespace {
                     crate::builtin_admission::admit_create(
@@ -3031,6 +3036,22 @@ mod status_put_tests {
             "fieldManager=t", b"apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w2}\nspec: {size: 1}\nstatus: {phase: Hacked}\n",
             Strategy::custom(true)).await.unwrap();
         assert!(out.get("status").is_none(), "{out}");
+
+        // #357 (review finding 27b84965dcae): an apply create whose body names
+        // another object than the URL is a 400 and stores nothing. Admission
+        // matches its object by name, so a mismatch skipped it: a CSR came out
+        // with the client's `Approved` status and no requester stamp.
+        let key3 = ResourceStorage::namespaced_key("example.com/widgets", "default", "w3");
+        let err = patch_stored_object(&s, &key3, "widgets", "w3", Some("default"), &hdr("application/apply-patch+yaml"),
+            "fieldManager=t", b"apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: other}\nstatus: {phase: Hacked}\n",
+            Strategy::custom(true)).await.unwrap_err();
+        assert_eq!((err.status, err.reason.as_str()), (StatusCode::BAD_REQUEST, "BadRequest"), "{}", err.message);
+        assert!(err.message.contains("does not match the name on the URL (w3)"), "{}", err.message);
+        assert!(s.storage.get(&key3).await.is_err(), "nothing is stored at w3");
+        let err = patch_stored_object(&s, &key3, "widgets", "w3", Some("default"), &hdr("application/apply-patch+yaml"),
+            "fieldManager=t", b"apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: w3, namespace: kube-system}\n",
+            Strategy::custom(true)).await.unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST, "{}", err.message);
 
         // Writable: status is an ordinary field.
         let out = patch_stored_object(&s, &key, "widgets", "w1", Some("default"), &hdr("application/merge-patch+json"),

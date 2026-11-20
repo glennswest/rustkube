@@ -9,13 +9,17 @@
 # - kubelet-serving (external): not approved; approved by hand, not signed
 # - stormcert.io/workload (another signer's): approved by hand, not signed
 # - kube-apiserver-client: not auto-approved; approved by hand, signed
+# - a client-supplied `Approved` status is never stored (#350, #357; review
+#   finding 27b84965dcae): dropped on POST and on a server-side apply create,
+#   neither signed; an apply create whose body names another CSR than its URL
+#   is a 400 and creates neither
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 RK_CM_ARGS="--cluster-signing-cert-file $W/ca.crt --cluster-signing-key-file $W/ca.key --csr-external-signer-names kubernetes.io/kubelet-serving"
 start_controller_manager
-for n in kc ks sc ac; do
+for n in kc ks sc ac pa aa; do
   openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$W/$n.key" -out "$W/$n.csr" \
     -subj "/O=system:nodes/CN=system:node:n1" 2>/dev/null || exit 100
 done
@@ -27,10 +31,10 @@ failed = 0
 def check(ok, what):
     global failed
     print(("PASS  " if ok else "FAIL  ") + what, flush=True); failed += 0 if ok else 1
-def req(method, path, body=None):
+def req(method, path, body=None, ctype="application/json"):
     c = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=30)
     c.request(method, path, body=None if body is None else json.dumps(body),
-              headers={"Authorization": "Bearer " + os.environ["ADMIN"], "Content-Type": "application/json"})
+              headers={"Authorization": "Bearer " + os.environ["ADMIN"], "Content-Type": ctype})
     r = c.getresponse(); raw = r.read(); c.close()
     try: return r.status, json.loads(raw)
     except ValueError: return r.status, raw
@@ -67,6 +71,24 @@ check(until(lambda: signed(get("api-client"))), "kube-apiserver-client approved 
 time.sleep(4)
 check(not signed(get("kubelet-serving")), "kubelet-serving (external) approved by hand: not signed here")
 check(not signed(get("stormcert")), "stormcert.io/workload (another signer's): not signed")
+
+# A client-supplied Approved status (#350, #357): a requester must not approve
+# its own CSR by writing the condition into the object it creates.
+forged = {"conditions": [{"type": "Approved", "status": "True", "reason": "Self", "message": "forged"}]}
+def body(name, file):
+    pem = base64.b64encode(open(f"{W}/{file}.csr", "rb").read()).decode()
+    return {"apiVersion": "certificates.k8s.io/v1", "kind": "CertificateSigningRequest", "metadata": {"name": name},
+            "spec": {"request": pem, "signerName": "kubernetes.io/kube-apiserver-client", "usages": client}, "status": forged}
+code, o = req("POST", P, body("post-approved", "pa"))
+check(code == 201 and not approved(o) and not signed(o), f"POST with an Approved status: stored without it ({code})")
+APPLY = "application/apply-patch+yaml"
+code, o = req("PATCH", f"{P}/apply-x?fieldManager=e2e", body("apply-y", "aa"), APPLY)
+check(code == 400 and req("GET", f"{P}/apply-x")[0] == 404 and req("GET", f"{P}/apply-y")[0] == 404,
+      f"apply create naming another CSR than its URL: 400, nothing created ({code} {o if code != 400 else ''})")
+code, o = req("PATCH", f"{P}/apply-approved?fieldManager=e2e", body("apply-approved", "aa"), APPLY)
+check(code in (200, 201) and not approved(o) and not signed(o), f"apply create with an Approved status: stored without it ({code})")
+time.sleep(4)
+check(not signed(get("post-approved")) and not signed(get("apply-approved")), "neither self-approved CSR is signed")
 sys.exit(failed)
 PY
 report

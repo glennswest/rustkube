@@ -381,7 +381,9 @@ nodes/proxy RBAC (403 without, 200 with), unknown node 404.
 `e2e/csr-signers.sh` (#199, suite `rigs`): the CSR controller signs the
 kubelet-client and (hand-approved) kube-apiserver-client signers, and leaves
 an external signerName (kubelet-serving here) and `stormcert.io/*` unapproved
-or unsigned.
+or unsigned. A client-supplied `Approved` status is dropped on POST and on a
+server-side apply create, neither is signed, and an apply create whose body
+names another CSR than its URL is a 400 (#357).
 
 `e2e/status-put-latency.sh` (#191, suite `rigs`): 300 sequential pod
 status PUTs on an idle apiserver, p50/p99/max as a NOTE (mostly the
