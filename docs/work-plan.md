@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Protobuf /openapi/v2 (#343) — IN PROGRESS 2026-11-19
+### Protobuf /openapi/v2 (#343) — WAITING on rigs run c04777d587 (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:
   application/com.github.proto-openapi.spec.v2@v1.0+protobuf` answered JSON;
   client-go failed `proto: cannot parse invalid wire-format data`
@@ -16,7 +16,8 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [x] Unit tests (negotiation, decode of the encoded message, the served
   document with CRDs). Rig `crd-openapi`: protobuf answer, 406, `kubectl
   explain --output=plaintext-openapiv2`.
-- [ ] sc-build; `rigs` run on a test machine; ship with a proof.
+- [x] sc-build ec978d7 passed; clippy clean in the changed files; stage 7fa5a92f9f2b requested.
+- [ ] `rigs` c04777d587 (pvetest1, queued): crd-openapi protobuf + explain checks; then ship with a proof (`get` of /openapi/v2 under the protobuf Accept).
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
   that is the built-in-schemas gap, #342, not this issue.
