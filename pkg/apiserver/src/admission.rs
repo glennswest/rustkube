@@ -361,6 +361,12 @@ async fn after_mutating(
     if request.group == crate::csr_admission::GROUP && request.resource == crate::csr_admission::RESOURCE {
         crate::csr_admission::admit(request, op, object, old).await?;
     }
+    // A mutating webhook may change a Pod too; what it may change is what a
+    // client may (review finding 198fa7c65883).
+    if let (Operation::Update, Some(stored), "", "pods") = (op, old, request.group.as_str(), request.resource.as_str()) {
+        let resize = request.subresource.as_deref() == Some("resize");
+        crate::builtin_admission::pod_update(stored, object, resize)?;
+    }
     escalation(request, object, old).await
 }
 

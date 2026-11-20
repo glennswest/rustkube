@@ -279,6 +279,121 @@ pub fn pod_gates_update(old: &Value, new: &Value) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// What an update may change in a Pod, as upstream's `ValidatePodUpdate`
+/// (review finding 198fa7c65883). Everything SCC and PodSecurity admission
+/// decided on create lives in the spec — `securityContext`, privileged,
+/// host namespaces, volumes, the UID restricted-v2 chose — and admission ran
+/// on create only, so a PUT or PATCH could replace any of it afterwards and
+/// run the pod as root on the host.
+///
+/// The spec may change only in: each container's and init container's
+/// `image`; `activeDeadlineSeconds` set, or lowered, never removed;
+/// `tolerations` added to (none removed or changed); `schedulingGates`
+/// removed ([`pod_gates_update`]); `nodeName` set once where there was none
+/// (rustkube's scheduler binds with a PUT); and, through `pods/resize` only
+/// (`resize`), containers' `resources` and `resizePolicy`. The
+/// `kubernetes.io/config.mirror` annotation is neither added, changed nor
+/// removed. Ephemeral containers are not served, so they do not change.
+pub fn pod_update(old: &Value, new: &Value, resize: bool) -> Result<(), ApiError> {
+    const MIRROR: &str = "kubernetes.io/config.mirror";
+    let mirror = |p: &Value| p["metadata"]["annotations"][MIRROR].clone();
+    if mirror(old) != mirror(new) {
+        return Err(ApiError::invalid(&format!(
+            "metadata.annotations[{MIRROR}]: Invalid value: {}: field is immutable",
+            mirror(new)
+        )));
+    }
+    let (o, n) = (&old["spec"], &new["spec"]);
+    let mut errs = Vec::new();
+    match (o["activeDeadlineSeconds"].as_i64(), &n["activeDeadlineSeconds"]) {
+        (Some(_), v) if v.is_null() => errs.push(
+            "spec.activeDeadlineSeconds: Invalid value: \"null\": must not update from a positive integer to nil value".to_string(),
+        ),
+        (Some(was), v) if v.as_i64().is_some_and(|now| now > was) => errs.push(format!(
+            "spec.activeDeadlineSeconds: Invalid value: {v}: must be less than or equal to previous value"
+        )),
+        _ => {}
+    }
+    let tolerations = |s: &Value| s["tolerations"].as_array().cloned().unwrap_or_default();
+    let now_tol = tolerations(n);
+    if let Some(gone) = tolerations(o).iter().find(|t| !now_tol.contains(t)) {
+        errs.push(format!("spec.tolerations: Forbidden: existing tolerations can not be modified or removed: {gone}"));
+    }
+    if !errs.is_empty() {
+        return Err(ApiError::invalid(&errs.join(", ")));
+    }
+
+    // The new spec with what may change taken back from the old: equal to
+    // the old one, or the update changed something it may not.
+    let mut mutable = without_nulls(n);
+    let old_spec = without_nulls(o);
+    if let Some(m) = mutable.as_object_mut() {
+        for field in ["activeDeadlineSeconds", "tolerations", "schedulingGates"] {
+            match old_spec.get(field) {
+                Some(v) => m.insert(field.into(), v.clone()),
+                None => m.remove(field),
+            };
+        }
+        if old_spec["nodeName"].as_str().unwrap_or("").is_empty() {
+            match old_spec.get("nodeName") {
+                Some(v) => m.insert("nodeName".into(), v.clone()),
+                None => m.remove("nodeName"),
+            };
+        }
+    }
+    let mut taken = vec!["image"];
+    if resize {
+        taken.extend(["resources", "resizePolicy"]);
+    }
+    for list in ["containers", "initContainers"] {
+        let (Some(now), Some(was)) = (mutable[list].as_array_mut(), old_spec[list].as_array()) else { continue };
+        if now.len() != was.len() {
+            continue; // unequal anyway
+        }
+        for (c, w) in now.iter_mut().zip(was) {
+            let Some(c) = c.as_object_mut() else { continue };
+            for field in &taken {
+                match w.get(*field) {
+                    Some(v) => c.insert((*field).into(), v.clone()),
+                    None => c.remove(*field),
+                };
+            }
+        }
+    }
+    if mutable != old_spec {
+        let changed = changed_fields(&old_spec, &mutable).join(", ");
+        return Err(ApiError::invalid(&format!(
+            "spec: Forbidden: pod updates may not change fields other than `spec.containers[*].image`, \
+             `spec.initContainers[*].image`, `spec.activeDeadlineSeconds`, `spec.tolerations` (only additions \
+             to existing tolerations), `spec.schedulingGates` (only removals) or `spec.nodeName` (only \
+             setting it); changed: {changed}"
+        )));
+    }
+    Ok(())
+}
+
+/// `v` with every `null` member dropped, at any depth: an absent field and a
+/// `null` one are the same field.
+fn without_nulls(v: &Value) -> Value {
+    match v {
+        Value::Object(m) => Value::Object(
+            m.iter().filter(|(_, v)| !v.is_null()).map(|(k, v)| (k.clone(), without_nulls(v))).collect(),
+        ),
+        Value::Array(a) => Value::Array(a.iter().map(without_nulls).collect()),
+        other => other.clone(),
+    }
+}
+
+/// The top-level spec fields that differ, for the refusal.
+fn changed_fields(old: &Value, new: &Value) -> Vec<String> {
+    let mut keys: Vec<String> = old.as_object().into_iter().flatten().map(|(k, _)| k.clone())
+        .chain(new.as_object().into_iter().flatten().map(|(k, _)| k.clone()))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys.into_iter().filter(|k| old.get(k) != new.get(k)).map(|k| format!("spec.{k}")).collect()
+}
+
 /// The validation half of [`pvc_update`]; `Ok(true)` when the storage
 /// request grew.
 fn pvc_update_valid(old: &Value, new: &Value) -> Result<bool, ApiError> {
@@ -1389,5 +1504,107 @@ mod job_managed_by_tests {
         assert_eq!(job_managed_by(Some(&old), &job(json!("acme.io/b"))).unwrap_err().message,
                    r#"spec.managedBy: Invalid value: "acme.io/b": field is immutable"#);
         assert!(job_managed_by(Some(&json!({"spec": {}})), &job(json!("acme.io/a"))).is_err(), "cannot be added later");
+    }
+}
+
+#[cfg(test)]
+mod pod_update_tests {
+    use super::pod_update;
+    use serde_json::{json, Value};
+
+    /// A pod as restricted-v2 admitted it.
+    fn admitted() -> Value {
+        json!({"metadata": {"name": "web", "annotations": {"openshift.io/scc": "restricted-v2"}},
+               "spec": {
+                   "securityContext": {"fsGroup": 1000680000, "seccompProfile": {"type": "RuntimeDefault"}},
+                   "tolerations": [{"key": "node.kubernetes.io/not-ready", "operator": "Exists",
+                                    "effect": "NoExecute", "tolerationSeconds": 300}],
+                   "activeDeadlineSeconds": 600,
+                   "containers": [{"name": "c", "image": "app:1",
+                                   "resources": {"requests": {"cpu": "100m"}},
+                                   "securityContext": {"runAsUser": 1000680000, "runAsNonRoot": true,
+                                       "allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}}}],
+                   "initContainers": [{"name": "i", "image": "init:1"}]}})
+    }
+
+    #[test]
+    fn the_security_context_and_host_access_cannot_be_replaced() {
+        // Review finding 198fa7c65883: each of these was stored.
+        let old = admitted();
+        let edits: [(&str, fn(&mut Value)); 7] = [
+            ("root", |p| p["spec"]["containers"][0]["securityContext"]["runAsUser"] = json!(0)),
+            ("privileged", |p| p["spec"]["containers"][0]["securityContext"] = json!({"privileged": true})),
+            ("pod securityContext", |p| p["spec"]["securityContext"] = json!({})),
+            ("hostNetwork", |p| p["spec"]["hostNetwork"] = json!(true)),
+            ("hostPath", |p| p["spec"]["volumes"] = json!([{"name": "h", "hostPath": {"path": "/"}}])),
+            ("a container", |p| p["spec"]["containers"].as_array_mut().unwrap().push(json!({"name": "d", "image": "x"}))),
+            ("serviceAccount", |p| p["spec"]["serviceAccountName"] = json!("builder")),
+        ];
+        for (what, edit) in edits {
+            let mut new = old.clone();
+            edit(&mut new);
+            let e = pod_update(&old, &new, false).expect_err(what);
+            assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY, "{what}");
+            assert!(e.message.contains("spec: Forbidden: pod updates may not change fields"), "{what}: {}", e.message);
+        }
+        // Nor through pods/resize.
+        let mut new = old.clone();
+        new["spec"]["containers"][0]["securityContext"]["runAsUser"] = json!(0);
+        assert!(pod_update(&old, &new, true).is_err());
+    }
+
+    #[test]
+    fn what_upstream_allows_still_changes() {
+        let old = admitted();
+        assert!(pod_update(&old, &old, false).is_ok(), "unchanged");
+        let mut new = old.clone();
+        new["spec"]["containers"][0]["image"] = json!("app:2");
+        new["spec"]["initContainers"][0]["image"] = json!("init:2");
+        new["spec"]["activeDeadlineSeconds"] = json!(300);
+        new["spec"]["tolerations"].as_array_mut().unwrap().push(json!({"key": "k", "operator": "Exists"}));
+        new["metadata"]["labels"] = json!({"a": "b"});
+        new["metadata"]["annotations"]["x"] = json!("y");
+        new["status"] = json!({"phase": "Running"});
+        assert_eq!(pod_update(&old, &new, false).map_err(|e| e.message), Ok(()));
+
+        // The bind: nodeName set where there was none — once.
+        let mut bound = old.clone();
+        bound["spec"]["nodeName"] = json!("n1");
+        assert!(pod_update(&old, &bound, false).is_ok());
+        let mut moved = bound.clone();
+        moved["spec"]["nodeName"] = json!("n2");
+        assert!(pod_update(&bound, &moved, false).is_err(), "a bound pod does not move");
+
+        // A null and an absent field are the same.
+        let mut nulls = old.clone();
+        nulls["spec"]["hostNetwork"] = Value::Null;
+        assert!(pod_update(&old, &nulls, false).is_ok());
+
+        // resources: through pods/resize only.
+        let mut resized = old.clone();
+        resized["spec"]["containers"][0]["resources"]["requests"]["cpu"] = json!("200m");
+        resized["spec"]["containers"][0]["resizePolicy"] = json!([{"resourceName": "cpu", "restartPolicy": "NotRequired"}]);
+        assert!(pod_update(&old, &resized, true).is_ok());
+        assert!(pod_update(&old, &resized, false).is_err());
+    }
+
+    #[test]
+    fn deadlines_tolerations_and_the_mirror_annotation() {
+        let old = admitted();
+        let mut longer = old.clone();
+        longer["spec"]["activeDeadlineSeconds"] = json!(601);
+        assert!(pod_update(&old, &longer, false).unwrap_err().message.contains("less than or equal to previous value"));
+        let mut unset = old.clone();
+        unset["spec"].as_object_mut().unwrap().remove("activeDeadlineSeconds");
+        assert!(pod_update(&old, &unset, false).is_err());
+
+        let mut dropped = old.clone();
+        dropped["spec"]["tolerations"] = json!([]);
+        assert!(pod_update(&old, &dropped, false).unwrap_err().message.contains("spec.tolerations"));
+
+        let mut mirrored = old.clone();
+        mirrored["metadata"]["annotations"]["kubernetes.io/config.mirror"] = json!("h");
+        assert!(pod_update(&old, &mirrored, false).unwrap_err().message.contains("field is immutable"));
+        assert!(pod_update(&mirrored, &old, false).is_err(), "nor removed");
     }
 }

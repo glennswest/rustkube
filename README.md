@@ -486,7 +486,15 @@ PersistentVolumeClaim or PersistentVolume. **On update**: immutable
 ConfigMaps/Secrets and PriorityClass `value`; a PersistentVolumeClaim's
 spec is immutable but for growing `resources.requests.storage` on a Bound
 claim whose StorageClass has `allowVolumeExpansion` (403 otherwise; shrinking
-only back to `status.capacity`) — volume expansion, docs/storage.md.
+only back to `status.capacity`) — volume expansion, docs/storage.md. A
+client's update of a Pod (PUT, PATCH, apply, and again after mutating
+webhooks) changes only what upstream's pod validation allows: container and
+init-container `image`, `activeDeadlineSeconds` set or lowered, tolerations
+added, scheduling gates removed, `nodeName` set where there was none; a
+container's `resources`/`resizePolicy` only through `pods/resize`; the
+`kubernetes.io/config.mirror` annotation never — 422 `spec: Forbidden: pod
+updates may not change fields …` otherwise, so the security context SCC
+and PodSecurity admitted on create stays (#350).
 
 **Security context constraints, restricted-v2 (#321).** OpenShift manifests —
 no `runAsUser`, no `fsGroup`, no root — run unchanged. Every Namespace gets

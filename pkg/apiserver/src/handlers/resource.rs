@@ -603,7 +603,8 @@ pub(crate) async fn put_object(
 /// apply, `/status`) and a reconciled startup manifest (#158): a Secret's
 /// stringData folded (#101), quantities as strings (#292), a Service's port and spec defaults, immutable fields (ConfigMap/Secret,
 /// PriorityClass), a PersistentVolumeClaim's update rules (#63), a Pod's
-/// scheduling gates (#87), a Job's `spec.managedBy` and `metadata.generation` (#285), and a Service's ClusterIP and node ports (#132),
+/// scheduling gates (#87) and, for a client's update, what may change in a
+/// Pod at all (#350), a Job's `spec.managedBy` and `metadata.generation` (#285), and a Service's ClusterIP and node ports (#132),
 /// whose [`crate::node_port::Plan`] the caller commits once its write lands
 /// or aborts when it fails.
 pub(crate) async fn builtin_update(
@@ -630,6 +631,12 @@ pub(crate) async fn builtin_update(
     }
     if key.starts_with("/registry/pods/") {
         crate::builtin_admission::pod_gates_update(existing, body)?;
+        // A client's update (review finding 198fa7c65883); the apiserver's
+        // own writes (a reconciled manifest) carry no request.
+        if crate::admission::current().is_some() {
+            let resize = crate::admission::subresource().as_deref() == Some("resize");
+            crate::builtin_admission::pod_update(existing, body, resize)?;
+        }
     }
     if key.starts_with("/registry/jobs/") {
         crate::builtin_admission::job_managed_by(Some(existing), body)?;
@@ -2940,6 +2947,47 @@ mod status_put_tests {
     /// patch, JSON patch and server-side apply through the main resource
     /// change spec and leave the stored status; `Writable` objects keep
     /// whole-object semantics.
+    /// Review finding 198fa7c65883: a client's PUT or PATCH of a Pod could
+    /// replace the security context SCC admission set on create.
+    #[tokio::test]
+    async fn a_clients_pod_update_cannot_replace_its_security_context() {
+        let s = state();
+        let key = ResourceStorage::namespaced_key("pods", "default", "p");
+        s.storage.create(&key, json!({
+            "apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": "p", "namespace": "default", "uid": "u1"},
+            "spec": {"containers": [{"name": "c", "image": "app:1",
+                "securityContext": {"runAsUser": 1000680000, "runAsNonRoot": true}}]}})).await.unwrap();
+        let as_user = |method: axum::http::Method| {
+            crate::admission::RequestAttrs::of(
+                "/api/v1/namespaces/default/pods/p", &method, None,
+                crate::auth::UserInfo { username: "alice".into(), groups: vec!["system:authenticated".into()] },
+            ).unwrap()
+        };
+        let root = json!({"metadata": {"name": "p"}, "spec": {"containers": [{"name": "c", "image": "app:1",
+            "securityContext": {"runAsUser": 0, "privileged": true}}]}});
+        let e = crate::admission::with_request(as_user(axum::http::Method::PUT),
+            put_object(&s, &key, "p", Some("default"), root, Strategy::BuiltIn)).await.unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY, "{}", e.message);
+
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(axum::http::header::CONTENT_TYPE, "application/merge-patch+json".parse().unwrap());
+        let body = br#"{"spec":{"hostNetwork":true}}"#;
+        let e = crate::admission::with_request(as_user(axum::http::Method::PATCH),
+            patch_stored_object(&s, &key, "pods", "p", Some("default"), &h, "", body, Strategy::BuiltIn))
+            .await.unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY, "{}", e.message);
+
+        // An image change is an update a client may make.
+        let body = br#"{"spec":{"containers":[{"name":"c","image":"app:2"}]}}"#;
+        h.insert(axum::http::header::CONTENT_TYPE, "application/strategic-merge-patch+json".parse().unwrap());
+        let out = crate::admission::with_request(as_user(axum::http::Method::PATCH),
+            patch_stored_object(&s, &key, "pods", "p", Some("default"), &h, "", body, Strategy::BuiltIn))
+            .await.unwrap();
+        assert_eq!(out["spec"]["containers"][0]["image"], "app:2");
+        assert_eq!(out["spec"]["containers"][0]["securityContext"]["runAsUser"], 1000680000);
+    }
+
     #[tokio::test]
     async fn main_writes_keep_status_when_it_is_a_subresource() {
         let s = state();
