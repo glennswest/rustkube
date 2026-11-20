@@ -66,7 +66,7 @@ pub fn negotiate(accept: Option<&str>) -> Option<Format> {
             "application/json" | "application/*" | "*/*" => Format::Json,
             _ => continue,
         };
-        if best.is_none_or(|(bq, _)| q > bq) {
+        if !matches!(best, Some((bq, _)) if q <= bq) {
             best = Some((q, format));
         }
     }
