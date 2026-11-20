@@ -1536,7 +1536,8 @@ mod pod_update_tests {
     fn the_security_context_and_host_access_cannot_be_replaced() {
         // Review finding 198fa7c65883: each of these was stored.
         let old = admitted();
-        let edits: [(&str, fn(&mut Value)); 7] = [
+        type Edit = (&'static str, fn(&mut Value));
+        let edits: [Edit; 7] = [
             ("root", |p| p["spec"]["containers"][0]["securityContext"]["runAsUser"] = json!(0)),
             ("privileged", |p| p["spec"]["containers"][0]["securityContext"] = json!({"privileged": true})),
             ("pod securityContext", |p| p["spec"]["securityContext"] = json!({})),
