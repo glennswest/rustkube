@@ -4,14 +4,18 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Scheduler request accounting (#365, review 93be2afaffe2, aaa4c9a1bf6c, cc73c69e0514, a5b072e00d6c) — IN PROGRESS 2026-11-20
-- [ ] filter.rs: one request map (`pod_request_map`) — container statuses
-  matched by name, `allocatedResources` read as the map it is, per-container
-  max of spec/actuated/allocated, aggregated by `containers_total` rules;
-  pod-level requests override only the keys they name; JSON numbers read.
-- [ ] quantity.rs: `parse_cpu_millis` takes SI suffixes (`1k`); `parse_quantity`.
-- [ ] pod_count_filter reads `allocatable.pods` as a quantity (`1k`).
-- [ ] Units; sc-build; close.
+### Scheduler request accounting (#365, review 93be2afaffe2, aaa4c9a1bf6c, cc73c69e0514, a5b072e00d6c) — DONE 2026-11-20
+- [x] filter.rs: `pod_request_map` — statuses matched by name,
+  `allocatedResources` read as the map, per-container max of
+  spec/actuated/allocated aggregated via `pod_resources::aggregate`;
+  pod-level requests override only cpu/memory/hugepages keys they name;
+  JSON numbers read (also node allocatable and score.rs).
+- [x] quantity.rs: `parse_quantity`, `cpu_millis`, `base_units`;
+  `parse_cpu_millis` takes SI suffixes (`1k`).
+- [x] pod_count_filter reads `allocatable.pods` as a quantity (`1k`).
+- [x] Units (`request_tests`, `canonical_forms_and_numbers_read_back`);
+  sc-build 3c7a66b passed (build, tests, clippy -D warnings on scheduler +
+  apimachinery). Staged. Closed.
 
 ### CronJob failed Job create consumes the run (#364, review f522089c5539) — DONE 2026-11-20
 - [x] cronjob.rs: `create_job` returns the error; AlreadyExists accepted
