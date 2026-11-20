@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 rcgen = { workspace = true }
+x509-parser = { workspace = true }
 base64 = { workspace = true }
 apimachinery = { workspace = true }
 tokio = { workspace = true }

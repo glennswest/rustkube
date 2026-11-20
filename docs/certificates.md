@@ -31,7 +31,7 @@ No new issuer or trust-root migration should be inferred from this roadmap.
 | controller-manager / scheduler client certs | `gen-pki.sh`, subject is the RBAC identity (`system:kube-controller-manager` / `system:kube-scheduler`, bound to their own least-privilege roles, not cluster-admin, #176) | `deploy/renew-certs.sh`, **no restart** (#105) |
 | admin client cert | `gen-pki.sh`, subject is the RBAC identity | `deploy/renew-certs.sh` (the client reads it per run) |
 | kubelet bootstrap client cert (`CN=kubelet-bootstrap`, `O=system:bootstrappers`) | `gen-pki.sh` | `deploy/renew-certs.sh` |
-| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves the `kubernetes.io/kube-apiserver-client-kubelet` signer, and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file`, only upstream's `kubernetes.io/*` signers; a signerName in `--csr-external-signer-names` it neither approves nor signs — stormcert as the external signer does both (#199, stormcert#51) | the kubelet re-requests |
+| kubelet client certs | `certificates.k8s.io` CSR API; the controller manager auto-approves a `kubernetes.io/kube-apiserver-client-kubelet` CSR only when a node renews its own identity (requester `system:node:<n>` in `system:nodes`, subject exactly `CN=system:node:<n>, O=system:nodes`, no SANs, client-auth usages; #350), and signs only when given `--cluster-signing-cert-file`/`--cluster-signing-key-file`, only upstream's `kubernetes.io/*` signers; a signerName in `--csr-external-signer-names` it neither approves nor signs — stormcert as the external signer does both (#199, stormcert#51) | the kubelet re-requests |
 | service-account signing key (RSA or ECDSA P-256) | `gen-pki.sh` | by overlap, [below](#rotating-the-serviceaccount-key-223) (#223); read at start |
 | front-proxy client cert (`--proxy-client-cert-file`/`--proxy-client-key-file`, CA `--requestheader-client-ca-file`), presented to aggregated API servers (#83) | not issued by `gen-pki.sh` | followed on disk, **no restart** |
 
@@ -255,8 +255,9 @@ signs it (stormcos docs/ENROLLMENT.md). What rustkube does for it:
 - **A bootstrapper** may create only `storm.io/forge-node` CSRs, and read
   only CSRs it filed (GET by name, or a WATCH with `fieldSelector=
   metadata.name=<its CSR>`); no LIST. An enrollment token therefore cannot
-  get a kubelet client certificate, which the controller-manager would
-  auto-approve.
+  get a kubelet client certificate. The controller-manager auto-approves
+  one only for a node renewing its own (#350); any other waits for a
+  person or stormcert.
 - **Renewal** with the machine's own certificate (`system:nodes`) is not
   narrowed (the group is bound to cluster-admin until #228).
 - **Approving and signing** follow upstream: `/approval` needs `approve`,

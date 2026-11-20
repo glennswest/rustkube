@@ -722,8 +722,10 @@ pods are evicted when their toleration, 300 s by default, runs out; #267), PodDi
 (VolumeAttachment), the stormblock provisioner for the in-kubelet blank-clone
 path (claims whose StorageClass's provisioner is `stormblock.storm.io` or
 `stormblock.storm.io/in-kubelet`, #92; the PV it writes takes the claim's
-`volumeMode`, #201; docs/storage.md), the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approval and signing (auto-approves only the
-`kubernetes.io/kube-apiserver-client-kubelet` signer; signs only with
+`volumeMode`, #201; docs/storage.md), the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approval and signing (auto-approves only a node renewing its own
+`kubernetes.io/kube-apiserver-client-kubelet` certificate — requested by
+`system:node:<n>` in `system:nodes` for exactly `CN=system:node:<n>,
+O=system:nodes`, no SANs, client-auth usages; anything else waits for a person; signs only with
 `--cluster-signing-*-file`; signs only upstream's `kubernetes.io/*` signers, never another signerName, and leaves `--csr-external-signer-names` to that signer, #199), PodMigration, and VirtualMachine
 (`start`/`stop`/`restart`; a failed VMI is recreated with backoff under
 `Always`/`RerunOnFailure`/`running: true` and left under `Once`/`Manual`,

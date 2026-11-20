@@ -1,9 +1,11 @@
 //! CertificateSigningRequest controller — the node-join half of the OpenShift
 //! model. Two responsibilities, matching upstream kube-controller-manager:
 //!
-//! 1. **Approve** — auto-approve kubelet client-cert CSRs from bootstrappers
-//!    (signerName `kubernetes.io/kube-apiserver-client-kubelet`). Anything else
-//!    is left pending for a human `kubectl certificate approve`.
+//! 1. **Approve** — auto-approve a node renewing its own kubelet client
+//!    certificate (signerName `kubernetes.io/kube-apiserver-client-kubelet`,
+//!    requested by `system:node:<n>` for exactly `CN=system:node:<n>,
+//!    O=system:nodes`: [`self_node_client`]). Anything else is left pending
+//!    for a human `kubectl certificate approve` or another approver.
 //! 2. **Sign** — for approved CSRs with no issued cert, sign the embedded PKCS#10
 //!    request with the cluster CA and publish the cert in `status.certificate`.
 //!
@@ -78,9 +80,18 @@ impl CsrController {
         }
 
         // 1) Approve eligible, undecided CSRs.
-        if !approved && !denied && self.should_auto_approve(spec) {
-            self.approve(&name, csr).await;
-            return Ok(()); // approval acknowledgement queues signing
+        if !approved && !denied && spec["signerName"].as_str() == Some(KUBELET_CLIENT_SIGNER) {
+            match self_node_client(spec) {
+                Ok(()) => {
+                    self.approve(&name, csr).await;
+                    return Ok(()); // approval acknowledgement queues signing
+                }
+                // Left pending for a person (or an approver that knows more).
+                Err(why) => {
+                    tracing::debug!("CSR {name}: not auto-approved: {why}");
+                    return Ok(());
+                }
+            }
         }
 
         // 2) Sign approved CSRs that have no issued certificate yet.
@@ -90,12 +101,6 @@ impl CsrController {
             }
         }
         Ok(())
-    }
-
-    /// Auto-approve kubelet client CSRs (bootstrap node join). Everything else
-    /// waits for manual approval.
-    fn should_auto_approve(&self, spec: &Value) -> bool {
-        spec["signerName"].as_str() == Some(KUBELET_CLIENT_SIGNER)
     }
 
     async fn approve(&self, name: &str, csr: &Value) {
@@ -144,6 +149,71 @@ impl CsrController {
             Err(e) => warn!("CSR {name}: publishing cert failed: {e}"),
         }
     }
+}
+
+/// The usages a kubelet client certificate may ask for (upstream's
+/// `kube-apiserver-client-kubelet` signer); `client auth` is required.
+const KUBELET_CLIENT_USAGES: [&str; 3] = ["digital signature", "key encipherment", "client auth"];
+
+/// Whether a `kube-apiserver-client-kubelet` CSR is a node renewing its own
+/// client certificate — the one case auto-approved, as upstream's approver
+/// does for `selfnodeclient` (review finding 77f265e40744). Everything was
+/// approved before, whatever it asked: any requester with `create` on CSRs
+/// got a certificate for any CN and organisation, `system:masters` included.
+///
+/// - the PKCS#10 subject is `O=system:nodes` (only) and
+///   `CN=system:node:<name>`, with no subject alternative names;
+/// - `spec.usages` are within [`KUBELET_CLIENT_USAGES`] and name `client auth`;
+/// - the requester (`spec.username`/`spec.groups`, which the apiserver sets
+///   from who filed it) is that same node, in `system:nodes`.
+///
+/// A first certificate for a new node is not this: it waits for a person
+/// (`kubectl certificate approve`) or an approver such as stormcert.
+pub fn self_node_client(spec: &Value) -> Result<(), String> {
+    use x509_parser::prelude::*;
+    let request = spec["request"].as_str().ok_or("no spec.request")?;
+    let pem_bytes = base64::engine::general_purpose::STANDARD
+        .decode(request)
+        .map_err(|e| format!("spec.request is not base64: {e}"))?;
+    let (_, pem) = x509_parser::pem::parse_x509_pem(&pem_bytes).map_err(|e| format!("spec.request is not PEM: {e}"))?;
+    if pem.label != "CERTIFICATE REQUEST" && pem.label != "NEW CERTIFICATE REQUEST" {
+        return Err(format!("spec.request is a {:?}, not a certificate request", pem.label));
+    }
+    let (_, req) = X509CertificationRequest::from_der(&pem.contents)
+        .map_err(|e| format!("spec.request is not a PKCS#10 request: {e}"))?;
+    let subject = &req.certification_request_info.subject;
+    let cns: Vec<&str> = subject.iter_common_name().filter_map(|a| a.as_str().ok()).collect();
+    let orgs: Vec<&str> = subject.iter_organization().filter_map(|a| a.as_str().ok()).collect();
+    let [cn] = cns.as_slice() else { return Err(format!("subject has {} common names", cns.len())) };
+    let node = cn.strip_prefix("system:node:").unwrap_or("");
+    if node.is_empty() {
+        return Err(format!("CN {cn:?} is not system:node:<name>"));
+    }
+    if orgs != ["system:nodes"] {
+        return Err(format!("organizations {orgs:?} are not exactly [\"system:nodes\"]"));
+    }
+    if let Some(exts) = req.requested_extensions() {
+        for ext in exts {
+            if let ParsedExtension::SubjectAlternativeName(_) = ext {
+                return Err("a kubelet client certificate carries no subject alternative names".into());
+            }
+        }
+    }
+    let usages: Vec<&str> = spec["usages"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    if !usages.contains(&"client auth") {
+        return Err(format!("usages {usages:?} do not include client auth"));
+    }
+    if let Some(u) = usages.iter().copied().find(|u| !KUBELET_CLIENT_USAGES.contains(u)) {
+        return Err(format!("usage {u:?} is not a kubelet client usage"));
+    }
+    if spec["username"].as_str() != Some(*cn) {
+        return Err(format!("requested by {:?}, not by {cn:?} itself", spec["username"].as_str().unwrap_or("")));
+    }
+    let in_nodes = spec["groups"].as_array().into_iter().flatten().any(|g| g.as_str() == Some("system:nodes"));
+    if !in_nodes {
+        return Err("the requester is not in system:nodes".into());
+    }
+    Ok(())
 }
 
 /// A CSR this controller handles: one of [`SIGNERS`], and not one the
@@ -205,5 +275,58 @@ mod tests {
         assert!(!is_ours(&spec("kubernetes.io/kube-apiserver-client-kubelet"), &stormcert), "the external signer's");
         assert!(!is_ours(&spec("kubernetes.io/kubelet-serving"), &stormcert));
         assert!(is_ours(&spec("kubernetes.io/kube-apiserver-client"), &stormcert), "not listed: still ours");
+    }
+
+    /// A base64 PEM PKCS#10 request for `cn` in `orgs`, with `sans`.
+    fn request(cn: &str, orgs: &[&str], sans: &[&str]) -> String {
+        use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair};
+        let mut params = CertificateParams::new(sans.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, cn);
+        for o in orgs {
+            dn.push(DnType::OrganizationName, *o);
+        }
+        params.distinguished_name = dn;
+        let key = KeyPair::generate().unwrap();
+        let pem = params.serialize_request(&key).unwrap().pem().unwrap();
+        base64::engine::general_purpose::STANDARD.encode(pem)
+    }
+
+    fn kubelet_csr(req: String, username: &str, groups: &[&str], usages: &[&str]) -> Value {
+        json!({"signerName": KUBELET_CLIENT_SIGNER, "request": req, "username": username,
+               "groups": groups, "usages": usages})
+    }
+
+    #[test]
+    fn only_a_node_renewing_its_own_client_certificate_is_auto_approved() {
+        let usages = ["digital signature", "client auth"];
+        let nodes = ["system:nodes", "system:authenticated"];
+        let own = || request("system:node:n1", &["system:nodes"], &[]);
+        assert_eq!(self_node_client(&kubelet_csr(own(), "system:node:n1", &nodes, &usages)), Ok(()));
+        let all = ["digital signature", "key encipherment", "client auth"];
+        assert_eq!(self_node_client(&kubelet_csr(own(), "system:node:n1", &nodes, &all)), Ok(()));
+
+        // Review finding 77f265e40744: each of these was approved.
+        let refused = [
+            ("another node's identity", kubelet_csr(own(), "system:node:n2", &nodes, &usages)),
+            ("someone else asking", kubelet_csr(own(), "mallory", &["system:authenticated"], &usages)),
+            ("a bootstrapper", kubelet_csr(own(), "system:bootstrap:abcdef", &["system:bootstrappers"], &usages)),
+            ("requester not in system:nodes", kubelet_csr(own(), "system:node:n1", &["system:authenticated"], &usages)),
+            ("system:masters asked for",
+             kubelet_csr(request("system:node:n1", &["system:nodes", "system:masters"], &[]), "system:node:n1", &nodes, &usages)),
+            ("masters only",
+             kubelet_csr(request("system:node:n1", &["system:masters"], &[]), "system:node:n1", &nodes, &usages)),
+            ("an admin CN", kubelet_csr(request("admin", &["system:nodes"], &[]), "admin", &nodes, &usages)),
+            ("an empty node name",
+             kubelet_csr(request("system:node:", &["system:nodes"], &[]), "system:node:", &nodes, &usages)),
+            ("a SAN", kubelet_csr(request("system:node:n1", &["system:nodes"], &["n1.example"]), "system:node:n1", &nodes, &usages)),
+            ("server auth", kubelet_csr(own(), "system:node:n1", &nodes, &["digital signature", "client auth", "server auth"])),
+            ("no client auth", kubelet_csr(own(), "system:node:n1", &nodes, &["digital signature"])),
+            ("not a request", kubelet_csr("bm90IGEgcmVxdWVzdA==".into(), "system:node:n1", &nodes, &usages)),
+        ];
+        for (what, spec) in refused {
+            assert!(self_node_client(&spec).is_err(), "{what} must not be auto-approved");
+        }
+        assert!(self_node_client(&json!({"signerName": KUBELET_CLIENT_SIGNER})).is_err(), "no request");
     }
 }
