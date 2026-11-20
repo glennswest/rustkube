@@ -362,6 +362,10 @@ full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
 loses its nominatedNodeName; Never and equal priority preempt nothing; a
 PDB-protected Pod is spared for an unprotected victim.
 
+`e2e/statefulset-ordinals.sh` (#363, suite `rigs`): replicas 3 come up
+db-0, db-1, db-2 in order; db-1 deleted is made again (no db-3, db-2
+untouched); a Failed db-2 is deleted and made again; replicas 1 leaves db-0.
+
 `e2e/service-endpoints.sh` (#362, suite `rigs`): a Service with
 `targetPort: http` over Pods naming http 8080 (not Ready), 9090 (Ready) and
 none: an Endpoints subset and an EndpointSlice per resolved port, the

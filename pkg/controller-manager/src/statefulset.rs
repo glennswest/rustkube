@@ -47,12 +47,7 @@ impl StatefulSetController {
         // Find pods owned by this StatefulSet
         let mut owned_pods: Vec<&Value> = all_pods
             .iter()
-            .filter(|pod| {
-                pod["metadata"]["ownerReferences"]
-                    .as_array()
-                    .map(|refs| refs.iter().any(|r| r["uid"].as_str() == Some(sts_uid)))
-                    .unwrap_or(false)
-            })
+            .filter(|pod| owned_by(pod, sts_uid))
             .filter(|pod| {
                 let phase = pod["status"]["phase"].as_str().unwrap_or("Pending");
                 phase != "Succeeded" && phase != "Failed"
@@ -60,77 +55,57 @@ impl StatefulSetController {
             .collect();
 
         // Sort by ordinal index
-        owned_pods.sort_by_key(|pod| {
-            let name = pod["metadata"]["name"].as_str().unwrap_or("");
-            extract_ordinal(name).unwrap_or(0)
+        owned_pods.sort_by_key(|pod| ordinal_of(sts_name, pod).unwrap_or(usize::MAX));
+        let ordinals: std::collections::BTreeMap<usize, &Value> = owned_pods
+            .iter()
+            .filter_map(|pod| ordinal_of(sts_name, pod).map(|o| (o, *pod)))
+            .collect();
+
+        // A finished Pod holds its ordinal's name: deleted first, as
+        // upstream's, and made again on a later pass. Counted as missing
+        // without that, its create was refused AlreadyExists on every pass.
+        let finished = all_pods.iter().find(|pod| {
+            owned_by(pod, sts_uid)
+                && matches!(pod["status"]["phase"].as_str(), Some("Succeeded" | "Failed"))
+                && pod["metadata"]["deletionTimestamp"].is_null()
+                && ordinal_of(sts_name, pod).is_some_and(|o| o < desired)
         });
+        if let Some(pod) = finished {
+            let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
+            match self.api.delete_observed(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"), pod).await {
+                Ok(_) => info!("Deleted finished pod {namespace}/{pod_name} of StatefulSet {sts_name} to recreate it"),
+                Err(e) => warn!("Failed to delete finished pod {pod_name}: {e}"),
+            }
+            self.update_status(namespace, sts_name, sts, &owned_pods).await;
+            return Ok(());
+        }
 
-        let current = owned_pods.len();
-
-        if current < desired {
-            // Ordered creation: only create next if previous is Ready
-            let next_ordinal = current;
-            if next_ordinal > 0 {
-                // Check if previous pod is Running+Ready
-                if let Some(prev_pod) = owned_pods.last() {
-                    if !is_pod_ready(prev_pod) {
-                        debug!(
-                            "StatefulSet {sts_name}: waiting for pod ordinal {} to be ready",
-                            next_ordinal - 1
-                        );
-                        // Still update status with current count
-                        self.update_status(namespace, sts_name, sts, &owned_pods)
-                            .await;
-                        return Ok(());
-                    }
+        match plan(desired, &ordinals) {
+            Step::Create(ordinal) => {
+                let pod = build_statefulset_pod(namespace, sts_name, sts_uid, ordinal, service_name, sts)?;
+                match self.api.create(&format!("/api/v1/namespaces/{namespace}/pods"), &pod).await {
+                    Ok(_) => info!("Created pod {namespace}/{sts_name}-{ordinal} for StatefulSet {sts_name}"),
+                    Err(e) => warn!("Failed to create pod {sts_name}-{ordinal}: {e}"),
                 }
             }
-
-            let pod = build_statefulset_pod(
-                namespace,
-                sts_name,
-                sts_uid,
-                next_ordinal,
-                service_name,
-                sts,
-            )?;
-            match self
-                .api
-                .create(&format!("/api/v1/namespaces/{namespace}/pods"), &pod)
-                .await
-            {
-                Ok(_) => {
-                    info!(
-                        "Created pod {namespace}/{sts_name}-{next_ordinal} for StatefulSet {sts_name}"
-                    );
-                }
-                Err(e) => {
-                    warn!("Failed to create pod for {sts_name}: {e}");
-                }
+            Step::WaitFor(ordinal) => {
+                debug!("StatefulSet {sts_name}: waiting for pod ordinal {ordinal} to be ready");
             }
-        } else if current > desired {
-            // Reverse-ordered deletion: delete highest ordinal first
-            if let Some(pod) = owned_pods.last() {
+            Step::Delete(ordinal) => {
+                let pod = ordinals[&ordinal];
                 let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
-                let phase = pod["status"]["phase"].as_str().unwrap_or("");
-                if phase != "Terminating" && !pod_name.is_empty() {
+                if pod["metadata"]["deletionTimestamp"].is_null() && !pod_name.is_empty() {
                     match self
                         .api
-                        .delete_observed(
-                            &format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"),
-                            pod,
-                        )
+                        .delete_observed(&format!("/api/v1/namespaces/{namespace}/pods/{pod_name}"), pod)
                         .await
                     {
-                        Ok(_) => {
-                            info!("Deleted pod {namespace}/{pod_name} (scale down {sts_name})");
-                        }
-                        Err(e) => {
-                            warn!("Failed to delete pod {pod_name}: {e}");
-                        }
+                        Ok(_) => info!("Deleted pod {namespace}/{pod_name} (scale down {sts_name})"),
+                        Err(e) => warn!("Failed to delete pod {pod_name}: {e}"),
                     }
                 }
             }
+            Step::Settled => {}
         }
 
         self.update_status(namespace, sts_name, sts, &owned_pods)
@@ -169,8 +144,49 @@ impl StatefulSetController {
     }
 }
 
-fn extract_ordinal(pod_name: &str) -> Option<usize> {
-    pod_name.rsplit('-').next()?.parse().ok()
+fn owned_by(pod: &Value, uid: &str) -> bool {
+    pod["metadata"]["ownerReferences"]
+        .as_array()
+        .is_some_and(|refs| refs.iter().any(|r| r["uid"].as_str() == Some(uid)))
+}
+
+/// A Pod's ordinal: `N` in `<sts>-N`. Any other name has none.
+fn ordinal_of(sts_name: &str, pod: &Value) -> Option<usize> {
+    let rest = pod["metadata"]["name"].as_str()?.strip_prefix(sts_name)?.strip_prefix('-')?;
+    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) || (rest.len() > 1 && rest.starts_with('0')) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
+/// One pass's step, as upstream's `OrderedReady` (review finding
+/// c1b3be631b68, #363).
+#[derive(Debug, PartialEq)]
+enum Step {
+    /// The lowest ordinal below `replicas` with no Pod.
+    Create(usize),
+    /// A lower ordinal is not Ready yet: nothing is created past it.
+    WaitFor(usize),
+    /// None missing: the highest ordinal at or above `replicas` goes.
+    Delete(usize),
+    Settled,
+}
+
+/// The next step for `replicas` Pods given the live ones by ordinal. The
+/// next ordinal is the lowest one missing, not the count of Pods: with 0
+/// and 2 present and 3 wanted, it is 1. The count re-created 2 on every
+/// pass (AlreadyExists) and 1 never came.
+fn plan(replicas: usize, ordinals: &std::collections::BTreeMap<usize, &Value>) -> Step {
+    if let Some(missing) = (0..replicas).find(|o| !ordinals.contains_key(o)) {
+        return match ordinals.range(..missing).find(|(_, p)| !is_pod_ready(p)) {
+            Some((&o, _)) => Step::WaitFor(o),
+            None => Step::Create(missing),
+        };
+    }
+    match ordinals.range(replicas..).next_back() {
+        Some((&o, _)) => Step::Delete(o),
+        None => Step::Settled,
+    }
 }
 
 fn build_statefulset_pod(
@@ -280,5 +296,50 @@ mod template_metadata_tests {
         assert_eq!(pod["metadata"]["annotations"]["kubectl.kubernetes.io/default-container"], "c");
         assert_eq!(pod["metadata"]["finalizers"], json!(["example.com/keep"]));
         assert_eq!(pod["metadata"]["labels"]["app"], "a");
+    }
+}
+
+#[cfg(test)]
+mod ordinal_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn pod(name: &str, ready: bool) -> Value {
+        json!({"metadata": {"name": name},
+               "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": if ready { "True" } else { "False" }}]}})
+    }
+
+    #[test]
+    fn the_lowest_missing_ordinal_is_made_next() {
+        // Review finding c1b3be631b68: 0 and 2 present, 3 wanted.
+        let (p0, p2) = (pod("web-0", true), pod("web-2", true));
+        let ords: BTreeMap<usize, &Value> = [(0, &p0), (2, &p2)].into_iter().collect();
+        assert_eq!(plan(3, &ords), Step::Create(1));
+        // OrderedReady: not past a lower Pod that is not Ready.
+        let p0_down = pod("web-0", false);
+        let ords: BTreeMap<usize, &Value> = [(0, &p0_down), (2, &p2)].into_iter().collect();
+        assert_eq!(plan(3, &ords), Step::WaitFor(0));
+        // From nothing: 0.
+        assert_eq!(plan(2, &BTreeMap::new()), Step::Create(0));
+        // All present, one beyond replicas: the highest goes.
+        let (p1, p3) = (pod("web-1", true), pod("web-3", true));
+        let ords: BTreeMap<usize, &Value> = [(0, &p0), (1, &p1), (2, &p2), (3, &p3)].into_iter().collect();
+        assert_eq!(plan(2, &ords), Step::Delete(3));
+        assert_eq!(plan(4, &ords), Step::Settled);
+        // A gap is filled before anything is scaled down.
+        let ords: BTreeMap<usize, &Value> = [(0, &p0), (3, &p3)].into_iter().collect();
+        assert_eq!(plan(2, &ords), Step::Create(1));
+    }
+
+    #[test]
+    fn an_ordinal_is_the_sets_own_suffix() {
+        let o = |n: &str| ordinal_of("web", &json!({"metadata": {"name": n}}));
+        assert_eq!(o("web-0"), Some(0));
+        assert_eq!(o("web-12"), Some(12));
+        assert_eq!(o("webby-1"), None);
+        assert_eq!(o("web-x"), None);
+        assert_eq!(o("web-01"), None);
+        assert_eq!(o("web-"), None);
+        assert_eq!(ordinal_of("my-db", &json!({"metadata": {"name": "my-db-2"}})), Some(2));
     }
 }
