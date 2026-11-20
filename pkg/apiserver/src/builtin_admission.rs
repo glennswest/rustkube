@@ -346,7 +346,12 @@ pub fn pod_update(old: &Value, new: &Value, resize: bool) -> Result<(), ApiError
         taken.extend(["resources", "resizePolicy"]);
     }
     for list in ["containers", "initContainers"] {
-        let (Some(now), Some(was)) = (mutable[list].as_array_mut(), old_spec[list].as_array()) else { continue };
+        // `get_mut`, not `[list]`: indexing would insert a `null` for a
+        // pod without the list, and the specs would differ by it.
+        let (Some(now), Some(was)) = (mutable.get_mut(list).and_then(Value::as_array_mut), old_spec[list].as_array())
+        else {
+            continue;
+        };
         if now.len() != was.len() {
             continue; // unequal anyway
         }
@@ -1557,6 +1562,11 @@ mod pod_update_tests {
     fn what_upstream_allows_still_changes() {
         let old = admitted();
         assert!(pod_update(&old, &old, false).is_ok(), "unchanged");
+        let mut no_init = old.clone();
+        no_init["spec"].as_object_mut().unwrap().remove("initContainers");
+        let mut image = no_init.clone();
+        image["spec"]["containers"][0]["image"] = json!("app:2");
+        assert!(pod_update(&no_init, &image, false).is_ok(), "a pod without init containers");
         let mut new = old.clone();
         new["spec"]["containers"][0]["image"] = json!("app:2");
         new["spec"]["initContainers"][0]["image"] = json!("init:2");
