@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Concurrent evictions vs PDB (#360, review 6d98e18d1259 + b8d6824b0231) — IN PROGRESS 2026-11-20
+### Concurrent evictions vs PDB (#360, review 6d98e18d1259 + b8d6824b0231) — DONE 2026-11-20
 - [x] eviction.rs: reserve in PDB status by `guaranteed_update` CAS
   (`reserve_in`: processed? allowed > 0? decrement + disruptedPods[pod]);
   release on a failed delete; upstream's canIgnorePDB, one-PDB rule,
@@ -14,7 +14,8 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [x] Units (reserve/release, unprocessed, multi-thread race through
   `create_eviction` for budgets 1 and 3, two-PDB 500, unready path; controller
   expiry). Rig `pdb-eviction` (day suite).
-- [ ] sc-build; stage; rig with the next `rigs` run; close.
+- [x] sc-build 46622a0 passed; no lint in eviction.rs/pdb.rs. Stage
+  80835fce5908. Closed; `pdb-eviction` runs with the next `rigs` run.
 
 ### A refused write's reason in events (#340) — DONE 2026-11-20
 - [x] `apimachinery::api_status`: `check(response)` → `ApiStatusError` (code,
