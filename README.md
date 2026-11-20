@@ -76,7 +76,8 @@ revision it recorded an interval earlier, so a snapshot stays readable for
 one to two intervals. A continue token whose snapshot is compacted is a 410
 `Expired` whose Status carries an "inconsistent" token in
 `metadata.continue`, listing the rest from the same key at the current
-revision; a LIST at a compacted `Exact` revision and a watch from below the
+revision; a continue key outside the list's own prefix is a 400 `invalid
+continue token` (the store adapter refuses it too, #350); a LIST at a compacted `Exact` revision and a watch from below the
 compaction are 410 `Expired` too. fastetcd compacting on its own (its space
 reclaim) is treated as done, not an error. A guaranteed update (PATCH,
 every `/status` PUT, `/scale`, `resize`, a delete that only marks the object
@@ -617,7 +618,10 @@ only its own (GET, or a WATCH of its name); `system:storm:forge-node-signer`
 (reconciled, **unbound**: stormcos binds stormcert to it) — CSRs read,
 `/approval` and `/status`, `approve`/`sign` on `storm.io/forge-node`,
 `machines.storm.io`, `enrollmentpolicies.storm.io` and creating those CRDs.
-A CSR's `spec.username`/`groups` are the requester's on create, whatever the
+A CSR's `status` is emptied on create (a forged `Approved` is never signed,
+#350), and a server-side apply that creates an object refuses a body naming
+another name or namespace than its URL (400, #357). A CSR's
+`spec.username`/`groups` are the requester's on create, whatever the
 body says, and `spec` never changes after; `/approval` needs `approve` and
 writing `status.certificate` needs `sign` on `signers/<signerName>` (or
 `<domain>/*`), as upstream;
@@ -1007,7 +1011,7 @@ sc-build 'cargo test -p apiserver'    # any command at the repo root
 `sc-build` fetches the pushed commit onto a private build volume as the
 `stormbuild` user (checkout, target dir, HOME and TMPDIR all on it), runs the
 command, and deletes the volume. A failing build is filed as a
-`build-failure` issue here. `protoc` is needed (`pkg/apimachinery/build.rs`).
+`build-failure` issue here. `protoc` is needed (`pkg/apimachinery/build.rs`); the minimum Rust is 1.82 (`rust-version`, #354).
 
 Release artifacts — static musl binaries (x86_64 and aarch64, #68),
 tarballs and `FROM scratch` images from `deploy/build-release.sh` — are
