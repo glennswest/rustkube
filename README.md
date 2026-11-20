@@ -241,7 +241,10 @@ any apiserver cannot spend one disruption twice; 429 when none is left,
 memory only, nothing removed, non-sidecar init containers fixed; a Pod with a
 running container whose status reports no `resources` is refused, so until
 the kubelet resizes (rustkube-node#192) only not-yet-running Pods resize); namespace
-`/finalize`; CSR `/approval`. A PUT to `/status` (and `/approval`) is
+`/finalize` (a body `uid` that is not the namespace's, or a `resourceVersion`
+that is not its current one, is a 409 and changes nothing; the update, or the
+delete of a terminating namespace left with no finalizers, is conditional on
+the revision read, #366); CSR `/approval`. A PUT to `/status` (and `/approval`) is
 conditional on the body's `resourceVersion`: stale is a 409 and nothing is
 written; none is an unconditional update (#78). A `/status` write changes
 only status (and labels/annotations), never spec. For a custom resource whose
@@ -397,7 +400,16 @@ coverage: `*` holds anything, a `*` in the new rule needs a `*`, `*/status`
 and `pods/*` hold the subresources they name, resourceNames hold only those
 names. `system:masters` is never checked, nor an update that changes only
 ownerReferences or finalizers. It runs on every create/update path (POST,
-PUT, PATCH, server-side apply), after the mutating admission webhooks.
+PUT, PATCH, server-side apply), after the mutating admission webhooks. So
+is a Job's `spec.managedBy` (valid on create, unchanged on update): a
+mutating webhook cannot set an invalid manager or move a Job to another
+controller (#366).
+
+**A new object's `uid` and `creationTimestamp` are the server's** on every
+API create (POST, server-side apply create, custom resources,
+`events.k8s.io`), whatever the body or a mutating webhook says, as upstream's
+`FillObjectMetaSystemFields`: recreating a deleted Pod or ServiceAccount
+with its old uid does not bring back the tokens bound to it (#366).
 
 **Projects** (`project.openshift.io/v1`, #97) are Namespaces with owners.
 Nothing is stored as a Project: each is the Namespace of the same name,
