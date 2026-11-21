@@ -165,18 +165,27 @@ fn is_reserved(name: &str) -> bool {
 async fn create_namespace(state: &AppState, mut ns: Value, name: &str) -> Result<Value, ApiError> {
     validate_name(name)?;
     resource::ensure_metadata_pub(&mut ns, name, None);
-    crate::builtin_admission::admit_create(
+    let scc_block = crate::builtin_admission::admit_create(
         &state.storage, "namespaces", None, &mut ns, &state.service_cidr,
     )
-    .await?;
+    .await
+    .map_err(|e| project_error(e, name))?;
     let key = ResourceStorage::cluster_key("namespaces", name);
-    state.storage.create(&key, ns).await.map_err(|e| {
-        if e.is_already_exists() {
-            ApiError::already_exists("projects.project.openshift.io", name)
-        } else {
-            e
-        }
-    })
+    let created = state.storage.create(&key, ns).await;
+    // Not written: its UID block goes back (#377).
+    if let Err(e) = &created {
+        crate::scc::create_failed(&state.storage, scc_block, e).await;
+    }
+    created.map_err(|e| project_error(e, name))
+}
+
+/// A Namespace's AlreadyExists, said of the project.
+fn project_error(e: ApiError, name: &str) -> ApiError {
+    if e.is_already_exists() {
+        ApiError::already_exists("projects.project.openshift.io", name)
+    } else {
+        e
+    }
 }
 
 /// `POST /apis/project.openshift.io/v1/projectrequests` — `oc new-project`.

@@ -530,7 +530,12 @@ no `runAsUser`, no `fsGroup`, no root — run unchanged. Every Namespace gets
 1000000000–1999999999) when it is created, at boot if it was stored without
 them, or at its first pod's admission; blocks come from a counter at
 `/registry/rangeallocations/scc-uid` (compare-and-swap, never reused, resumed
-after the highest block a namespace holds if the record is missing). A
+after the highest block a namespace holds if the record is missing). A create
+of a namespace name already taken is refused before a block is taken, and a
+block taken for a create that then fails with a 4xx (an admission webhook's
+refusal, the name taken in a race) is given back — it was never on a
+namespace — and handed out first; a 5xx, which may have written it, keeps it
+(#377). A
 namespace created with valid ranges keeps them. A pod created in a governed
 namespace — every namespace except `kube-*`, `openshift*`, `storm-*` and
 `*-system`, unless its `pod-security.kubernetes.io/enforce` label says

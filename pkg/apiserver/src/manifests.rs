@@ -283,9 +283,12 @@ pub async fn apply_one(
             if is_crd {
                 crate::crd::establish_crd_status(&mut obj);
             }
+            let mut scc_block = None;
             let admitted = match &custom {
                 Some(_) => strategy.on_create(&mut obj),
-                None => crate::builtin_admission::admit_create(storage, &resource, ns, &mut obj, service_cidr).await,
+                None => crate::builtin_admission::admit_create(storage, &resource, ns, &mut obj, service_cidr)
+                    .await
+                    .map(|block| scc_block = block),
             };
             if let Err(e) = admitted {
                 // Another apiserver applying the same manifest got there
@@ -310,10 +313,12 @@ pub async fn apply_one(
                 }
                 Err(e) => {
                     // What admission claimed for a Service that was not
-                    // written goes back, as on the API's create (#132).
+                    // written goes back, as on the API's create (#132),
+                    // and a Namespace's UID block (#377).
                     if is_service {
                         crate::node_port::release_all(storage, &obj).await;
                     }
+                    crate::scc::create_failed(storage, scc_block, &e).await;
                     // Lost a race with another writer, which is the state
                     // we wanted anyway.
                     if e.reason == "AlreadyExists" || e.reason == "Conflict" {

@@ -385,17 +385,23 @@ pub async fn create_cluster_resource(
 
     let id = new_identity(&mut body, &name, None);
 
-    crate::builtin_admission::admit_create(
+    let scc_block = crate::builtin_admission::admit_create(
         &state.storage, &resource, None, &mut body, &state.service_cidr,
     )
     .await?;
-    crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
-    id.keep(&mut body, &name, None);
-    crate::generation::on_create(&resource, &mut body); // #285
-
-    let key = ResourceStorage::cluster_key(&resource, &name);
-    let obj = state.storage.create(&key, body).await?;
-    Ok((StatusCode::CREATED, Json(obj)))
+    let created = async {
+        crate::admission::admit(&state, crate::admission::Operation::Create, Some(&mut body), None).await?;
+        id.keep(&mut body, &name, None);
+        crate::generation::on_create(&resource, &mut body); // #285
+        let key = ResourceStorage::cluster_key(&resource, &name);
+        state.storage.create(&key, body).await
+    }
+    .await;
+    // A Namespace's UID block goes back if it was not written (#377).
+    if let Err(e) = &created {
+        crate::scc::create_failed(&state.storage, scc_block, e).await;
+    }
+    Ok((StatusCode::CREATED, Json(created?)))
 }
 
 /// POST — create a namespace-scoped resource.

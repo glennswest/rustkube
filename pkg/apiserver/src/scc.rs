@@ -139,40 +139,115 @@ fn block_of(ns: &Value) -> Option<u64> {
     }
 }
 
-/// Take the next block from the cluster-wide allocator.
+/// The allocation record: `next`, the first block never handed out, and
+/// `released`, blocks handed out to a create that then failed before the
+/// namespace was stored (#377) — never on a namespace, so free to give again.
+fn allocation_record(next: u64, released: &[u64]) -> Value {
+    json!({
+        "apiVersion": "security.openshift.io/v1",
+        "kind": "RangeAllocation",
+        "metadata": {"name": "scc-uid"},
+        "range": format!("{POOL_START}-{POOL_END}/{BLOCK}"),
+        "next": next,
+        "released": released,
+    })
+}
+
+fn released_of(rec: &Value) -> Vec<u64> {
+    rec["released"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default()
+}
+
+/// Take a block from the cluster-wide allocator: a released one first, else
+/// the next never handed out. A block once stored on a namespace is never
+/// handed out again.
 pub async fn allocate_block(storage: &ResourceStorage) -> Result<u64, ApiError> {
     for _ in 0..32 {
-        let (next, rev) = match storage.get(ALLOCATION_KEY).await {
+        let (next, mut released, rev) = match storage.get(ALLOCATION_KEY).await {
             Ok(rec) => (
                 rec["next"].as_u64().unwrap_or(0),
+                released_of(&rec),
                 rec["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse::<u64>().ok()),
             ),
-            Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => (first_free_block(storage).await?, None),
+            Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => {
+                (first_free_block(storage).await?, Vec::new(), None)
+            }
             Err(e) => return Err(e),
         };
-        if next >= BLOCKS {
+        let (block, next) = if !released.is_empty() {
+            (released.remove(0), next)
+        } else if next >= BLOCKS {
             return Err(ApiError::internal(&format!(
                 "the SCC UID pool {POOL_START}-{POOL_END}/{BLOCK} is exhausted: every block has been given to a namespace"
             )));
-        }
-        let rec = json!({
-            "apiVersion": "security.openshift.io/v1",
-            "kind": "RangeAllocation",
-            "metadata": {"name": "scc-uid"},
-            "range": format!("{POOL_START}-{POOL_END}/{BLOCK}"),
-            "next": next + 1,
-        });
+        } else {
+            (next, next + 1)
+        };
+        let rec = allocation_record(next, &released);
         let written = match rev {
             Some(rev) => storage.update(ALLOCATION_KEY, rec, Some(rev)).await,
             None => storage.create(ALLOCATION_KEY, rec).await,
         };
         match written {
-            Ok(_) => return Ok(next),
+            Ok(_) => return Ok(block),
             Err(e) if e.reason == "Conflict" || e.reason == "AlreadyExists" => continue,
             Err(e) => return Err(e),
         }
     }
     Err(ApiError::internal("SCC UID allocation: too many concurrent allocations, try again"))
+}
+
+/// Give back `block`, taken for a namespace create that failed before the
+/// namespace was stored (#377): `next` steps back when it was the last one
+/// handed out, else it joins `released`. Best effort — a block that cannot be
+/// given back is one block, not a leak a client can repeat.
+pub async fn release_block(storage: &ResourceStorage, block: u64) {
+    for _ in 0..32 {
+        let rec = match storage.get(ALLOCATION_KEY).await {
+            Ok(rec) => rec,
+            Err(e) => {
+                tracing::warn!("SCC UID block {block} not given back: {}", e.message);
+                return;
+            }
+        };
+        let rev = rec["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse::<u64>().ok());
+        let mut next = rec["next"].as_u64().unwrap_or(0);
+        let mut released = released_of(&rec);
+        if block >= next || released.contains(&block) {
+            return; // never handed out, or already back
+        }
+        if block + 1 == next {
+            next = block;
+        } else {
+            released.push(block);
+            released.sort_unstable();
+        }
+        // The top of the released list joins `next` as it steps back.
+        while released.last().is_some_and(|b| b + 1 == next) {
+            next -= 1;
+            released.pop();
+        }
+        match storage.update(ALLOCATION_KEY, allocation_record(next, &released), rev).await {
+            Ok(_) => return,
+            Err(e) if e.reason == "Conflict" => continue,
+            Err(e) => {
+                tracing::warn!("SCC UID block {block} not given back: {}", e.message);
+                return;
+            }
+        }
+    }
+    tracing::warn!("SCC UID block {block} not given back: the allocation record kept changing");
+}
+
+/// A namespace create that took `block` failed with `err`: give the block
+/// back unless the namespace may have been written. A 4xx — an admission
+/// refusal, or the name taken (AlreadyExists) — wrote nothing; a 5xx from
+/// the datastore may have, and keeps its block.
+pub async fn create_failed(storage: &ResourceStorage, block: Option<u64>, err: &ApiError) {
+    if let Some(block) = block {
+        if err.status.is_client_error() {
+            release_block(storage, block).await;
+        }
+    }
 }
 
 /// With no allocation record: the block after the highest any namespace holds.
@@ -195,14 +270,29 @@ async fn first_free_block(storage: &ResourceStorage) -> Result<u64, ApiError> {
 }
 
 /// Give `ns` (a Namespace about to be written) its ranges, unless it has
-/// valid ones. True when it changed.
-pub async fn ensure_ranges(storage: &ResourceStorage, ns: &mut Value) -> Result<bool, ApiError> {
+/// valid ones. The block taken, when one was — the caller gives it back
+/// with `create_failed` if the namespace is not then written.
+pub async fn ensure_ranges(storage: &ResourceStorage, ns: &mut Value) -> Result<Option<u64>, ApiError> {
     if namespace_ranges(ns).is_some() {
-        return Ok(false);
+        return Ok(None);
     }
     let block = allocate_block(storage).await?;
     set_ranges(ns, block);
-    Ok(true)
+    Ok(Some(block))
+}
+
+/// A Namespace create's ranges (#321), refused first when the name is taken
+/// (#377): every `oc new-project` of an existing name used to spend a block
+/// on a 409, and the pool is finite.
+pub async fn ranges_for_new_namespace(storage: &ResourceStorage, ns: &mut Value) -> Result<Option<u64>, ApiError> {
+    if let Some(name) = ns["metadata"]["name"].as_str() {
+        match storage.get(&ResourceStorage::cluster_key("namespaces", name)).await {
+            Ok(_) => return Err(ApiError::already_exists("namespaces", name)),
+            Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => {}
+            Err(e) => return Err(e),
+        }
+    }
+    ensure_ranges(storage, ns).await
 }
 
 fn set_ranges(ns: &mut Value, block: u64) {
@@ -258,10 +348,14 @@ pub async fn namespace_with_ranges(storage: &ResourceStorage, mut ns: Value) -> 
         let key = ResourceStorage::cluster_key("namespaces", &name);
         let rev = ns["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok());
         let mut updated = ns.clone();
-        ensure_ranges(storage, &mut updated).await?;
+        let block = ensure_ranges(storage, &mut updated).await?;
         match storage.update(&key, updated, rev).await {
             Ok(written) => return Ok(written),
-            Err(e) if e.reason == "Conflict" => ns = storage.get(&key).await?,
+            Err(e) if e.reason == "Conflict" => {
+                // Not written: the block goes back (#377).
+                create_failed(storage, block, &e).await;
+                ns = storage.get(&key).await?
+            }
             Err(e) => return Err(e),
         }
     }
@@ -731,11 +825,68 @@ mod tests {
         assert_eq!(allocate_block(&storage).await.unwrap(), 9);
 
         let mut ns = json!({"metadata": {"name": "a"}});
-        assert!(ensure_ranges(&storage, &mut ns).await.unwrap());
+        assert_eq!(ensure_ranges(&storage, &mut ns).await.unwrap(), Some(10));
         assert_eq!(ns["metadata"]["annotations"][UID_RANGE], "1000100000/10000");
         assert_eq!(ns["metadata"]["annotations"][SUPPLEMENTAL_GROUPS], "1000100000/10000");
         // Already set: kept.
-        assert!(!ensure_ranges(&storage, &mut ns).await.unwrap());
+        assert_eq!(ensure_ranges(&storage, &mut ns).await.unwrap(), None);
+    }
+
+    /// #377 (finding 5a63ec20536a): a create of an existing namespace name
+    /// is refused before a block is taken — repeated `oc new-project` of a
+    /// taken name used to spend a block per 409 until the pool ran out.
+    #[tokio::test]
+    async fn an_existing_name_takes_no_block() {
+        let storage = ResourceStorage::new(Arc::new(MemStore::default()));
+        let mut ns = json!({"metadata": {"name": "taken"}});
+        let block = ranges_for_new_namespace(&storage, &mut ns).await.unwrap();
+        storage.create(&ResourceStorage::cluster_key("namespaces", "taken"), ns).await.unwrap();
+        assert_eq!(block, Some(0));
+        for _ in 0..5 {
+            let mut again = json!({"metadata": {"name": "taken"}});
+            let err = ranges_for_new_namespace(&storage, &mut again).await.unwrap_err();
+            assert!(err.is_already_exists(), "{}", err.message);
+            assert!(again["metadata"]["annotations"].is_null(), "no ranges given");
+        }
+        let mut fresh = json!({"metadata": {"name": "fresh"}});
+        assert_eq!(ranges_for_new_namespace(&storage, &mut fresh).await.unwrap(), Some(1));
+    }
+
+    /// A block taken for a create that then failed with a 4xx (a webhook's
+    /// refusal, the name taken in a race) is given back and handed out
+    /// again; a 5xx, which may have written the namespace, keeps it.
+    #[tokio::test]
+    async fn a_failed_create_gives_its_block_back() {
+        let storage = ResourceStorage::new(Arc::new(MemStore::default()));
+        let refused = ApiError::forbidden("denied by webhook");
+        // The last one handed out: `next` steps back.
+        let a = allocate_block(&storage).await.unwrap();
+        create_failed(&storage, Some(a), &refused).await;
+        assert_eq!(allocate_block(&storage).await.unwrap(), a);
+        // Not the last one (another allocation since): onto `released`, and
+        // handed out before a new one.
+        let b = allocate_block(&storage).await.unwrap();
+        let c = allocate_block(&storage).await.unwrap();
+        create_failed(&storage, Some(b), &ApiError::already_exists("namespaces", "x")).await;
+        assert_eq!(allocate_block(&storage).await.unwrap(), b);
+        assert_eq!(allocate_block(&storage).await.unwrap(), c + 1);
+        // Given back twice, or a 5xx: nothing changes.
+        create_failed(&storage, Some(c), &ApiError::internal("datastore timeout")).await;
+        assert_eq!(allocate_block(&storage).await.unwrap(), c + 2);
+        // Released blocks below `next` fold back into it.
+        let (d, e) = (allocate_block(&storage).await.unwrap(), allocate_block(&storage).await.unwrap());
+        create_failed(&storage, Some(d), &refused).await;
+        create_failed(&storage, Some(d), &refused).await;
+        create_failed(&storage, Some(e), &refused).await;
+        let rec = storage.get(ALLOCATION_KEY).await.unwrap();
+        assert_eq!(rec["next"], d);
+        assert_eq!(rec["released"], json!([]));
+        // Many refused creates in a row spend nothing.
+        for _ in 0..100 {
+            let blk = allocate_block(&storage).await.unwrap();
+            create_failed(&storage, Some(blk), &refused).await;
+        }
+        assert_eq!(allocate_block(&storage).await.unwrap(), d);
     }
 
     #[test]

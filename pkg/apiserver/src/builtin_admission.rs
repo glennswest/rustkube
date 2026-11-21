@@ -32,14 +32,16 @@ use crate::storage::ResourceStorage;
 use serde_json::{json, Value};
 
 /// Run built-in admission for a create. Mutates `obj` in place; an `Err`
-/// rejects the request.
+/// rejects the request. A Namespace's SCC UID block, when one was taken, is
+/// returned: a create that does not then happen gives it back with
+/// `scc::create_failed` (#377).
 pub async fn admit_create(
     storage: &ResourceStorage,
     resource: &str,
     namespace: Option<&str>,
     obj: &mut Value,
     service_cidr: &str,
-) -> Result<(), ApiError> {
+) -> Result<Option<u64>, ApiError> {
     // Quantities as strings (#292), before anything below reads them.
     apimachinery::quantity::numbers_to_strings(resource, obj);
     // NamespaceLifecycle — namespaced resources (other than Namespaces) require
@@ -54,11 +56,13 @@ pub async fn admit_create(
         None
     };
 
+    let mut scc_block = None;
     if resource == "namespaces" {
         namespace_defaults(obj);
-        // UID and supplemental-group ranges (#321); a dry run takes no block.
+        // UID and supplemental-group ranges (#321); a dry run takes no block,
+        // nor does a name already taken (#377).
         if !crate::admission::dry_run() {
-            crate::scc::ensure_ranges(storage, obj).await?;
+            scc_block = crate::scc::ranges_for_new_namespace(storage, obj).await?;
         }
     }
     if resource == "jobs" {
@@ -158,7 +162,7 @@ pub async fn admit_create(
     if let Some(ns) = namespace {
         crate::quota_admission::admit(storage, resource, ns, obj).await?;
     }
-    Ok(())
+    Ok(scc_block)
 }
 
 /// Admission for an update of a PersistentVolumeClaim (#63): upstream's
