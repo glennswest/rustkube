@@ -4,7 +4,8 @@
 # fastetcd with the controller-manager running: Node membership and label
 # changes drive DaemonSet pods without a poll pass. A node added, relabelled
 # or deleted is acted on for exactly the DaemonSets whose nodeSelector matches
-# it; a node heartbeat changes nothing.
+# it; a node heartbeat changes nothing. A template change rolls the pods one
+# node at a time; an OnDelete DaemonSet keeps them (#369).
 #
 #   test/e2e/daemonset-nodes.sh     # from the checkout; builds what it runs
 #
@@ -131,5 +132,102 @@ for _ in $(seq 60); do
   sleep 0.1
 done
 [ "$desired" = 2 ] && pass "status: desiredNumberScheduled 2" || fail "status: desiredNumberScheduled $desired"
+
+# Rolling update (#369). No kubelet runs here, so a pod is Ready only when
+# the rig says so: the old pods are made Ready, and a new one stays unready
+# until the rig marks it, which is what holds the rollout at one node.
+#
+# live <ds>: "<node>=<controller-revision-hash or none>" per live pod, sorted.
+live() {
+  req GET /api/v1/namespaces/default/pods >/dev/null
+  python3 - "$W/out" "$1" <<'PY'
+import json, sys
+items = json.load(open(sys.argv[1])).get("items", [])
+print(" ".join(sorted(
+    "%s=%s" % (p["spec"].get("nodeName", ""),
+               p["metadata"].get("labels", {}).get("controller-revision-hash", "none"))
+    for p in items
+    if not p["metadata"].get("deletionTimestamp")
+    and any(r.get("name") == sys.argv[2] and r.get("kind") == "DaemonSet"
+            for r in p["metadata"].get("ownerReferences", [])))))
+PY
+}
+# ready <ds>: mark every live pod of the DaemonSet Ready.
+ready() {
+  req GET /api/v1/namespaces/default/pods >/dev/null
+  python3 - "$W/out" "$1" <<'PY' | while read -r name; do
+import json, sys
+for p in json.load(open(sys.argv[1])).get("items", []):
+    if not p["metadata"].get("deletionTimestamp") and any(
+            r.get("name") == sys.argv[2] for r in p["metadata"].get("ownerReferences", [])):
+        print(p["metadata"]["name"])
+PY
+    req GET "/api/v1/namespaces/default/pods/$name" >/dev/null
+    python3 -c "import json;p=json.load(open('$W/out'));p['status']={'phase':'Running','conditions':[{'type':'Ready','status':'True'}]};print(json.dumps(p))" >"$W/body"
+    curl -sk -o /dev/null -X PUT -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+      "$API/api/v1/namespaces/default/pods/$name/status" -d @"$W/body"
+  done
+}
+image() { # <ds> <image>: change the template
+  curl -sk -o /dev/null -X PATCH -H "Authorization: Bearer $ADMIN" \
+    -H 'Content-Type: application/merge-patch+json' "$API/apis/apps/v1/namespaces/default/daemonsets/$1" \
+    -d "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"c\",\"image\":\"$2\"}]}}}}"
+}
+# hashes <live output>: the distinct hashes in it.
+hashes() { tr ' ' '\n' <<<"$1" | sed 's/.*=//' | sort -u | tr '\n' ' ' | sed 's/ $//'; }
+# Wait until `live <ds>` satisfies a python predicate on its pairs.
+until_live() { # <ds> <python expr over pairs [(node, hash)]>
+  for _ in $(seq 100); do
+    got=$(live "$1")
+    python3 -c "import sys;pairs=[tuple(x.split('=')) for x in sys.argv[1].split()];sys.exit(0 if ($2) else 1)" "$got" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+ds_status() { # <ds> <field>
+  req GET "/apis/apps/v1/namespaces/default/daemonsets/$1" >/dev/null
+  python3 -c "import json;print(json.load(open('$W/out')).get('status',{}).get('$2'))"
+}
+
+before=$(live all)
+case "$before" in *=none*) fail "pods without controller-revision-hash: $before";;
+  *) pass "pods carry controller-revision-hash: $before";; esac
+old=$(hashes "$before")
+ready all
+for _ in $(seq 60); do [ "$(ds_status all numberReady)" = 2 ] && break; sleep 0.1; done
+image all busybox:1.36
+# One node rolls; the other keeps its Ready old pod while the replacement is
+# not Ready (maxUnavailable 1).
+if until_live all "len(pairs)==2 and sum(h=='$old' for _,h in pairs)==1"; then
+  sleep 1
+  got=$(live all)
+  [ "$(tr ' ' '\n' <<<"$got" | grep -c "=$old\$")" = 1 ] \
+    && pass "rolling: one node at a time ($got)" || fail "rolling: more than one node rolled: $got"
+else
+  fail "rolling: no single node rolled: $(live all)"
+fi
+for _ in $(seq 60); do [ "$(ds_status all updatedNumberScheduled)" = 1 ] && break; sleep 0.1; done
+u=$(ds_status all updatedNumberScheduled)
+[ "$u" = 1 ] && pass "status: updatedNumberScheduled 1 mid-rollout" || fail "status: updatedNumberScheduled $u mid-rollout"
+ready all
+if until_live all "len(pairs)==2 and all(h!='$old' and h!='none' for _,h in pairs) and len({h for _,h in pairs})==1"; then
+  pass "rolling: every node on the new template ($(live all))"
+else
+  fail "rolling: not finished: $(live all)"
+fi
+for _ in $(seq 60); do [ "$(ds_status all updatedNumberScheduled)" = 2 ] && break; sleep 0.1; done
+u=$(ds_status all updatedNumberScheduled)
+[ "$u" = 2 ] && pass "status: updatedNumberScheduled 2" || fail "status: updatedNumberScheduled $u"
+
+# OnDelete keeps its pods across a template change.
+req POST /apis/apps/v1/namespaces/default/daemonsets '{"apiVersion":"apps/v1","kind":"DaemonSet","metadata":{"name":"keep"},"spec":{"updateStrategy":{"type":"OnDelete"},"selector":{"matchLabels":{"ds":"keep"}},"template":{"metadata":{"labels":{"ds":"keep"}},"spec":{"containers":[{"name":"c","image":"busybox"}]}}}}' >/dev/null
+expect "OnDelete placement" keep "n2 n3"
+kept=$(live keep)
+image keep busybox:1.36
+sleep 2
+[ "$(live keep)" = "$kept" ] && pass "OnDelete: pods kept ($kept)" || fail "OnDelete: pods changed: $kept -> $(live keep)"
+for _ in $(seq 60); do [ "$(ds_status keep observedGeneration)" = 2 ] && break; sleep 0.1; done
+u=$(ds_status keep updatedNumberScheduled)
+[ "$u" = 0 ] && pass "OnDelete: updatedNumberScheduled 0" || fail "OnDelete: updatedNumberScheduled $u"
 
 report

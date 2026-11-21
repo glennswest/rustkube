@@ -522,7 +522,7 @@ fn view_of(rs: &Value) -> RsView {
 /// documented as not stable across Rust releases, so it cannot be used here;
 /// FNV-1a is fixed by its specification and will produce the same digits in
 /// ten years.
-fn compute_template_hash(template: &Value) -> String {
+pub(crate) fn compute_template_hash(template: &Value) -> String {
     // serde_json's default Map is a BTreeMap, so a template's keys serialise
     // in a fixed order and two equal templates always hash alike.
     let s = serde_json::to_string(template).unwrap_or_default();
