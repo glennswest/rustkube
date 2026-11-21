@@ -3,9 +3,10 @@
 # The ServiceAccount key files followed (#298, stormcos#176): a running
 # apiserver has the cluster's pair installed over its own node's pair, as a
 # promote onto a running master does (stormcluster#38/#67). It must sign with
-# the new key, verify the new key's tokens, keep verifying the old key's until
-# the next change, refuse a pair caught half written, and log each load's
-# saPin (sha256 of the SPKI DER).
+# the new key, verify the new key's tokens, keep verifying the replaced
+# signing key's for a bounded overlap, revoke at once a public key removed
+# while the signing key stays (#371), refuse a pair caught half written, and
+# log each load's saPin (sha256 of the SPKI DER).
 #
 #   test/e2e/sa-key-reload.sh        # from the checkout; builds what it runs
 #
@@ -85,16 +86,40 @@ T2=$(minted "$CLUSTER_ADMIN")
 signed_by "$T2" "$W/cluster.pub" && pass "after: TokenRequest signed with the cluster's key" \
   || fail "after: TokenRequest not signed with the cluster's key"
 c=$(code "$CLUSTER_ADMIN"); [ "$c" = 200 ] && pass "after: a cluster-key token authenticates" || fail "after: cluster-key token $c"
-c=$(code "$ADMIN"); [ "$c" = 200 ] && pass "after: the node's key's tokens still verify (until the next change)" \
+c=$(code "$ADMIN"); [ "$c" = 200 ] && pass "after: the node's key's tokens still verify (overlap)" \
   || fail "after: node-key token $c"
 c=$(code "$T1"); [ "$c" != 401 ] && pass "after: a pod token signed before the swap still authenticates ($c)" \
   || fail "after: the earlier TokenRequest token is 401"
 
-# The next change (another key added beside the cluster's) drops the node's.
-openssl genrsa 2048 2>/dev/null | openssl rsa -pubout 2>/dev/null >"$W/extra.pub"
+# <what> <fixed string> <seconds>: wait for one more log line saying it than
+# there are now (an earlier reload may have logged the same set).
+logged_again() {
+  local before
+  before=$(grep -cF -- "$2" "$W/apiserver.log")
+  for _ in $(seq "$3"); do
+    [ "$(grep -cF -- "$2" "$W/apiserver.log")" -gt "$before" ] && { pass "$1"; return 0; }
+    sleep 1
+  done
+  fail "$1: no new log line matching $2 in $3 s"; return 1
+}
+
+# The next change (another key added beside the cluster's): the replaced
+# signing key keeps its bounded overlap (24 h, #371), the new key verifies.
+openssl genrsa -out "$W/extra.key" 2048 2>/dev/null
+openssl rsa -in "$W/extra.key" -pubout -out "$W/extra.pub" 2>/dev/null
+EXTRA_ADMIN=$(token_with "$W/extra.key" admin '["system:masters"]')
 cat "$W/cluster.pub" "$W/extra.pub" >"$W/sa.pub.new" && mv "$W/sa.pub.new" "$W/sa.pub"
 logged "next change: reloaded with two verification keys" "verifying [\"$CLUSTER_PIN\", \"$(pin_of "$W/extra.pub")\"]" 45
-c=$(code "$ADMIN"); [ "$c" = 401 ] && pass "next change: the node's key's tokens stop (401)" || fail "next change: node-key token $c"
-c=$(code "$CLUSTER_ADMIN"); [ "$c" = 200 ] && pass "next change: the cluster key's tokens still work" || fail "next change: cluster-key token $c"
+c=$(code "$EXTRA_ADMIN"); [ "$c" = 200 ] && pass "next change: the added key's tokens authenticate" || fail "next change: added-key token $c"
+c=$(code "$ADMIN"); [ "$c" = 200 ] && pass "next change: the replaced signing key still verifies (overlap)" \
+  || fail "next change: node-key token $c"
+
+# Revocation (#371): the added key removed, the signing key unchanged — its
+# tokens stop at once; it used to be kept until yet another change.
+cp "$W/cluster.pub" "$W/sa.pub.new" && mv "$W/sa.pub.new" "$W/sa.pub"
+logged_again "removed: reloaded with the cluster key alone" "verifying [\"$CLUSTER_PIN\"]" 45
+c=$(code "$EXTRA_ADMIN"); [ "$c" = 401 ] && pass "removed: the removed key's tokens are refused (401)" \
+  || fail "removed: removed-key token $c"
+c=$(code "$CLUSTER_ADMIN"); [ "$c" = 200 ] && pass "removed: the cluster key's tokens still work" || fail "removed: cluster-key token $c"
 
 ADMIN=$CLUSTER_ADMIN report

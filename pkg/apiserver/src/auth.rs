@@ -222,10 +222,31 @@ fn pem_blocks(pem: &[u8]) -> Vec<String> {
 const DELETED_GRACE_SECS: i64 = 60;
 
 /// One verification key, with its `saPin` when it is an SPKI public key.
+#[derive(Clone)]
 struct Verifier {
     key: DecodingKey,
     algorithm: Algorithm,
     pin: Option<String>,
+}
+
+/// How long the previous signing key's tokens keep verifying after a reload
+/// switched the signing key (#298, #371): long enough for a kubelet to fetch
+/// every pod a token from the new key — upstream's kubelet refreshes a
+/// ServiceAccount token at least once a day — and no longer.
+pub const RETIRED_SIGNER_OVERLAP_SECS: u64 = 24 * 3600;
+
+/// The previous signing key's verifier, accepted until `until` (unix seconds).
+#[derive(Clone)]
+struct Retired {
+    verifier: Verifier,
+    until: u64,
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// `sha256:` and the hex SHA-256 of a `PUBLIC KEY` PEM block's
@@ -255,10 +276,12 @@ struct Material {
     /// new public key everywhere, switching the signing key, waiting for
     /// tokens to turn over and then dropping the old key, as upstream does.
     decoding: Vec<Verifier>,
-    /// The keys verified against before the last reload, kept until the next
-    /// one, so a token signed just before a pair is replaced still verifies
-    /// (#298).
-    retired: Vec<Verifier>,
+    /// Signing keys replaced by a reload, each verified against for
+    /// `RETIRED_SIGNER_OVERLAP_SECS` after it, so a token signed just before a
+    /// pair is replaced still verifies (#298). Only a signing key that was
+    /// replaced is kept: a public key dropped from the files while the
+    /// signing key stays is not accepted again (#371).
+    retired: Vec<Retired>,
     /// The signing key's pin: that of the public key its tokens verify with.
     signing_pin: Option<String>,
 }
@@ -292,6 +315,21 @@ impl Material {
     /// The verification key the signing key's tokens verify with, if any: a
     /// probe token is signed and checked against each.
     fn signer(&self) -> Option<&Verifier> {
+        let token = self.probe()?;
+        self.verifier_of(&token)
+    }
+
+    /// The configured verification key `token`'s signature verifies with.
+    fn verifier_of(&self, token: &str) -> Option<&Verifier> {
+        self.decoding.iter().find(|v| {
+            let mut validation = Validation::new(v.algorithm);
+            validation.validate_aud = false;
+            decode::<Claims>(token, &v.key, &validation).is_ok()
+        })
+    }
+
+    /// A token signed with the signing key, to find which public key is its.
+    fn probe(&self) -> Option<String> {
         let probe = Claims {
             iss: None,
             sub: "probe".into(),
@@ -303,12 +341,7 @@ impl Material {
             jti: None,
             kubernetes: None,
         };
-        let token = encode(&Header::new(self.algorithm), &probe, &self.encoding).ok()?;
-        self.decoding.iter().find(|v| {
-            let mut validation = Validation::new(v.algorithm);
-            validation.validate_aud = false;
-            decode::<Claims>(&token, &v.key, &validation).is_ok()
-        })
+        encode(&Header::new(self.algorithm), &probe, &self.encoding).ok()
     }
 
     /// The pins, for the log: the signing key's and each verification key's.
@@ -323,7 +356,18 @@ impl Material {
             if self.retired.is_empty() {
                 String::new()
             } else {
-                format!(", and until the next change the previous {:?}", pins(&self.retired))
+                let until: Vec<String> = self
+                    .retired
+                    .iter()
+                    .map(|r| {
+                        let pin = r.verifier.pin.clone().unwrap_or_else(|| "(not SPKI)".into());
+                        let at = chrono::DateTime::from_timestamp(r.until as i64, 0)
+                            .map(|t| t.to_rfc3339())
+                            .unwrap_or_else(|| r.until.to_string());
+                        format!("{pin} until {at}")
+                    })
+                    .collect();
+                format!(", and the replaced signing key {until:?}")
             }
         )
     }
@@ -400,11 +444,20 @@ impl SigningKeys {
     }
 
     /// Replace the keys with the files' new contents (#298), for every clone.
-    /// The keys verified against until now stay good until the next reload.
+    /// Tokens verify against the new public keys only, with one exception: when
+    /// the signing key was replaced — its tokens verify against none of the new
+    /// public keys — its own public key keeps verifying for
+    /// `RETIRED_SIGNER_OVERLAP_SECS`, so tokens signed just before still work.
+    /// A public key removed while the signing key stays stops verifying at once
+    /// (#371): that is how a compromised key is revoked.
     /// Refused, keeping the current keys, when the new signing key's tokens
     /// would verify against none of the new public keys — a pair caught half
     /// written; the second half's write is looked at again.
     pub fn reload(&self, private_pem: &[u8], public_pems: &[&[u8]]) -> anyhow::Result<String> {
+        self.reload_at(private_pem, public_pems, unix_now())
+    }
+
+    fn reload_at(&self, private_pem: &[u8], public_pems: &[&[u8]], now: u64) -> anyhow::Result<String> {
         let mut material = Material::parse(private_pem, public_pems)
             .map_err(|e| anyhow::anyhow!("loading ServiceAccount keys: {e}"))?;
         if material.signer().is_none() {
@@ -414,18 +467,36 @@ impl SigningKeys {
             );
         }
         let mut current = self.keys.write().unwrap_or_else(|e| e.into_inner());
+        // Earlier replaced signing keys keep their own deadline — unless the
+        // files carry them again, when they are simply configured.
         material.retired = current
-            .decoding
+            .retired
             .iter()
-            .map(|v| Verifier { key: v.key.clone(), algorithm: v.algorithm, pin: v.pin.clone() })
+            .filter(|r| r.until > now)
+            .filter(|r| !material.decoding.iter().any(|v| v.pin.is_some() && v.pin == r.verifier.pin))
+            .cloned()
             .collect();
+        // The signing key replaced: its tokens verify against none of the new
+        // keys, so its public key is kept for the overlap. A signing key
+        // whose public key is still configured needs nothing kept.
+        if let Some(old_token) = current.probe() {
+            if material.verifier_of(&old_token).is_none() {
+                if let Some(old_signer) = current.signer() {
+                    material.retired.retain(|r| r.verifier.pin.is_none() || r.verifier.pin != old_signer.pin);
+                    material.retired.push(Retired {
+                        verifier: old_signer.clone(),
+                        until: now + RETIRED_SIGNER_OVERLAP_SECS,
+                    });
+                }
+            }
+        }
         let described = material.describe();
         *current = Arc::new(material);
         Ok(described)
     }
 
-    /// How many keys tokens are verified against (the previous pair's kept
-    /// ones not counted).
+    /// How many keys tokens are verified against (a replaced signing key
+    /// still in its overlap not counted).
     pub fn verifying_keys(&self) -> usize {
         self.material().decoding.len()
     }
@@ -499,9 +570,11 @@ impl SigningKeys {
     /// Audiences and bindings are not checked here.
     fn verify(&self, token: &str) -> Option<TokenData<Claims>> {
         // Any verification key will do (#223): the one its signer used —
-        // the previous pair's too, until the next reload (#298).
+        // a replaced signing key's too, during its overlap (#298, #371).
         let keys = self.material();
-        let data = keys.decoding.iter().chain(&keys.retired).find_map(|v| {
+        let now = unix_now();
+        let retired = keys.retired.iter().filter(|r| r.until > now).map(|r| &r.verifier);
+        let data = keys.decoding.iter().chain(retired).find_map(|v| {
             let (key, algorithm) = (&v.key, v.algorithm);
             let mut validation = Validation::new(algorithm);
             validation.validate_exp = true;
@@ -1042,10 +1115,82 @@ pub(crate) mod tests {
         assert!(only_cluster().validate_token(&still).is_some());
         assert!(keys.reload(cluster_priv.as_bytes(), &[b"not a key"]).is_err());
 
-        // The next change drops the node's own key.
+        // Another reload within the overlap keeps the replaced signing key…
         keys.reload(cluster_priv.as_bytes(), &[cluster_pub.as_bytes()]).unwrap();
+        assert!(handler.validate_token(&old_token).is_some(), "within the overlap");
+        // …and the first one past it drops it (#371: bounded, not "until
+        // the next change").
+        let later = unix_now() + RETIRED_SIGNER_OVERLAP_SECS + 1;
+        keys.reload_at(cluster_priv.as_bytes(), &[cluster_pub.as_bytes()], later).unwrap();
         assert!(handler.validate_token(&old_token).is_none());
         assert!(handler.validate_token(&new_token).is_some());
+    }
+
+    /// #371 (finding c6cb83387661): a public key removed from the files
+    /// while the signing key stays is revoked at once — every reload used to
+    /// keep the whole previous set, so a compromised key's tokens went on
+    /// authenticating.
+    #[test]
+    fn a_removed_verification_key_is_revoked_at_once() {
+        let signer = rcgen::KeyPair::generate().unwrap();
+        let (signer_priv, signer_pub) = (signer.serialize_pem(), signer.public_key_pem());
+        let leaked = rcgen::KeyPair::generate().unwrap();
+        let (leaked_priv, leaked_pub) = (leaked.serialize_pem(), leaked.public_key_pem());
+        let keys = SigningKeys::from_pem(signer_priv.as_bytes(), &[signer_pub.as_bytes(), leaked_pub.as_bytes()]).unwrap();
+        let claims = || Claims {
+            iss: None,
+            sub: "system:serviceaccount:a:b".into(),
+            aud: None,
+            groups: Vec::new(),
+            iat: 0,
+            nbf: None,
+            exp: in_ten_years(),
+            jti: None,
+            kubernetes: None,
+        };
+        let leaked_keys = SigningKeys::from_pem(leaked_priv.as_bytes(), &[leaked_pub.as_bytes()]).unwrap();
+        let leaked_token = leaked_keys.sign(&claims()).unwrap();
+        let own_token = keys.sign(&claims()).unwrap();
+        assert!(keys.validate_token(&leaked_token).is_some(), "configured: verifies");
+
+        let described = keys.reload(signer_priv.as_bytes(), &[signer_pub.as_bytes()]).unwrap();
+        assert!(keys.validate_token(&leaked_token).is_none(), "removed: refused at once");
+        assert!(keys.validate_token(&own_token).is_some(), "the signing key's own tokens stay good");
+        assert!(!described.contains("replaced signing key"), "nothing kept: {described}");
+    }
+
+    /// A signing-key change keeps only the replaced signing key, not every
+    /// other key the files used to hold.
+    #[test]
+    fn a_signing_key_change_keeps_only_the_replaced_signer() {
+        let a = rcgen::KeyPair::generate().unwrap();
+        let other = rcgen::KeyPair::generate().unwrap();
+        let b = rcgen::KeyPair::generate().unwrap();
+        let token_of = |k: &rcgen::KeyPair| {
+            let ks = SigningKeys::from_pem(k.serialize_pem().as_bytes(), &[k.public_key_pem().as_bytes()]).unwrap();
+            ks.sign(&Claims {
+                iss: None,
+                sub: "system:serviceaccount:a:b".into(),
+                aud: None,
+                groups: Vec::new(),
+                iat: 0,
+                nbf: None,
+                exp: in_ten_years(),
+                jti: None,
+                kubernetes: None,
+            })
+            .unwrap()
+        };
+        let keys = SigningKeys::from_pem(
+            a.serialize_pem().as_bytes(),
+            &[a.public_key_pem().as_bytes(), other.public_key_pem().as_bytes()],
+        )
+        .unwrap();
+        let described = keys.reload(b.serialize_pem().as_bytes(), &[b.public_key_pem().as_bytes()]).unwrap();
+        assert!(keys.validate_token(&token_of(&a)).is_some(), "the replaced signer, in its overlap");
+        assert!(keys.validate_token(&token_of(&other)).is_none(), "a dropped non-signing key");
+        assert!(keys.validate_token(&token_of(&b)).is_some());
+        assert!(described.contains("replaced signing key"), "{described}");
     }
 
     #[test]
