@@ -4,6 +4,17 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### auth.rs review finding (#371: c6cb83387661) — IN PROGRESS 2026-11-20
+- [ ] A reload retires only the previous *signing* key's verifier, and only
+  when the signing key changed (its tokens verify against none of the new
+  public keys), for a bounded overlap (24 h: upstream kubelet refreshes a
+  token at least daily). Every other key dropped from the files stops
+  verifying at once. Unexpired retired keys carry over; expired ones go.
+- [ ] Units: removing a key while the signing key stays revokes it; a
+  transition keeps the old signer until the deadline only.
+- [ ] Rig `sa-key-reload` keeps passing; README/CHANGELOG; rustkube-node
+  refresh cap (80% of a 1-year extended token) filed there.
+
 ### DaemonSet rolling update (#369, stormcos#811) — SHIPPED (proof pending) 2026-11-20
 - [x] Pods carry `controller-revision-hash` (FNV of `spec.template`, the
   Deployment's hash) and `pod-template-generation`.
