@@ -72,6 +72,10 @@ pub async fn admit_create(
     if resource == crate::user_groups::RESOURCE && namespace.is_none() {
         crate::user_groups::admit(obj)?;
     }
+    // security.openshift.io SCCs (#373): OpenShift's defaulting and validation.
+    if resource == crate::scc_policy::RESOURCE && namespace.is_none() {
+        crate::scc_policy::admit(obj)?;
+    }
 
     // Served (#119) but not evaluated yet (#234): say so, rather than let
     // the policy's author believe it protects anything.

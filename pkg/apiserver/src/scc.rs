@@ -29,18 +29,26 @@
 //! (the kubelet's static pods) are never changed. Writes the apiserver makes
 //! for itself (manifests) have no requester and are not governed.
 //!
-//! **Which SCC**, as OpenShift chooses: the providers the requester *or the
-//! pod's ServiceAccount* may `use` (RBAC, `security.openshift.io`
-//! `securitycontextconstraints`, by name), in OpenShift's order — `anyuid`
-//! (priority 10), `restricted-v2`, `privileged` — and the first one the pod
-//! satisfies admits it. `restricted-v2` is open to everyone (OpenShift binds
-//! it to `system:authenticated`). `cluster-admin` and `system:masters` may
-//! use every SCC, so a pod an administrator creates directly is admitted
-//! under `anyuid` (or `privileged`) unchanged, exactly as on OpenShift, while
-//! a pod a controller creates for a Deployment, StatefulSet or Job gets
-//! `restricted-v2` unless its ServiceAccount was granted more. Granting one:
-//! a RoleBinding to `system:openshift:scc:anyuid` (or `…:privileged`), the
-//! ClusterRoles bootstrapped for it.
+//! **Which SCC** (#373): the stored `security.openshift.io/v1`
+//! SecurityContextConstraints, each made a provider for the pod's namespace
+//! and tried in OpenShift's order (priority, then restrictiveness, then
+//! name; [`crate::scc_policy`]). An SCC is usable when it lists the pod's
+//! ServiceAccount or the requester (or one of their groups), or RBAC grants
+//! `use` of it — the ServiceAccount is asked first, and the pod records which
+//! one it was (`security.openshift.io/validated-scc-subject-type`). The first
+//! usable SCC the pod satisfies admits it, with what that SCC fills in; a pod
+//! naming `openshift.io/required-scc` is tried against that SCC alone.
+//! rustkube ships `anyuid` (priority 10), `restricted-v2` and `privileged`,
+//! created at boot when missing and otherwise left as an administrator made
+//! them; `restricted-v2` is granted to `system:authenticated` by the
+//! ClusterRoleBinding `system:openshift:scc:restricted-v2`. `cluster-admin`
+//! and `system:masters` may use every SCC, so a pod an administrator creates
+//! directly is admitted under `anyuid` (or `privileged`) unchanged but for
+//! the dropped `MKNOD`, exactly as on OpenShift, while a pod a controller
+//! creates for a Deployment, StatefulSet or Job gets `restricted-v2` unless
+//! its ServiceAccount was granted more: a RoleBinding to
+//! `system:openshift:scc:anyuid` (or `…:privileged`), the ClusterRoles
+//! bootstrapped for it, or the SCC's own `users`/`groups`.
 //!
 //! **restricted-v2** (what it sets when the pod leaves it unset, and refuses
 //! otherwise, in OpenShift's words):
@@ -48,14 +56,16 @@
 //! - each container's `runAsUser`: the first UID of the range
 //!   (`MustRunAsRange`); a UID outside it is refused;
 //! - each container's `runAsNonRoot: true`;
-//! - the pod's `fsGroup`: the first group of the supplemental range; one
-//!   outside it is refused (`supplementalGroups` are `RunAsAny`);
+//! - the pod's `fsGroup`: the first group of the supplemental range, and only
+//!   that one (`supplementalGroups` are `RunAsAny`);
 //! - `allowPrivilegeEscalation: false`; `capabilities.drop` gains `ALL`; only
 //!   `NET_BIND_SERVICE` may be added;
-//! - the pod's `seccompProfile: RuntimeDefault`; any other profile is refused;
-//! - no privileged containers, host network/PID/IPC, host ports, and only
-//!   configMap, csi, downwardAPI, emptyDir, ephemeral, image,
-//!   persistentVolumeClaim, projected and secret volumes.
+//! - the pod's `seccompProfile: RuntimeDefault` (and OpenShift's
+//!   `seccomp.security.alpha.kubernetes.io/pod` annotation); any other
+//!   profile is refused;
+//! - no privileged containers, host network/PID/IPC, host ports, unsafe
+//!   sysctls, and only configMap, csi, downwardAPI, emptyDir, ephemeral,
+//!   image, persistentVolumeClaim, projected and secret volumes.
 //!
 //! The pod is annotated `openshift.io/scc: <provider>`. SELinux levels
 //! (`openshift.io/sa.scc.mcs`) are not assigned: stormcos nodes do not run
@@ -63,7 +73,7 @@
 
 use crate::auth::UserInfo;
 use crate::error::ApiError;
-use crate::rbac_engine::{AuthorizationRequest, RbacEngine};
+use crate::scc_policy::{self, Provider};
 use crate::storage::ResourceStorage;
 use serde_json::{json, Value};
 
@@ -413,25 +423,6 @@ pub fn governs(ns: &Value) -> bool {
     }
 }
 
-/// The SCCs this admission knows, in OpenShift's order of preference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Provider {
-    AnyUid,
-    RestrictedV2,
-    Privileged,
-}
-
-impl Provider {
-    pub fn name(self) -> &'static str {
-        match self {
-            Provider::AnyUid => "anyuid",
-            Provider::RestrictedV2 => "restricted-v2",
-            Provider::Privileged => "privileged",
-        }
-    }
-    const ORDER: [Provider; 3] = [Provider::AnyUid, Provider::RestrictedV2, Provider::Privileged];
-}
-
 /// Run SCC admission over a pod being created in `ns` (already read, by
 /// NamespaceLifecycle). Mutates the pod; an `Err` refuses it.
 pub async fn admit_pod(storage: &ResourceStorage, ns: &Value, pod: &mut Value) -> Result<(), ApiError> {
@@ -446,19 +437,76 @@ pub async fn admit_pod(storage: &ResourceStorage, ns: &Value, pod: &mut Value) -
         return Ok(());
     }
     let ns = namespace_with_ranges(storage, ns.clone()).await?;
-    let Some((uid, groups)) = namespace_ranges(&ns) else {
-        return Err(ApiError::internal("namespace has no UID range"));
-    };
     let ns_name = ns["metadata"]["name"].as_str().unwrap_or_default().to_string();
-    let sa = pod["spec"]["serviceAccountName"].as_str().unwrap_or("default").to_string();
-    let mut usable = Vec::new();
-    for p in Provider::ORDER {
-        let ok = p == Provider::RestrictedV2
-            || may_use(request.rbac.as_deref(), &request.user, &ns_name, p.name()).await
-            || may_use(request.rbac.as_deref(), &service_account_user(&ns_name, &sa), &ns_name, p.name()).await;
-        usable.push((p, ok));
+    let pod_name = pod["metadata"]["name"].as_str().or(pod["metadata"]["generateName"].as_str()).unwrap_or("").to_string();
+    let refused = |why: String| ApiError::forbidden(&format!("pods \"{pod_name}\" is forbidden: {why}"));
+    let required = pod["metadata"]["annotations"][scc_policy::REQUIRED_SCC].as_str().unwrap_or("").to_string();
+    let constraints = constraints(storage, &required).await.map_err(&refused)?;
+    let mut providers = Vec::new();
+    let mut errs = Vec::new();
+    for scc in &constraints {
+        match Provider::new(&ns, scc) {
+            Ok(p) => providers.push(p),
+            Err(e) => errs.push(e),
+        }
     }
-    choose(pod, uid, &groups, &usable)
+    if !errs.is_empty() {
+        return Err(refused(scc_policy::aggregate(&errs)));
+    }
+    if providers.is_empty() {
+        return Err(refused("no SecurityContextConstraintsProvider available to validate pod request".into()));
+    }
+    let sa = pod["spec"]["serviceAccountName"].as_str().unwrap_or("default").to_string();
+    let sa_user = scc_policy::service_account_user(&ns_name, &sa);
+    let rbac = request.rbac.as_deref();
+    let mut reasons = Vec::new();
+    for p in &providers {
+        // The ServiceAccount first, then the requester (`allowedForType`).
+        let subject = if scc_policy::applies_to(&p.scc, &sa_user, &ns_name, rbac).await {
+            "serviceaccount"
+        } else if scc_policy::applies_to(&p.scc, &request.user, &ns_name, rbac).await {
+            "user"
+        } else {
+            reasons.push(format!("provider {:?}: Forbidden: not usable by user or serviceaccount", p.name));
+            continue;
+        };
+        let mut candidate = pod.clone();
+        let errs = p.assign(&mut candidate);
+        if !errs.is_empty() {
+            reasons.extend(errs);
+            continue;
+        }
+        *pod = candidate;
+        annotate(pod, &p.name, subject);
+        return Ok(());
+    }
+    Err(refused(format!(
+        "unable to validate against any security context constraint: {}",
+        scc_policy::aggregate(&reasons)
+    )))
+}
+
+/// The SCCs a pod is tried against (`listSortedSCCs`): the one it requires,
+/// or every SCC — refused while one rustkube ships is missing, as OpenShift
+/// refuses while its standard set is incomplete.
+async fn constraints(storage: &ResourceStorage, required: &str) -> Result<Vec<Value>, String> {
+    let all = scc_policy::list(storage, false).await.map_err(|e| e.message)?;
+    if !required.is_empty() {
+        return match all.into_iter().find(|s| s["metadata"]["name"].as_str() == Some(required)) {
+            Some(s) => Ok(vec![s]),
+            None => Err(format!(
+                "failed to retrieve the required SCC {required:?}: securitycontextconstraints.security.openshift.io {required:?} not found"
+            )),
+        };
+    }
+    let missing: Vec<&str> = scc_policy::BUILTIN
+        .into_iter()
+        .filter(|n| !all.iter().any(|s| s["metadata"]["name"].as_str() == Some(*n)))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!("securitycontextconstraints.security.openshift.io cache is missing {}", missing.join(", ")));
+    }
+    Ok(all)
 }
 
 /// A static pod's mirror, created by the node that runs it: the one pod the
@@ -478,215 +526,15 @@ pub fn node_mirror_pod(user: &UserInfo, pod: &Value) -> bool {
     user.groups.iter().any(|g| g == "system:nodes") && pod["spec"]["nodeName"].as_str() == Some(node)
 }
 
-/// The pod's ServiceAccount as an RBAC subject.
-fn service_account_user(ns: &str, sa: &str) -> UserInfo {
-    UserInfo {
-        username: format!("system:serviceaccount:{ns}:{sa}"),
-        groups: vec![
-            "system:serviceaccounts".into(),
-            format!("system:serviceaccounts:{ns}"),
-            "system:authenticated".into(),
-        ],
-    }
-}
-
-async fn may_use(rbac: Option<&RbacEngine>, user: &UserInfo, ns: &str, scc: &str) -> bool {
-    let Some(rbac) = rbac else {
-        return user.groups.iter().any(|g| g == "system:masters");
-    };
-    rbac.authorize(
-        user,
-        &AuthorizationRequest {
-            verb: "use".into(),
-            resource: "securitycontextconstraints".into(),
-            subresource: None,
-            api_group: "security.openshift.io".into(),
-            namespace: Some(ns.into()),
-            name: Some(scc.into()),
-        },
-    )
-    .await
-}
-
-/// Admit `pod` under the first usable provider it satisfies, or refuse it
-/// with every provider's reason, as OpenShift's message lists them.
-pub fn choose(pod: &mut Value, uid: IdRange, groups: &[IdRange], usable: &[(Provider, bool)]) -> Result<(), ApiError> {
-    let mut reasons = Vec::new();
-    for &(p, ok) in usable {
-        if !ok {
-            reasons.push(format!("provider \"{}\": Forbidden: not usable by user or serviceaccount", p.name()));
-            continue;
-        }
-        let mut candidate = pod.clone();
-        let errs = match p {
-            Provider::Privileged => Vec::new(),
-            Provider::AnyUid => anyuid(&candidate),
-            Provider::RestrictedV2 => restricted_v2(&mut candidate, uid, groups),
-        };
-        if errs.is_empty() {
-            *pod = candidate;
-            annotate(pod, p);
-            return Ok(());
-        }
-        reasons.push(format!("provider {}: {}", p.name(), errs.join(", ")));
-    }
-    let name = pod["metadata"]["name"].as_str().or(pod["metadata"]["generateName"].as_str()).unwrap_or("");
-    Err(ApiError::forbidden(&format!(
-        "pods \"{name}\" is forbidden: unable to validate against any security context constraint: [{}]",
-        reasons.join(", ")
-    )))
-}
-
-fn annotate(pod: &mut Value, p: Provider) {
+fn annotate(pod: &mut Value, scc: &str, subject: &str) {
     if !pod["metadata"].is_object() {
         pod["metadata"] = json!({});
     }
     if !pod["metadata"]["annotations"].is_object() {
         pod["metadata"]["annotations"] = json!({});
     }
-    pod["metadata"]["annotations"][SCC_ANNOTATION] = json!(p.name());
-}
-
-const VOLUMES: &[&str] = &[
-    "configMap", "csi", "downwardAPI", "emptyDir", "ephemeral", "image", "persistentVolumeClaim", "projected", "secret",
-];
-
-/// What `anyuid` and `restricted-v2` both refuse: host namespaces, host
-/// ports, privileged containers, volume types outside the list.
-fn host_and_volumes(pod: &Value, errs: &mut Vec<String>) {
-    let spec = &pod["spec"];
-    for (key, what) in [("hostNetwork", "Host network"), ("hostPID", "Host PID"), ("hostIPC", "Host IPC")] {
-        if spec[key].as_bool() == Some(true) {
-            errs.push(format!(".spec.securityContext.{key}: Invalid value: true: {what} is not allowed to be used"));
-        }
-    }
-    for (i, v) in spec["volumes"].as_array().into_iter().flatten().enumerate() {
-        let kind = v.as_object().and_then(|o| o.keys().find(|k| *k != "name")).cloned().unwrap_or_default();
-        if !kind.is_empty() && !VOLUMES.contains(&kind.as_str()) {
-            errs.push(format!(".spec.volumes[{i}]: Invalid value: \"{kind}\": {kind} volumes are not allowed to be used"));
-        }
-    }
-    for (path, c) in containers(pod) {
-        if c["securityContext"]["privileged"].as_bool() == Some(true) {
-            errs.push(format!("{path}.privileged: Invalid value: true: Privileged containers are not allowed"));
-        }
-        for p in c["ports"].as_array().into_iter().flatten() {
-            if let Some(port) = p["hostPort"].as_u64().filter(|p| *p != 0) {
-                errs.push(format!("{path}.hostPort: Invalid value: {port}: Host ports are not allowed to be used"));
-            }
-        }
-    }
-}
-
-/// Every container (init first) with its path in OpenShift's messages.
-fn containers(pod: &Value) -> Vec<(String, &Value)> {
-    let mut out = Vec::new();
-    for field in ["initContainers", "containers"] {
-        for (i, c) in pod["spec"][field].as_array().into_iter().flatten().enumerate() {
-            out.push((format!(".{field}[{i}]"), c));
-        }
-    }
-    out
-}
-
-/// `anyuid`: any UID and group, no capabilities added; validation only.
-fn anyuid(pod: &Value) -> Vec<String> {
-    let mut errs = Vec::new();
-    host_and_volumes(pod, &mut errs);
-    for (path, c) in containers(pod) {
-        for cap in c["securityContext"]["capabilities"]["add"].as_array().into_iter().flatten() {
-            errs.push(format!("{path}.capabilities.add: Invalid value: {cap}: capability may not be added"));
-        }
-    }
-    errs
-}
-
-fn seccomp_ok(sc: &Value) -> Result<bool, String> {
-    match sc["seccompProfile"]["type"].as_str() {
-        None => Ok(false),
-        Some("RuntimeDefault") => Ok(true),
-        Some(other) => Err(other.to_string()),
-    }
-}
-
-/// `restricted-v2`: fill in what the pod left unset, refuse what it set
-/// against the profile. Mutates `pod` (the caller's copy).
-fn restricted_v2(pod: &mut Value, uid: IdRange, groups: &[IdRange]) -> Vec<String> {
-    let mut errs = Vec::new();
-    host_and_volumes(pod, &mut errs);
-    if !pod["spec"].is_object() {
-        pod["spec"] = json!({});
-    }
-    if !pod["spec"]["securityContext"].is_object() {
-        pod["spec"]["securityContext"] = json!({});
-    }
-    let pod_sc = pod["spec"]["securityContext"].clone();
-
-    // fsGroup: MustRunAs, the first group of the supplemental range.
-    match pod_sc["fsGroup"].as_i64() {
-        None => pod["spec"]["securityContext"]["fsGroup"] = json!(groups[0].min),
-        Some(g) if g >= 0 && groups.iter().any(|r| r.contains(g as u64)) => {}
-        Some(g) => errs.push(format!(".spec.securityContext.fsGroup: Invalid value: []int64{{{g}}}: {g} is not an allowed group")),
-    }
-    // seccomp: runtime/default only.
-    match seccomp_ok(&pod_sc) {
-        Ok(true) => {}
-        Ok(false) => pod["spec"]["securityContext"]["seccompProfile"] = json!({"type": "RuntimeDefault"}),
-        Err(t) => errs.push(format!(
-            ".spec.securityContext.seccompProfile.type: Invalid value: \"{t}\": {t} is not an allowed seccomp profile. Valid values are runtime/default"
-        )),
-    }
-    let pod_uid = pod_sc["runAsUser"].as_i64();
-    let pod_nonroot = pod_sc["runAsNonRoot"].as_bool();
-
-    for field in ["initContainers", "containers"] {
-        let Some(list) = pod["spec"][field].as_array_mut() else { continue };
-        for (i, c) in list.iter_mut().enumerate() {
-            let path = format!(".{field}[{i}]");
-            if !c["securityContext"].is_object() {
-                c["securityContext"] = json!({});
-            }
-            let sc = &mut c["securityContext"];
-            // runAsUser: MustRunAsRange, the first UID of the range.
-            match sc["runAsUser"].as_i64().or(pod_uid) {
-                None => sc["runAsUser"] = json!(uid.min),
-                Some(u) if u >= 0 && uid.contains(u as u64) => {}
-                Some(u) => errs.push(format!(
-                    "{path}.runAsUser: Invalid value: {u}: must be in the ranges: [{}, {}]",
-                    uid.min, uid.max
-                )),
-            }
-            if sc["runAsNonRoot"].as_bool().or(pod_nonroot).is_none() {
-                sc["runAsNonRoot"] = json!(true);
-            }
-            match sc["allowPrivilegeEscalation"].as_bool() {
-                None => sc["allowPrivilegeEscalation"] = json!(false),
-                Some(false) => {}
-                Some(true) => errs.push(format!(
-                    "{path}.allowPrivilegeEscalation: Invalid value: true: Allowing privilege escalation for containers is not allowed"
-                )),
-            }
-            if !sc["capabilities"].is_object() {
-                sc["capabilities"] = json!({});
-            }
-            for cap in sc["capabilities"]["add"].as_array().into_iter().flatten() {
-                if cap.as_str() != Some("NET_BIND_SERVICE") {
-                    errs.push(format!("{path}.capabilities.add: Invalid value: {cap}: capability may not be added"));
-                }
-            }
-            let mut drop = sc["capabilities"]["drop"].as_array().cloned().unwrap_or_default();
-            if !drop.iter().any(|d| d.as_str() == Some("ALL")) {
-                drop.push(json!("ALL"));
-            }
-            sc["capabilities"]["drop"] = Value::Array(drop);
-            if let Err(t) = seccomp_ok(sc) {
-                errs.push(format!(
-                    "{path}.seccompProfile.type: Invalid value: \"{t}\": {t} is not an allowed seccomp profile. Valid values are runtime/default"
-                ));
-            }
-        }
-    }
-    errs
+    pod["metadata"]["annotations"][SCC_ANNOTATION] = json!(scc);
+    pod["metadata"]["annotations"][scc_policy::SUBJECT_TYPE] = json!(subject);
 }
 
 #[cfg(test)]
@@ -696,12 +544,7 @@ mod tests {
     use std::sync::Arc;
 
     const R: IdRange = IdRange { min: 1_000_680_000, max: 1_000_689_999 };
-    const ALL: [(Provider, bool); 3] =
-        [(Provider::AnyUid, false), (Provider::RestrictedV2, true), (Provider::Privileged, false)];
 
-    fn pod(spec: Value) -> Value {
-        json!({"metadata": {"name": "web"}, "spec": spec})
-    }
 
     #[test]
     fn ranges_parse_as_openshift_writes_them() {
@@ -711,88 +554,6 @@ mod tests {
         assert_eq!(parse_range("5/0"), None);
         assert_eq!(parse_ranges("1/2,10/5").unwrap().len(), 2);
         assert_eq!(parse_ranges("1/2,bad"), None);
-    }
-
-    #[test]
-    fn an_openshift_manifest_gets_restricted_v2() {
-        // No runAsUser, no fsGroup, nothing: the storefront's case.
-        let mut p = pod(json!({"containers": [{"name": "app", "image": "x"}]}));
-        choose(&mut p, R, &[R], &ALL).unwrap();
-        let c = &p["spec"]["containers"][0]["securityContext"];
-        assert_eq!(c["runAsUser"], 1_000_680_000u64);
-        assert_eq!(c["runAsNonRoot"], true);
-        assert_eq!(c["allowPrivilegeEscalation"], false);
-        assert_eq!(c["capabilities"]["drop"], json!(["ALL"]));
-        assert_eq!(p["spec"]["securityContext"]["fsGroup"], 1_000_680_000u64);
-        assert_eq!(p["spec"]["securityContext"]["seccompProfile"]["type"], "RuntimeDefault");
-        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "restricted-v2");
-        // And it now passes PodSecurity restricted.
-        crate::builtin_admission::pod_security("restricted", &p).unwrap();
-    }
-
-    #[test]
-    fn a_uid_in_range_is_kept_and_one_outside_is_refused() {
-        let mut p = pod(json!({"securityContext": {"runAsUser": 1_000_680_005u64},
-                               "containers": [{"name": "app"}]}));
-        choose(&mut p, R, &[R], &ALL).unwrap();
-        assert!(p["spec"]["containers"][0]["securityContext"]["runAsUser"].is_null());
-
-        let mut p = pod(json!({"containers": [{"name": "app", "securityContext": {"runAsUser": 0}}]}));
-        let e = choose(&mut p, R, &[R], &ALL).unwrap_err();
-        assert!(e.message.contains("unable to validate against any security context constraint"), "{}", e.message);
-        assert!(e.message.contains("provider restricted-v2: .containers[0].runAsUser: Invalid value: 0: must be in the ranges: [1000680000, 1000689999]"), "{}", e.message);
-        assert!(e.message.contains("provider \"anyuid\": Forbidden: not usable by user or serviceaccount"));
-        // The refused pod is left as it came.
-        assert!(p["metadata"]["annotations"].is_null());
-    }
-
-    #[test]
-    fn fs_group_outside_the_range_is_refused() {
-        let mut p = pod(json!({"securityContext": {"fsGroup": 1}, "containers": [{"name": "a"}]}));
-        let e = choose(&mut p, R, &[R], &ALL).unwrap_err();
-        assert!(e.message.contains(".spec.securityContext.fsGroup: Invalid value: []int64{1}: 1 is not an allowed group"));
-    }
-
-    #[test]
-    fn privileged_host_and_capabilities_are_refused() {
-        let mut p = pod(json!({"hostNetwork": true,
-            "volumes": [{"name": "h", "hostPath": {"path": "/"}}, {"name": "d", "emptyDir": {}}],
-            "containers": [{"name": "a", "ports": [{"containerPort": 80, "hostPort": 80}],
-                            "securityContext": {"privileged": true, "allowPrivilegeEscalation": true,
-                                                "capabilities": {"add": ["NET_ADMIN", "NET_BIND_SERVICE"]}}}]}));
-        let e = choose(&mut p, R, &[R], &ALL).unwrap_err().message;
-        for want in [
-            "Host network is not allowed to be used",
-            ".spec.volumes[0]: Invalid value: \"hostPath\": hostPath volumes are not allowed to be used",
-            ".containers[0].privileged: Invalid value: true: Privileged containers are not allowed",
-            ".containers[0].hostPort: Invalid value: 80",
-            "Allowing privilege escalation for containers is not allowed",
-            "capabilities.add: Invalid value: \"NET_ADMIN\": capability may not be added",
-        ] {
-            assert!(e.contains(want), "{want} not in {e}");
-        }
-        assert!(!e.contains("NET_BIND_SERVICE\": capability"));
-    }
-
-    #[test]
-    fn anyuid_and_privileged_admit_what_restricted_refuses() {
-        // An administrator (may use every SCC) pinning UID 0: anyuid, unchanged.
-        let every = [(Provider::AnyUid, true), (Provider::RestrictedV2, true), (Provider::Privileged, true)];
-        let mut p = pod(json!({"containers": [{"name": "a", "securityContext": {"runAsUser": 0}}]}));
-        let before = p["spec"].clone();
-        choose(&mut p, R, &[R], &every).unwrap();
-        assert_eq!(p["spec"], before);
-        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "anyuid");
-        // A privileged container: past anyuid and restricted-v2, privileged.
-        let mut p = pod(json!({"containers": [{"name": "a", "securityContext": {"privileged": true}}]}));
-        choose(&mut p, R, &[R], &every).unwrap();
-        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "privileged");
-    }
-
-    #[test]
-    fn seccomp_other_than_runtime_default_is_refused() {
-        let mut p = pod(json!({"securityContext": {"seccompProfile": {"type": "Unconfined"}}, "containers": [{"name": "a"}]}));
-        assert!(choose(&mut p, R, &[R], &ALL).unwrap_err().message.contains("Unconfined is not an allowed seccomp profile"));
     }
 
     #[test]
@@ -930,9 +691,10 @@ mod tests {
     #[tokio::test]
     async fn a_users_mirror_annotation_does_not_bypass_admission() {
         let storage = ResourceStorage::new(Arc::new(MemStore::default()));
+        crate::scc_policy::bootstrap(&storage).await;
         let mut ns = json!({"metadata": {"name": "app"}});
         set_ranges(&mut ns, 7);
-        // No RBAC engine: only restricted-v2 is usable by anyone here.
+        // No RBAC engine: the bootstrapped grants (restricted-v2 for alice).
         let attrs = |u: UserInfo| {
             crate::admission::RequestAttrs::of("/api/v1/namespaces/app/pods", &axum::http::Method::POST, None, u)
                 .unwrap()
@@ -958,5 +720,108 @@ mod tests {
         backfill(&storage).await;
         let ns = storage.get(&key).await.unwrap();
         assert_eq!(ns["metadata"]["annotations"][UID_RANGE], "1000000000/10000");
+    }
+
+    fn attrs(u: UserInfo) -> crate::admission::RequestAttrs {
+        crate::admission::RequestAttrs::of("/api/v1/namespaces/app/pods", &axum::http::Method::POST, None, u).unwrap()
+    }
+
+    async fn cluster() -> (ResourceStorage, Value) {
+        let storage = ResourceStorage::new(Arc::new(MemStore::default()));
+        crate::scc_policy::bootstrap(&storage).await;
+        let mut ns = json!({"metadata": {"name": "app"}});
+        set_ranges(&mut ns, 68);
+        (storage, ns)
+    }
+
+    async fn admit(storage: &ResourceStorage, ns: &Value, u: UserInfo, pod: &mut Value) -> Result<(), ApiError> {
+        crate::admission::with_request(attrs(u), admit_pod(storage, ns, pod)).await
+    }
+
+    /// A user's pod with no securityContext — the storefront's case — gets
+    /// restricted-v2's UID, fsGroup, seccomp and capabilities (#321, #373).
+    #[tokio::test]
+    async fn an_openshift_manifest_gets_restricted_v2() {
+        let (storage, ns) = cluster().await;
+        let mut p = json!({"metadata": {"name": "web"}, "spec": {"containers": [{"name": "app", "image": "x"}]}});
+        admit(&storage, &ns, user("alice", &["system:authenticated"]), &mut p).await.unwrap();
+        let c = &p["spec"]["containers"][0]["securityContext"];
+        assert_eq!(c["runAsUser"], 1_000_680_000u64);
+        assert_eq!(c["runAsNonRoot"], true);
+        assert_eq!(c["allowPrivilegeEscalation"], false);
+        assert_eq!(c["capabilities"]["drop"], json!(["ALL"]));
+        assert_eq!(p["spec"]["securityContext"]["fsGroup"], 1_000_680_000u64);
+        assert_eq!(p["spec"]["securityContext"]["seccompProfile"]["type"], "RuntimeDefault");
+        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "restricted-v2");
+        assert_eq!(p["metadata"]["annotations"][crate::scc_policy::SUBJECT_TYPE], "user");
+        // And it now passes PodSecurity restricted.
+        crate::builtin_admission::pod_security("restricted", &p).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refusal_lists_every_provider_as_openshift_does() {
+        let (storage, ns) = cluster().await;
+        let mut p = json!({"metadata": {"name": "web"}, "spec": {"containers": [{"name": "app", "securityContext": {"runAsUser": 0}}]}});
+        let e = admit(&storage, &ns, user("alice", &["system:authenticated"]), &mut p).await.unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(
+            e.message,
+            "pods \"web\" is forbidden: unable to validate against any security context constraint: [provider \"anyuid\": \
+             Forbidden: not usable by user or serviceaccount, provider restricted-v2: .containers[0].runAsUser: Invalid \
+             value: 0: must be in the ranges: [1000680000, 1000689999], provider \"privileged\": Forbidden: not usable \
+             by user or serviceaccount]"
+        );
+        assert!(p["metadata"]["annotations"].is_null(), "the refused pod is left as it came");
+    }
+
+    #[tokio::test]
+    async fn an_administrator_gets_anyuid_and_then_privileged() {
+        let (storage, ns) = cluster().await;
+        let admin = user("system:admin", &["system:masters", "system:authenticated"]);
+        let mut p = json!({"metadata": {"name": "web"}, "spec": {"containers": [{"name": "a", "securityContext": {"runAsUser": 0}}]}});
+        admit(&storage, &ns, admin.clone(), &mut p).await.unwrap();
+        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "anyuid");
+        assert_eq!(p["spec"]["containers"][0]["securityContext"]["runAsUser"], 0);
+        let mut p = json!({"metadata": {"name": "web"}, "spec": {"containers": [{"name": "a", "securityContext": {"privileged": true}}]}});
+        admit(&storage, &ns, admin, &mut p).await.unwrap();
+        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "privileged");
+    }
+
+    /// An administrator's own SCC is taken by admission in OpenShift's
+    /// order: listing the ServiceAccount, at a priority above anyuid.
+    #[tokio::test]
+    async fn a_custom_scc_admits_by_priority_and_names_its_subject() {
+        let (storage, ns) = cluster().await;
+        let mut custom = crate::scc_policy::builtins().into_iter().find(|s| s["metadata"]["name"] == "restricted-v2").unwrap();
+        custom["metadata"] = json!({"name": "fixed-uid"});
+        custom["priority"] = json!(20);
+        custom["runAsUser"] = json!({"type": "MustRunAs", "uid": 4242});
+        custom["users"] = json!(["system:serviceaccount:app:builder"]);
+        crate::scc_policy::admit(&mut custom).unwrap();
+        storage.create(&ResourceStorage::cluster_key("securitycontextconstraints", "fixed-uid"), custom).await.unwrap();
+        let alice = user("alice", &["system:authenticated"]);
+        let mut p = json!({"metadata": {"name": "b"}, "spec": {"serviceAccountName": "builder", "containers": [{"name": "a"}]}});
+        admit(&storage, &ns, alice.clone(), &mut p).await.unwrap();
+        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "fixed-uid");
+        assert_eq!(p["metadata"]["annotations"][crate::scc_policy::SUBJECT_TYPE], "serviceaccount");
+        assert_eq!(p["spec"]["containers"][0]["securityContext"]["runAsUser"], 4242);
+        // Another ServiceAccount's pod is not admitted by it.
+        let mut p = json!({"metadata": {"name": "w"}, "spec": {"containers": [{"name": "a"}]}});
+        admit(&storage, &ns, alice.clone(), &mut p).await.unwrap();
+        assert_eq!(p["metadata"]["annotations"][SCC_ANNOTATION], "restricted-v2");
+        // Required: that SCC alone.
+        let mut p = json!({"metadata": {"name": "r", "annotations": {crate::scc_policy::REQUIRED_SCC: "privileged"}},
+                           "spec": {"containers": [{"name": "a"}]}});
+        let e = admit(&storage, &ns, alice, &mut p).await.unwrap_err().message;
+        assert!(e.ends_with("unable to validate against any security context constraint: provider \"privileged\": Forbidden: not usable by user or serviceaccount"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_builtin_refuses_pods() {
+        let (storage, ns) = cluster().await;
+        storage.delete(&ResourceStorage::cluster_key("securitycontextconstraints", "anyuid"), None).await.unwrap();
+        let mut p = json!({"metadata": {"name": "web"}, "spec": {"containers": [{"name": "a"}]}});
+        let e = admit(&storage, &ns, user("alice", &["system:authenticated"]), &mut p).await.unwrap_err();
+        assert_eq!(e.message, "pods \"web\" is forbidden: securitycontextconstraints.security.openshift.io cache is missing anyuid");
     }
 }

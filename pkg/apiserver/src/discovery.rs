@@ -225,6 +225,14 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "route.openshift.io/v1", "version": "v1"}
         }),
         json!({
+            // SecurityContextConstraints and the PodSecurityPolicy reviews
+            // (#373): what pod admission chooses among, and `oc adm policy
+            // scc-review` / `scc-subject-review` ask about.
+            "name": "security.openshift.io",
+            "versions": [{"groupVersion": "security.openshift.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "security.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             // Groups (#372): what `oc adm groups` and `oc adm prune groups`
             // act on; a Group's users carry it at authentication.
             "name": "user.openshift.io",
@@ -861,6 +869,7 @@ pub(crate) async fn builtin_lists() -> &'static std::collections::BTreeMap<(Stri
         gv!("networking.k8s.io", "v1", api_networking_v1_resources());
         gv!("route.openshift.io", "v1", api_route_v1_resources());
         gv!("user.openshift.io", "v1", api_user_v1_resources());
+        gv!("security.openshift.io", "v1", api_security_v1_resources());
         gv!("scheduling.k8s.io", "v1", api_scheduling_v1_resources());
         gv!("authentication.k8s.io", "v1", api_authentication_v1_resources());
         gv!("project.openshift.io", "v1", api_project_v1_resources());
@@ -1092,6 +1101,7 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
         ("scheduling.k8s.io", "v1") => vec![("priorityclasses", "PriorityClass", false)],
         ("route.openshift.io", "v1") => vec![("routes", "Route", true)],
         ("user.openshift.io", "v1") => vec![("groups", "Group", false)],
+        ("security.openshift.io", "v1") => vec![("securitycontextconstraints", "SecurityContextConstraints", false)],
         ("apiregistration.k8s.io", "v1") => vec![("apiservices", "APIService", false)],
         ("rustkube.io", "v1alpha1") => vec![("podmigrations", "PodMigration", true)],
         ("apps", "v1") => vec![
@@ -1682,6 +1692,40 @@ pub async fn api_route_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/security.openshift.io/v1 — SCCs and the three
+/// PodSecurityPolicy reviews (#373), as OpenShift's discovery lists them.
+/// OpenShift's `rangeallocations` are not served (rustkube's UID block
+/// counter is internal, `scc`).
+pub async fn api_security_v1_resources() -> impl IntoResponse {
+    let review = |name: &str, kind: &str| {
+        json!({
+            "name": name,
+            "singularName": name.trim_end_matches('s'),
+            "namespaced": true,
+            "kind": kind,
+            "verbs": ["create"]
+        })
+    };
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "security.openshift.io/v1",
+        "resources": [
+            review("podsecuritypolicyreviews", "PodSecurityPolicyReview"),
+            review("podsecuritypolicyselfsubjectreviews", "PodSecurityPolicySelfSubjectReview"),
+            review("podsecuritypolicysubjectreviews", "PodSecurityPolicySubjectReview"),
+            {
+                "name": "securitycontextconstraints",
+                "singularName": "securitycontextconstraint",
+                "namespaced": false,
+                "kind": "SecurityContextConstraints",
+                "shortNames": ["scc"],
+                "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }))
+}
+
 /// GET /apis/user.openshift.io/v1 — Groups (#372), stored as written.
 ///
 /// Only `groups`: OpenShift's Users, Identities and UserIdentityMappings are
@@ -2016,7 +2060,7 @@ mod tests {
             ("certificates.k8s.io", "v1"), ("rbac.authorization.k8s.io", "v1"), ("autoscaling", "v2"),
             ("networking.k8s.io", "v1"), ("scheduling.k8s.io", "v1"), ("admissionregistration.k8s.io", "v1"),
             ("node.k8s.io", "v1"), ("flowcontrol.apiserver.k8s.io", "v1"), ("gateway.networking.k8s.io", "v1"),
-            ("route.openshift.io", "v1"), ("user.openshift.io", "v1")];
+            ("route.openshift.io", "v1"), ("user.openshift.io", "v1"), ("security.openshift.io", "v1")];
         for (g, v) in generic {
             let served = advertised(g, v).await.unwrap_or_else(|| panic!("{g}/{v} not in the table"));
             let lists = builtin_lists().await;
@@ -2144,6 +2188,7 @@ mod tests {
             "route.openshift.io",
             "project.openshift.io",
             "user.openshift.io",
+            "security.openshift.io",
             "scheduling.k8s.io",
             "authentication.k8s.io",
             "apiregistration.k8s.io",

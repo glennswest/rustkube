@@ -16,6 +16,7 @@ pub mod pod_resize;
 pub mod project;
 pub mod resource;
 pub mod scale;
+pub mod scc_review;
 pub mod streaming;
 pub mod token;
 

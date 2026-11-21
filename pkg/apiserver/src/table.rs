@@ -292,6 +292,36 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                 vec![json!(name_of(o)), json!(users.join(", "))]
             }) as RowFn,
         )),
+        // `oc get scc` (#373): the columns of OpenShift's SCC CRD, each
+        // cell as apiextensions prints a `string` column — arrays as
+        // compact JSON, a null as `<no value>`.
+        "securitycontextconstraints" => Some((
+            vec![
+                col("Name", "string", 0, "Name must be unique within a namespace."),
+                col("Priv", "string", 0, "Determines if a container can request to be run as privileged"),
+                col("Caps", "string", 0, "A list of capabilities that can be requested to add to the container"),
+                col("SELinux", "string", 0, "Strategy that will dictate what labels will be set in the SecurityContext"),
+                col("RunAsUser", "string", 0, "Strategy that will dictate what RunAsUser is used in the SecurityContext"),
+                col("FSGroup", "string", 0, "Strategy that will dictate what fs group is used by the SecurityContext"),
+                col("SupGroup", "string", 0, "Strategy that will dictate what supplemental groups are used by the SecurityContext"),
+                col("Priority", "string", 0, "Sort order of SCCs"),
+                col("ReadOnlyRootFS", "string", 0, "Force containers to run with a read only root file system"),
+                col("Volumes", "string", 0, "White list of allowed volume plugins"),
+            ],
+            (|o: &Value| {
+                let mut cells = vec![json!(name_of(o))];
+                for path in [".allowPrivilegedContainer", ".allowedCapabilities", ".seLinuxContext.type", ".runAsUser.type",
+                             ".fsGroup.type", ".supplementalGroups.type", ".priority", ".readOnlyRootFilesystem", ".volumes"] {
+                    cells.push(match json_path(o, path) {
+                        None => Value::Null,
+                        Some(Value::Null) => json!("<no value>"),
+                        Some(Value::String(s)) => json!(s),
+                        Some(v) => json!(v.to_string()),
+                    });
+                }
+                cells
+            }) as RowFn,
+        )),
         "routes" => Some((
             vec![
                 col("Name", "string", 0, "Name of the route"),
@@ -788,6 +818,18 @@ mod tests {
         let t = to_table_crd(one, &cols);
         assert_eq!(t["rows"].as_array().unwrap().len(), 1);
         assert_eq!(t["rows"][0]["cells"][1], json!(1));
+    }
+
+    /// `oc get scc` prints what OpenShift prints for the built-ins (#373).
+    #[test]
+    fn sccs_print_the_crds_columns() {
+        let t = to_table("securitycontextconstraints", json!({"items": crate::scc_policy::builtins()}));
+        let row = |i: usize| t["rows"][i]["cells"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(row(0), ["anyuid", "false", "<no value>", "MustRunAs", "RunAsAny", "RunAsAny", "RunAsAny", "10", "false",
+            "[\"configMap\",\"csi\",\"downwardAPI\",\"emptyDir\",\"ephemeral\",\"image\",\"persistentVolumeClaim\",\"projected\",\"secret\"]"]);
+        assert_eq!(row(1)[2..8], ["[\"NET_BIND_SERVICE\"]", "MustRunAs", "MustRunAsRange", "MustRunAs", "RunAsAny", "<no value>"]);
+        assert_eq!(row(2)[1..3], ["true", "[\"*\"]"]);
+        assert_eq!(t["columnDefinitions"].as_array().unwrap().len(), 10);
     }
 
     /// `oc get groups`: NAME and the users joined as OpenShift's printer

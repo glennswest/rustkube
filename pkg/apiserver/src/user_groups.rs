@@ -72,7 +72,7 @@ fn is_dns_label(s: &str) -> bool {
 }
 
 /// A DNS-1123 subdomain (a ServiceAccount's name).
-fn is_dns_subdomain(s: &str) -> bool {
+pub(crate) fn is_dns_subdomain(s: &str) -> bool {
     !s.is_empty() && s.len() <= 253 && s.split('.').all(|l| {
         !l.is_empty()
             && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')

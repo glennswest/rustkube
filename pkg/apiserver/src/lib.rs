@@ -33,6 +33,7 @@ pub mod rbac_engine;
 pub mod requester;
 pub mod resource_metrics;
 pub mod scc;
+pub mod scc_policy;
 pub mod schema;
 pub mod selector;
 pub mod node_port;

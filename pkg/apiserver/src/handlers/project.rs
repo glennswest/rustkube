@@ -671,6 +671,12 @@ fn admin_rules() -> Vec<Value> {
     // Sharing the project: `oc adm policy add-role-to-user edit bob -n demo`.
     rules.push(rule(&["rbac.authorization.k8s.io"], &["roles", "rolebindings"], ALL));
     rules.push(rule(&["authorization.k8s.io"], &["localsubjectaccessreviews"], &["create"]));
+    // `oc adm policy scc-review` / `scc-subject-review` (#373).
+    rules.push(rule(
+        &["security.openshift.io"],
+        &["podsecuritypolicyreviews", "podsecuritypolicyselfsubjectreviews", "podsecuritypolicysubjectreviews"],
+        &["create"],
+    ));
     // The project itself. Authorized in its own namespace, so this reaches
     // this project and no other.
     rules.push(rule(&["project.openshift.io"], &["projects"], &["delete", "update"]));
@@ -756,12 +762,17 @@ pub fn bootstrap_cluster_roles() -> Vec<Value> {
     ]
 }
 
-/// The ClusterRoleBindings that give every authenticated user `basic-user`
-/// and `self-provisioner`. Created once and never rewritten: emptying the
-/// subjects of `self-provisioners` turns self-service projects off, and a
-/// boot must not turn it back on.
+/// The ClusterRoleBindings that give every authenticated user `basic-user`,
+/// `self-provisioner` and the `restricted-v2` SCC (#373, as OpenShift grants
+/// it). Created once and never rewritten: emptying the subjects of
+/// `self-provisioners` turns self-service projects off, and a boot must not
+/// turn it back on.
 pub fn bootstrap_cluster_role_bindings() -> Vec<Value> {
-    [("basic-users", "basic-user"), ("self-provisioners", "self-provisioner")]
+    [
+        ("basic-users", "basic-user"),
+        ("self-provisioners", "self-provisioner"),
+        ("system:openshift:scc:restricted-v2", "system:openshift:scc:restricted-v2"),
+    ]
         .iter()
         .map(|(name, role)| {
             json!({

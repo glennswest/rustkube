@@ -659,6 +659,9 @@ pub(crate) async fn builtin_update(
     if key.starts_with("/registry/groups/") {
         crate::user_groups::admit(body)?; // #372
     }
+    if key.starts_with("/registry/securitycontextconstraints/") {
+        crate::scc_policy::admit(body)?; // #373
+    }
     if key.starts_with("/registry/services/") {
         // Upstream defaults every write, not just a create.
         crate::builtin_admission::default_service_ports(body);
@@ -1802,6 +1805,8 @@ pub(crate) async fn patch_stored_object(
                         .await?;
                 } else if resource == crate::user_groups::RESOURCE {
                     crate::user_groups::admit(&mut obj)?; // #372
+                } else if resource == crate::scc_policy::RESOURCE {
+                    crate::scc_policy::admit(&mut obj)?; // #373
                 }
                 let claims = (resource == "services").then(|| obj.clone()); // #132
                 let created = async {
@@ -2376,6 +2381,10 @@ fn resource_to_list_kind(resource: &str) -> String {
         "podmigrations" => "PodMigration",
         "routes" => "Route",
         "groups" => "Group",
+        "securitycontextconstraints" => "SecurityContextConstraints",
+        "podsecuritypolicyreviews" => "PodSecurityPolicyReview",
+        "podsecuritypolicyselfsubjectreviews" => "PodSecurityPolicySelfSubjectReview",
+        "podsecuritypolicysubjectreviews" => "PodSecurityPolicySubjectReview",
         // storage.k8s.io/v1 — CSI ecosystem (#24)
         "storageclasses" => "StorageClass",
         "csidrivers" => "CSIDriver",
@@ -2435,6 +2444,8 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "podmigrations" => "rustkube.io/v1alpha1",
         "routes" => "route.openshift.io/v1",
         "groups" => "user.openshift.io/v1",
+        "securitycontextconstraints" | "podsecuritypolicyreviews" | "podsecuritypolicyselfsubjectreviews"
+        | "podsecuritypolicysubjectreviews" => "security.openshift.io/v1",
         // Core group.
         _ => "v1",
     }

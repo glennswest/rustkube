@@ -698,6 +698,35 @@ fn build_router(
                 .delete(resource::delete_cluster_resource)
                 .patch(resource::patch_cluster_resource),
         )
+        // security.openshift.io/v1 (#373): SCCs, cluster-scoped and stored;
+        // the three PodSecurityPolicy reviews, answered by SCC admission's
+        // providers.
+        .route("/apis/security.openshift.io/v1", get(discovery::api_security_v1_resources))
+        .route(
+            "/apis/security.openshift.io/v1/namespaces/{namespace}/podsecuritypolicyreviews",
+            post(crate::handlers::scc_review::review),
+        )
+        .route(
+            "/apis/security.openshift.io/v1/namespaces/{namespace}/podsecuritypolicyselfsubjectreviews",
+            post(crate::handlers::scc_review::self_subject_review),
+        )
+        .route(
+            "/apis/security.openshift.io/v1/namespaces/{namespace}/podsecuritypolicysubjectreviews",
+            post(crate::handlers::scc_review::subject_review),
+        )
+        .route(
+            "/apis/security.openshift.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/security.openshift.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
+        )
         // route.openshift.io/v1 — OpenShift Routes
         .route(
             "/apis/route.openshift.io/v1",
@@ -1022,6 +1051,8 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
     // kinds that carry quantities): timed apart from the bootstrap writes.
     backfill_namespace_defaults(&storage).await;
     crate::scc::backfill(&storage).await;
+    // The SCCs pod admission chooses among (#373), created when missing.
+    crate::scc_policy::bootstrap(&storage).await;
     backfill_secret_string_data(&storage).await;
     backfill_quantity_strings(&storage).await;
     boot.done("backfill");
