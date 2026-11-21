@@ -4,17 +4,23 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### DaemonSet rolling update (#369, stormcos#811) — IN PROGRESS 2026-11-20
-- [ ] Pods carry `controller-revision-hash` (FNV of `spec.template`, the
+### DaemonSet rolling update (#369, stormcos#811) — SHIPPED (proof pending) 2026-11-20
+- [x] Pods carry `controller-revision-hash` (FNV of `spec.template`, the
   Deployment's hash) and `pod-template-generation`.
-- [ ] `RollingUpdate` (default): old-hash pods replaced, at most
+- [x] `RollingUpdate` (default): old-hash pods replaced, at most
   `maxUnavailable` (default 1, % rounds up) nodes unavailable; unavailable
   old pods replaced freely; `maxSurge` > 0 creates the new pod beside the
   old and deletes the old once the new is Ready. `OnDelete` leaves them.
-- [ ] `updatedNumberScheduled` counts nodes with a current-hash pod.
-- [ ] Units on the pure plan; rig `daemonset-nodes` gains a template change
-  (Ready pods, one at a time; OnDelete keeps its pod).
-- [ ] sc-build, rig run, README/CHANGELOG, close.
+- [x] `updatedNumberScheduled` counts nodes with a current-hash pod; status
+  counts per node.
+- [x] Units on the pure plan (8 new); rig `daemonset-nodes` gains a
+  template change (Ready pods, one at a time; OnDelete keeps its pod).
+- [x] sc-build 0d1c85c: build + all tests passed, no clippy finding in
+  daemonset.rs. README/CHANGELOG. minReadySeconds gap filed: #379.
+- [ ] Rig run: refused on pvetest1 and pvetest2 (node API-health gate:
+  stormcluster#56, stormlb#30 — not rustkube). Rerun
+  `stormcentral test run rustkube rigs --tag pvetest1 --commit 0d1c85c9549f`
+  once a machine answers. Shipped with a node proof (pods labelled).
 
 ### manifests.rs review findings (#368: de2ea73c2f21, 89bec8a64dff) — DONE 2026-11-20
 - [x] de2ea73c2f21: a document in a Namespace queued for retry is deferred
