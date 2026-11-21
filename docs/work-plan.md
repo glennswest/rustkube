@@ -4,19 +4,19 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — IN PROGRESS 2026-11-21
+### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
 `sccdefaults`, `util/sort` and openshift-apiserver's three review REST
 handlers (read 2026-11-21).
-- [ ] `security.openshift.io/v1` `securitycontextconstraints` (short name
+- [x] `security.openshift.io/v1` `securitycontextconstraints` (short name
   `scc`), cluster-scoped, generic handlers; OpenShift's defaulting
   (`SetDefaults_SCC`) and validation on every write; the CRD's printer
   columns for `oc get scc`.
-- [ ] `anyuid`, `restricted-v2`, `privileged` bootstrapped create-only
+- [x] `anyuid`, `restricted-v2`, `privileged` bootstrapped create-only
   (`release.openshift.io/create-only`), OpenShift's fields (volumes keep
   rustkube's `image`). ClusterRoleBinding `system:openshift:scc:restricted-v2`
   → `system:authenticated`, create-only, as OpenShift grants it.
-- [ ] Admission runs on the stored SCCs: providers from each SCC with the
+- [x] Admission runs on the stored SCCs: providers from each SCC with the
   namespace's preallocated UID / group ranges, sorted by priority, then
   restrictiveness points, then name; SA first, then requester, by the SCC's
   users/groups or RBAC `use`; first that admits wins; `openshift.io/scc` +
@@ -26,12 +26,21 @@ handlers (read 2026-11-21).
   privilege escalation) as upstream, messages and field paths included.
   Deviation kept from #321: no MCS levels — a `MustRunAs` SELinux strategy is
   enforced only when the SCC names a level itself.
-- [ ] `podsecuritypolicyreviews`, `…selfsubjectreviews`, `…subjectreviews`
+- [x] `podsecuritypolicyreviews`, `…selfsubjectreviews`, `…subjectreviews`
   (namespaced, create only), answered by the same providers, with
   OpenShift's quirks (subject review keeps the failure reason; template only
   when the pod names a ServiceAccount). `admin` may create them.
-- [ ] Rig `oc-adm`: `oc get scc`, `scc-subject-review`, `scc-review -z`.
-  README, docs/oc-compatibility.md, CHANGELOG.
+- [x] README, docs/oc-compatibility.md, CHANGELOG (fbf75dd).
+- [x] 6386b61 + fixes (compile, dead code, clippy) to a2e5883. sc-build-1f54b46fff:
+  workspace build + every test (apiserver 422, incl. 21 new); clippy clean
+  in the touched files.
+- [ ] Rigs `scc-restricted` (custom SCC by priority, invalid SCC 422, subject
+  review) and `oc-adm` (`get scc`, `describe scc`, `scc-subject-review
+  -u/-g/self`, `scc-review -z`), suite `rigs`, at a2e5883. Runs 45e67c79d8
+  (pvetest2) and 0d66141b1e (pvetest3) ended `infrastructure`, as pvetest1
+  for #372 (stormcluster/stormlb APIs down on every pve test machine,
+  stormcluster#128). Then `stormcentral test run rustkube rigs --tag
+  <machine> --commit <main>`; close #373 when both rigs pass.
 
 ### user.openshift.io Groups (#372, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
