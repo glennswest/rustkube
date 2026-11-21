@@ -605,7 +605,9 @@ the stored object (#290); a refused manifest is logged (ERROR) and skipped. A
 manifest the datastore could not read or write, or whose kind is not served
 yet, is retried in the background in filename order (1 s doubling to 30 s)
 until it applies — a kind still unserved after 10 min is given up at ERROR;
-the pass's summary line names the failures by cause (#293). Not RBAC,
+the pass's summary line names the failures by cause (#293). A document in a
+Namespace that is waiting for a retry is not attempted but retried behind it
+(#368), so the namespace's absence is not taken for a refusal. Not RBAC,
 webhooks or the requester stamp: these are the apiserver's own writes.
 **What left the directory is pruned (#236)**, as upstream's addon-manager
 does: the applier records the `Reconcile` documents it applied in ConfigMap
@@ -618,9 +620,13 @@ Only while the stored object still says `Reconcile` (an operator who sets
 never recorded (applied before this, or made by others) are never pruned.
 The delete is a plain DELETE's: finalizers set `deletionTimestamp`, a
 Namespace goes Terminating, a Service gives back its addresses, dependents go
-by the GC. Nothing is pruned when a file cannot be read or parsed, or the
-directory has no manifests; a prune the datastore refused is owed to the
-next start.
+by the GC. Pruning waits until every document in the directory applied
+(#368): at the end of the pass, or once its background retries have all
+landed; a refused document, or a retry given up, prunes nothing that start
+(the inventory keeps the old objects beside the new), so a network-flavour
+switch whose new DaemonSet did not apply keeps the old one. Nothing is pruned
+when a file cannot be read or parsed, or the directory has no manifests; a
+prune the datastore refused is owed to the next start.
 Each boot phase logs its duration as it ends (`boot phase datastore_wait:
 33.7s` — connect, datastore_wait, backfill, bootstrap, crd_load, manifests,
 claims, auth, tls), and one summary line when the server starts accepting
@@ -995,7 +1001,7 @@ override environment values.
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--service-node-port-range` | | `30000-32767` | NodePort range, inclusive (#132) |
-| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if labelled (upstream's place, #299) or annotated `addonmanager.kubernetes.io/mode: Reconcile`, and pruned at a later start once no file names it (#236); what the datastore refused retried until it applies (#293) |
+| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if labelled (upstream's place, #299) or annotated `addonmanager.kubernetes.io/mode: Reconcile`, and pruned at a later start once no file names it and every document applied (#236, #368); what the datastore refused retried until it applies (#293) |
 | `--data-dir` | | `/var/lib/kubernetes` | where the `--tls` self-signed pair is kept (#88); nothing else |
 | `--cluster-domain` | | `cluster.local` | the `--tls` certificate's `kubernetes.default.svc.<domain>` SAN (#88); nothing else |
 

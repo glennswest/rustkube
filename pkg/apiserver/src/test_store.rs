@@ -23,11 +23,19 @@ pub struct MemStore {
     inner: Mutex<Data>,
     /// Every read and write fails as a datastore without quorum does.
     unavailable: AtomicBool,
+    /// Keys whose next write fails as unavailable, once each (#368).
+    fail_once: Mutex<Vec<String>>,
 }
 
 impl MemStore {
     pub fn set_unavailable(&self, on: bool) {
         self.unavailable.store(on, Ordering::SeqCst);
+    }
+
+    /// The next write of `key` fails as a datastore without quorum; the store
+    /// answers again after it.
+    pub fn fail_next_put(&self, key: &str) {
+        self.fail_once.lock().unwrap().push(key.to_string());
     }
 }
 
@@ -43,6 +51,13 @@ impl KvStore for MemStore {
     async fn put(&self, key: &str, value: &[u8], prev_revision: Option<u64>) -> Result<u64> {
         if self.unavailable.load(Ordering::SeqCst) {
             return Err(Error::Unavailable("no quorum".into()));
+        }
+        {
+            let mut once = self.fail_once.lock().unwrap();
+            if let Some(i) = once.iter().position(|k| k == key) {
+                once.remove(i);
+                return Err(Error::Unavailable("no quorum".into()));
+            }
         }
         let mut g = self.inner.lock().unwrap();
         if let Some(want) = prev_revision {

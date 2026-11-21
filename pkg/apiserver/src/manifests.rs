@@ -44,6 +44,16 @@
 //! way — is not lost with that boot: it is retried in the background, in
 //! filename order, until it applies (a kind that stays unserved is given up
 //! after ten minutes). A document the API itself refuses is not retried.
+//! A document in a Namespace that is waiting for a retry waits behind it, not
+//! attempted, so the namespace's absence is not taken for a refusal (#368).
+//!
+//! **Nothing is pruned while a replacement is missing (#368).** Pruning runs
+//! only once every document in the directory has applied — at the end of the
+//! first pass, or when the background retries have all landed. A pass with a
+//! refused document, or retries that give up, deletes nothing: the inventory
+//! keeps what it recorded beside what is named now, and the next start tries
+//! again. A network-flavour switch whose new DaemonSet did not apply keeps
+//! the old one.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -432,12 +442,14 @@ struct Pass {
     failed: usize,
     unavailable: usize,
     not_served: usize,
+    /// Not attempted: their Namespace is waiting for a retry (#368).
+    deferred: usize,
     retry: Vec<Document>,
 }
 
 impl Pass {
     fn not_applied(&self) -> usize {
-        self.failed + self.unavailable + self.not_served
+        self.failed + self.unavailable + self.not_served + self.deferred
     }
 
     /// The failures by cause, for the summary line.
@@ -448,6 +460,9 @@ impl Pass {
         }
         if self.not_served > 0 {
             why.push(format!("{} kind not served", self.not_served));
+        }
+        if self.deferred > 0 {
+            why.push(format!("{} waiting for their namespace", self.deferred));
         }
         if self.failed > 0 {
             why.push(format!("{} refused", self.failed));
@@ -460,6 +475,11 @@ impl Pass {
 ///
 /// A failure the retries take up is a WARN (they say when it lands); one they
 /// do not is an ERROR, as before.
+///
+/// A Namespace that is going to be retried holds back every later document
+/// in it (#368): applied now, NamespaceLifecycle would refuse it — NotFound,
+/// a refusal, never retried — while its Namespace lands in the retries. It
+/// goes to the retries behind its Namespace, in filename order.
 async fn apply_all(
     storage: &ResourceStorage,
     crds: &CrdRegistry,
@@ -467,8 +487,18 @@ async fn apply_all(
     docs: Vec<Document>,
 ) -> Pass {
     let mut pass = Pass::default();
+    let mut waiting: std::collections::HashSet<String> = std::collections::HashSet::new();
     for doc in docs {
         let what = doc.what();
+        if let Some(ns) = doc.obj["metadata"]["namespace"].as_str().filter(|ns| waiting.contains(*ns)) {
+            tracing::warn!(
+                "manifests: {what} from {} waits for namespace {ns}, which will be retried",
+                doc.path.display()
+            );
+            pass.deferred += 1;
+            pass.retry.push(doc);
+            continue;
+        }
         let outcome = apply_one(storage, crds, service_cidr, doc.obj.clone()).await;
         match &outcome {
             Outcome::Created => {
@@ -497,6 +527,11 @@ async fn apply_all(
             }
         }
         if outcome.retryable() {
+            if doc.obj["kind"].as_str() == Some("Namespace") && doc.obj["apiVersion"].as_str() == Some("v1") {
+                if let Some(name) = doc.obj["metadata"]["name"].as_str() {
+                    waiting.insert(name.to_string());
+                }
+            }
             pass.retry.push(doc);
         }
     }
@@ -554,15 +589,29 @@ pub async fn apply_dir(
         pass.unchanged,
         pass.not_applied(),
     );
+    // Pruning waits for every replacement to exist (#368).
+    let unread = (!complete).then(|| format!("a manifest in {} could not be read", dir.display()));
     if pass.not_applied() == 0 {
         tracing::info!("{summary}");
+        prune(storage, crds, dir, &named, unread).await;
     } else if pass.retry.is_empty() {
         tracing::error!("{summary} ({})", pass.causes());
+        let why = unread.unwrap_or_else(|| format!("{} manifest(s) were not applied", pass.not_applied()));
+        prune(storage, crds, dir, &named, Some(why)).await;
     } else {
         tracing::warn!("{summary} ({}); retrying {} in the background", pass.causes(), pass.retry.len());
-        tokio::spawn(retry(storage.clone(), crds.clone(), service_cidr.to_string(), pass.retry));
+        // Recorded now (what is named joins the inventory), pruned once the
+        // retries have all landed — unless this pass refused one.
+        let why = unread.clone().unwrap_or_else(|| format!("{} manifest(s) not applied yet", pass.not_applied()));
+        prune(storage, crds, dir, &named, Some(why)).await;
+        let prune_after = unread.is_none() && pass.failed == 0;
+        let (storage, crds, cidr, dir) = (storage.clone(), crds.clone(), service_cidr.to_string(), dir.to_path_buf());
+        tokio::spawn(async move {
+            if retry(storage.clone(), crds.clone(), cidr, pass.retry).await && prune_after {
+                prune(&storage, &crds, &dir, &named, None).await;
+            }
+        });
     }
-    prune(storage, crds, dir, named, complete).await;
 }
 
 /// One `Reconcile` document, as the inventory records it (#236).
@@ -641,9 +690,11 @@ enum Pruned {
 /// the stored object still says `Reconcile`. A dangling link (stormcos's
 /// other network's files, #261) names nothing, so a flavour switch removes
 /// the old flavour. Nothing is pruned when a file could not be read or
-/// parsed, or when the directory has no manifests at all (an unmounted
-/// pallet must not empty the cluster); the inventory then keeps what it had.
-async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named: Vec<Entry>, complete: bool) {
+/// parsed, when a document did not apply (`blocked`, #368: its replacement
+/// may be what is missing), or when the directory has no manifests at all (an
+/// unmounted pallet must not empty the cluster); the inventory then keeps
+/// what it had beside what is named now.
+async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named: &[Entry], blocked: Option<String>) {
     let key = ResourceStorage::namespaced_key("configmaps", INVENTORY_NS, INVENTORY);
     let stored = match storage.get(&key).await {
         Ok(cm) => Some(cm),
@@ -673,11 +724,8 @@ async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named:
 
     let mut keep = Vec::new();
     let mut pruned = 0;
-    if !complete && !stale.is_empty() {
-        tracing::warn!(
-            "manifests: {} recorded object(s) not named, not pruned: a manifest in {dir_text} could not be read",
-            stale.len()
-        );
+    if let Some(why) = blocked.filter(|_| !stale.is_empty()) {
+        tracing::warn!("manifests: {} recorded object(s) not named, not pruned yet: {why}", stale.len());
         keep = stale;
     } else {
         for entry in stale {
@@ -704,7 +752,7 @@ async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named:
 
     // The record for the next start: what is named now, and what is still
     // owed a prune.
-    let mut objects = named;
+    let mut objects = named.to_vec();
     objects.extend(keep);
     let data = serde_json::json!({
         "manifest-dir": dir_text,
@@ -802,15 +850,19 @@ const NOT_SERVED_FOR: Duration = Duration::from_secs(600);
 /// cannot do without its store anyway. Once only unserved kinds are left and
 /// [`NOT_SERVED_FOR`] has passed, they are given up at ERROR — their CRD is
 /// not coming.
+///
+/// Whether every document applied: none refused, none given up (#368 — only
+/// then may the caller prune).
 async fn retry(
     storage: Arc<ResourceStorage>,
     crds: Arc<CrdRegistry>,
     service_cidr: String,
     mut pending: Vec<Document>,
-) {
+) -> bool {
     let start = tokio::time::Instant::now();
     let mut delay = Duration::from_secs(1);
     let mut round = 0;
+    let mut refused = 0;
     while !pending.is_empty() {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(Duration::from_secs(30));
@@ -832,8 +884,9 @@ async fn retry(
                 pass.unchanged,
             );
         }
+        refused += pass.failed;
         pending = pass.retry;
-        if pass.unavailable == 0 && !pending.is_empty() && start.elapsed() >= NOT_SERVED_FOR {
+        if pass.unavailable == 0 && pass.deferred == 0 && !pending.is_empty() && start.elapsed() >= NOT_SERVED_FOR {
             for doc in &pending {
                 tracing::error!(
                     "manifests: {} from {} given up after {NOT_SERVED_FOR:?}: its kind is still not served",
@@ -841,10 +894,15 @@ async fn retry(
                     doc.path.display()
                 );
             }
-            return;
+            return false;
         }
     }
+    if refused > 0 {
+        tracing::error!("manifests: retries done, {refused} refused; nothing pruned this start");
+        return false;
+    }
     tracing::info!("manifests: every retried manifest applied, {:?} after the first pass", start.elapsed());
+    true
 }
 
 #[cfg(test)]
@@ -1148,6 +1206,77 @@ metadata:
         std::fs::remove_file(dir.join("20-b.yaml")).unwrap();
         apply_dir(&storage, &crds, cidr, &dir).await;
         assert_eq!(storage.get(&role("b")).await.unwrap_err().reason, "NotFound", "b owed a prune");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A Namespace whose write failed once holds back what is in it
+    /// (#368, finding de2ea73c2f21): the store answered again before the
+    /// ConfigMap was reached, so applying it then was NamespaceLifecycle's
+    /// NotFound — a refusal, dropped from the retries — and the retry made
+    /// the Namespace but never its contents.
+    #[tokio::test(start_paused = true)]
+    async fn a_document_waits_for_its_namespace_to_be_retried() {
+        let dir = std::env::temp_dir().join(format!("rk-manifests-nswait-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("10-ns.yaml"), "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: addons\n").unwrap();
+        std::fs::write(
+            dir.join("20-cm.yaml"),
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: addons\ndata:\n  a: \"1\"\n",
+        )
+        .unwrap();
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = Arc::new(ResourceStorage::new(store.clone()));
+        let crds = Arc::new(CrdRegistry::new());
+        let cm_key = ResourceStorage::namespaced_key("configmaps", "addons", "cfg");
+
+        store.fail_next_put(&ResourceStorage::cluster_key("namespaces", "addons"));
+        apply_dir(&storage, &crds, "10.96.0.0/12", &dir).await;
+        assert_eq!(storage.get(&cm_key).await.unwrap_err().reason, "NotFound", "applied ahead of its namespace");
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert!(storage.get(&ResourceStorage::cluster_key("namespaces", "addons")).await.is_ok());
+        assert_eq!(storage.get(&cm_key).await.unwrap()["data"]["a"], "1", "dropped behind its namespace");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The old flavour stays until its replacement exists (#368, finding
+    /// 89bec8a64dff): a replacement the API refuses prunes nothing, one the
+    /// datastore refused prunes once its retry lands.
+    #[tokio::test(start_paused = true)]
+    async fn nothing_is_pruned_until_the_replacement_applied() {
+        let dir = std::env::temp_dir().join(format!("rk-manifests-replace-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = Arc::new(ResourceStorage::new(store.clone()));
+        let crds = Arc::new(CrdRegistry::new());
+        let cidr = "10.96.0.0/12";
+        let role = |n: &str| ResourceStorage::cluster_key("clusterroles", n);
+
+        std::fs::write(dir.join("10-net.yaml"), role_yaml("old", Some("Reconcile"))).unwrap();
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("old")).await.is_ok());
+
+        // The switch: the new flavour's file has a document the API refuses.
+        let refused = "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  labels:\n    \
+                       addonmanager.kubernetes.io/mode: Reconcile\nrules: []\n";
+        std::fs::write(dir.join("10-net.yaml"), format!("{}---\n{refused}", role_yaml("new", Some("Reconcile")))).unwrap();
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("new")).await.is_ok());
+        assert!(storage.get(&role("old")).await.is_ok(), "pruned while a replacement was refused");
+
+        // The new flavour's write fails once: kept through the first pass,
+        // pruned when the retry lands.
+        std::fs::write(dir.join("10-net.yaml"), role_yaml("newer", Some("Reconcile"))).unwrap();
+        store.fail_next_put(&role("newer"));
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("old")).await.is_ok(), "pruned before the replacement was written");
+        assert!(storage.get(&role("new")).await.is_ok());
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert!(storage.get(&role("newer")).await.is_ok(), "replacement not retried");
+        for gone in ["old", "new"] {
+            assert_eq!(storage.get(&role(gone)).await.unwrap_err().reason, "NotFound", "{gone} not pruned after the retry");
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 }
