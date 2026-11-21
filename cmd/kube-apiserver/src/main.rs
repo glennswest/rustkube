@@ -124,7 +124,10 @@ struct Cli {
     /// Directory of manifests to apply once at startup (YAML or JSON, applied
     /// in filename order). Objects are created if absent; an object labelled
     /// (or annotated) `addonmanager.kubernetes.io/mode: Reconcile` is also
-    /// overwritten when it already exists.
+    /// overwritten when it already exists, and deleted at a later start once
+    /// no manifest names it — also when the directory is left empty (not when
+    /// it is absent or holds only dangling links), and across a change of
+    /// this path.
     #[arg(long = "manifest-dir", env = "MANIFEST_DIR")]
     manifest_dir: Option<PathBuf>,
 

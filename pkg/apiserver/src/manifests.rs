@@ -422,6 +422,42 @@ pub fn manifest_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Why a directory has no manifest to apply.
+#[derive(Debug, PartialEq)]
+enum Empty {
+    /// Not there: a node that ships no addons. Nothing is pruned.
+    Absent,
+    /// There, but not listable. Nothing is pruned.
+    Unreadable(String),
+    /// There, and no manifest name in it: everything recorded is pruned.
+    Empty,
+    /// Only manifest links that resolve to nothing: the pallet they point
+    /// into is not mounted, so nothing is pruned (#378).
+    Dangling(usize),
+}
+
+/// Tell an absent or unreadable directory, and one of dangling links only,
+/// from one that is empty because its last manifest was removed (#378,
+/// finding f25b22881436). Called when [`manifest_files`] found none.
+fn empty_dir(dir: &Path) -> Empty {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Empty::Absent,
+        Err(e) => return Empty::Unreadable(e.to_string()),
+    };
+    let dangling = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("yaml") | Some("yml") | Some("json")))
+        .filter(|p| p.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) && std::fs::metadata(p).is_err())
+        .count();
+    if dangling > 0 {
+        Empty::Dangling(dangling)
+    } else {
+        Empty::Empty
+    }
+}
+
 /// One manifest document, and the file it came from.
 struct Document {
     path: PathBuf,
@@ -558,7 +594,19 @@ pub async fn apply_dir(
 ) {
     let files = manifest_files(dir);
     if files.is_empty() {
-        tracing::debug!("manifests: nothing to apply in {}", dir.display());
+        match empty_dir(dir) {
+            Empty::Absent => tracing::debug!("manifests: nothing to apply in {}", dir.display()),
+            Empty::Unreadable(why) => {
+                tracing::warn!("manifests: {} cannot be read ({why}): nothing applied or pruned", dir.display())
+            }
+            // The last manifest was removed on purpose: what it named goes
+            // (#378, finding f25b22881436).
+            Empty::Empty => prune(storage, crds, dir, &[], None).await,
+            Empty::Dangling(n) => {
+                let why = format!("its {n} manifest(s) are dangling links (pallet not mounted?)");
+                prune(storage, crds, dir, &[], Some(why)).await;
+            }
+        }
         return;
     }
     let mut docs = Vec::new();
@@ -696,9 +744,13 @@ enum Pruned {
 /// other network's files, #261) names nothing, so a flavour switch removes
 /// the old flavour. Nothing is pruned when a file could not be read or
 /// parsed, when a document did not apply (`blocked`, #368: its replacement
-/// may be what is missing), or when the directory has no manifests at all (an
-/// unmounted pallet must not empty the cluster); the inventory then keeps
-/// what it had beside what is named now.
+/// may be what is missing), or when the directory is absent, unreadable or
+/// holds only dangling manifest links (an unmounted pallet must not empty the
+/// cluster, #378); the inventory then keeps what it had beside what is named
+/// now. An existing directory with no manifests left prunes everything
+/// recorded. The inventory does not depend on the directory's path (#378): a
+/// moved `--manifest-dir` prunes what the old one recorded and the new one
+/// does not name.
 async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named: &[Entry], blocked: Option<String>) {
     let key = ResourceStorage::namespaced_key("configmaps", INVENTORY_NS, INVENTORY);
     let stored = match storage.get(&key).await {
@@ -710,16 +762,16 @@ async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named:
         }
     };
     let dir_text = dir.display().to_string();
+    // The inventory is the cluster's, not the path's (#378, finding
+    // 96a66790f5c4): a moved `--manifest-dir` keeps what was recorded, and
+    // prunes it like any start once the new directory is complete.
     let previous: Vec<Entry> = match &stored {
-        Some(cm) if cm["data"]["manifest-dir"].as_str() == Some(dir_text.as_str()) => {
-            serde_json::from_str(cm["data"]["objects"].as_str().unwrap_or("[]")).unwrap_or_default()
-        }
         Some(cm) => {
-            tracing::info!(
-                "manifests: inventory was for {}, not {dir_text}: nothing pruned this start",
-                cm["data"]["manifest-dir"].as_str().unwrap_or("?")
-            );
-            Vec::new()
+            let was = cm["data"]["manifest-dir"].as_str().unwrap_or("?");
+            if was != dir_text {
+                tracing::info!("manifests: inventory was recorded for {was}, now {dir_text}; kept");
+            }
+            serde_json::from_str(cm["data"]["objects"].as_str().unwrap_or("[]")).unwrap_or_default()
         }
         None => Vec::new(),
     };
@@ -764,6 +816,7 @@ async fn prune(storage: &ResourceStorage, crds: &CrdRegistry, dir: &Path, named:
         "objects": serde_json::to_string(&objects).unwrap_or_else(|_| "[]".into()),
     });
     let written = match stored {
+        None if objects.is_empty() => return,
         Some(mut cm) => {
             if cm["data"] == data {
                 return;
@@ -1282,6 +1335,97 @@ metadata:
         for gone in ["old", "new"] {
             assert_eq!(storage.get(&role(gone)).await.unwrap_err().reason, "NotFound", "{gone} not pruned after the retry");
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A moved `--manifest-dir` keeps the inventory (#378, finding
+    /// 96a66790f5c4): what the move dropped is pruned, and what the old path
+    /// recorded is still owed a prune at a later start from the new one.
+    #[tokio::test]
+    async fn a_moved_manifest_dir_keeps_its_inventory() {
+        let base = std::env::temp_dir().join(format!("rk-manifests-move-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        let (old, new) = (base.join("old"), base.join("new"));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = Arc::new(ResourceStorage::new(store.clone()));
+        let crds = Arc::new(CrdRegistry::new());
+        let cidr = "10.96.0.0/12";
+        let role = |n: &str| ResourceStorage::cluster_key("clusterroles", n);
+
+        for n in ["a", "b", "c"] {
+            std::fs::write(old.join(format!("10-{n}.yaml")), role_yaml(n, Some("Reconcile"))).unwrap();
+        }
+        apply_dir(&storage, &crds, cidr, &old).await;
+        // The same set moves, without b.
+        for n in ["a", "c"] {
+            std::fs::write(new.join(format!("10-{n}.yaml")), role_yaml(n, Some("Reconcile"))).unwrap();
+        }
+        apply_dir(&storage, &crds, cidr, &new).await;
+        assert!(storage.get(&role("a")).await.is_ok());
+        assert_eq!(storage.get(&role("b")).await.unwrap_err().reason, "NotFound", "b lost in the move");
+        // c, recorded under the old path, still goes when its file does.
+        std::fs::remove_file(new.join("10-c.yaml")).unwrap();
+        apply_dir(&storage, &crds, cidr, &new).await;
+        assert_eq!(storage.get(&role("c")).await.unwrap_err().reason, "NotFound", "c not pruned");
+        assert!(storage.get(&role("a")).await.is_ok());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Removing the last manifest prunes what it named (#378, finding
+    /// f25b22881436); a directory that went away, or whose every manifest is
+    /// a dangling link (an unmounted pallet), prunes nothing and keeps the
+    /// record.
+    #[tokio::test]
+    async fn removing_the_last_manifest_prunes_its_objects() {
+        let dir = std::env::temp_dir().join(format!("rk-manifests-last-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = Arc::new(ResourceStorage::new(store.clone()));
+        let crds = Arc::new(CrdRegistry::new());
+        let cidr = "10.96.0.0/12";
+        let role = |n: &str| ResourceStorage::cluster_key("clusterroles", n);
+
+        std::fs::write(dir.join("10-a.yaml"), role_yaml("a", Some("Reconcile"))).unwrap();
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("a")).await.is_ok());
+
+        // Only a dangling link left: the pallet is not mounted.
+        std::fs::remove_file(dir.join("10-a.yaml")).unwrap();
+        std::os::unix::fs::symlink("/nonexistent/pallets/net/10-a.yaml", dir.join("10-a.yaml")).unwrap();
+        assert_eq!(empty_dir(&dir), Empty::Dangling(1));
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("a")).await.is_ok(), "pruned behind an unmounted pallet");
+
+        // The directory gone: nothing pruned either.
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(empty_dir(&dir), Empty::Absent);
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert!(storage.get(&role("a")).await.is_ok(), "pruned for an absent directory");
+
+        // There and empty, a non-manifest file aside: a is pruned.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("README"), "").unwrap();
+        assert_eq!(empty_dir(&dir), Empty::Empty);
+        apply_dir(&storage, &crds, cidr, &dir).await;
+        assert_eq!(storage.get(&role("a")).await.unwrap_err().reason, "NotFound", "a not pruned");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// An empty directory and no inventory writes none.
+    #[tokio::test]
+    async fn an_empty_directory_with_no_inventory_writes_none() {
+        let dir = std::env::temp_dir().join(format!("rk-manifests-none-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(crate::test_store::MemStore::default());
+        let storage = Arc::new(ResourceStorage::new(store.clone()));
+        let crds = Arc::new(CrdRegistry::new());
+        apply_dir(&storage, &crds, "10.96.0.0/12", &dir).await;
+        let key = ResourceStorage::namespaced_key("configmaps", INVENTORY_NS, INVENTORY);
+        assert_eq!(storage.get(&key).await.unwrap_err().reason, "NotFound");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

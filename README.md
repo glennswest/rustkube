@@ -630,8 +630,12 @@ by the GC. Pruning waits until every document in the directory applied
 landed; a refused document, or a retry given up, prunes nothing that start
 (the inventory keeps the old objects beside the new), so a network-flavour
 switch whose new DaemonSet did not apply keeps the old one. Nothing is pruned
-when a file cannot be read or parsed, or the directory has no manifests; a
-prune the datastore refused is owed to the next start.
+when a file cannot be read or parsed, or the directory is absent, cannot be
+listed, or holds only dangling manifest links (its pallet not mounted); an
+existing directory whose last manifest was removed prunes everything recorded
+(#378). The record is the cluster's, not the path's: a moved `--manifest-dir`
+keeps it, and prunes what the old directory named and the new one does not
+(#378). A prune the datastore refused is owed to the next start.
 Each boot phase logs its duration as it ends (`boot phase datastore_wait:
 33.7s` — connect, datastore_wait, backfill, bootstrap, crd_load, manifests,
 claims, auth, tls), and one summary line when the server starts accepting
@@ -1016,7 +1020,7 @@ override environment values.
 | `--advertise-address` | | `--bind-addr` if concrete | the address put in `default/kubernetes` Endpoints |
 | `--service-cidr` | | `10.96.0.0/12` | ClusterIP range; `.1` is the `kubernetes` Service |
 | `--service-node-port-range` | | `30000-32767` | NodePort range, inclusive (#132) |
-| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if labelled (upstream's place, #299) or annotated `addonmanager.kubernetes.io/mode: Reconcile`, and pruned at a later start once no file names it and every document applied (#236, #368); what the datastore refused retried until it applies (#293) |
+| `--manifest-dir` | `MANIFEST_DIR` | — | YAML/JSON applied once at start, in filename order, through the built-in admission (#158); created if absent, overwritten if labelled (upstream's place, #299) or annotated `addonmanager.kubernetes.io/mode: Reconcile`, and pruned at a later start once no file names it and every document applied (#236, #368) — an existing empty directory prunes all, an absent one or one of dangling links only prunes nothing, and a moved directory keeps the record (#378); what the datastore refused retried until it applies (#293) |
 | `--data-dir` | | `/var/lib/kubernetes` | where the `--tls` self-signed pair is kept (#88); nothing else |
 | `--cluster-domain` | | `cluster.local` | the `--tls` certificate's `kubernetes.default.svc.<domain>` SAN (#88); nothing else |
 
