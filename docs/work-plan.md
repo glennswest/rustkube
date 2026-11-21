@@ -4,6 +4,35 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — IN PROGRESS 2026-11-21
+Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
+`sccdefaults`, `util/sort` and openshift-apiserver's three review REST
+handlers (read 2026-11-21).
+- [ ] `security.openshift.io/v1` `securitycontextconstraints` (short name
+  `scc`), cluster-scoped, generic handlers; OpenShift's defaulting
+  (`SetDefaults_SCC`) and validation on every write; the CRD's printer
+  columns for `oc get scc`.
+- [ ] `anyuid`, `restricted-v2`, `privileged` bootstrapped create-only
+  (`release.openshift.io/create-only`), OpenShift's fields (volumes keep
+  rustkube's `image`). ClusterRoleBinding `system:openshift:scc:restricted-v2`
+  → `system:authenticated`, create-only, as OpenShift grants it.
+- [ ] Admission runs on the stored SCCs: providers from each SCC with the
+  namespace's preallocated UID / group ranges, sorted by priority, then
+  restrictiveness points, then name; SA first, then requester, by the SCC's
+  users/groups or RBAC `use`; first that admits wins; `openshift.io/scc` +
+  `security.openshift.io/validated-scc-subject-type`; `openshift.io/required-scc`.
+  The strategies (runAsUser, fsGroup, supplementalGroups, capabilities,
+  seccomp incl. the pod annotation, sysctls, volumes, host*, readOnlyRootFS,
+  privilege escalation) as upstream, messages and field paths included.
+  Deviation kept from #321: no MCS levels — a `MustRunAs` SELinux strategy is
+  enforced only when the SCC names a level itself.
+- [ ] `podsecuritypolicyreviews`, `…selfsubjectreviews`, `…subjectreviews`
+  (namespaced, create only), answered by the same providers, with
+  OpenShift's quirks (subject review keeps the failure reason; template only
+  when the pod names a ServiceAccount). `admin` may create them.
+- [ ] Rig `oc-adm`: `oc get scc`, `scc-subject-review`, `scc-review -z`.
+  README, docs/oc-compatibility.md, CHANGELOG.
+
 ### user.openshift.io Groups (#372, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
   cluster handlers: discovery (`/apis` + the group-version), list kind
