@@ -4,6 +4,16 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### scc.rs review finding (#377: 5a63ec20536a) — IN PROGRESS 2026-11-20
+- [ ] Namespace create admission refuses an existing name before taking a
+  block (the repeated-409 ProjectRequest exhaustion).
+- [ ] A block taken for a create that then fails with a 4xx (webhook
+  refusal, AlreadyExists race) is given back: `next` stepped back when
+  nothing was allocated since, else onto the record's `released` list,
+  which allocation takes first. Never given to a stored namespace, so
+  "never reused" holds. 5xx (a write that may have landed) keeps it.
+- [ ] Call sites: cluster POST, ProjectRequest, manifests. Units; README.
+
 ### auth.rs review finding (#371: c6cb83387661) — DONE 2026-11-20
 - [x] A reload retires only the previous *signing* key's verifier, and only
   when the signing key changed (its tokens verify against none of the new
