@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### user.openshift.io Groups (#372, sc#151) — IN PROGRESS 2026-11-21
+### user.openshift.io Groups (#372, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
   cluster handlers: discovery (`/apis` + the group-version), list kind
   `GroupList`, apiVersion `user.openshift.io/v1`, apply table, table printer
@@ -24,6 +24,13 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [x] 67f863a, 2538deb, a709666. sc-build-6dcbb0f04d at a709666: one unit
   failure, the 2538deb apiVersion check applied to `pods/eviction` in
   policy/v1 (a subresource; #380). The check now covers top-level resources only.
+- [x] d9c470e: sc-build-228a972e55 passed — workspace build and every test
+  (sc-build closed #380 itself).
+- [ ] Rig `oc-adm` (suite `rigs`): run f4c348536f (pvetest1, d9c470e) ended
+  `infrastructure` — stormcluster/stormlb APIs down, as on every pve test
+  machine since 2026-11-20 13:21Z (stormcluster#128, fix f1de3f6 not
+  installed). Then `stormcentral test run rustkube rigs --tag <that machine>
+  --commit <main>`; close #372 when oc-adm's Groups checks pass.
 
 ### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
 - [x] 96a66790f5c4: the inventory is not keyed by the directory's path; a
