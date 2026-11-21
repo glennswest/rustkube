@@ -424,7 +424,7 @@ pub fn manifest_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Why a directory has no manifest to apply.
 #[derive(Debug, PartialEq)]
-enum Empty {
+enum NoManifests {
     /// Not there: a node that ships no addons. Nothing is pruned.
     Absent,
     /// There, but not listable. Nothing is pruned.
@@ -439,11 +439,11 @@ enum Empty {
 /// Tell an absent or unreadable directory, and one of dangling links only,
 /// from one that is empty because its last manifest was removed (#378,
 /// finding f25b22881436). Called when [`manifest_files`] found none.
-fn empty_dir(dir: &Path) -> Empty {
+fn empty_dir(dir: &Path) -> NoManifests {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Empty::Absent,
-        Err(e) => return Empty::Unreadable(e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return NoManifests::Absent,
+        Err(e) => return NoManifests::Unreadable(e.to_string()),
     };
     let dangling = entries
         .flatten()
@@ -452,9 +452,9 @@ fn empty_dir(dir: &Path) -> Empty {
         .filter(|p| p.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) && std::fs::metadata(p).is_err())
         .count();
     if dangling > 0 {
-        Empty::Dangling(dangling)
+        NoManifests::Dangling(dangling)
     } else {
-        Empty::Empty
+        NoManifests::Empty
     }
 }
 
@@ -595,14 +595,14 @@ pub async fn apply_dir(
     let files = manifest_files(dir);
     if files.is_empty() {
         match empty_dir(dir) {
-            Empty::Absent => tracing::debug!("manifests: nothing to apply in {}", dir.display()),
-            Empty::Unreadable(why) => {
+            NoManifests::Absent => tracing::debug!("manifests: nothing to apply in {}", dir.display()),
+            NoManifests::Unreadable(why) => {
                 tracing::warn!("manifests: {} cannot be read ({why}): nothing applied or pruned", dir.display())
             }
             // The last manifest was removed on purpose: what it named goes
             // (#378, finding f25b22881436).
-            Empty::Empty => prune(storage, crds, dir, &[], None).await,
-            Empty::Dangling(n) => {
+            NoManifests::Empty => prune(storage, crds, dir, &[], None).await,
+            NoManifests::Dangling(n) => {
                 let why = format!("its {n} manifest(s) are dangling links (pallet not mounted?)");
                 prune(storage, crds, dir, &[], Some(why)).await;
             }
@@ -1395,20 +1395,20 @@ metadata:
         // Only a dangling link left: the pallet is not mounted.
         std::fs::remove_file(dir.join("10-a.yaml")).unwrap();
         std::os::unix::fs::symlink("/nonexistent/pallets/net/10-a.yaml", dir.join("10-a.yaml")).unwrap();
-        assert_eq!(empty_dir(&dir), Empty::Dangling(1));
+        assert_eq!(empty_dir(&dir), NoManifests::Dangling(1));
         apply_dir(&storage, &crds, cidr, &dir).await;
         assert!(storage.get(&role("a")).await.is_ok(), "pruned behind an unmounted pallet");
 
         // The directory gone: nothing pruned either.
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(empty_dir(&dir), Empty::Absent);
+        assert_eq!(empty_dir(&dir), NoManifests::Absent);
         apply_dir(&storage, &crds, cidr, &dir).await;
         assert!(storage.get(&role("a")).await.is_ok(), "pruned for an absent directory");
 
         // There and empty, a non-manifest file aside: a is pruned.
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("README"), "").unwrap();
-        assert_eq!(empty_dir(&dir), Empty::Empty);
+        assert_eq!(empty_dir(&dir), NoManifests::Empty);
         apply_dir(&storage, &crds, cidr, &dir).await;
         assert_eq!(storage.get(&role("a")).await.unwrap_err().reason, "NotFound", "a not pruned");
         std::fs::remove_dir_all(&dir).ok();
