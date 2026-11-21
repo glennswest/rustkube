@@ -4,6 +4,24 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### user.openshift.io Groups (#372, sc#151) — IN PROGRESS 2026-11-21
+- [ ] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
+  cluster handlers: discovery (`/apis` + the group-version), list kind
+  `GroupList`, apiVersion `user.openshift.io/v1`, apply table, table printer
+  (NAME, USERS), `users: null` when absent, as OpenShift serializes it.
+- [ ] Validation as openshift/apiserver `ValidateGroup`: name a path segment,
+  no `:`, not `~`; each user non-empty, a path segment, no `:` — except a
+  ServiceAccount user name `system:serviceaccount:<ns>:<name>` (the issue:
+  sc's users are `storm-users/<name>` SAs and must be listable).
+- [ ] Authentication adds a Group's name to the groups of every user it lists
+  (OpenShift's group cache), from a watch-cache view of `/registry/groups/`.
+  So a RoleBinding to the Group grants its members; SSAR shows it.
+- [ ] Side fix found on the way: Route lists said kind `routesList`,
+  apiVersion `v1` (routes missing from the list-kind tables).
+- [ ] Rig `openshift-groups`: `oc adm groups new/add-users/remove-users`,
+  output as OpenShift's; a binding to the group grants its member (SSAR).
+- [ ] docs/oc-compatibility.md, README, CHANGELOG.
+
 ### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
 - [x] 96a66790f5c4: the inventory is not keyed by the directory's path; a
   moved `--manifest-dir` keeps the previous entries and prunes them once the
