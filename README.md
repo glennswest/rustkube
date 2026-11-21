@@ -462,7 +462,11 @@ RuntimeClass, HPA targets, CSIStorageCapacity, DRA capacity) — from clients,
 controllers, startup manifests and webhook patches — and objects stored with
 a number before are rewritten at boot. Quantity strings are kept as written
 (upstream also re-canonicalizes those, `1000m` → `1`; rustkube does not).
-Custom resources and CRDs keep their numbers.
+Custom resources and CRDs keep their numbers, and so does a DRA driver's
+opaque data (`opaque.parameters`, a claim's `status.devices[].data`) and any
+integer that is not a quantity, such as a device request's `count` (#367).
+Every reader of a quantity takes the canonical forms back (`"1k"` CPUs is
+1000 CPUs, #365).
 
 **Admission**, on create: NamespaceLifecycle (a missing namespace is 404;
 a Terminating one is 403 with upstream's `NamespaceTerminating` cause, which
