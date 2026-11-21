@@ -4,6 +4,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### quantity.rs review findings (#367: 4de4faf81751, 986d36e631b7) — IN PROGRESS 2026-11-20
+- [x] 4de4faf81751: `parse_cpu_millis` takes SI suffixes — fixed in 3c7a66b
+  (#365); added the quota round trip (`cpu: 1000` stored `"1k"`, quota and
+  Pod usage 1,000,000m) beside #365's scheduler one.
+- [x] 986d36e631b7: `numbers_to_strings` never enters `opaque.parameters`
+  or a claim's `status.devices[].data`; array items sit under `[]`, not the
+  array's name (a DRA request's `count` stayed under "requests").
+- [ ] sc-build; close.
+
 ### resource.rs review findings (#366: f8ad6d24b615, fc9c16b6b9e0, f33be8cc42cb) — DONE 2026-11-20
 - [x] Job `managedBy` re-checked in `admission::after_mutating` (create,
   update; not `/status`). Unit + rig `admission-webhook` (/jobbad, /jobmove).

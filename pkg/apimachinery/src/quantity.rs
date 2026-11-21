@@ -153,6 +153,11 @@ pub fn numbers_to_strings(resource: &str, obj: &mut serde_json::Value) -> bool {
     walk(resource, obj, &mut path)
 }
 
+/// An array's items sit under this path segment, not under the array's own
+/// name (#367): `spec.devices.requests[]` is a list of DRA device requests,
+/// not a `requests` quantity map, and a request's `count: 2` is an integer.
+const ITEM: &str = "[]";
+
 fn walk(resource: &str, v: &mut serde_json::Value, path: &mut Vec<String>) -> bool {
     use serde_json::Value;
     let mut changed = false;
@@ -166,19 +171,36 @@ fn walk(resource: &str, v: &mut serde_json::Value, path: &mut Vec<String>) -> bo
                     }
                     continue;
                 }
+                if is_opaque(resource, path, k) {
+                    continue;
+                }
                 path.push(k.clone());
                 changed |= walk(resource, child, path);
                 path.pop();
             }
         }
         Value::Array(items) => {
+            path.push(ITEM.into());
             for item in items {
                 changed |= walk(resource, item, path);
             }
+            path.pop();
         }
         _ => {}
     }
     changed
+}
+
+/// A `runtime.RawExtension` — JSON its owner defines, not the API — is
+/// never entered (#367, review finding 986d36e631b7): a DRA driver's
+/// `opaque.parameters` (in a ResourceClaim's or ResourceClaimTemplate's
+/// `devices.config[]`, and in a claim's `status.allocation`) and a claim's
+/// `status.devices[].data`. Parameters `{"limits": {"connections": 10}}` were
+/// stored as `{"connections": "10"}`, which the driver may no longer decode.
+fn is_opaque(resource: &str, path: &[String], key: &str) -> bool {
+    let parent = path.last().map(String::as_str);
+    (key == "parameters" && parent == Some("opaque"))
+        || (resource == "resourceclaims" && key == "data" && path.ends_with(&["status".to_string(), "devices".to_string(), ITEM.to_string()]))
 }
 
 fn is_quantity(resource: &str, path: &[String], key: &str) -> bool {
@@ -264,6 +286,47 @@ mod tests {
             serde_json::Value::Number(n) => canonical_number(&n),
             other => panic!("{other} is not a number"),
         }
+    }
+
+    /// #367, review finding 986d36e631b7: a DRA driver's opaque payloads keep
+    /// their numbers, even under keys that are quantity maps elsewhere, and a
+    /// device request's `count` stays an integer; the claim's real quantity
+    /// maps are still converted.
+    #[test]
+    fn opaque_driver_data_and_device_counts_are_left_as_written() {
+        use serde_json::json;
+        let params = json!({"limits": {"connections": 10}, "requests": {"cpu": 1}, "sizeLimit": 5, "value": 3});
+        let config = json!([{"requests": ["r"], "opaque": {"driver": "gpu.example.com", "parameters": params}}]);
+        let mut claim = json!({"spec": {"devices": {
+                "requests": [{"name": "r", "deviceClassName": "gpu", "count": 2,
+                              "exactly": {"deviceClassName": "gpu", "count": 2, "capacity": {"requests": {"memory": 1000}}}}],
+                "config": config}},
+            "status": {"allocation": {"devices": {"config": [{"source": "FromClaim", "requests": ["r"],
+                    "opaque": {"driver": "gpu.example.com", "parameters": params}}]}},
+                "devices": [{"driver": "gpu.example.com", "pool": "p", "device": "d", "data": {"limits": {"bw": 7}}}]}});
+        let before = claim.clone();
+        assert!(numbers_to_strings("resourceclaims", &mut claim), "the capacity request is a quantity");
+        let r = &claim["spec"]["devices"]["requests"][0];
+        assert_eq!(r["count"], 2);
+        assert_eq!(r["exactly"]["count"], 2);
+        assert_eq!(r["exactly"]["capacity"]["requests"]["memory"], "1k");
+        assert_eq!(claim["spec"]["devices"]["config"], before["spec"]["devices"]["config"]);
+        assert_eq!(claim["status"]["allocation"], before["status"]["allocation"]);
+        assert_eq!(claim["status"]["devices"], before["status"]["devices"]);
+
+        let mut template = json!({"spec": {"spec": {"devices": {"requests": [{"name": "r", "count": 1}], "config": config}}}});
+        let before = template.clone();
+        assert!(!numbers_to_strings("resourceclaimtemplates", &mut template));
+        assert_eq!(template, before);
+
+        // Array items of a real quantity path are still reached: a container's
+        // requests, a LimitRange item's bounds.
+        let mut pod = json!({"spec": {"containers": [{"name": "a", "resources": {"requests": {"cpu": 2}}}]}});
+        assert!(numbers_to_strings("pods", &mut pod));
+        assert_eq!(pod["spec"]["containers"][0]["resources"]["requests"]["cpu"], "2");
+        let mut lr = json!({"spec": {"limits": [{"type": "Container", "max": {"cpu": 4}}]}});
+        assert!(numbers_to_strings("limitranges", &mut lr));
+        assert_eq!(lr["spec"]["limits"][0]["max"]["cpu"], "4");
     }
 
     /// #365: a canonicalized number reads back as the number it was, and a

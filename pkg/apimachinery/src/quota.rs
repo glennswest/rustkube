@@ -242,6 +242,26 @@ mod tests {
         assert!(usage("pods", "", &done).is_empty(), "a finished pod charges nothing");
     }
 
+    /// #367, review finding 4de4faf81751: `cpu: 1000` is stored as `"1k"`
+    /// (#292); a quota of it is still 1000 CPUs, and a Pod asking for it is
+    /// charged 1000 CPUs, not nothing.
+    #[test]
+    fn canonicalized_numeric_cpu_is_counted_in_full() {
+        let mut quota = json!({"spec": {"hard": {"requests.cpu": 1000, "cpu": 0.5}}});
+        assert!(crate::quantity::numbers_to_strings("resourcequotas", &mut quota));
+        assert_eq!(quota["spec"]["hard"]["requests.cpu"], "1k");
+        assert_eq!(parse("requests.cpu", &quota["spec"]["hard"]["requests.cpu"]), 1_000_000);
+        assert_eq!(parse("cpu", &quota["spec"]["hard"]["cpu"]), 500);
+        let mut pod = json!({"spec": {"containers": [{"name": "a", "resources": {"requests": {"cpu": 1000}, "limits": {"cpu": 2000}}}]}});
+        let numeric = usage("pods", "", &pod);
+        assert!(crate::quantity::numbers_to_strings("pods", &mut pod));
+        assert_eq!(pod["spec"]["containers"][0]["resources"]["requests"]["cpu"], "1k");
+        let stored = usage("pods", "", &pod);
+        assert_eq!(stored, numeric);
+        assert_eq!((stored["requests.cpu"], stored["limits.cpu"]), (1_000_000, 2_000_000));
+        assert!(same(&json!({"cpu": "1k"}), &json!({"cpu": 1000})));
+    }
+
     #[test]
     fn objects_charge_counts_services_and_claims_their_extras() {
         let svc = json!({"spec": {"type": "LoadBalancer", "ports": [{"port": 80, "nodePort": 30080}, {"port": 81, "nodePort": 30081}]}});
