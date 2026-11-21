@@ -28,7 +28,7 @@ State on 2026-10-09, from the code on main and from running oc against it
   `oc explain` on built-in types (their OpenAPI schemas are empty; on
   custom resources it works, #120); `oc whoami` (`user.openshift.io`
   serves only Groups here, #372, not `users/~`; SelfSubjectReview is served, #116, so `kubectl auth
-  whoami` works); `clusterversion`, `dc`, `scc` (their groups are not served).
+  whoami` works); `clusterversion`, `dc` (their groups are not served).
 -->
 
 # `oc` command reference and compatibility checklist
@@ -188,11 +188,11 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `policy add-role-to-user/-group`, `remove-role-from-user/-group`, `remove-user`, `remove-group` | ✅ | RoleBindings (the remove verbs needed #69's protobuf fix) |
 | `policy add-/remove-cluster-role-to/from-user/-group` | ✅ | ClusterRoleBindings |
 | `create-bootstrap-project-template`, `create-login-template`, `create-error-template`, `create-provider-selection-template` | ✅ | client-side only: print a template |
-| `policy add-scc-to-user/-group` | ✅ | binds ClusterRole `system:openshift:scc:<name>` (bootstrapped for `anyuid`, `privileged`, `restricted-v2`), which SCC admission reads: the user, group or ServiceAccount may then use that SCC (#321). SCC objects themselves are not served |
+| `policy add-scc-to-user/-group` | ✅ | binds ClusterRole `system:openshift:scc:<name>` (bootstrapped for `anyuid`, `privileged`, `restricted-v2`), which SCC admission reads: the user, group or ServiceAccount may then use that SCC (#321). The SCCs are `security.openshift.io/v1` objects (#373) |
 | `new-project` | ✅ | the project, its admin binding, and the post-check (an `authorization.openshift.io` SubjectAccessReview of `get projects`, #106) |
 | `inspect` | ✅ | `/api` and `/apis` answer aggregated discovery (#107) |
 | `policy who-can` | ✅ | `authorization.openshift.io` (Local)ResourceAccessReview: the users and groups of every binding whose role permits it (#106) |
-| `policy scc-review`, `scc-subject-review` | 🔴 | `security.openshift.io` (#70) |
+| `policy scc-review`, `scc-subject-review` | ✅ | `security.openshift.io/v1` PodSecurityPolicyReview / SubjectReview / SelfSubjectReview, answered by SCC admission's providers (#373); OpenShift's output (`RESOURCE  SERVICE ACCOUNT  ALLOWED BY`, `RESOURCE  ALLOWED BY`). As on OpenShift, `-z sa` on `scc-subject-review` sends the bare name as the user, and a ServiceAccount alone is not granted `restricted-v2` (that is `system:authenticated`'s) |
 | `node-logs` | 🔴 | `nodes/{name}/proxy` is served (#108); the kubelet's `/logs/` is rustkube-node#198 |
 | `top node`, `top pod` | 🟡 | `metrics.k8s.io` served from cadvisor (#89): nodes work; pods need cadvisor to label stormpump containers (cadvisor#3). The rig has no cadvisor, so both fail there |
 | `copy-to-node`, `restart-kubelet` | 🔴 | a debug pod on the node, so kubelet exec (rustkube-node#56) — not in the script |

@@ -141,6 +141,8 @@ there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated AP
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `user.openshift.io/v1` (Groups only, below),
+`security.openshift.io/v1` (SecurityContextConstraints and the three
+PodSecurityPolicy reviews, below),
 `rustkube.io/v1alpha1` (PodMigration) and
 `subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet; the
 VMI verbs `pause`, `unpause`, `softreboot`, `freeze`, `unfreeze` (#141), PUT
@@ -557,33 +559,77 @@ namespace — and handed out first; a 5xx, which may have written it, keeps it
 namespace created with valid ranges keeps them. A pod created in a governed
 namespace — every namespace except `kube-*`, `openshift*`, `storm-*` and
 `*-system`, unless its `pod-security.kubernetes.io/enforce` label says
-`restricted`/`baseline` (governed) or `privileged` (not) — is admitted under
-the first SCC the requester or the pod's ServiceAccount may `use` (RBAC verb
-`use` on `security.openshift.io` `securitycontextconstraints`, by name) and the
-pod satisfies, in OpenShift's order: `anyuid`, `restricted-v2` (everyone),
-`privileged`. `restricted-v2` sets what the pod leaves unset — each
-container's `runAsUser` (the range's first UID) and `runAsNonRoot: true`,
-`allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`; the pod's
-`fsGroup` (the first supplemental group) and `seccompProfile: RuntimeDefault`
-— and refuses a UID or fsGroup outside the range, privileged containers,
-added capabilities other than `NET_BIND_SERVICE`, host network/PID/IPC, host
-ports, other seccomp profiles and volume types other than configMap, csi,
+`restricted`/`baseline` (governed) or `privileged` (not) — is admitted by
+OpenShift's SCC admission over the stored SecurityContextConstraints (#373,
+ported from apiserver-library-go): each SCC becomes a provider for the
+namespace (a `MustRunAsRange` without a range takes the namespace's UID block,
+an `fsGroup` `MustRunAs` its first group, `supplementalGroups` `MustRunAs`
+its blocks); they are tried by `priority` (null is 0), then OpenShift's
+restrictiveness points, then name; one is usable when it lists the pod's
+ServiceAccount or the requester (or one of their groups) in `users`/`groups`,
+or RBAC grants `use` on `security.openshift.io` `securitycontextconstraints`
+by name — the ServiceAccount is asked first — and the first usable one the
+pod satisfies admits it, with what it fills in. A pod annotated
+`openshift.io/required-scc` is tried against that SCC alone. While one of the
+three built-ins is missing, pods are refused (`… cache is missing anyuid`),
+as OpenShift refuses while its standard set is incomplete. The built-ins,
+created at boot when missing and otherwise left as an administrator made them
+(`release.openshift.io/create-only`): `anyuid` (priority 10, any UID, drops
+`MKNOD`), `restricted-v2` (granted to `system:authenticated` by the
+create-only ClusterRoleBinding `system:openshift:scc:restricted-v2`) and
+`privileged` (its `users`/`groups` name `system:admin`, `system:masters`,
+`system:nodes`, `system:cluster-admins`). `restricted-v2` sets what the pod
+leaves unset — each container's `runAsUser` (the range's first UID) and
+`runAsNonRoot: true`, `allowPrivilegeEscalation: false`,
+`capabilities.drop: [ALL]`; the pod's `fsGroup` (the first supplemental group,
+the only one allowed) and `seccompProfile: RuntimeDefault` with OpenShift's
+`seccomp.security.alpha.kubernetes.io/pod: runtime/default` annotation — and
+refuses a UID outside the range, privileged containers, added capabilities
+other than `NET_BIND_SERVICE`, host network/PID/IPC, host ports, unsafe
+sysctls, other seccomp profiles and volume types other than configMap, csi,
 downwardAPI, emptyDir, ephemeral, image, persistentVolumeClaim, projected and
-secret: 403 `pods "x" is forbidden: unable to validate against any security
-context constraint: [provider "anyuid": Forbidden: not usable by user or
-serviceaccount, provider restricted-v2: .containers[0].runAsUser: Invalid
-value: 0: must be in the ranges: [1000680000, 1000689999], …]`. The pod is
-annotated `openshift.io/scc`. So a pod a controller creates for a Deployment
-gets `restricted-v2`, while one `cluster-admin` or `system:masters` creates
-directly is admitted under `anyuid` unchanged, as on OpenShift. More than
-restricted-v2 for a ServiceAccount: a RoleBinding to the bootstrapped
-ClusterRole `system:openshift:scc:anyuid` (or `…:privileged`). A mirror pod
-its node creates (`kubernetes.io/config.mirror`, requester `system:node:<n>`
-in `system:nodes`, `spec.nodeName` `<n>`) and the apiserver's own writes
-(manifests) are not governed — the annotation from anyone else exempts
-nothing (#350); SELinux levels
-are not assigned. The kubelet applying `fsGroup` to volumes is
-rustkube-node#171.
+secret, in OpenShift's words and field paths: 403 `pods "x" is forbidden:
+unable to validate against any security context constraint: [provider
+"anyuid": Forbidden: not usable by user or serviceaccount, provider
+restricted-v2: .containers[0].runAsUser: Invalid value: 0: must be in the
+ranges: [1000680000, 1000689999], …]`. The pod is annotated `openshift.io/scc`
+and `security.openshift.io/validated-scc-subject-type` (`serviceaccount` or
+`user`). So a pod a controller creates for a Deployment gets `restricted-v2`,
+while one `cluster-admin` or `system:masters` creates directly is admitted
+under `anyuid`, as on OpenShift. More than restricted-v2 for a
+ServiceAccount: a RoleBinding to the bootstrapped ClusterRole
+`system:openshift:scc:anyuid` (or `…:privileged`), or an SCC naming it. A
+mirror pod its node creates (`kubernetes.io/config.mirror`, requester
+`system:node:<n>` in `system:nodes`, `spec.nodeName` `<n>`) and the
+apiserver's own writes (manifests) are not governed — the annotation from
+anyone else exempts nothing (#350). SELinux levels are not assigned (no
+`openshift.io/sa.scc.mcs`): a `MustRunAs` SELinux strategy is enforced only
+when the SCC names a level itself. The kubelet applying `fsGroup` to volumes
+is rustkube-node#171.
+
+**SecurityContextConstraints and the PodSecurityPolicy reviews (#373).**
+`security.openshift.io/v1` serves `securitycontextconstraints` (short name
+`scc`, cluster-scoped, every verb): written SCCs get OpenShift's defaulting
+(`RunAsAny` group strategies, `users`/`groups` `[]`,
+`allowPrivilegeEscalation: true`, the volume list resolved — `*` without
+`allowHostDirVolumePlugin` is every type but `hostPath`) and validation (422
+for a negative priority, an unknown strategy, a capability both allowed and
+required-dropped, `none` beside other volumes, overlapping sysctl patterns, …);
+`oc get scc` prints the SCC CRD's columns (PRIV, CAPS, SELINUX, RUNASUSER,
+FSGROUP, SUPGROUP, PRIORITY, READONLYROOTFS, VOLUMES). The three reviews are
+served namespaced, create only, answered by the same providers:
+`podsecuritypolicysubjectreviews` (for `spec.user` and `spec.groups` as given,
+plus the template's ServiceAccount — `oc adm policy scc-subject-review -u|-z`),
+`podsecuritypolicyselfsubjectreviews` (the requester — `scc-subject-review`
+without `-u`) and `podsecuritypolicyreviews` (each ServiceAccount named, else
+the template's, else `default`, each of which must exist; every SCC that
+admits the template for that ServiceAccount alone — `scc-review -z`). OpenShift's
+quirks are kept: a ServiceAccount alone is not in `system:authenticated`, so
+`restricted-v2` does not admit for it in a review; a subject review keeps
+`reason: CantAssignSecurityContextConstraintProvider` from an SCC that refused
+before the one that allowed; `status.template` carries the assigned spec only
+when the template names a ServiceAccount. `admin` may create the reviews.
+OpenShift's `rangeallocations` are not served.
 
 **Admission webhooks** (#82) run after the built-in admission, on create
 (built-in and custom resources, server-side apply's upsert, `pods/eviction`),

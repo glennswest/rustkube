@@ -154,6 +154,41 @@ code, out = req("ALICE", "POST", "/api/v1/namespaces/shop/pods", pod("legacy", c
 check(code == 201 and out["metadata"].get("annotations", {}).get(SCC) == "anyuid",
       f"SA granted anyuid: UID 0 admitted ({code} {out.get('message', '') if isinstance(out, dict) else ''})")
 
+# SCCs as objects (#373): the three built-ins are served, and an SCC an
+# administrator makes is taken by admission in OpenShift's order.
+code, out = req("ADMIN", "GET", "/apis/security.openshift.io/v1/securitycontextconstraints")
+names = sorted(i["metadata"]["name"] for i in out.get("items", [])) if code == 200 else []
+check(names == ["anyuid", "privileged", "restricted-v2"] and out.get("kind") == "SecurityContextConstraintsList",
+      f"the built-in SCCs are served ({code} {names})")
+setup(req("ADMIN", "POST", "/api/v1/namespaces/shop/serviceaccounts",
+          {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "pinned"}}), "sa pinned")
+code, out = req("ADMIN", "POST", "/apis/security.openshift.io/v1/securitycontextconstraints", {
+    "apiVersion": "security.openshift.io/v1", "kind": "SecurityContextConstraints", "metadata": {"name": "fixed-uid"},
+    "priority": 20, "runAsUser": {"type": "MustRunAs", "uid": 4242}, "seLinuxContext": {"type": "RunAsAny"},
+    "fsGroup": {"type": "RunAsAny"}, "requiredDropCapabilities": ["ALL"], "allowPrivilegeEscalation": False,
+    "volumes": ["configMap", "secret", "projected", "emptyDir"], "users": ["system:serviceaccount:shop:pinned"]})
+check(code == 201 and out.get("allowHostDirVolumePlugin") is False and out.get("groups") == [],
+      f"an SCC is created and defaulted as OpenShift ({code})")
+code, out = req("ADMIN", "POST", "/apis/security.openshift.io/v1/securitycontextconstraints", {
+    "apiVersion": "security.openshift.io/v1", "kind": "SecurityContextConstraints", "metadata": {"name": "bad"},
+    "priority": -1, "runAsUser": {"type": "Sometimes"}, "seLinuxContext": {"type": "RunAsAny"}})
+check(code == 422 and "priority cannot be negative" in str(out) and "invalid strategy type" in str(out), f"an invalid SCC: 422 ({code})")
+time.sleep(1)
+code, out = req("ALICE", "POST", "/api/v1/namespaces/shop/pods", pod("pinned", sa="pinned"))
+ann = out.get("metadata", {}).get("annotations", {}) if isinstance(out, dict) else {}
+check(code == 201 and ann.get(SCC) == "fixed-uid" and ann.get("security.openshift.io/validated-scc-subject-type") == "serviceaccount"
+      and out["spec"]["containers"][0]["securityContext"].get("runAsUser") == 4242,
+      f"the custom SCC listing the ServiceAccount admits its pod, at priority 20 ({code} {ann})")
+code, out = req("ALICE", "POST", "/api/v1/namespaces/shop/pods", pod("plain2"))
+check(code == 201 and out["metadata"]["annotations"].get(SCC) == "restricted-v2", f"another ServiceAccount's pod: restricted-v2 ({code})")
+code, out = req("ADMIN", "POST", "/apis/security.openshift.io/v1/namespaces/shop/podsecuritypolicysubjectreviews", {
+    "apiVersion": "security.openshift.io/v1", "kind": "PodSecurityPolicySubjectReview",
+    "spec": {"template": {"spec": {"serviceAccountName": "pinned", "containers": [{"name": "c", "image": "i"}]}}}})
+check(code == 201 and out["status"].get("allowedBy", {}).get("name") == "fixed-uid"
+      and out["status"]["template"]["spec"]["containers"][0]["securityContext"]["runAsUser"] == 4242,
+      f"a subject review of the ServiceAccount names fixed-uid and the assigned template ({code})")
+req("ADMIN", "DELETE", "/apis/security.openshift.io/v1/securitycontextconstraints/fixed-uid")
+
 namespace("storm-tools")
 code, out = req("ALICE", "POST", "/api/v1/namespaces/storm-tools/pods", pod("plain"))
 check(code == 201 and SCC not in out["metadata"].get("annotations", {}), f"storm-* is not governed ({code})")

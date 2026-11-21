@@ -111,7 +111,30 @@ verb works "policy remove-group" adm adm policy remove-group devs -n work
 # Binds ClusterRole system:openshift:scc:privileged, which SCC admission
 # reads (#321: alice may then use the privileged SCC; scc-restricted.sh).
 verb works "policy add-scc-to-user" adm adm policy add-scc-to-user privileged alice
-verb missing "policy scc-review" adm adm policy scc-subject-review -u alice -f - <<<'{"apiVersion":"v1","kind":"Pod","metadata":{"name":"x"},"spec":{"containers":[{"name":"c","image":"i"}]}}'
+# security.openshift.io (#373): the SCCs as objects, and the reviews
+# answered by SCC admission's providers.
+OCA() { KUBECONFIG=$W/kc-admin timeout 60 "$OC" --cache-dir "$W/cache-admin" --server "$API" --insecure-skip-tls-verify --token "$ADMIN" "$@" 2>&1; }
+has() { # <extended regex> <oc args...> — the admin's output has a matching line
+  local re=$1; shift
+  OCA "$@" | grep -Eq -- "$re"
+}
+check "get scc: the three built-ins" test "$(OCA get scc --no-headers | awk '{print $1}' | sort | tr '\n' ' ')" = "anyuid privileged restricted-v2 "
+check "get scc: OpenShift's columns" has '^NAME +PRIV +CAPS +SELINUX +RUNASUSER +FSGROUP +SUPGROUP +PRIORITY +READONLYROOTFS +VOLUMES' get scc
+check "get scc restricted-v2: NET_BIND_SERVICE, MustRunAsRange, <no value>" \
+  has '^restricted-v2 +false +\["NET_BIND_SERVICE"\] +MustRunAs +MustRunAsRange +MustRunAs +RunAsAny +<no value> +false' get scc restricted-v2 --no-headers
+verb works "describe scc" adm describe scc anyuid
+printf '%s' '{"apiVersion":"v1","kind":"Pod","metadata":{"name":"x"},"spec":{"containers":[{"name":"c","image":"i"}]}}' >"$W/scc-pod.json"
+verb works "policy scc-subject-review -u" adm adm policy scc-subject-review -u alice -n work -f "$W/scc-pod.json"
+check "scc-subject-review -u alice: privileged (add-scc-to-user above)" has '^Pod/x +privileged' adm policy scc-subject-review -u alice -n work -f "$W/scc-pod.json"
+check "scc-subject-review (self, cluster-admin): anyuid" has '^Pod/x +anyuid' adm policy scc-subject-review -n work -f "$W/scc-pod.json"
+check "scc-subject-review -u bob -g system:authenticated: restricted-v2" \
+  has '^Pod/x +restricted-v2' adm policy scc-subject-review -u bob -g system:authenticated -n work -f "$W/scc-pod.json"
+adm create sa builder -n work >/dev/null
+verb works "policy add-scc-to-user -z" adm adm policy add-scc-to-user anyuid -z builder -n work
+verb works "policy scc-review -z" adm adm policy scc-review -z builder -n work -f "$W/scc-pod.json"
+check "scc-review -z builder: Pod/x builder anyuid" has '^Pod/x +builder +anyuid' adm policy scc-review -z builder -n work -f "$W/scc-pod.json"
+check "scc-review -z ghost: no such ServiceAccount" has 'unable to retrieve ServiceAccount ghost' adm policy scc-review -z ghost -n work -f "$W/scc-pod.json"
+check "a user may not create an SCC" bash -c "! KUBECONFIG=$W/kc-alice timeout 60 $OC --cache-dir $W/cache-alice --server $API --insecure-skip-tls-verify --token $ALICE create -f - <<<'{\"apiVersion\":\"security.openshift.io/v1\",\"kind\":\"SecurityContextConstraints\",\"metadata\":{\"name\":\"mine\"},\"runAsUser\":{\"type\":\"RunAsAny\"},\"seLinuxContext\":{\"type\":\"RunAsAny\"}}' >/dev/null 2>&1"
 
 # --- certificates -------------------------------------------------------------
 for c in csr-ok csr-no; do
