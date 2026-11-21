@@ -4,16 +4,24 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### auth.rs review finding (#371: c6cb83387661) — IN PROGRESS 2026-11-20
-- [ ] A reload retires only the previous *signing* key's verifier, and only
+### auth.rs review finding (#371: c6cb83387661) — DONE 2026-11-20
+- [x] A reload retires only the previous *signing* key's verifier, and only
   when the signing key changed (its tokens verify against none of the new
-  public keys), for a bounded overlap (24 h: upstream kubelet refreshes a
-  token at least daily). Every other key dropped from the files stops
-  verifying at once. Unexpired retired keys carry over; expired ones go.
-- [ ] Units: removing a key while the signing key stays revokes it; a
-  transition keeps the old signer until the deadline only.
-- [ ] Rig `sa-key-reload` keeps passing; README/CHANGELOG; rustkube-node
-  refresh cap (80% of a 1-year extended token) filed there.
+  public keys), for 24 h (`RETIRED_SIGNER_OVERLAP_SECS`). Every other key
+  dropped from the files stops verifying at once. Unexpired retired keys
+  carry over; expired ones go; the log names each kept key's deadline.
+- [x] Units `a_removed_verification_key_is_revoked_at_once`,
+  `a_signing_key_change_keeps_only_the_replaced_signer`, overlap end in
+  `a_replaced_pair_is_used_without_a_restart`. sc-build 1988068: build + all
+  tests passed, clippy nothing in auth.rs.
+- [x] Rig `sa-key-reload` rewritten (added key works, replaced signer kept,
+  removed key 401). README/CHANGELOG. rustkube-node#462 (refresh after 24 h,
+  as upstream; the overlap relies on it).
+- [ ] Rig runs b5e196e1c7 (pvetest1) / e27515ec26 (pvetest2) at 1988068
+  errored at the machines' API-health gate (stormcluster :9102, stormlb
+  :9111 — stormcluster#56, stormlb#30). Rerun `stormcentral test run
+  rustkube rigs --tag pvetest1 --commit <main>` when a machine answers; it
+  covers `sa-key-reload` (#371) and `daemonset-nodes` (#369).
 
 ### DaemonSet rolling update (#369, stormcos#811) — SHIPPED (proof pending) 2026-11-20
 - [x] Pods carry `controller-revision-hash` (FNV of `spec.template`, the
