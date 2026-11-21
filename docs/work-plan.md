@@ -4,14 +4,17 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### manifests.rs review findings (#368: de2ea73c2f21, 89bec8a64dff) — IN PROGRESS 2026-11-20
-- [ ] de2ea73c2f21: a document in a Namespace queued for retry is deferred
+### manifests.rs review findings (#368: de2ea73c2f21, 89bec8a64dff) — DONE 2026-11-20
+- [x] de2ea73c2f21: a document in a Namespace queued for retry is deferred
   behind it (kept in the retry queue, not attempted), so NamespaceLifecycle's
-  NotFound cannot drop it. Test: Namespace write fails once, store recovers.
-- [ ] 89bec8a64dff: prune only after every document applied (first pass, or
-  the background retries ending with all applied); otherwise the inventory
-  records previous ∪ named and deletes nothing.
-- [ ] sc-build, close.
+  NotFound cannot drop it. Unit with `MemStore::fail_next_put` on the
+  Namespace.
+- [x] 89bec8a64dff: prune only after every document applied (first pass, or
+  the background retries ending with all applied, none refused); otherwise
+  the inventory records previous ∪ named and deletes nothing.
+- [x] sc-build 9f0d7e6: build + all tests passed; 12/12 manifests units by
+  name; clippy: no warnings in the changed files (the older apiserver ones
+  are #376, #370). Staged. Closed.
 
 ### quantity.rs review findings (#367: 4de4faf81751, 986d36e631b7) — DONE 2026-11-20
 - [x] 4de4faf81751: `parse_cpu_millis` takes SI suffixes — fixed in 3c7a66b
