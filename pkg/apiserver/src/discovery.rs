@@ -1978,7 +1978,8 @@ mod tests {
     /// finds them. That is exactly how the Route group first shipped —
     /// `/apis/route.openshift.io/v1` answered and `/apis` did not mention it.
     /// What the generic handlers serve has a list kind of its own, never the
-    /// `{plural}List` fallback (#110), and the apply table names nothing
+    /// `{plural}List` fallback (#110), and its own apiVersion (#372: Route
+    /// lists were `routesList` in `v1`), and the apply table names nothing
     /// discovery does not advertise.
     #[tokio::test]
     async fn every_advertised_generic_resource_has_its_list_kind() {
@@ -1986,12 +1987,16 @@ mod tests {
             ("discovery.k8s.io", "v1"), ("policy", "v1"), ("storage.k8s.io", "v1"), ("resource.k8s.io", "v1"),
             ("certificates.k8s.io", "v1"), ("rbac.authorization.k8s.io", "v1"), ("autoscaling", "v2"),
             ("networking.k8s.io", "v1"), ("scheduling.k8s.io", "v1"), ("admissionregistration.k8s.io", "v1"),
-            ("node.k8s.io", "v1"), ("flowcontrol.apiserver.k8s.io", "v1"), ("gateway.networking.k8s.io", "v1")];
+            ("node.k8s.io", "v1"), ("flowcontrol.apiserver.k8s.io", "v1"), ("gateway.networking.k8s.io", "v1"),
+            ("route.openshift.io", "v1")];
         for (g, v) in generic {
             let served = advertised(g, v).await.unwrap_or_else(|| panic!("{g}/{v} not in the table"));
             for r in served {
                 let kind = crate::handlers::resource::resource_to_kind(r);
                 assert!(kind.chars().next().is_some_and(|c| c.is_ascii_uppercase()), "{g}/{v} {r}: list kind {kind}List");
+                // And its own group-version: Route lists said `v1` (#372).
+                let want = if g.is_empty() { v.to_string() } else { format!("{g}/{v}") };
+                assert_eq!(crate::handlers::resource::resource_to_api_version(r), want, "{g}/{v} {r}: apiVersion");
             }
             for (plural, _, _) in resources_for(g, v) {
                 assert!(served.contains(plural), "{g}/{v}: {plural} is in the apply table but not advertised");

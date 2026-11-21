@@ -2369,6 +2369,7 @@ fn resource_to_list_kind(resource: &str) -> String {
         "httproutes" => "HTTPRoute",
         "apiservices" => "APIService",
         "podmigrations" => "PodMigration",
+        "routes" => "Route",
         // storage.k8s.io/v1 — CSI ecosystem (#24)
         "storageclasses" => "StorageClass",
         "csidrivers" => "CSIDriver",
@@ -2426,6 +2427,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "gatewayclasses" | "gateways" | "httproutes" => "gateway.networking.k8s.io/v1",
         "apiservices" => "apiregistration.k8s.io/v1",
         "podmigrations" => "rustkube.io/v1alpha1",
+        "routes" => "route.openshift.io/v1",
         // Core group.
         _ => "v1",
     }
