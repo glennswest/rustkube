@@ -4,6 +4,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — IN PROGRESS 2026-11-20
+- [ ] 96a66790f5c4: the inventory is not keyed by the directory's path; a
+  moved `--manifest-dir` keeps the previous entries and prunes them once the
+  new directory is complete (the stored path is informational).
+- [ ] f25b22881436: an existing directory with no manifests prunes what the
+  inventory recorded; an absent or unreadable directory, or one whose every
+  manifest is a dangling link (its pallet not mounted), prunes nothing.
+- [ ] Units, README/CHANGELOG, sc-build.
+
 ### scc.rs review finding (#377: 5a63ec20536a) — DONE 2026-11-20
 - [x] Namespace create admission refuses an existing name before taking a
   block (`scc::ranges_for_new_namespace`).
