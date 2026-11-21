@@ -758,7 +758,7 @@ Ready pod at once, and an old pod not Ready is replaced at once; with
 `maxSurge` the new pod starts beside the old, which is deleted once the new is
 Ready. `OnDelete` leaves old pods until they are deleted.
 `updatedNumberScheduled` counts the nodes running a current-template pod; a
-pod counts as available once Ready — `minReadySeconds` is not read, #369), Job (one whose `spec.managedBy` names another controller is left to it, #285; the field is validated and immutable), CronJob (a run's Job is named `<cronjob>-<unix minutes of the scheduled time>`, as upstream; `lastScheduleTime` advances only once that Job is created, or already exists owned by the CronJob — a failed create fails the pass and is retried, #364), ephemeral volumes (a Pod's generic ephemeral volume gets its
+pod counts as available once Ready — `minReadySeconds` is not read, #379; #369), Job (one whose `spec.managedBy` names another controller is left to it, #285; the field is validated and immutable), CronJob (a run's Job is named `<cronjob>-<unix minutes of the scheduled time>`, as upstream; `lastScheduleTime` advances only once that Job is created, or already exists owned by the CronJob — a failed create fails the pass and is retried, #364), ephemeral volumes (a Pod's generic ephemeral volume gets its
 `<pod>-<volume>` PVC from `volumeClaimTemplate`, owned by the Pod; a claim of
 that name the Pod does not own is left alone with a Warning Event, #94),
 ResourceQuota (`status.hard` and `status.used` per quota from
