@@ -569,7 +569,7 @@ pub async fn list(storage: &ResourceStorage, fresh: bool) -> Result<Vec<Value>, 
 /// bootstrapped grants stand in: `system:masters` may use every SCC,
 /// `system:authenticated` `restricted-v2`.
 pub async fn applies_to(scc: &Value, user: &UserInfo, ns: &str, rbac: Option<&RbacEngine>) -> bool {
-    if strings(&scc["users"]).iter().any(|u| *u == user.username) {
+    if strings(&scc["users"]).contains(&user.username) {
         return true;
     }
     let groups = strings(&scc["groups"]);
