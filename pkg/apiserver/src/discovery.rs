@@ -2019,10 +2019,19 @@ mod tests {
             ("route.openshift.io", "v1"), ("user.openshift.io", "v1")];
         for (g, v) in generic {
             let served = advertised(g, v).await.unwrap_or_else(|| panic!("{g}/{v} not in the table"));
+            let lists = builtin_lists().await;
+            let top_level: std::collections::HashSet<&str> = lists[&(g.to_string(), v.to_string())]
+                .as_array().into_iter().flatten()
+                .filter_map(|r| r["name"].as_str()).filter(|n| !n.contains('/')).collect();
             for r in served {
                 let kind = crate::handlers::resource::resource_to_kind(r);
                 assert!(kind.chars().next().is_some_and(|c| c.is_ascii_uppercase()), "{g}/{v} {r}: list kind {kind}List");
                 // And its own group-version: Route lists said `v1` (#372).
+                // Only a top-level resource: `pods/eviction` in policy/v1
+                // is a subresource of core Pods (#380).
+                if !top_level.contains(r.as_str()) {
+                    continue;
+                }
                 let want = if g.is_empty() { v.to_string() } else { format!("{g}/{v}") };
                 assert_eq!(crate::handlers::resource::resource_to_api_version(r), want, "{g}/{v} {r}: apiVersion");
             }
