@@ -140,6 +140,7 @@ unchanged value — #240; `format`, `allOf`/`anyOf`/`oneOf`/`not`, CEL
 there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated APIs, below),
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
+`user.openshift.io/v1` (Groups only, below),
 `rustkube.io/v1alpha1` (PodMigration) and
 `subresources.kubevirt.io/v1` (VM console/VNC, proxied to the kubelet; the
 VMI verbs `pause`, `unpause`, `softreboot`, `freeze`, `unfreeze` (#141), PUT
@@ -310,6 +311,23 @@ kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
 4. a request with no credentials (no client certificate, no `Authorization`,
    an empty `Bearer ` token, or another scheme) is `system:anonymous` if
    `--anonymous-auth` is true; else 401.
+
+An authenticated user named in a Group's `users` is also in that Group, as
+OpenShift's group cache adds it (#372); TokenReview reports it too.
+
+**Groups** (`user.openshift.io/v1` `groups`, cluster-scoped, #372) are what
+`oc adm groups new|add-users|remove-users|sync|prune` and `oc adm prune
+groups` act on: stored as written (CRUD, watch, RBAC as any cluster-scoped
+kind; `users: null` when there are none, as OpenShift writes it; `oc get
+groups` prints NAME and USERS). Validated as OpenShift's: the name is a path
+segment with no `:` and is not `~`, so no Group can put anyone into a
+`system:` group; each user is non-empty and of the same shape, except that a
+ServiceAccount's user name `system:serviceaccount:<namespace>:<name>` may be
+listed (OpenShift refuses it; StormCOS's users are ServiceAccounts). A
+request from a listed user carries the Group (read from the watch cache,
+rebuilt when a Group changes), so a RoleBinding to the Group grants its
+members; impersonation carries only the groups it names. OpenShift's Users,
+Identities and UserIdentityMappings are not served.
 
 **API aggregation** (#83). An `apiregistration.k8s.io/v1` APIService with
 a `service` makes its group/version an aggregated API, as with upstream's

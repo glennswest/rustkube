@@ -26,8 +26,8 @@ State on 2026-10-09, from the code on main and from running oc against it
   works from cadvisor, #89); `oc adm node-logs` (`nodes/{name}/proxy` is served, #108, but the kubelet
   serves no `/logs/`, rustkube-node#198);
   `oc explain` on built-in types (their OpenAPI schemas are empty; on
-  custom resources it works, #120); `oc whoami` (no
-  `user.openshift.io`; SelfSubjectReview is served, #116, so `kubectl auth
+  custom resources it works, #120); `oc whoami` (`user.openshift.io`
+  serves only Groups here, #372, not `users/~`; SelfSubjectReview is served, #116, so `kubectl auth
   whoami` works); `clusterversion`, `dc`, `scc` (their groups are not served).
 -->
 
@@ -197,7 +197,9 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `top node`, `top pod` | 🟡 | `metrics.k8s.io` served from cadvisor (#89): nodes work; pods need cadvisor to label stormpump containers (cadvisor#3). The rig has no cadvisor, so both fail there |
 | `copy-to-node`, `restart-kubelet` | 🔴 | a debug pod on the node, so kubelet exec (rustkube-node#56) — not in the script |
 | `must-gather` | 🔴 | the `openshift` imagestreams, then a running pod with exec |
-| `groups new/add-users/remove-users/sync/prune` | 🔴 | `user.openshift.io` Groups (#70) — RBAC `Group` subjects work without them |
+| `groups new/add-users/remove-users` | ✅ | `user.openshift.io/v1` Groups (#372); a Group's users carry it at authentication, so a binding to the Group grants them (SSAR in the script). ServiceAccount user names may be members |
+| `prune groups` | ✅ | lists the Groups synced from the config's LDAP host; the script has no LDAP server, so it prunes none (#372) |
+| `groups sync` | 🟡 | the Groups it writes are served (#372); it reads an LDAP server, which the script has none of, so it is not run there |
 | `prune builds/deployments/images` | 🔴 | BuildConfigs, DeploymentConfigs, ImageStreams (#70) |
 | `upgrade`, `wait-for-stable-cluster`, `reboot-machine-config-pool`, `wait-for-node-reboot`, `ocp-certificates`, `node-image`, `release`, `catalog`, `build-chain`, `migrate`, `verify-image-signature` | 🔴 out of scope | the OpenShift platform: ClusterVersion, ClusterOperators, MachineConfigPools, the release payload, OLM (#70) |
 | `pod-network …` | — | OpenShift SDN, removed upstream |

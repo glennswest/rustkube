@@ -139,8 +139,55 @@ check "team: alice is its admin" as "$ALICE" alice get project team
 for t in create-bootstrap-project-template create-login-template create-error-template create-provider-selection-template; do
   verb works "$t" adm adm $t
 done
-verb missing "groups new" adm adm groups new devs alice
-verb missing "prune groups" adm adm prune groups --sync-config=/dev/null
+# user.openshift.io Groups (#372): a Group's users carry it at
+# authentication, so a binding to the Group grants them.
+BOB=$(token bob '[]')
+CAROL_SA=system:serviceaccount:storm-users:carol
+CAROL=$(token "$CAROL_SA" '[]')
+can() { # <token> <name> <verb> <resource> <ns> — SelfSubjectAccessReview
+  KUBECONFIG=$W/kc-$2 timeout 60 "$OC" --cache-dir "$W/cache-$2" --server "$API" \
+    --insecure-skip-tls-verify --token "$1" auth can-i "$3" "$4" -n "$5" 2>/dev/null
+}
+verb works "groups new" adm adm groups new team-devs alice
+check "groups new: says created" bash -c "KUBECONFIG=$W/kc-admin timeout 60 $OC --cache-dir $W/cache-admin --server $API --insecure-skip-tls-verify --token $ADMIN adm groups new team-ops 2>&1 | grep -qx 'group.user.openshift.io/team-ops created'"
+check "groups new: users [alice]" test "$(adm get groups team-devs -o jsonpath='{.users}')" = '["alice"]'
+check "groups new: an empty group's users are null" test "$(adm get group team-ops -o json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["users"])')" = None
+verb works "groups add-users" adm adm groups add-users team-devs bob "$CAROL_SA"
+check "add-users: alice, bob and the ServiceAccount" test "$(adm get groups team-devs -o jsonpath='{.users}')" = "[\"alice\",\"bob\",\"$CAROL_SA\"]"
+check "get groups: USERS column" bash -c "KUBECONFIG=$W/kc-admin timeout 60 $OC --cache-dir $W/cache-admin --server $API --insecure-skip-tls-verify --token $ADMIN get groups team-devs --no-headers | grep -q 'alice, bob, $CAROL_SA'"
+check "bob may not list pods in work yet" test "$(can "$BOB" bob list pods work)" = no
+adm adm policy add-role-to-group view team-devs -n work >/dev/null
+check "a binding to team-devs grants bob (SSAR)" test "$(can "$BOB" bob list pods work)" = yes
+check "and the ServiceAccount member (SSAR)" test "$(can "$CAROL" carol list pods work)" = yes
+check "bob may not delete pods (view only)" test "$(can "$BOB" bob delete pods work)" = no
+check "SelfSubjectReview: bob is in team-devs" bash -c "curl -sk -H 'Authorization: Bearer $BOB' -H 'Content-Type: application/json' -X POST -d '{\"apiVersion\":\"authentication.k8s.io/v1\",\"kind\":\"SelfSubjectReview\"}' $API/apis/authentication.k8s.io/v1/selfsubjectreviews | grep -q '\"team-devs\"'"
+verb works "groups remove-users" adm adm groups remove-users team-devs bob
+check "remove-users: bob gone" test "$(adm get groups team-devs -o jsonpath='{.users}')" = "[\"alice\",\"$CAROL_SA\"]"
+check "bob's grant went with his membership (SSAR)" test "$(can "$BOB" bob list pods work)" = no
+# OpenShift's validation: no ":" in a Group name, so no Group is a system: group.
+verb missing "groups new system:masters (refused)" adm adm groups new system:masters bob
+check "and nothing was stored" bash -c "! KUBECONFIG=$W/kc-admin timeout 60 $OC --cache-dir $W/cache-admin --server $API --insecure-skip-tls-verify --token $ADMIN get group system:masters >/dev/null 2>&1"
+check "a user may not list groups" bash -c "! KUBECONFIG=$W/kc-alice timeout 60 $OC --cache-dir $W/cache-alice --server $API --insecure-skip-tls-verify --token $ALICE get groups >/dev/null 2>&1"
+# `groups sync` and `prune groups` read an LDAP server, which this rig has
+# none of. `prune groups` lists the Groups synced from the configured host
+# (label openshift.io/ldap.host), finds none, and asks LDAP nothing.
+cat >"$W/ldap-sync.yaml" <<'YAML'
+kind: LDAPSyncConfig
+apiVersion: v1
+url: ldap://127.0.0.1:1
+insecure: true
+rfc2307:
+  groupsQuery: { baseDN: "ou=groups,dc=example,dc=com", scope: sub, derefAliases: never, filter: "(objectClass=groupOfNames)" }
+  groupUIDAttribute: dn
+  groupNameAttributes: [ cn ]
+  groupMembershipAttributes: [ member ]
+  usersQuery: { baseDN: "ou=users,dc=example,dc=com", scope: sub, derefAliases: never }
+  userUIDAttribute: dn
+  userNameAttributes: [ uid ]
+YAML
+verb works "prune groups (no LDAP-synced groups)" adm adm prune groups --sync-config="$W/ldap-sync.yaml" --confirm
+check "prune groups kept the groups it did not sync" test "$(adm get groups -o name | wc -l)" = 2
+verb works "groups delete (oc delete group)" adm delete group team-ops
 
 # --- a Deployment created by oc (protobuf) keeps its ReplicaSet (#99) ---------
 adm create deployment web -n work --image=registry.invalid/web >/dev/null
