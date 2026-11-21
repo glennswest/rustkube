@@ -97,12 +97,6 @@ pub struct IdRange {
     pub max: u64,
 }
 
-impl IdRange {
-    fn contains(&self, id: u64) -> bool {
-        (self.min..=self.max).contains(&id)
-    }
-}
-
 /// One range as OpenShift writes it: `start/size` or `start-end`.
 pub fn parse_range(text: &str) -> Option<IdRange> {
     let text = text.trim();
