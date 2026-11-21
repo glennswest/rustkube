@@ -4,15 +4,18 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### scc.rs review finding (#377: 5a63ec20536a) — IN PROGRESS 2026-11-20
-- [ ] Namespace create admission refuses an existing name before taking a
-  block (the repeated-409 ProjectRequest exhaustion).
-- [ ] A block taken for a create that then fails with a 4xx (webhook
-  refusal, AlreadyExists race) is given back: `next` stepped back when
-  nothing was allocated since, else onto the record's `released` list,
-  which allocation takes first. Never given to a stored namespace, so
-  "never reused" holds. 5xx (a write that may have landed) keeps it.
-- [ ] Call sites: cluster POST, ProjectRequest, manifests. Units; README.
+### scc.rs review finding (#377: 5a63ec20536a) — DONE 2026-11-20
+- [x] Namespace create admission refuses an existing name before taking a
+  block (`scc::ranges_for_new_namespace`).
+- [x] A block taken for a create that then fails with a 4xx is given back
+  (`scc::create_failed` → `release_block`: `next` steps back, else the
+  record's `released` list, handed out first). 5xx keeps it.
+- [x] Call sites: cluster POST, ProjectRequest, manifests, lazy backfill
+  (CAS conflict). Units `an_existing_name_takes_no_block`,
+  `a_failed_create_gives_its_block_back`. sc-build 9ab99c4 passed; clippy:
+  nothing in the changed lines (older lints: #376, #370). README/CHANGELOG.
+- [ ] Rigs (`projects`, `scc-restricted`) at 9ab99c4: runs 44f39d98cf /
+  58c7131e18 errored at the same machine API-health gate as #371's.
 
 ### auth.rs review finding (#371: c6cb83387661) — DONE 2026-11-20
 - [x] A reload retires only the previous *signing* key's verifier, and only
