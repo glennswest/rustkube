@@ -30,6 +30,8 @@ fn build_router(
     anonymous_auth: bool,
     prom: metrics_exporter_prometheus::PrometheusHandle,
 ) -> Router {
+    // A Group's users carry it at authentication (#372).
+    let group_index = Arc::new(crate::user_groups::GroupIndex::new(state.storage.clone()));
     Router::new()
         .route(
             "/metrics",
@@ -680,6 +682,22 @@ fn build_router(
             get(crate::handlers::project::list_project_requests)
                 .post(crate::handlers::project::create_project_request),
         )
+        // user.openshift.io/v1 — Groups (#372), cluster-scoped and stored
+        // as written; their users carry them at authentication.
+        .route("/apis/user.openshift.io/v1", get(discovery::api_user_v1_resources))
+        .route(
+            "/apis/user.openshift.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/user.openshift.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
+        )
         // route.openshift.io/v1 — OpenShift Routes
         .route(
             "/apis/route.openshift.io/v1",
@@ -943,10 +961,12 @@ fn build_router(
         .layer(middleware::from_fn(move |req, next| {
             let keys = signing_keys.clone();
             let static_tokens = static_tokens.clone();
+            let group_index = group_index.clone();
             async move {
                 let mut req: axum::extract::Request = req;
                 req.extensions_mut().insert(keys);
                 req.extensions_mut().insert(static_tokens);
+                req.extensions_mut().insert(group_index);
                 req.extensions_mut()
                     .insert(auth::AnonymousAuth(anonymous_auth));
                 auth::auth_middleware(req, next).await

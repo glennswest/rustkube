@@ -221,6 +221,7 @@ pub async fn create_serviceaccount_token(
 pub async fn create_token_review(
     Extension(keys): Extension<SigningKeys>,
     static_tokens: Option<Extension<crate::token_file::StaticTokens>>,
+    group_index: Option<Extension<std::sync::Arc<crate::user_groups::GroupIndex>>>,
     Json(body): Json<Value>,
 ) -> impl axum::response::IntoResponse {
     let token = body["spec"]["token"].as_str().unwrap_or("");
@@ -243,10 +244,14 @@ pub async fn create_token_review(
             audiences,
         })
     });
-    let user = match static_user {
+    let mut user = match static_user {
         Some(u) => Some(u),
         None => keys.authenticate(token, &wanted).await,
     };
+    // The Groups listing the user (#372), as a request with the token gets.
+    if let (Some(u), Some(Extension(index))) = (user.as_mut(), group_index.as_ref()) {
+        index.add_to(&u.username, &mut u.groups).await;
+    }
     let status = match user {
         Some(u) => {
             let mut user = json!({ "username": u.username, "groups": u.groups });
@@ -352,6 +357,7 @@ mod tests {
     async fn review(keys: &SigningKeys, token: &str, audiences: Value) -> Value {
         let resp = create_token_review(
             Extension(keys.clone()),
+            None,
             None,
             Json(json!({"spec": {"token": token, "audiences": audiences}})),
         )

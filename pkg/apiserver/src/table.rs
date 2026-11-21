@@ -280,6 +280,18 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                 ]
             }) as RowFn,
         )),
+        // OpenShift's group printer (#372): the users joined with ", ".
+        "groups" => Some((
+            vec![
+                col("Name", "string", 0, "Name must be unique within a namespace."),
+                col("Users", "string", 0, "List of users in the group."),
+            ],
+            (|o: &Value| {
+                let users: Vec<&str> =
+                    o["users"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                vec![json!(name_of(o)), json!(users.join(", "))]
+            }) as RowFn,
+        )),
         "routes" => Some((
             vec![
                 col("Name", "string", 0, "Name of the route"),
@@ -776,6 +788,19 @@ mod tests {
         let t = to_table_crd(one, &cols);
         assert_eq!(t["rows"].as_array().unwrap().len(), 1);
         assert_eq!(t["rows"][0]["cells"][1], json!(1));
+    }
+
+    /// `oc get groups`: NAME and the users joined as OpenShift's printer
+    /// joins them; a Group with `users: null` prints an empty cell (#372).
+    #[test]
+    fn groups_print_their_users() {
+        let t = to_table("groups", json!({"items": [
+            {"metadata": {"name": "devs"}, "users": ["alice", "bob"]},
+            {"metadata": {"name": "empty"}, "users": null},
+        ]}));
+        assert_eq!(t["columnDefinitions"][1]["name"], json!("Users"));
+        assert_eq!(t["rows"][0]["cells"], json!(["devs", "alice, bob"]));
+        assert_eq!(t["rows"][1]["cells"], json!(["empty", ""]));
     }
 
     /// A Route prints what `oc get route` prints. The DaemonSet columns matter

@@ -787,6 +787,16 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
 
     // 3. No credentials: fall back to system:anonymous only if anonymous
     //    auth is enabled; otherwise reject (401), matching upstream.
+    // A Group listing the user adds it (#372), as OpenShift's group cache.
+    let authenticated = match authenticated {
+        Some(mut u) => {
+            if let Some(index) = request.extensions().get::<std::sync::Arc<crate::user_groups::GroupIndex>>() {
+                index.add_to(&u.username, &mut u.groups).await;
+            }
+            Some(u)
+        }
+        None => None,
+    };
     let user_info = match authenticated {
         Some(u) => u,
         None => {
@@ -1017,6 +1027,59 @@ pub(crate) mod tests {
             username: username.into(),
             groups: groups.split(',').map(String::from).collect(),
         })
+    }
+
+    /// A Group's users carry it (#372), as OpenShift's group cache adds it;
+    /// an anonymous request is in no Group, whatever a Group lists.
+    #[tokio::test]
+    async fn a_group_listing_the_user_is_among_its_groups() {
+        use tower::ServiceExt;
+        let storage = std::sync::Arc::new(crate::storage::ResourceStorage::new(std::sync::Arc::new(
+            crate::test_store::MemStore::default(),
+        )));
+        for (name, users) in [("admins", vec!["system:admin"]), ("ops", vec!["system:admin", "bob"]),
+            ("anons", vec!["system:anonymous"])]
+        {
+            let key = crate::storage::ResourceStorage::cluster_key("groups", name);
+            storage.create(&key, serde_json::json!({"metadata": {"name": name}, "users": users})).await.unwrap();
+        }
+        let index = std::sync::Arc::new(crate::user_groups::GroupIndex::new(storage));
+        let ask = |authorization: Option<&'static str>| {
+            let index = index.clone();
+            async move {
+                let app = axum::Router::new()
+                    .route(
+                        "/",
+                        axum::routing::get(|axum::Extension(u): axum::Extension<UserInfo>| async move {
+                            u.groups.join(",")
+                        }),
+                    )
+                    .layer(axum::middleware::from_fn(move |mut req: Request, next: Next| {
+                        let index = index.clone();
+                        async move {
+                            req.extensions_mut().insert(test_keys());
+                            req.extensions_mut().insert(crate::token_file::StaticTokens::from_text(
+                                "0123456789abcdef0123456789abcdef0123456789abcdef,system:admin,system:admin,\"system:masters\"\n",
+                            ));
+                            req.extensions_mut().insert(AnonymousAuth(true));
+                            req.extensions_mut().insert(index);
+                            auth_middleware(req, next).await
+                        }
+                    }));
+                let mut req = axum::http::Request::get("/");
+                if let Some(h) = authorization {
+                    req = req.header("authorization", h);
+                }
+                let resp = app.oneshot(req.body(axum::body::Body::empty()).unwrap()).await.unwrap();
+                let body = axum::body::to_bytes(resp.into_body(), 1 << 16).await.unwrap();
+                String::from_utf8(body.to_vec()).unwrap()
+            }
+        };
+        assert_eq!(
+            ask(Some("Bearer 0123456789abcdef0123456789abcdef0123456789abcdef")).await,
+            "system:masters,system:authenticated,admins,ops"
+        );
+        assert_eq!(ask(None).await, "system:unauthenticated");
     }
 
     #[tokio::test]

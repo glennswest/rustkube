@@ -48,6 +48,7 @@ pub mod table;
 pub(crate) mod test_store;
 pub mod tls;
 pub mod token_file;
+pub mod user_groups;
 pub mod watch;
 pub mod watch_cache;
 

@@ -656,6 +656,9 @@ pub(crate) async fn builtin_update(
     if key.starts_with("/registry/jobs/") {
         crate::builtin_admission::job_managed_by(Some(existing), body)?;
     }
+    if key.starts_with("/registry/groups/") {
+        crate::user_groups::admit(body)?; // #372
+    }
     if key.starts_with("/registry/services/") {
         // Upstream defaults every write, not just a create.
         crate::builtin_admission::default_service_ports(body);
@@ -1797,6 +1800,8 @@ pub(crate) async fn patch_stored_object(
                         &state.storage, resource, Some(ns), &mut obj, &state.service_cidr,
                     )
                         .await?;
+                } else if resource == crate::user_groups::RESOURCE {
+                    crate::user_groups::admit(&mut obj)?; // #372
                 }
                 let claims = (resource == "services").then(|| obj.clone()); // #132
                 let created = async {
@@ -2370,6 +2375,7 @@ fn resource_to_list_kind(resource: &str) -> String {
         "apiservices" => "APIService",
         "podmigrations" => "PodMigration",
         "routes" => "Route",
+        "groups" => "Group",
         // storage.k8s.io/v1 — CSI ecosystem (#24)
         "storageclasses" => "StorageClass",
         "csidrivers" => "CSIDriver",
@@ -2428,6 +2434,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "apiservices" => "apiregistration.k8s.io/v1",
         "podmigrations" => "rustkube.io/v1alpha1",
         "routes" => "route.openshift.io/v1",
+        "groups" => "user.openshift.io/v1",
         // Core group.
         _ => "v1",
     }

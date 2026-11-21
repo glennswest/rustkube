@@ -225,6 +225,13 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "route.openshift.io/v1", "version": "v1"}
         }),
         json!({
+            // Groups (#372): what `oc adm groups` and `oc adm prune groups`
+            // act on; a Group's users carry it at authentication.
+            "name": "user.openshift.io",
+            "versions": [{"groupVersion": "user.openshift.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "user.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             // Projects (#97): Namespaces with owners, under OpenShift's group
             // name so `oc new-project` and `oc projects` find them.
             "name": "project.openshift.io",
@@ -853,6 +860,7 @@ pub(crate) async fn builtin_lists() -> &'static std::collections::BTreeMap<(Stri
         gv!("autoscaling", "v2", api_autoscaling_v2_resources());
         gv!("networking.k8s.io", "v1", api_networking_v1_resources());
         gv!("route.openshift.io", "v1", api_route_v1_resources());
+        gv!("user.openshift.io", "v1", api_user_v1_resources());
         gv!("scheduling.k8s.io", "v1", api_scheduling_v1_resources());
         gv!("authentication.k8s.io", "v1", api_authentication_v1_resources());
         gv!("project.openshift.io", "v1", api_project_v1_resources());
@@ -1083,6 +1091,7 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
         ("policy", "v1") => vec![("poddisruptionbudgets", "PodDisruptionBudget", true)],
         ("scheduling.k8s.io", "v1") => vec![("priorityclasses", "PriorityClass", false)],
         ("route.openshift.io", "v1") => vec![("routes", "Route", true)],
+        ("user.openshift.io", "v1") => vec![("groups", "Group", false)],
         ("apiregistration.k8s.io", "v1") => vec![("apiservices", "APIService", false)],
         ("rustkube.io", "v1alpha1") => vec![("podmigrations", "PodMigration", true)],
         ("apps", "v1") => vec![
@@ -1673,6 +1682,25 @@ pub async fn api_route_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/user.openshift.io/v1 — Groups (#372), stored as written.
+///
+/// Only `groups`: OpenShift's Users, Identities and UserIdentityMappings are
+/// not served here (`oc adm groups` needs none of them).
+pub async fn api_user_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "user.openshift.io/v1",
+        "resources": [{
+            "name": "groups",
+            "singularName": "group",
+            "namespaced": false,
+            "kind": "Group",
+            "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+        }]
+    }))
+}
+
 /// GET /apis/scheduling.k8s.io/v1 — PriorityClass (#85).
 pub async fn api_scheduling_v1_resources() -> impl IntoResponse {
     Json(json!({
@@ -1988,7 +2016,7 @@ mod tests {
             ("certificates.k8s.io", "v1"), ("rbac.authorization.k8s.io", "v1"), ("autoscaling", "v2"),
             ("networking.k8s.io", "v1"), ("scheduling.k8s.io", "v1"), ("admissionregistration.k8s.io", "v1"),
             ("node.k8s.io", "v1"), ("flowcontrol.apiserver.k8s.io", "v1"), ("gateway.networking.k8s.io", "v1"),
-            ("route.openshift.io", "v1")];
+            ("route.openshift.io", "v1"), ("user.openshift.io", "v1")];
         for (g, v) in generic {
             let served = advertised(g, v).await.unwrap_or_else(|| panic!("{g}/{v} not in the table"));
             for r in served {
@@ -2106,6 +2134,7 @@ mod tests {
             "gateway.networking.k8s.io",
             "route.openshift.io",
             "project.openshift.io",
+            "user.openshift.io",
             "scheduling.k8s.io",
             "authentication.k8s.io",
             "apiregistration.k8s.io",
