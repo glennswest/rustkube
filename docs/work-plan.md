@@ -4,14 +4,17 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — IN PROGRESS 2026-11-20
-- [ ] 96a66790f5c4: the inventory is not keyed by the directory's path; a
+### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
+- [x] 96a66790f5c4: the inventory is not keyed by the directory's path; a
   moved `--manifest-dir` keeps the previous entries and prunes them once the
   new directory is complete (the stored path is informational).
-- [ ] f25b22881436: an existing directory with no manifests prunes what the
+- [x] f25b22881436: an existing directory with no manifests prunes what the
   inventory recorded; an absent or unreadable directory, or one whose every
   manifest is a dangling link (its pallet not mounted), prunes nothing.
-- [ ] Units, README/CHANGELOG, sc-build.
+  An empty directory with no inventory writes none.
+- [x] 62d6dbf + 2e clippy rename. sc-build-1c0cf7a236: workspace build +
+  all tests passed (apiserver 398), manifests 15/15; sc-build-846e5f636f:
+  15/15, clippy nothing in manifests.rs. README/help/CHANGELOG.
 
 ### scc.rs review finding (#377: 5a63ec20536a) — DONE 2026-11-20
 - [x] Namespace create admission refuses an existing name before taking a
