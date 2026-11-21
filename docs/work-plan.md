@@ -4,6 +4,15 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### manifests.rs review findings (#368: de2ea73c2f21, 89bec8a64dff) — IN PROGRESS 2026-11-20
+- [ ] de2ea73c2f21: a document in a Namespace queued for retry is deferred
+  behind it (kept in the retry queue, not attempted), so NamespaceLifecycle's
+  NotFound cannot drop it. Test: Namespace write fails once, store recovers.
+- [ ] 89bec8a64dff: prune only after every document applied (first pass, or
+  the background retries ending with all applied); otherwise the inventory
+  records previous ∪ named and deletes nothing.
+- [ ] sc-build, close.
+
 ### quantity.rs review findings (#367: 4de4faf81751, 986d36e631b7) — DONE 2026-11-20
 - [x] 4de4faf81751: `parse_cpu_millis` takes SI suffixes — fixed in 3c7a66b
   (#365); added the quota round trip (`cpu: 1000` stored `"1k"`, quota and
