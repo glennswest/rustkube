@@ -1286,11 +1286,11 @@ fn equal_levels(expected: &str, actual: &str) -> bool {
     let (Some((es, ec)), Some((as_, ac))) = (expected.split_once(':'), actual.split_once(':')) else {
         return false;
     };
-    let cats = |c: &str| {
+    fn cats(c: &str) -> Vec<&str> {
         let mut v: Vec<&str> = c.split(',').collect();
         v.sort();
         v
-    };
+    }
     es == as_ && cats(ec) == cats(ac)
 }
 

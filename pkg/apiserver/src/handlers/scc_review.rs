@@ -59,7 +59,7 @@ fn refuse(kind: &str, errs: Vec<String>) -> Result<(), ApiError> {
 }
 
 /// The namespace with its UID and group blocks, as providers need it.
-async fn namespace(storage: &ResourceStorage, ns: &str) -> Result<Value, ApiError> {
+async fn load_namespace(storage: &ResourceStorage, ns: &str) -> Result<Value, ApiError> {
     match storage.get(&ResourceStorage::cluster_key("namespaces", ns)).await {
         Ok(n) => crate::scc::namespace_with_ranges(storage, n).await,
         Err(e) if e.status == StatusCode::NOT_FOUND => Err(ApiError::internal(&format!(
@@ -131,7 +131,7 @@ async fn subject_status(
     rbac: Option<&RbacEngine>,
     body: &Value,
 ) -> Result<Value, ApiError> {
-    let ns = namespace(storage, namespace).await?;
+    let ns = load_namespace(storage, namespace).await?;
     let mut status = json!({"template": empty_template()});
     for p in providers(storage, &ns, &users, rbac).await? {
         if fill(&mut status, &p, &body["spec"]["template"]) {
@@ -245,7 +245,7 @@ pub async fn review(
     if !missing.is_empty() {
         return Err(ApiError::bad_request(&scc_policy::aggregate(&missing)));
     }
-    let ns = namespace(storage, &namespace).await?;
+    let ns = load_namespace(storage, &namespace).await?;
     let rbac = rbac.as_ref().map(|Extension(r)| r.as_ref());
     let mut allowed = Vec::new();
     for sa in &wanted {
