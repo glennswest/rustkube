@@ -69,7 +69,7 @@ pub fn controller_manager_role() -> Value {
             rule(&["*"], &["*"], &["get", "list", "watch", "patch", "update", "delete", "deletecollection"]),
             // What the controllers create, and nothing else.
             rule(&[""], &["pods", "events", "serviceaccounts", "configmaps", "persistentvolumes", "endpoints",
-                         "persistentvolumeclaims"], &["create"]),
+                         "persistentvolumeclaims", "replicationcontrollers"], &["create"]),
             rule(&["apps"], &["replicasets", "controllerrevisions"], &["create"]),
             rule(&["batch"], &["jobs"], &["create"]),
             rule(&["discovery.k8s.io"], &["endpointslices"], &["create"]),

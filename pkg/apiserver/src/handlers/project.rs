@@ -520,6 +520,7 @@ const WORKLOADS: &[(&str, &[&str])] = &[
     ("networking.k8s.io", &["ingresses", "networkpolicies"]),
     ("gateway.networking.k8s.io", &["gateways", "httproutes"]),
     ("route.openshift.io", &["routes"]),
+    ("apps.openshift.io", &["deploymentconfigs", "deploymentconfigs/scale"]),
     ("kubevirt.io", &["virtualmachines", "virtualmachineinstances"]),
     ("snapshot.storage.k8s.io", &["volumesnapshots"]),
 ];
@@ -544,6 +545,7 @@ const OBSERVED: &[(&str, &[&str])] = &[
     ("events.k8s.io", &["events"]),
     ("gateway.networking.k8s.io", &["gateways/status", "httproutes/status"]),
     ("route.openshift.io", &["routes/status"]),
+    ("apps.openshift.io", &["deploymentconfigs/log", "deploymentconfigs/status"]),
 ];
 
 fn view_rules() -> Vec<Value> {
@@ -646,6 +648,8 @@ fn edit_rules() -> Vec<Value> {
         &["get", "create"],
     ));
     rules.push(rule(&[""], &["pods/eviction"], &["create"]));
+    // Roll out and roll back, as OpenShift's edit (#375).
+    rules.push(rule(&["apps.openshift.io"], &["deploymentconfigs/instantiate", "deploymentconfigs/rollback"], &["create"]));
     rules.push(rule(
         &["subresources.kubevirt.io"],
         &["virtualmachines/start", "virtualmachines/stop", "virtualmachines/restart"],

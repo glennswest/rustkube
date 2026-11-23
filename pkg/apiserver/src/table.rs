@@ -280,6 +280,34 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                 ]
             }) as RowFn,
         )),
+        // OpenShift's DeploymentConfig printer (#375): only ConfigChange
+        // triggers are admitted here, which it prints as `config`.
+        "deploymentconfigs" => Some((
+            vec![
+                col("Name", "string", 0, "Name must be unique within a namespace."),
+                col("Revision", "string", 0, "The latest version of the config."),
+                col("Desired", "string", 0, "The number of desired replicas."),
+                col("Current", "string", 0, "The number of replicas of the latest version."),
+                col("Triggered By", "string", 0, "What triggers a new version."),
+            ],
+            (|o: &Value| {
+                let desired = o["spec"]["replicas"].as_i64().unwrap_or(0);
+                let desired = if o["spec"]["test"] == true { format!("{desired} (during test)") } else { desired.to_string() };
+                let mut triggers: Vec<String> = o["spec"]["triggers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|t| match t["type"].as_str().unwrap_or("") {
+                        "ConfigChange" => "config".to_string(),
+                        other => other.to_string(),
+                    })
+                    .collect();
+                triggers.sort();
+                triggers.dedup();
+                vec![json!(name_of(o)), json!(o["status"]["latestVersion"].as_i64().unwrap_or(0)), json!(desired),
+                     json!(o["status"]["updatedReplicas"].as_i64().unwrap_or(0)), json!(triggers.join(","))]
+            }) as RowFn,
+        )),
         // OpenShift's group printer (#372): the users joined with ", ".
         "groups" => Some((
             vec![
@@ -834,6 +862,16 @@ mod tests {
 
     /// `oc get groups`: NAME and the users joined as OpenShift's printer
     /// joins them; a Group with `users: null` prints an empty cell (#372).
+    #[test]
+    fn deployment_configs_print_as_oc_get_dc() {
+        let t = to_table("deploymentconfigs", json!({"items": [
+            {"metadata": {"name": "web"}, "spec": {"replicas": 3, "triggers": [{"type": "ConfigChange"}]},
+             "status": {"latestVersion": 2, "updatedReplicas": 3}},
+        ]}));
+        assert_eq!(t["columnDefinitions"][4]["name"], json!("Triggered By"));
+        assert_eq!(t["rows"][0]["cells"], json!(["web", 2, "3", 3, "config"]));
+    }
+
     #[test]
     fn groups_print_their_users() {
         let t = to_table("groups", json!({"items": [

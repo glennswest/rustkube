@@ -727,6 +727,52 @@ fn build_router(
                 .delete(resource::delete_cluster_resource)
                 .patch(resource::patch_cluster_resource),
         )
+        // apps.openshift.io/v1 — DeploymentConfigs (#375): the objects
+        // through the generic handlers (`crate::deployment_configs` admits
+        // them), and the subresources.
+        .route("/apis/apps.openshift.io/v1", get(discovery::api_apps_openshift_v1_resources))
+        .route(
+            "/apis/apps.openshift.io/v1/namespaces/{namespace}/deploymentconfigs/{name}/instantiate",
+            post(crate::handlers::deployment_configs::instantiate),
+        )
+        .route(
+            "/apis/apps.openshift.io/v1/namespaces/{namespace}/deploymentconfigs/{name}/rollback",
+            post(crate::handlers::deployment_configs::rollback),
+        )
+        .route(
+            "/apis/apps.openshift.io/v1/namespaces/{namespace}/deploymentconfigs/{name}/log",
+            get(crate::handlers::deployment_configs::log),
+        )
+        .route(
+            "/apis/apps.openshift.io/v1/namespaces/{namespace}/deploymentconfigs/{name}/scale",
+            get(crate::handlers::deployment_configs::get_scale)
+                .put(crate::handlers::deployment_configs::put_scale)
+                .merge(patch(crate::handlers::deployment_configs::patch_scale)),
+        )
+        .route(
+            "/apis/apps.openshift.io/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
+        .route(
+            "/apis/apps.openshift.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/apps.openshift.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
+        )
+        .route(
+            "/apis/apps.openshift.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
+        )
         // route.openshift.io/v1 — OpenShift Routes
         .route(
             "/apis/route.openshift.io/v1",

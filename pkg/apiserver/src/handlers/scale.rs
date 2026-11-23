@@ -148,6 +148,20 @@ async fn patch(state: &AppState, key: &str, paths: &ScalePaths, headers: &Header
     Ok(Json(to_scale(&obj, paths)))
 }
 
+/// The Scale of a built-in object at `key` whose replicas and selector are
+/// where a ReplicationController keeps them (a DeploymentConfig's, #375).
+pub(crate) async fn get_builtin(state: &AppState, key: &str) -> Result<Json<Value>, ApiError> {
+    get(state, key, &ScalePaths::builtin()).await
+}
+
+pub(crate) async fn put_builtin(state: &AppState, key: &str, body: &Value) -> Result<Json<Value>, ApiError> {
+    put(state, key, &ScalePaths::builtin(), body).await
+}
+
+pub(crate) async fn patch_builtin(state: &AppState, key: &str, headers: &HeaderMap, body: &[u8]) -> Result<Json<Value>, ApiError> {
+    patch(state, key, &ScalePaths::builtin(), headers, body).await
+}
+
 fn apps_key(namespace: &str, resource: &str, name: &str) -> Result<String, ApiError> {
     match resource {
         "deployments" | "replicasets" | "statefulsets" => Ok(ResourceStorage::namespaced_key(resource, namespace, name)),

@@ -26,6 +26,9 @@ enum Tracks {
     SpecAndAnnotations,
     /// `webhooks` (Mutating/ValidatingWebhookConfiguration).
     Webhooks,
+    /// `spec` or `status.latestVersion` (an OpenShift DeploymentConfig,
+    /// #375: a new rollout moves it on).
+    SpecAndLatestVersion,
     /// `spec` without `nodeName` (Pod): a main-resource update cannot change
     /// a bound Pod's node, and the bind itself is upstream's `pods/binding`,
     /// which does not count — rustkube's scheduler binds with a PUT.
@@ -37,6 +40,7 @@ fn tracks(resource: &str) -> Option<Tracks> {
         "pods" => Tracks::PodSpec,
         "deployments" => Tracks::SpecAndAnnotations,
         "mutatingwebhookconfigurations" | "validatingwebhookconfigurations" => Tracks::Webhooks,
+        "deploymentconfigs" => Tracks::SpecAndLatestVersion,
         "replicasets" | "statefulsets" | "daemonsets" | "replicationcontrollers" | "jobs" | "cronjobs"
         | "poddisruptionbudgets" | "networkpolicies" | "ingresses" | "customresourcedefinitions"
         | "validatingadmissionpolicies" | "validatingadmissionpolicybindings"
@@ -118,6 +122,9 @@ fn changed(t: Tracks, stored: &Value, obj: &Value) -> bool {
                 || stored["metadata"].get("annotations") != obj["metadata"].get("annotations")
         }
         Tracks::Webhooks => stored.get("webhooks") != obj.get("webhooks"),
+        Tracks::SpecAndLatestVersion => {
+            stored.get("spec") != obj.get("spec") || stored["status"]["latestVersion"] != obj["status"]["latestVersion"]
+        }
         Tracks::PodSpec => {
             let without_node = |v: &Value| {
                 let mut s = v.get("spec").cloned().unwrap_or(Value::Null);

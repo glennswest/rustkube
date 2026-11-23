@@ -723,6 +723,16 @@ impl ControllerManager {
             stormblock::StormblockProvisioner::new(api).run().await;
         });
 
+        // OpenShift DeploymentConfigs (#375): versions, and their rollouts.
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::deploymentconfig::DeploymentConfigController::new(api).run().await;
+        });
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::deploymentconfig::Deployer::new(api).run().await;
+        });
+
         let api = self.api.clone();
         tasks.spawn(async move {
             service::ServiceController::new(api).run().await;

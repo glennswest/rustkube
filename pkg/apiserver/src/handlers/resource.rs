@@ -662,6 +662,10 @@ pub(crate) async fn builtin_update(
     if key.starts_with("/registry/securitycontextconstraints/") {
         crate::scc_policy::admit(body)?; // #373
     }
+    if key.starts_with("/registry/deploymentconfigs/") {
+        let status = crate::admission::subresource().as_deref() == Some("status");
+        crate::deployment_configs::admit_update(body, existing, status)?; // #375
+    }
     if key.starts_with("/registry/services/") {
         // Upstream defaults every write, not just a create.
         crate::builtin_admission::default_service_ports(body);
@@ -2380,6 +2384,7 @@ fn resource_to_list_kind(resource: &str) -> String {
         "apiservices" => "APIService",
         "podmigrations" => "PodMigration",
         "routes" => "Route",
+        "deploymentconfigs" => "DeploymentConfig",
         "groups" => "Group",
         "securitycontextconstraints" => "SecurityContextConstraints",
         "podsecuritypolicyreviews" => "PodSecurityPolicyReview",
@@ -2443,6 +2448,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "apiservices" => "apiregistration.k8s.io/v1",
         "podmigrations" => "rustkube.io/v1alpha1",
         "routes" => "route.openshift.io/v1",
+        "deploymentconfigs" => "apps.openshift.io/v1",
         "groups" => "user.openshift.io/v1",
         "securitycontextconstraints" | "podsecuritypolicyreviews" | "podsecuritypolicyselfsubjectreviews"
         | "podsecuritypolicysubjectreviews" => "security.openshift.io/v1",

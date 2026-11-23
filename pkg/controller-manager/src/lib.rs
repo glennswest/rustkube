@@ -11,6 +11,7 @@ pub mod bootstrapsigner;
 pub mod cronjob;
 pub mod csr;
 pub mod daemonset;
+pub mod deploymentconfig;
 pub mod deployment;
 pub mod events;
 pub mod gateway;

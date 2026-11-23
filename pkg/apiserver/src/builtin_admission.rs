@@ -76,6 +76,11 @@ pub async fn admit_create(
     if resource == crate::scc_policy::RESOURCE && namespace.is_none() {
         crate::scc_policy::admit(obj)?;
     }
+    // apps.openshift.io DeploymentConfigs (#375): OpenShift's defaults,
+    // registry strategy and validation.
+    if resource == crate::deployment_configs::RESOURCE && namespace.is_some() {
+        crate::deployment_configs::admit_create(obj)?;
+    }
 
     // Served (#119) but not evaluated yet (#234): say so, rather than let
     // the policy's author believe it protects anything.
