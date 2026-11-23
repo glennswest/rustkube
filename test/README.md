@@ -730,6 +730,22 @@ the rolling updater's log; `oc rollout cancel` stops a rollout whose pod never
 becomes ready (RolloutCancelled); `oc adm prune deployments` deletes the oldest
 complete versions; a Custom strategy and an ImageChange trigger are 422.
 
+`e2e/builds.sh` (#374, suite `rigs`): a real controller-manager (as itself:
+its role and the privileged SCC admit build pods) and scheduler, one stand-in
+node; the script finishes build pods as the builder would (Failed with its
+termination message when the BUILD's post-commit script is `exit 1`; the
+`slow` config's stay Running). A Docker BuildConfig's ConfigChange trigger
+starts web-1 in OpenShift's build pod (builder image, git-clone and
+manage-dockerfile, privileged docker-build under the privileged SCC, its
+registries.conf), which completes with its completion data; `oc get bc`,
+`oc get builds`; `oc start-build`; `oc cancel-build` cancels a slow build and
+deletes its pod; `oc set build-hook --post-commit --script='exit 1'` reaches
+BUILD and the build fails with the log snippet; `oc set build-secret
+--source|--push|--pull` mount at OpenShift's paths; `oc adm prune builds`
+prunes; without `system:build-strategy-docker` a Docker BuildConfig is 403;
+JenkinsPipeline, Binary and a GitHub trigger are 422; the namespace has
+`builder` and `system:image-builders`.
+
 `e2e/client-crl.sh` (#260, suite `rigs`) runs the apiserver with two client
 CAs and a CRL each (PEM and DER, from `openssl ca`): two certificates are
 accepted (by SelfSubjectReview); one is revoked and its CRL re-signed, and the

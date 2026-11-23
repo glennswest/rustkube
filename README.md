@@ -142,6 +142,7 @@ there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated AP
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `user.openshift.io/v1` (Groups only, below),
 `apps.openshift.io/v1` (DeploymentConfigs, below),
+`build.openshift.io/v1` (Builds and BuildConfigs, below),
 `security.openshift.io/v1` (SecurityContextConstraints and the three
 PodSecurityPolicy reviews, below),
 `rustkube.io/v1alpha1` (PodMigration) and
@@ -343,6 +344,41 @@ shows, a hook pod's own output included. A cancelled version is marked
 Failed and its hook pods deleted; a failed one leaves the last complete
 version running. The rollouts restart from their records when a new
 controller-manager leader takes over.
+
+**Builds and BuildConfigs** (`build.openshift.io/v1` `builds`,
+`buildconfigs` (`bc`), #374) are OpenShift's, with `buildconfigs/instantiate`
+(`oc start-build`), `builds/clone` (`--from-build`), `builds/log` (`oc logs
+build/…|bc/…`, the init containers' logs then the builder's) and
+`builds/details` (the builder records its revision and output). Writes get
+OpenShift's defaults (Serial run policy, history limits 5 and 5, the v1
+`type` fields) and validation; a build's spec is immutable but for its push
+secret, and a finished phase stays. Creating a build or BuildConfig, or
+starting one, needs `create` on `builds/<strategy>` (`docker`, `source`,
+`custom`: OpenShift's BuildByStrategy); `system:build-strategy-docker` and
+`-source` are bound to `system:authenticated`, `-custom` is not. Refused,
+because nothing here can run them: the JenkinsPipeline strategy, Binary
+sources (`instantiatebinary` is not served), webhook triggers (`webhooks` is
+not served), ImageChange triggers (no ImageStreams, #385/#386) and a Custom
+build's `exposeDockerSocket`; an ImageStreamTag `from` fails as OpenShift's
+does when the stream is missing, and an ImageStreamTag output gets
+InvalidOutputReference. The controller-manager runs them: a BuildConfig's
+ConfigChange trigger starts its first build; a build runs when its run
+policy lets it, in OpenShift's build pod `<build>-build` — **OpenShift's
+builder image** (`--build-image`), given the build as `BUILD`, with
+`git-clone`, `extract-image-content` and `manage-dockerfile` init containers
+and `docker-build` / `sti-build` (a Custom build runs its own image). The
+builder clones, builds, runs the post-commit hook (`oc set build-hook`) and
+pushes itself, with the secrets `oc set build-secret` names mounted at
+OpenShift's paths. Build pods are privileged (buildah), so the
+controller-manager may `use` the `privileged` SCC (that SCC only). On a
+stormcos node the paths OpenShift mounts from the node are emptyDirs, and
+`--build-insecure-registries` lets a build push to a node registry over
+HTTP. The phase, start, completion, duration and a failed build's log
+snippet follow the pod; `oc cancel-build` deletes it; finished builds past a
+BuildConfig's history limits are pruned. Every namespace has a `builder`
+ServiceAccount (the controller-manager's) bound to `system:image-builder` by
+the RoleBinding `system:image-builders` (the apiserver's: it records
+`builds/details` and pushes to the project's registry).
 
 **Groups** (`user.openshift.io/v1` `groups`, cluster-scoped, #372) are what
 `oc adm groups new|add-users|remove-users|sync|prune` and `oc adm prune
@@ -1134,6 +1170,8 @@ override environment values.
 | `--startup-timeout` | `STARTUP_TIMEOUT` | `120` | seconds to wait for credential files and for the apiserver |
 | `--cluster-signing-cert-file`, `--cluster-signing-key-file` | | — | controller manager only: the CA the CSR controller signs with; without them CSRs are approved but not signed |
 | `--csr-external-signer-names` | | — | controller manager only: signerNames an external signer (stormcert) handles; CSRs naming one are neither approved nor signed here (#199). Comma-separated or repeated |
+| `--build-image` | | origin-docker-builder 5.0.0 (`quay.io/openshift/origin-docker-builder@sha256:a11e3b12…0572`) | controller manager only: OpenShift's builder image, which build pods run (#374) |
+| `--build-insecure-registries` | | — | controller manager only: registries build pods reach over plain HTTP (a node registry, `host:5100`), written into each build's `registries.conf` (#374). Comma-separated or repeated |
 | `--root-ca-file` | | `--certificate-authority` | controller manager only: the CA bundle published as `kube-root-ca.crt` in every namespace and in `kube-public/cluster-info`; with neither, nothing is published |
 | `--tls-cert-file`, `--tls-private-key-file` | | — | serving pair for the metrics port (10257/10259): HTTPS only with it, plain HTTP without; renewed in place (#90) |
 | `--authorization-always-allow-paths` | | `/healthz,/readyz,/livez` | metrics-port paths served without authorization; the rest need a bearer token the apiserver's TokenReview accepts and SubjectAccessReview allows (#90) |
