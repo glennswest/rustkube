@@ -4,6 +4,41 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — IN PROGRESS 2026-11-23
+Ported from openshift/openshift-apiserver `pkg/build` (validation, defaults,
+buildgenerator, registry/{build,buildconfig,buildclone,buildconfiginstantiate,
+buildlog}, admission/strategyrestrictions) and openshift-controller-manager
+`pkg/build` (build + buildconfig controllers, policy, strategy/{docker,sti,
+custom,util}), read 2026-11-23. The issue leaves "what runs the build in the
+pod, and how it reaches the registry" to us:
+- **The builder is OpenShift's builder image**, unchanged: the build pod is
+  OpenShift's (`BUILD` JSON, `openshift-git-clone` / `-manage-dockerfile` /
+  `-docker-build` / `-sti-build`, secrets at its paths; the image runs the
+  postCommit hook and the push itself). Which image is a controller-manager
+  flag, as OpenShift's controller config names it. Adapted to a stormcos
+  node: the containers-storage, blob cache and node pull secret hostPaths
+  OpenShift mounts are emptyDirs / absent. The push goes where
+  `spec.output.to` says (a `DockerImage` on the node registry, `:5100`), with
+  `spec.output.pushSecret`.
+- Served: `builds`, `buildconfigs`, `builds/clone`, `builds/log`,
+  `builds/details`, `buildconfigs/instantiate`; strategy restriction
+  admission (`builds/docker|source|custom` create); RBAC (admin/edit/view,
+  `system:build-strategy-*`, `system:image-builder`); a `builder`
+  ServiceAccount per namespace.
+- Refused (NotSupported at validation, gaps filed — no stubs): JenkinsPipeline
+  strategy, Binary source (`instantiatebinary`), webhook triggers
+  (`buildconfigs/webhooks`), ImageChange triggers (no ImageStreams served).
+  An ImageStreamTag `from`/`to` fails as OpenShift's does with no such stream.
+- [ ] apiserver: API, validation, generator, subresources, admission, RBAC
+- [ ] controller-manager: builder SA, BuildConfig controller (ConfigChange,
+  history limits), build controller (policy, pods, status, cancel)
+- [ ] rig `builds` (suite `rigs`, plays the kubelet): oc start-build,
+  get/describe, cancel-build, set build-hook/build-secret into the pod,
+  prune builds
+- [ ] stormcos: ship the builder image as a golden + the flag; prove a real
+  Docker build pushes on a node (issue's Check) — filed there
+- [ ] docs: README, oc-compatibility, CHANGELOG
+
 ### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, RIG BLOCKED 2026-11-23
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
   `kubeconfig` (server = `--apiserver`, CA = the `kube-root-ca.crt` bundle;
