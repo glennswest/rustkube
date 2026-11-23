@@ -665,6 +665,7 @@ pub(crate) async fn builtin_update(
     if key.starts_with("/registry/deploymentconfigs/") {
         let status = crate::admission::subresource().as_deref() == Some("status");
         crate::deployment_configs::admit_update(body, existing, status)?; // #375
+    }
     for resource in [crate::builds::BUILDS, crate::builds::BUILD_CONFIGS] {
         if key.starts_with(&format!("/registry/{resource}/")) {
             let ns = existing["metadata"]["namespace"].as_str().unwrap_or("").to_string();

@@ -128,6 +128,7 @@ fn changed(t: Tracks, stored: &Value, obj: &Value) -> bool {
         Tracks::Webhooks => stored.get("webhooks") != obj.get("webhooks"),
         Tracks::SpecAndLatestVersion => {
             stored.get("spec") != obj.get("spec") || stored["status"]["latestVersion"] != obj["status"]["latestVersion"]
+        }
         Tracks::SpecAndLastVersion => {
             stored.get("spec") != obj.get("spec") || stored["status"]["lastVersion"] != obj["status"]["lastVersion"]
         }
