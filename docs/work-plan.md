@@ -26,50 +26,36 @@ oc `pkg/cli/deployer` (read 2026-11-23).
 - [ ] Run the rig: every pve test machine refuses runs until one installs the
   stormcluster#128 fix (as #372, #373, #388).
 
-### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — WAITING on an owner decision (privileged build pods), 2026-11-23
-Ported from openshift/openshift-apiserver `pkg/build` (validation, defaults,
-buildgenerator, registry/{build,buildconfig,buildclone,buildconfiginstantiate,
-buildlog}, admission/strategyrestrictions) and openshift-controller-manager
-`pkg/build` (build + buildconfig controllers, policy, strategy/{docker,sti,
-custom,util}), read 2026-11-23. The issue leaves "what runs the build in the
-pod, and how it reaches the registry" to us:
-- **The builder is OpenShift's builder image**, unchanged: the build pod is
-  OpenShift's (`BUILD` JSON, `openshift-git-clone` / `-manage-dockerfile` /
-  `-docker-build` / `-sti-build`, secrets at its paths; the image runs the
-  postCommit hook and the push itself). Which image is a controller-manager
-  flag, as OpenShift's controller config names it. Adapted to a stormcos
-  node: the containers-storage, blob cache and node pull secret hostPaths
-  OpenShift mounts are emptyDirs / absent. The push goes where
-  `spec.output.to` says (a `DockerImage` on the node registry, `:5100`), with
-  `spec.output.pushSecret`.
-- Served: `builds`, `buildconfigs`, `builds/clone`, `builds/log`,
-  `builds/details`, `buildconfigs/instantiate`; strategy restriction
-  admission (`builds/docker|source|custom` create); RBAC (admin/edit/view,
-  `system:build-strategy-*`, `system:image-builder`); a `builder`
-  ServiceAccount per namespace.
-- Refused (NotSupported at validation, gaps filed — no stubs): JenkinsPipeline
-  strategy, Binary source (`instantiatebinary`), webhook triggers
-  (`buildconfigs/webhooks`), ImageChange triggers (no ImageStreams served).
-  An ImageStreamTag `from`/`to` fails as OpenShift's does with no such stream.
-- [x] apiserver (branch `issue-374`, not main — no controller yet, so on
-  main it would be a stub): API, defaults/v1 types, validation, generator
-  (instantiate, clone), details, log, BuildByStrategy, RBAC
-  (`system:build-strategy-docker|source|custom`, docker+source bound to
-  `system:authenticated`; `system:image-builder`; admin/edit/view), and
-  `system:image-builders` in every namespace, kept by an apiserver namespace
-  watch (the controller-manager creates no RBAC objects, #176). 95faa36:
-  sc-build on the branch, apiserver 437/437, clippy clean in `builds`.
-- [ ] **Decision asked on #374**: build pods are privileged (buildah, as
-  OpenShift's), so whoever creates them needs `use` on the `privileged`
-  SCC; today that is the controller-manager's #176 least-privilege role.
-- [ ] controller-manager: builder SA, BuildConfig controller (ConfigChange,
-  history limits), build controller (policy, pods, status, cancel)
-- [ ] rig `builds` (suite `rigs`, plays the kubelet): oc start-build,
-  get/describe, cancel-build, set build-hook/build-secret into the pod,
-  prune builds
-- [ ] stormcos: ship the builder image as a golden + the flag; prove a real
-  Docker build pushes on a node (issue's Check) — filed there
-- [ ] docs: README, oc-compatibility, CHANGELOG
+### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — CODE DONE, RIG BLOCKED 2026-11-23
+Ported from openshift-apiserver and openshift-controller-manager `pkg/build`
+(read 2026-11-23). The issue left "what runs the build in the pod, and how
+it reaches the registry" to us; the privileged-pod question went to option A
+(the owner queue: a gap's design question is session work, #1680).
+- [x] The builder is OpenShift's builder image (`--build-image`, default
+  origin-docker-builder 5.0.0 by digest), in OpenShift's build pod; node
+  paths are emptyDirs on stormcos; `--build-insecure-registries` into the
+  build's registries.conf for the node registry (`:5100`, HTTP).
+- [x] apiserver: API, defaults (incl. history limits 5/5), validation,
+  instantiate/clone/details/log, BuildByStrategy, RBAC,
+  `system:image-builders` per namespace (apiserver watch; the
+  controller-manager creates no RBAC objects, #176).
+- [x] controller-manager: `build` (run policies, pods per strategy,
+  sys-config ConfigMap, phase/completion/log snippet, cancel) and
+  `buildconfig` (ConfigChange first build, history pruning); `builder` SA
+  per namespace; `use` on the `privileged` SCC and `create`
+  `buildconfigs/instantiate` in its role.
+- [x] Refused, gaps elsewhere: JenkinsPipeline, Binary (`instantiatebinary`),
+  webhook triggers (`webhooks`), ImageChange (#385/#386), Custom
+  `exposeDockerSocket`.
+- [x] sc-build on branch `issue-374-v2`: workspace build, apiserver 443/443,
+  controller-manager 163/163; no clippy findings in the new files.
+- [x] Rig `builds` (suite `rigs`), README (+ the two flags), oc-compatibility,
+  CHANGELOG, test/README.
+- [ ] stormcos: ship the builder image as a golden and pass `--build-image` /
+  `--build-insecure-registries` (filed there); then the issue's check, a real
+  Docker build that pushes, on a node.
+- [ ] Rig `builds`: pve test machines refuse runs until the stormcluster#128
+  fix is installed (as #372, #373, #375, #388).
 
 ### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, RIG BLOCKED 2026-11-23
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
