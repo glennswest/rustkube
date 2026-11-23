@@ -124,6 +124,9 @@ handlers (read 2026-11-21).
   every SCC unit among them). Rigs still blocked: `stormcentral test run
   rustkube rigs --tag pvetest1|2|3` is refused (400, the machine's apiserver
   not answering); stormcluster#128 open, f1de3f6 not installed.
+- [x] Held with `stormcentral propose --after-install
+  'stormcluster>=f1de3f6@any:pve'` (item 233220744ec5): it returns once a pve
+  test machine passes an install carrying the stormcluster#128 fix.
 
 ### user.openshift.io Groups (#372, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
