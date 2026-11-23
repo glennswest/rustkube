@@ -75,6 +75,10 @@ pod, and how it reaches the registry" to us:
   the machine's apiserver not answering, stormcluster API down since
   2026-11-21/22, stormcluster#128), as for #372/#373. Then run it at main and
   close #388 when `cluster-info` passes.
+- [x] 2026-11-23: held with `stormcentral propose --after-install
+  'stormcluster>=f1de3f6@any:pve'` (item fa8d247ee3a7), after the service's
+  parked notice: it returns once a pve test machine passes an install of a
+  release carrying the stormcluster#128 fix, which is when the rig can run.
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
   (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
 
