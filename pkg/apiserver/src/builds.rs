@@ -1344,6 +1344,9 @@ pub async fn clone(
     })?;
     authorize_strategy(rbac, user, ns, name, BUILDS, &old).await?;
     let config_name = s(&old["status"]["config"], "name").to_string();
+    // A hand-made build's clone carries a time suffix; a clone of a clone
+    // replaces it.
+    let suffixed = regex::Regex::new(r"^.+-\d{10}$").expect("valid regex");
     for _ in 0..3 {
         let config = if config_name.is_empty() {
             None
@@ -1376,8 +1379,7 @@ pub async fn clone(
             }
             None => {
                 annotations.remove(BUILD_NUMBER_ANNOTATION);
-                let re = regex::Regex::new(r"^.+-\d{10}$").expect("valid regex");
-                let base = if re.is_match(name) { name.rsplit_once('-').map_or(name, |(b, _)| b) } else { name };
+                let base = if suffixed.is_match(name) { name.rsplit_once('-').map_or(name, |(b, _)| b) } else { name };
                 let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default().to_string();
                 let suffix = &nanos[nanos.len().saturating_sub(10)..];
                 get_name(base, suffix, 253)
@@ -1597,7 +1599,8 @@ mod tests {
 
     #[test]
     fn upstream_validation() {
-        let refused: Vec<(&str, Box<dyn Fn(&mut Value)>)> = vec![
+        type Change = Box<dyn Fn(&mut Value)>;
+        let refused: Vec<(&str, Change)> = vec![
             ("spec.source: Invalid value: \"\": must provide a value for at least one source input",
              Box::new(|bc| bc["spec"]["source"] = json!({}))),
             ("spec.strategy: Invalid value: {}: must provide a value for exactly one of",
