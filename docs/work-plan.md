@@ -22,7 +22,9 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [x] Units (HMAC RFC 4231, JWS vs an independent Python computation, token
   rules, desired data; anonymous role; CSR subject/SAN/usage/group matrix);
   rig `cluster-info` (suite `rigs`).
-- [ ] sc-build: workspace build + tests.
+- [x] sc-build at 5b67427 (build VM 69d7274f43): workspace build; apiserver
+  424/424, controller-manager 151/151 (the 8 new tests by name, job on the
+  same commit); clippy silent on the touched files.
 - [ ] Rig `cluster-info` on a test machine (pve machines blocked at the infra
   gate since #372/#373, stormcluster#128).
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
