@@ -236,11 +236,30 @@ fn clean(p: &str) -> String {
 /// A docker pull spec, as `reference.Parse` accepts one: an optional
 /// registry host, lower-case path components, an optional tag and digest.
 pub fn valid_pull_spec(spec: &str) -> bool {
-    let re = regex::Regex::new(
-        r"^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*|\[[0-9a-fA-F:]+\])(?::[0-9]+)?/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[\w][\w.-]{0,127})?(?:@[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*:[0-9a-fA-F]{32,})?$",
+    if spec.is_empty() || spec.len() > 255 + 128 + 80 {
+        return false;
+    }
+    // The first component is a registry only when it looks like a host
+    // (has a `.` or a port, or is `localhost`), as the reference parser
+    // decides; otherwise it is part of the (lower-case) repository path.
+    let rest = match spec.split_once('/') {
+        Some((first, rest)) if first.contains('.') || first.contains(':') || first == "localhost" => {
+            let host = regex::Regex::new(
+                r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*|\[[0-9a-fA-F:]+\])(?::[0-9]+)?$",
+            )
+            .expect("valid regex");
+            if !host.is_match(first) {
+                return false;
+            }
+            rest
+        }
+        _ => spec,
+    };
+    let path = regex::Regex::new(
+        r"^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[\w][\w.-]{0,127})?(?:@[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*:[0-9a-fA-F]{32,})?$",
     )
     .expect("valid regex");
-    !spec.is_empty() && spec.len() <= 255 + 128 + 80 && re.is_match(spec)
+    path.is_match(rest)
 }
 
 fn valid_git_url(uri: &str) -> bool {
