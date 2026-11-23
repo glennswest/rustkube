@@ -796,6 +796,12 @@ pub fn admit_build_update(build: &mut Value, old: &Value) -> Result<(), ApiError
 
 pub fn admit_config_create(bc: &mut Value) -> Result<(), ApiError> {
     normalize_config(bc);
+    // The group API's layered defaults (`groupStrategy.PrepareForCreate`).
+    for k in ["successfulBuildsHistoryLimit", "failedBuildsHistoryLimit"] {
+        if bc["spec"][k].is_null() {
+            bc["spec"][k] = json!(5);
+        }
+    }
     bc["metadata"]["generation"] = json!(1);
     validate_config(bc)
 }
@@ -1563,6 +1569,8 @@ mod tests {
         assert_eq!(bc["spec"]["triggers"], json!([{"type": "ConfigChange"}]), "an unknown trigger is dropped");
         assert_eq!(bc["status"]["lastVersion"], 0);
         assert_eq!(bc["metadata"]["generation"], 1);
+        assert_eq!((bc["spec"]["successfulBuildsHistoryLimit"].clone(), bc["spec"]["failedBuildsHistoryLimit"].clone()),
+                   (json!(5), json!(5)), "the group API's history limits");
         // A Docker type alone, and a Source strategy's from kind.
         let mut b = json!({"metadata": {"name": "b"}, "spec": {"source": {"dockerfile": "FROM x"},
                            "strategy": {"type": "Docker"}}});
