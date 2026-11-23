@@ -159,6 +159,9 @@ handlers (read 2026-11-21).
   `stormcentral test run rustkube rigs --tag pvetest1|2|3` is refused (400,
   the machine's apiserver not answering); stormcluster#128 open, f1de3f6
   not installed.
+- [x] Held with `stormcentral propose --after-install
+  'stormcluster>=f1de3f6@any:pve'` (item 0ea8542924f5): it returns once a pve
+  test machine passes an install carrying the stormcluster#128 fix.
 
 ### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
 - [x] 96a66790f5c4: the inventory is not keyed by the directory's path; a
