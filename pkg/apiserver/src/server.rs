@@ -773,6 +773,44 @@ fn build_router(
             get(resource::list_cluster_resources)
                 .delete(resource::delete_cluster_collection),
         )
+        // build.openshift.io/v1 — Builds and BuildConfigs (#374): the objects
+        // through the generic handlers (`crate::builds` admits them), and
+        // the subresources this cluster serves.
+        .route("/apis/build.openshift.io/v1", get(discovery::api_build_v1_resources))
+        .route(
+            "/apis/build.openshift.io/v1/namespaces/{namespace}/buildconfigs/{name}/instantiate",
+            post(crate::handlers::builds::instantiate),
+        )
+        .route(
+            "/apis/build.openshift.io/v1/namespaces/{namespace}/builds/{name}/clone",
+            post(crate::handlers::builds::clone),
+        )
+        .route(
+            "/apis/build.openshift.io/v1/namespaces/{namespace}/builds/{name}/details",
+            put(crate::handlers::builds::details),
+        )
+        .route(
+            "/apis/build.openshift.io/v1/namespaces/{namespace}/builds/{name}/log",
+            get(crate::handlers::builds::log),
+        )
+        .route(
+            "/apis/build.openshift.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/build.openshift.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
+        )
+        .route(
+            "/apis/build.openshift.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
+        )
         // route.openshift.io/v1 — OpenShift Routes
         .route(
             "/apis/route.openshift.io/v1",
@@ -1107,6 +1145,8 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
 
     // Bootstrap RBAC resources
     bootstrap_rbac(&storage, config.anonymous_auth, config.dev_anonymous_admin).await;
+    // `system:image-builders` in every namespace, for builds' `builder` (#374).
+    crate::builds::spawn_image_builders(storage.clone());
 
     // default/kubernetes Service + Endpoints, so in-cluster client-go can reach
     // the apiserver via KUBERNETES_SERVICE_HOST (#30). Re-run periodically so a
@@ -2283,6 +2323,8 @@ async fn bootstrap_rbac(
     // (#176). Reconciled every boot, and a binding left pointing at
     // cluster-admin by an earlier release is repointed.
     for role in [
+        // The builder's (#374), bound per namespace by `builds`.
+        crate::builds::image_builder_role(),
         crate::control_plane_rbac::controller_manager_role(),
         crate::control_plane_rbac::scheduler_role(),
         // Not bound here: stormcos binds stormcert's identity (#264).

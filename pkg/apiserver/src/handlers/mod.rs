@@ -8,6 +8,7 @@
 
 pub mod authorization;
 pub mod deployment_configs;
+pub mod builds;
 pub mod openshift_authorization;
 pub mod hpa_v1;
 pub mod kubevirt;

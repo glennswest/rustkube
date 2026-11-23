@@ -63,7 +63,7 @@ fn name_reasons(name: &str) -> Vec<&'static str> {
 }
 
 /// A DNS-1123 label (a Namespace's name).
-fn is_dns_label(s: &str) -> bool {
+pub(crate) fn is_dns_label(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 63
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')

@@ -29,6 +29,9 @@ enum Tracks {
     /// `spec` or `status.latestVersion` (an OpenShift DeploymentConfig,
     /// #375: a new rollout moves it on).
     SpecAndLatestVersion,
+    /// `spec` or `status.lastVersion` (an OpenShift BuildConfig, #374:
+    /// instantiating moves it on).
+    SpecAndLastVersion,
     /// `spec` without `nodeName` (Pod): a main-resource update cannot change
     /// a bound Pod's node, and the bind itself is upstream's `pods/binding`,
     /// which does not count — rustkube's scheduler binds with a PUT.
@@ -41,11 +44,12 @@ fn tracks(resource: &str) -> Option<Tracks> {
         "deployments" => Tracks::SpecAndAnnotations,
         "mutatingwebhookconfigurations" | "validatingwebhookconfigurations" => Tracks::Webhooks,
         "deploymentconfigs" => Tracks::SpecAndLatestVersion,
+        "buildconfigs" => Tracks::SpecAndLastVersion,
         "replicasets" | "statefulsets" | "daemonsets" | "replicationcontrollers" | "jobs" | "cronjobs"
         | "poddisruptionbudgets" | "networkpolicies" | "ingresses" | "customresourcedefinitions"
         | "validatingadmissionpolicies" | "validatingadmissionpolicybindings"
         | "mutatingadmissionpolicies" | "mutatingadmissionpolicybindings" | "flowschemas"
-        | "prioritylevelconfigurations" | "deviceclasses" | "resourceslices" => Tracks::Spec,
+        | "prioritylevelconfigurations" | "deviceclasses" | "resourceslices" | "builds" => Tracks::Spec,
         _ => return None,
     })
 }
@@ -124,6 +128,8 @@ fn changed(t: Tracks, stored: &Value, obj: &Value) -> bool {
         Tracks::Webhooks => stored.get("webhooks") != obj.get("webhooks"),
         Tracks::SpecAndLatestVersion => {
             stored.get("spec") != obj.get("spec") || stored["status"]["latestVersion"] != obj["status"]["latestVersion"]
+        Tracks::SpecAndLastVersion => {
+            stored.get("spec") != obj.get("spec") || stored["status"]["lastVersion"] != obj["status"]["lastVersion"]
         }
         Tracks::PodSpec => {
             let without_node = |v: &Value| {

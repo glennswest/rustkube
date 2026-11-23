@@ -80,6 +80,10 @@ pub async fn admit_create(
     // registry strategy and validation.
     if resource == crate::deployment_configs::RESOURCE && namespace.is_some() {
         crate::deployment_configs::admit_create(obj)?;
+    // build.openshift.io (#374): OpenShift's registry strategies, validation
+    // and BuildByStrategy.
+    if let (crate::builds::BUILDS | crate::builds::BUILD_CONFIGS, Some(ns)) = (resource, namespace) {
+        crate::builds::admit(resource, ns, obj, None).await?;
     }
 
     // Served (#119) but not evaluated yet (#234): say so, rather than let
