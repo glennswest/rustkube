@@ -51,9 +51,11 @@ it reaches the registry" to us; the privileged-pod question went to option A
   controller-manager 163/163; no clippy findings in the new files.
 - [x] Rig `builds` (suite `rigs`), README (+ the two flags), oc-compatibility,
   CHANGELOG, test/README.
-- [ ] stormcos: ship the builder image as a golden and pass `--build-image` /
-  `--build-insecure-registries` (filed there); then the issue's check, a real
-  Docker build that pushes, on a node.
+- [ ] stormcos#1558: ship the builder image as a golden and pass
+  `--build-image` / `--build-insecure-registries`; then the issue's check, a
+  real Docker build that pushes, on a node.
+- [ ] Onto main: the fast-forward of `main` to `issue-374-v2` is the owner's
+  to allow (refused to this session 2026-11-23).
 - [ ] Rig `builds`: pve test machines refuse runs until the stormcluster#128
   fix is installed (as #372, #373, #375, #388).
 
