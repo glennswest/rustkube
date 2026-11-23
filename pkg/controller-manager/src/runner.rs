@@ -589,6 +589,10 @@ pub struct ControllerManager {
     external_signers: Vec<String>,
     /// The CA bundle published as `kube-root-ca.crt` in every namespace.
     root_ca: Option<String>,
+    /// OpenShift's builder image, for build pods (#374).
+    build_image: String,
+    /// Registries a build may reach over plain HTTP (#374).
+    build_insecure_registries: Vec<String>,
     /// How long to wait for the apiserver to serve before running anyway.
     startup_timeout: std::time::Duration,
     /// The metrics listener's certificate and open paths (#90).
@@ -612,6 +616,8 @@ impl ControllerManager {
             signing_ca: None,
             external_signers: Vec::new(),
             root_ca: None,
+            build_image: crate::builds::DEFAULT_BUILD_IMAGE.to_string(),
+            build_insecure_registries: Vec::new(),
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
             metrics_tls: None,
             metrics_always_allow: apimachinery::metrics::ALWAYS_ALLOW.iter().map(|s| s.to_string()).collect(),
@@ -627,6 +633,8 @@ impl ControllerManager {
             signing_ca: None,
             external_signers: Vec::new(),
             root_ca: None,
+            build_image: crate::builds::DEFAULT_BUILD_IMAGE.to_string(),
+            build_insecure_registries: Vec::new(),
             startup_timeout: apimachinery::startup::DEFAULT_STARTUP_TIMEOUT,
             metrics_tls: None,
             metrics_always_allow: apimachinery::metrics::ALWAYS_ALLOW.iter().map(|s| s.to_string()).collect(),
@@ -655,6 +663,13 @@ impl ControllerManager {
     ) -> Self {
         self.metrics_tls = tls;
         self.metrics_always_allow = always_allow;
+        self
+    }
+
+    /// The builder image and the registries builds reach over HTTP (#374).
+    pub fn with_builds(mut self, image: String, insecure_registries: Vec<String>) -> Self {
+        self.build_image = image;
+        self.build_insecure_registries = insecure_registries;
         self
     }
 
@@ -721,6 +736,18 @@ impl ControllerManager {
         let api = self.api.clone();
         tasks.spawn(async move {
             stormblock::StormblockProvisioner::new(api).run().await;
+        });
+
+        // OpenShift Builds (#374): build pods, and BuildConfigs' first builds
+        // and history.
+        let api = self.api.clone();
+        let (image, insecure) = (self.build_image.clone(), self.build_insecure_registries.clone());
+        tasks.spawn(async move {
+            crate::builds::BuildController::new(api, image, insecure).run().await;
+        });
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::builds::BuildConfigController::new(api).run().await;
         });
 
         // OpenShift DeploymentConfigs (#375): versions, and their rollouts.

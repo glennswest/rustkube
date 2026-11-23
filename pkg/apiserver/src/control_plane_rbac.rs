@@ -82,6 +82,12 @@ pub fn controller_manager_role() -> Value {
             // the strategy restriction, as OpenShift's build-controller is.
             rule(&["build.openshift.io"], &["builds/docker", "builds/optimizeddocker", "builds/source",
                                             "builds/custom"], &["create"]),
+            // A BuildConfig's first build (its ConfigChange trigger).
+            rule(&["build.openshift.io"], &["buildconfigs/instantiate"], &["create"]),
+            // Build pods are privileged (buildah), as OpenShift's
+            // build-controller creates them (#374, option A): this SCC alone.
+            json!({"apiGroups": ["security.openshift.io"], "resources": ["securitycontextconstraints"],
+                   "resourceNames": ["privileged"], "verbs": ["use"]}),
             // Its metrics port asks the apiserver who a scraper is and whether
             // it may read /metrics (#90), as upstream's delegated auth does.
             rule(&["authentication.k8s.io"], &["tokenreviews"], &["create"]),

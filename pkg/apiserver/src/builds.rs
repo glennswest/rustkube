@@ -590,6 +590,10 @@ fn validate_strategy(spec: &Value, errs: &mut Vec<String>) {
         }
         _ => {
             let d = &st["customStrategy"];
+            if d["exposeDockerSocket"] == true {
+                // No node here has a Docker socket to give it.
+                errs.push(not_supported("spec.strategy.customStrategy.exposeDockerSocket", "true", &["false"]));
+            }
             validate_image_reference(&d["from"], "spec.strategy.customStrategy.from", errs);
             validate_secret_ref(&d["pullSecret"], "spec.strategy.customStrategy.pullSecret", errs);
             validate_env(&d["env"], "spec.strategy.customStrategy.env", errs);

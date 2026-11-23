@@ -153,7 +153,16 @@ async fn terminate_namespace(
 }
 
 async fn ensure_default_service_account(api: &ApiClient, namespace: &str) -> anyhow::Result<()> {
-    let path = format!("/api/v1/namespaces/{namespace}/serviceaccounts/default");
+    // `builder` too: the account build pods run as (#374), as OpenShift's
+    // serviceaccounts controller makes it in every namespace.
+    for name in ["default", "builder"] {
+        ensure_service_account(api, namespace, name).await?;
+    }
+    Ok(())
+}
+
+async fn ensure_service_account(api: &ApiClient, namespace: &str, name: &str) -> anyhow::Result<()> {
+    let path = format!("/api/v1/namespaces/{namespace}/serviceaccounts/{name}");
     let resp = api.get(&path).await?;
 
     if resp.status().is_success() {
@@ -162,14 +171,14 @@ async fn ensure_default_service_account(api: &ApiClient, namespace: &str) -> any
 
     anyhow::ensure!(
         resp.status().as_u16() == 404,
-        "cannot observe default ServiceAccount: {}",
+        "cannot observe {name} ServiceAccount: {}",
         resp.status()
     );
     let sa = json!({
         "apiVersion": "v1",
         "kind": "ServiceAccount",
         "metadata": {
-            "name": "default",
+            "name": name,
             "namespace": namespace
         }
     });
@@ -179,7 +188,7 @@ async fn ensure_default_service_account(api: &ApiClient, namespace: &str) -> any
         &sa,
     )
     .await?;
-    info!("Created default ServiceAccount in {namespace}");
+    info!("Created {name} ServiceAccount in {namespace}");
     Ok(())
 }
 

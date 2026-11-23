@@ -58,6 +58,18 @@ struct Cli {
     #[arg(long = "csr-external-signer-names", value_delimiter = ',')]
     external_signers: Vec<String>,
 
+    /// OpenShift's builder image, which build pods run (#374): it clones,
+    /// builds, runs the post-commit hook and pushes. Defaults to
+    /// origin-docker-builder 5.0.0, by digest.
+    #[arg(long = "build-image", default_value = controller_manager::builds::DEFAULT_BUILD_IMAGE)]
+    build_image: String,
+
+    /// Registries build pods may reach over plain HTTP (a node's registry,
+    /// `host:5100`), written into each build's registries.conf (#374).
+    /// Comma-separated or repeated.
+    #[arg(long = "build-insecure-registries", value_delimiter = ',')]
+    build_insecure_registries: Vec<String>,
+
     /// CA bundle (PEM) published as the `kube-root-ca.crt` ConfigMap in every
     /// namespace, for pods to verify the apiserver, and in
     /// `kube-public/cluster-info`, signed per bootstrap token (#388).
@@ -172,6 +184,10 @@ async fn run() -> anyhow::Result<()> {
     if let Some((cert, key)) = signing_ca {
         cm = cm.with_signing_ca(cert, key);
     }
+    cm = cm.with_builds(
+        cli.build_image.clone(),
+        cli.build_insecure_registries.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+    );
     cm = cm.with_external_signers(cli.external_signers.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
 
     if let Err(e) = cm.run().await {
@@ -191,3 +207,4 @@ async fn read_pem(
         None => Ok(None),
     }
 }
+
