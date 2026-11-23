@@ -977,7 +977,7 @@ mod tests {
         assert!(mounts(&p["spec"]["initContainers"][0]).contains(&SOURCE_SECRET_PATH.to_string()));
         let vols = p["spec"]["volumes"].as_array().unwrap();
         let vol = |n: &str| vols.iter().find(|v| v["name"] == n).cloned();
-        assert_eq!(vol("source-source").unwrap()["secret"]["secretName"], "gitcreds");
+        assert_eq!(vol("gitcreds-source").unwrap()["secret"]["secretName"], "gitcreds");
         assert_eq!(vol("build-system-configs").unwrap()["configMap"]["name"], "web-1-sys-config");
         assert!(vol("container-storage-root").unwrap()["emptyDir"].is_object(), "no node paths on stormcos");
         assert!(vols.iter().all(|v| v.get("hostPath").is_none()));
