@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — IN PROGRESS 2026-11-23
+### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — WAITING on an owner decision (privileged build pods), 2026-11-23
 Ported from openshift/openshift-apiserver `pkg/build` (validation, defaults,
 buildgenerator, registry/{build,buildconfig,buildclone,buildconfiginstantiate,
 buildlog}, admission/strategyrestrictions) and openshift-controller-manager
@@ -29,7 +29,17 @@ pod, and how it reaches the registry" to us:
   strategy, Binary source (`instantiatebinary`), webhook triggers
   (`buildconfigs/webhooks`), ImageChange triggers (no ImageStreams served).
   An ImageStreamTag `from`/`to` fails as OpenShift's does with no such stream.
-- [ ] apiserver: API, validation, generator, subresources, admission, RBAC
+- [x] apiserver (branch `issue-374`, not main — no controller yet, so on
+  main it would be a stub): API, defaults/v1 types, validation, generator
+  (instantiate, clone), details, log, BuildByStrategy, RBAC
+  (`system:build-strategy-docker|source|custom`, docker+source bound to
+  `system:authenticated`; `system:image-builder`; admin/edit/view), and
+  `system:image-builders` in every namespace, kept by an apiserver namespace
+  watch (the controller-manager creates no RBAC objects, #176). 95faa36:
+  sc-build on the branch, apiserver 437/437, clippy clean in `builds`.
+- [ ] **Decision asked on #374**: build pods are privileged (buildah, as
+  OpenShift's), so whoever creates them needs `use` on the `privileged`
+  SCC; today that is the controller-manager's #176 least-privilege role.
 - [ ] controller-manager: builder SA, BuildConfig controller (ConfigChange,
   history limits), build controller (policy, pods, status, cancel)
 - [ ] rig `builds` (suite `rigs`, plays the kubelet): oc start-build,
