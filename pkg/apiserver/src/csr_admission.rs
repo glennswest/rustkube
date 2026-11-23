@@ -22,7 +22,12 @@
 //! [`FORGE_NODE_SIGNER`], and read only its own (`spec.username` its name):
 //! GET by name, or a WATCH of exactly that name. So an enrollment token
 //! cannot obtain a kubelet client certificate, nor see other machines'
-//! requests. RBAC cannot say either — they depend on the body and on the
+//! requests. One exception (#388, stormcentral#1676): a bootstrapper in
+//! [`STORMCENTRAL_GROUP`] may also ask [`CLIENT_SIGNER`] for stormcentral's
+//! own client certificate — subject `CN=stormcentral` (with `O` only
+//! `stormcentral:forge`), no SANs, usages within `client auth`/`digital
+//! signature`/`key encipherment` ([`stormcentral_client`]); it too reads
+//! only its own. RBAC cannot say either — they depend on the body and on the
 //! stored object — so [`guard_read`] runs after RBAC and [`admit`] in
 //! admission.
 
@@ -37,6 +42,17 @@ pub const GROUP: &str = "certificates.k8s.io";
 pub const RESOURCE: &str = "certificatesigningrequests";
 /// The signer a bootstrapper may ask (#264).
 pub const FORGE_NODE_SIGNER: &str = "storm.io/forge-node";
+
+/// The bootstrapper group whose members may also ask [`CLIENT_SIGNER`] for
+/// stormcentral's own client certificate (#388, stormcentral#1676).
+pub const STORMCENTRAL_GROUP: &str = "system:bootstrappers:stormcentral";
+pub const CLIENT_SIGNER: &str = "kubernetes.io/kube-apiserver-client";
+/// The one subject that request may carry: `CN=stormcentral`, and
+/// `O=stormcentral:forge` or no organisation.
+pub const STORMCENTRAL_CN: &str = "stormcentral";
+pub const STORMCENTRAL_ORG: &str = "stormcentral:forge";
+/// What its `spec.usages` may name; `client auth` is required.
+const STORMCENTRAL_USAGES: [&str; 3] = ["client auth", "digital signature", "key encipherment"];
 
 /// Is `user` held to the bootstrap narrowing?
 pub fn is_bootstrapper(user: &UserInfo) -> bool {
@@ -77,10 +93,19 @@ pub fn on_create(user: &UserInfo, object: &mut Value) -> Result<(), ApiError> {
     }
     let signer = object["spec"]["signerName"].as_str().unwrap_or("").to_string();
     if is_bootstrapper(user) && signer != FORGE_NODE_SIGNER {
-        return Err(ApiError::forbidden(&format!(
-            "certificatesigningrequests is forbidden: User \"{}\" may only request signerName \"{FORGE_NODE_SIGNER}\", not \"{signer}\"",
-            user.username
-        )));
+        let stormcentral = user.groups.iter().any(|g| g == STORMCENTRAL_GROUP);
+        if !(stormcentral && signer == CLIENT_SIGNER) {
+            return Err(ApiError::forbidden(&format!(
+                "certificatesigningrequests is forbidden: User \"{}\" may only request signerName \"{FORGE_NODE_SIGNER}\", not \"{signer}\"",
+                user.username
+            )));
+        }
+        stormcentral_client(&object["spec"]).map_err(|why| {
+            ApiError::forbidden(&format!(
+                "certificatesigningrequests is forbidden: User \"{}\" may request \"{CLIENT_SIGNER}\" only for CN={STORMCENTRAL_CN}: {why}",
+                user.username
+            ))
+        })?;
     }
     let spec = object["spec"].as_object_mut().expect("made an object above");
     spec.insert("username".into(), json!(user.username));
@@ -92,6 +117,61 @@ pub fn on_create(user: &UserInfo, object: &mut Value) -> Result<(), ApiError> {
     // the signer issued it (review finding 27b84965dcae). Upstream's
     // PrepareForCreate resets it the same way.
     object["status"] = json!({});
+    Ok(())
+}
+
+/// Whether a CSR `spec` asks for stormcentral's client certificate and
+/// nothing more (#388): the PKCS#10 subject holds exactly one `CN`,
+/// `stormcentral`, and at most one `O`, `stormcentral:forge`, and no other
+/// attribute; the request asks for no subject alternative names; and
+/// `spec.usages` are within [`STORMCENTRAL_USAGES`] and include `client
+/// auth`. Approval is still the approver's (stormcert's policy).
+pub fn stormcentral_client(spec: &Value) -> Result<(), String> {
+    use base64::Engine;
+    use x509_parser::prelude::*;
+    let request = spec["request"].as_str().ok_or("no spec.request")?;
+    let pem_bytes = base64::engine::general_purpose::STANDARD
+        .decode(request)
+        .map_err(|e| format!("spec.request is not base64: {e}"))?;
+    let (_, pem) = x509_parser::pem::parse_x509_pem(&pem_bytes).map_err(|e| format!("spec.request is not PEM: {e}"))?;
+    if pem.label != "CERTIFICATE REQUEST" && pem.label != "NEW CERTIFICATE REQUEST" {
+        return Err(format!("spec.request is a {:?}, not a certificate request", pem.label));
+    }
+    let (_, req) = X509CertificationRequest::from_der(&pem.contents)
+        .map_err(|e| format!("spec.request is not a PKCS#10 request: {e}"))?;
+    let subject = &req.certification_request_info.subject;
+    let (mut cns, mut orgs) = (Vec::new(), Vec::new());
+    for attr in subject.iter_attributes() {
+        let value = attr.as_str().map_err(|_| "a subject attribute is not a string".to_string())?;
+        if *attr.attr_type() == x509_parser::oid_registry::OID_X509_COMMON_NAME {
+            cns.push(value);
+        } else if *attr.attr_type() == x509_parser::oid_registry::OID_X509_ORGANIZATION_NAME {
+            orgs.push(value);
+        } else {
+            return Err(format!("the subject carries {}, not only CN and O", attr.attr_type()));
+        }
+    }
+    if cns != [STORMCENTRAL_CN] {
+        return Err(format!("subject common names {cns:?} are not exactly [\"{STORMCENTRAL_CN}\"]"));
+    }
+    if !(orgs.is_empty() || orgs == [STORMCENTRAL_ORG]) {
+        return Err(format!("subject organizations {orgs:?} are not [\"{STORMCENTRAL_ORG}\"]"));
+    }
+    for ext in req.requested_extensions().into_iter().flatten() {
+        if let ParsedExtension::SubjectAlternativeName(_) = ext {
+            return Err("it asks for subject alternative names".into());
+        }
+    }
+    let usages: Vec<&str> = spec["usages"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    if !usages.contains(&"client auth") {
+        return Err(format!("usages {usages:?} do not include client auth"));
+    }
+    if let Some(u) = usages.iter().copied().find(|u| !STORMCENTRAL_USAGES.contains(u)) {
+        return Err(format!("usage {u:?} is not one of {STORMCENTRAL_USAGES:?}"));
+    }
+    if spec["usages"].as_array().is_some_and(|a| a.len() != usages.len()) {
+        return Err("a usage is not a string".into());
+    }
     Ok(())
 }
 
@@ -249,6 +329,78 @@ mod tests {
         let admin = UserInfo { username: "a".into(), groups: vec!["system:bootstrappers".into(), "system:masters".into()] };
         let mut csr = json!({"spec": {"signerName": "kubernetes.io/legacy-unknown"}});
         on_create(&admin, &mut csr).unwrap();
+    }
+
+    /// A base64 PEM PKCS#10 request with these subject attributes and SANs.
+    fn request(subject: &[(rcgen::DnType, &str)], sans: &[&str]) -> String {
+        use base64::Engine;
+        use rcgen::{CertificateParams, DistinguishedName, KeyPair};
+        let mut params = CertificateParams::new(sans.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
+        let mut dn = DistinguishedName::new();
+        for (t, v) in subject {
+            dn.push(t.clone(), *v);
+        }
+        params.distinguished_name = dn;
+        let key = KeyPair::generate().unwrap();
+        let pem = params.serialize_request(&key).unwrap().pem().unwrap();
+        base64::engine::general_purpose::STANDARD.encode(pem)
+    }
+
+    fn stormcentral() -> UserInfo {
+        UserInfo {
+            username: "system:bootstrap:sc0001".into(),
+            groups: vec!["system:bootstrappers".into(), STORMCENTRAL_GROUP.into(), "system:authenticated".into()],
+        }
+    }
+
+    #[test]
+    fn stormcentral_may_ask_for_its_own_client_certificate() {
+        use rcgen::DnType::{CommonName as CN, OrganizationName as O, OrganizationalUnitName as OU};
+        let csr = |req: String, usages: Value| json!({"spec": {"signerName": CLIENT_SIGNER, "request": req, "usages": usages}});
+        let usages = json!(["digital signature", "key encipherment", "client auth"]);
+        // Allowed: CN=stormcentral, with O=stormcentral:forge or no O.
+        for subject in [vec![(CN, "stormcentral"), (O, "stormcentral:forge")], vec![(CN, "stormcentral")]] {
+            let mut c = csr(request(&subject, &[]), usages.clone());
+            on_create(&stormcentral(), &mut c).unwrap();
+            assert_eq!(c["spec"]["username"], "system:bootstrap:sc0001");
+            assert_eq!(c["spec"]["groups"][1], STORMCENTRAL_GROUP);
+        }
+        let mut c = csr(request(&[(CN, "stormcentral")], &[]), json!(["client auth"]));
+        on_create(&stormcentral(), &mut c).unwrap();
+        // The forge-node signer is still open to it, as to any bootstrapper.
+        let mut c = json!({"spec": {"signerName": FORGE_NODE_SIGNER}});
+        on_create(&stormcentral(), &mut c).unwrap();
+
+        let ok = || request(&[(CN, "stormcentral"), (O, "stormcentral:forge")], &[]);
+        let refused = [
+            ("another CN", csr(request(&[(CN, "admin")], &[]), usages.clone())),
+            ("a node CN", csr(request(&[(CN, "system:node:n1"), (O, "system:nodes")], &[]), usages.clone())),
+            ("no CN", csr(request(&[(O, "stormcentral:forge")], &[]), usages.clone())),
+            ("system:masters", csr(request(&[(CN, "stormcentral"), (O, "system:masters")], &[]), usages.clone())),
+            ("an OU", csr(request(&[(CN, "stormcentral"), (OU, "x")], &[]), usages.clone())),
+            ("a SAN", csr(request(&[(CN, "stormcentral")], &["stormcentral.example"]), usages.clone())),
+            ("server auth", csr(ok(), json!(["client auth", "server auth"]))),
+            ("no client auth", csr(ok(), json!(["digital signature"]))),
+            ("no usages", csr(ok(), Value::Null)),
+            ("a non-string usage", csr(ok(), json!(["client auth", 7]))),
+            ("not a request", csr("bm90IGEgcmVxdWVzdA==".into(), usages.clone())),
+            ("no request", json!({"spec": {"signerName": CLIENT_SIGNER, "usages": usages.clone()}})),
+            ("the kubelet signer", json!({"spec": {"signerName": "kubernetes.io/kube-apiserver-client-kubelet",
+                                                   "request": ok(), "usages": usages.clone()}})),
+            ("kubelet-serving", json!({"spec": {"signerName": "kubernetes.io/kubelet-serving",
+                                                "request": ok(), "usages": usages.clone()}})),
+        ];
+        for (what, mut c) in refused {
+            let e = on_create(&stormcentral(), &mut c).unwrap_err();
+            assert_eq!(e.status, axum::http::StatusCode::FORBIDDEN, "{what}");
+        }
+        // Another bootstrapper may not ask it at all, even for CN=stormcentral.
+        let mut c = csr(ok(), usages.clone());
+        assert!(on_create(&boot(), &mut c).is_err());
+        let other_group = UserInfo { username: "system:bootstrap:abcdef".into(),
+            groups: vec!["system:bootstrappers".into(), "system:bootstrappers:forge".into()] };
+        let mut c = csr(ok(), usages);
+        assert!(on_create(&other_group, &mut c).is_err());
     }
 
     #[test]

@@ -267,7 +267,29 @@ signs it (stormcos docs/ENROLLMENT.md). What rustkube does for it:
   signs (#199); stormcert gets `system:storm:forge-node-signer`, which
   stormcos binds to its identity.
 
-`test/e2e/bootstrap-token.sh` checks each of these against an apiserver.
+- **stormcentral** (#388, stormcentral#1676) gets its engine credential
+  from a new forge with nobody approving. With a bootstrap token whose
+  Secret has `usage-bootstrap-signing: "true"` and `auth-extra-groups:
+  system:bootstrappers:stormcentral`, it
+  1. reads `kube-public/cluster-info` anonymously and checks
+     `jws-kubeconfig-<id>` against the token: a detached HS256 JWS (header
+     `{"alg":"HS256","kid":"<id>"}`, key the token secret) over
+     `data.kubeconfig`, which names the apiserver (the controller-manager's
+     `--apiserver`) and the cluster CA (the `kube-root-ca.crt` bundle) —
+     kubeadm's discovery, unchanged. The controller-manager's bootstrap
+     signer keeps both current and drops a signature whose token is deleted,
+     stops signing or expires;
+  2. files a `kubernetes.io/kube-apiserver-client` CSR with subject exactly
+     `CN=stormcentral` (and `O=stormcentral:forge`, or no O), no SANs,
+     usages within `client auth`/`digital signature`/`key encipherment`
+     (`client auth` required). Any other subject, signer or extension use is
+     refused, a bootstrapper outside that group may not file it, and it
+     reads only its own. stormcert approves it by policy; stormpump writes
+     the token's Secret from install-config.
+
+`test/e2e/bootstrap-token.sh` checks each of these against an apiserver
+(but stormcentral's, which `test/e2e/cluster-info.sh` checks with the
+bootstrap signer).
 
 ## What is still missing
 

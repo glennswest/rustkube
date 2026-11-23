@@ -807,14 +807,21 @@ impl ControllerManager {
 
         match self.root_ca.clone() {
             Some(pem) => {
+                // kube-public/cluster-info, signed per bootstrap token (#388).
+                let api = self.api.clone();
+                let ca = pem.clone();
+                tasks.spawn(async move {
+                    crate::bootstrapsigner::BootstrapSigner::new(api, &ca).run().await;
+                });
                 let api = self.api.clone();
                 tasks.spawn(async move {
                     crate::rootca::RootCaPublisher::new(api, pem).run().await;
                 });
             }
             None => tracing::warn!(
-                "no --root-ca-file or --certificate-authority: kube-root-ca.crt is not \
-                 published, so pods cannot verify the apiserver"
+                "no --root-ca-file or --certificate-authority: kube-root-ca.crt and \
+                 kube-public/cluster-info are not published, so pods cannot verify the \
+                 apiserver and bootstrap tokens cannot discover it"
             ),
         }
 

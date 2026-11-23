@@ -719,7 +719,12 @@ its Lease and Events. `pods/exec`, `attach` and `portforward` are authorized
 as `create` whatever the method (upstream ≥ 1.31);
 `system:node-bootstrapper` (CSR create) for `system:bootstrappers` —
 narrowed by CSR admission (#264) to `storm.io/forge-node` CSRs and reading
-only its own (GET, or a WATCH of its name); `system:storm:forge-node-signer`
+only its own (GET, or a WATCH of its name) — except that one in
+`system:bootstrappers:stormcentral` may also file a
+`kubernetes.io/kube-apiserver-client` CSR for exactly `CN=stormcentral`
+(`O` only `stormcentral:forge`, no SANs, client usages; #388);
+`system:bootstrap-signer-clusterinfo` (kube-public Role + RoleBinding):
+`system:anonymous` may `get` the ConfigMap `cluster-info`, nothing else (#388); `system:storm:forge-node-signer`
 (reconciled, **unbound**: stormcos binds stormcert to it) — CSRs read,
 `/approval` and `/status`, `approve`/`sign` on `storm.io/forge-node`,
 `machines.storm.io`, `enrollmentpolicies.storm.io` and creating those CRDs.
@@ -865,7 +870,7 @@ terminating pods are not healthy, #360), garbage collection
 (VolumeAttachment), the stormblock provisioner for the in-kubelet blank-clone
 path (claims whose StorageClass's provisioner is `stormblock.storm.io` or
 `stormblock.storm.io/in-kubelet`, #92; the PV it writes takes the claim's
-`volumeMode`, #201; docs/storage.md), the root CA publisher (`kube-root-ca.crt` in every namespace), CSR approval and signing (auto-approves only a node renewing its own
+`volumeMode`, #201; docs/storage.md), the root CA publisher (`kube-root-ca.crt` in every namespace), the bootstrap signer (`kube-public/cluster-info`: a kubeconfig naming `--apiserver` and that CA bundle, plus `jws-kubeconfig-<id>` — a detached HS256 JWS over it, as kubeadm verifies — for each bootstrap token with `usage-bootstrap-signing: "true"`, not expired; runs when the root CA publisher does; #388), CSR approval and signing (auto-approves only a node renewing its own
 `kubernetes.io/kube-apiserver-client-kubelet` certificate — requested by
 `system:node:<n>` in `system:nodes` for exactly `CN=system:node:<n>,
 O=system:nodes`, no SANs, client-auth usages; anything else waits for a person; signs only with
@@ -1102,7 +1107,7 @@ override environment values.
 | `--startup-timeout` | `STARTUP_TIMEOUT` | `120` | seconds to wait for credential files and for the apiserver |
 | `--cluster-signing-cert-file`, `--cluster-signing-key-file` | | — | controller manager only: the CA the CSR controller signs with; without them CSRs are approved but not signed |
 | `--csr-external-signer-names` | | — | controller manager only: signerNames an external signer (stormcert) handles; CSRs naming one are neither approved nor signed here (#199). Comma-separated or repeated |
-| `--root-ca-file` | | `--certificate-authority` | controller manager only: the CA bundle published as `kube-root-ca.crt` in every namespace; with neither, nothing is published |
+| `--root-ca-file` | | `--certificate-authority` | controller manager only: the CA bundle published as `kube-root-ca.crt` in every namespace and in `kube-public/cluster-info`; with neither, nothing is published |
 | `--tls-cert-file`, `--tls-private-key-file` | | — | serving pair for the metrics port (10257/10259): HTTPS only with it, plain HTTP without; renewed in place (#90) |
 | `--authorization-always-allow-paths` | | `/healthz,/readyz,/livez` | metrics-port paths served without authorization; the rest need a bearer token the apiserver's TokenReview accepts and SubjectAccessReview allows (#90) |
 

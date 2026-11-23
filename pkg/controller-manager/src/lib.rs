@@ -7,6 +7,7 @@
 
 pub mod attachdetach;
 pub mod backoff;
+pub mod bootstrapsigner;
 pub mod cronjob;
 pub mod csr;
 pub mod daemonset;

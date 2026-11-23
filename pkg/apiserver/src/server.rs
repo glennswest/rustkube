@@ -2024,6 +2024,28 @@ fn node_admin_objects() -> (serde_json::Value, serde_json::Value) {
     (sa, binding)
 }
 
+/// Role and RoleBinding (both `system:bootstrap-signer-clusterinfo`, in
+/// kube-public): `system:anonymous` may `get` the ConfigMap `cluster-info`
+/// and nothing else (#388). Upstream's kubeadm writes the same pair, named
+/// `kubeadm:bootstrap-signer-clusterinfo`.
+pub(crate) fn cluster_info_reader() -> [serde_json::Value; 2] {
+    const NAME: &str = "system:bootstrap-signer-clusterinfo";
+    let mut role = json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
+        "metadata": {"name": NAME, "namespace": "kube-public"},
+        "rules": [{"apiGroups": [""], "resources": ["configmaps"], "resourceNames": ["cluster-info"], "verbs": ["get"]}],
+    });
+    let mut binding = json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
+        "metadata": {"name": NAME, "namespace": "kube-public"},
+        "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": NAME},
+        "subjects": [{"apiGroup": "rbac.authorization.k8s.io", "kind": "User", "name": "system:anonymous"}],
+    });
+    crate::handlers::resource::ensure_metadata_pub(&mut role, NAME, Some("kube-public"));
+    crate::handlers::resource::ensure_metadata_pub(&mut binding, NAME, Some("kube-public"));
+    [role, binding]
+}
+
 /// Create a bootstrap ClusterRole, or bring a stored one's rules up to date.
 ///
 /// Create-only would freeze a role at whatever this binary first wrote: a
@@ -2194,6 +2216,21 @@ async fn bootstrap_rbac(
         "roles kube-system/extension-apiserver-authentication-reader",
     )
     .await;
+
+    // kube-public/cluster-info is read anonymously, as kubeadm grants it:
+    // a holder of a bootstrap token checks the CA in it against the token's
+    // signature before trusting anything (#388, the bootstrap signer).
+    for object in cluster_info_reader() {
+        let kind = if object["kind"] == "Role" { "roles" } else { "rolebindings" };
+        let name = object["metadata"]["name"].as_str().unwrap_or_default().to_string();
+        create_bootstrap(
+            storage,
+            &ResourceStorage::namespaced_key(kind, "kube-public", &name),
+            object,
+            &format!("{kind} kube-public/{name}"),
+        )
+        .await;
+    }
 
     // The control-plane components (they authenticate via their client certs
     // as these users) get their own least-privilege roles, not cluster-admin

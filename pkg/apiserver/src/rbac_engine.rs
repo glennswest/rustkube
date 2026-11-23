@@ -1355,6 +1355,30 @@ mod subresource_tests {
     }
 
     #[test]
+    fn anonymous_reads_cluster_info_and_nothing_else() {
+        // The bootstrap pair for kube-public/cluster-info (#388).
+        let [role, binding] = crate::server::cluster_info_reader();
+        assert_eq!(binding["subjects"], json!([{"apiGroup": "rbac.authorization.k8s.io", "kind": "User",
+                                                 "name": "system:anonymous"}]));
+        assert_eq!(binding["roleRef"]["name"], role["metadata"]["name"]);
+        assert_eq!(role["metadata"]["namespace"], "kube-public");
+        let get = |name: Option<&str>, verb: &str, resource: &str| AuthorizationRequest {
+            verb: verb.into(),
+            resource: resource.into(),
+            subresource: None,
+            api_group: "".into(),
+            namespace: Some("kube-public".into()),
+            name: name.map(Into::into),
+        };
+        assert!(rules_permit(&role, &get(Some("cluster-info"), "get", "configmaps")));
+        assert!(!rules_permit(&role, &get(Some("other"), "get", "configmaps")));
+        assert!(!rules_permit(&role, &get(None, "list", "configmaps")));
+        assert!(!rules_permit(&role, &get(None, "watch", "configmaps")));
+        assert!(!rules_permit(&role, &get(Some("cluster-info"), "update", "configmaps")));
+        assert!(!rules_permit(&role, &get(Some("cluster-info"), "get", "secrets")));
+    }
+
+    #[test]
     fn an_empty_resource_list_grants_nothing() {
         // Absent and empty are the same thing, and neither is a wildcard.
         let role = json!({"rules": [{"apiGroups": ["*"], "resources": [], "verbs": ["*"]}]});

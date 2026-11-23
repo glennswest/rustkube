@@ -58,15 +58,16 @@ struct Cli {
     #[arg(long = "csr-external-signer-names", value_delimiter = ',')]
     external_signers: Vec<String>,
 
-    /// Seconds to wait for a credential file to be written, and for the
-    /// apiserver to start serving, before giving up. The whole control plane
-    /// starts at once, so these are normally races, not failures.
     /// CA bundle (PEM) published as the `kube-root-ca.crt` ConfigMap in every
-    /// namespace, for pods to verify the apiserver. Defaults to
-    /// `--certificate-authority`.
+    /// namespace, for pods to verify the apiserver, and in
+    /// `kube-public/cluster-info`, signed per bootstrap token (#388).
+    /// Defaults to `--certificate-authority`.
     #[arg(long = "root-ca-file")]
     root_ca: Option<std::path::PathBuf>,
 
+    /// Seconds to wait for a credential file to be written, and for the
+    /// apiserver to start serving, before giving up. The whole control plane
+    /// starts at once, so these are normally races, not failures.
     #[arg(long = "startup-timeout", env = "STARTUP_TIMEOUT", default_value_t = 120)]
     startup_timeout: u64,
 

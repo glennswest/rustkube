@@ -702,6 +702,20 @@ files a forge-node CSR; a user with only the CSR subresources is refused
 `system:storm:forge-node-signer` approves and signs a forge-node CSR and is
 refused a kubelet one; TokenReview answers the bootstrap token.
 
+`e2e/cluster-info.sh` (#388, suite `rigs`, anonymous auth on, a real
+controller-manager): `kube-public/cluster-info` appears with a kubeconfig
+naming the rig's apiserver and CA; a token with `usage-bootstrap-signing`
+gets a `jws-kubeconfig-<id>` that verifies with Python's `hmac` (not
+rustkube's code), a non-signing one none; a forged kubeconfig is put back and
+re-signed; a token expiring in 60 s loses its signature after, a deleted one
+at once. Anonymous GETs cluster-info and is refused another kube-public
+ConfigMap, a LIST and a write. A bootstrapper in
+`system:bootstrappers:stormcentral` files `kube-apiserver-client` CSRs for
+`CN=stormcentral` (with and without `O=stormcentral:forge`), stamped as
+itself, reads its own and not another's nor a LIST; another CN,
+`O=system:masters`, an OU, a SAN, `server auth`, the kubelet client signer,
+and a plain bootstrapper asking for `CN=stormcentral` are 403.
+
 `e2e/client-crl.sh` (#260, suite `rigs`) runs the apiserver with two client
 CAs and a CRL each (PEM and DER, from `openssl ca`): two certificates are
 accepted (by SelfSubjectReview); one is revoked and its CRL re-signed, and the

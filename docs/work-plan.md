@@ -4,6 +4,30 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — IN PROGRESS 2026-11-23
+- [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
+  `kubeconfig` (server = `--apiserver`, CA = the `kube-root-ca.crt` bundle;
+  kept, a changed one put back) and `jws-kubeconfig-<id>` per token with
+  `usage-bootstrap-signing: "true"` (detached HS256 JWS, header
+  `{"alg":"HS256","kid":"<id>"}`, string-equal to kubeadm's recompute);
+  stale/expired signatures removed, requeued at the earliest expiration.
+  Runs when there is a CA bundle (as the root CA publisher).
+- [x] apiserver bootstrap Role + RoleBinding `system:bootstrap-signer-clusterinfo`
+  in kube-public: `system:anonymous` may `get` cluster-info only.
+- [x] `csr_admission`: a bootstrapper in `system:bootstrappers:stormcentral`
+  may also create a `kubernetes.io/kube-apiserver-client` CSR with subject
+  exactly `CN=stormcentral` (+ `O=stormcentral:forge` or no O), no SANs,
+  usages ⊆ client auth / digital signature / key encipherment incl. client
+  auth. Reads stay own-only (`guard_read`, unchanged).
+- [x] Units (HMAC RFC 4231, JWS vs an independent Python computation, token
+  rules, desired data; anonymous role; CSR subject/SAN/usage/group matrix);
+  rig `cluster-info` (suite `rigs`).
+- [ ] sc-build: workspace build + tests.
+- [ ] Rig `cluster-info` on a test machine (pve machines blocked at the infra
+  gate since #372/#373, stormcluster#128).
+- Not ours: stormpump writes the token Secret, stormcert approves by policy
+  (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
+
 ### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
 `sccdefaults`, `util/sort` and openshift-apiserver's three review REST
