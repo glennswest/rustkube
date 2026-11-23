@@ -4,6 +4,27 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, RIG BLOCKED 2026-11-23
+Option A of the question on #375 (stormcentral's owner queue refused it:
+"a gap: session work — build it", #1680): rollouts run in the
+controller-manager, no deployer pod or image. Ported from
+openshift-apiserver `pkg/apps`, openshift-controller-manager `pkg/apps` and
+oc `pkg/cli/deployer` (read 2026-11-23).
+- [x] API: defaults, validation, spec/status strategies, instantiate,
+  rollback, log (from the RC's recorded log), scale, `oc get dc`, RBAC
+  (admin/edit/view; controller-manager creates RCs).
+- [x] Controller-manager: `deploymentconfig` (versions as RCs, ConfigChange,
+  cancel older, settle, history limit, status/conditions) and `deployer`
+  (Rolling, Recreate, pre/mid/post hook pods with failurePolicy, deadline,
+  cancel/retry, log on the RC).
+- [x] 21dcdfd: sc-build — workspace build, apiserver 430/430,
+  controller-manager 156/156, clippy clean in the new files.
+- [x] Rig `deploymentconfigs` (suite `rigs`), docs, CHANGELOG.
+- [ ] Gaps filed: Custom strategy (needs a `deployer` account and its RBAC),
+  `tagImages` hooks and ImageChange triggers (need ImageStreams).
+- [ ] Run the rig: every pve test machine refuses runs until one installs the
+  stormcluster#128 fix (as #372, #373, #388).
+
 ### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — WAITING on an owner decision (privileged build pods), 2026-11-23
 Ported from openshift/openshift-apiserver `pkg/build` (validation, defaults,
 buildgenerator, registry/{build,buildconfig,buildclone,buildconfiginstantiate,

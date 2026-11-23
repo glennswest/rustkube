@@ -716,6 +716,20 @@ itself, reads its own and not another's nor a LIST; another CN,
 `O=system:masters`, an OU, a SAN, `server auth`, the kubelet client signer,
 and a plain bootstrapper asking for `CN=stormcentral` are 403.
 
+`e2e/deploymentconfigs.sh` (#375, suite `rigs`): a real controller-manager
+and scheduler, one stand-in node (the script plays the kubelet: pods Ready,
+except those labelled `stall=yes`; hook pods finish by their command,
+`/bin/false` failing). A Recreate DC with a pre hook rolls out (hook pod from
+the container's image, 2 available, `oc get dc`, `oc logs dc/web` the
+deployer's log); `oc rollout latest`, then `oc set env` (ConfigChange) roll
+out the next versions, the old one scaled to 0; `oc set deployment-hook
+--pre --failure-policy=abort -- /bin/false` fails the next rollout and the DC
+stays on the last good version, `--remove` and it rolls out; `oc rollout undo`
+restores the previous template; `oc scale`; a Rolling DC rolls 3 replicas with
+the rolling updater's log; `oc rollout cancel` stops a rollout whose pod never
+becomes ready (RolloutCancelled); `oc adm prune deployments` deletes the oldest
+complete versions; a Custom strategy and an ImageChange trigger are 422.
+
 `e2e/client-crl.sh` (#260, suite `rigs`) runs the apiserver with two client
 CAs and a CRL each (PEM and DER, from `openssl ca`): two certificates are
 accepted (by SelfSubjectReview); one is revoked and its CRL re-signed, and the

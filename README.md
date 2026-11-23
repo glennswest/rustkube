@@ -141,6 +141,7 @@ there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated AP
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `user.openshift.io/v1` (Groups only, below),
+`apps.openshift.io/v1` (DeploymentConfigs, below),
 `security.openshift.io/v1` (SecurityContextConstraints and the three
 PodSecurityPolicy reviews, below),
 `rustkube.io/v1alpha1` (PodMigration) and
@@ -316,6 +317,32 @@ kubelet end of exec/attach/port-forward does not exist yet in rustkube-node
 
 An authenticated user named in a Group's `users` is also in that Group, as
 OpenShift's group cache adds it (#372); TokenReview reports it too.
+
+**DeploymentConfigs** (`apps.openshift.io/v1` `deploymentconfigs`, short
+name `dc`, #375) are OpenShift's, with `instantiate` (`oc rollout latest`),
+`rollback` (`oc rollback`, `oc rollout undo`: the rolled-back config is
+returned, the client stores it), `log`, `scale` (autoscaling/v1) and
+`status`. Writes get OpenShift's defaults (a ConfigChange trigger,
+Rolling with 25%/25%, timeouts 600 s, `activeDeadlineSeconds` 21600,
+`revisionHistoryLimit` 10, a lone container as every hook's) and validation;
+a spec write keeps the status but for a `latestVersion` one ahead, a
+`/status` write keeps the spec. Refused, because nothing here can run them:
+the Custom strategy, `tagImages` hooks and ImageChange triggers (no
+ImageStreams). Each version is a ReplicationController `<dc>-<version>`,
+made by the controller-manager with OpenShift's annotations (phase, version,
+the encoded config), so `oc rollout history|status|cancel|retry` and `oc adm
+prune deployments` read them as OpenShift's. **There is no deployer pod**: the
+controller-manager runs each rollout itself (Rolling: kubectl's rolling
+updater, surge and readiness; Recreate: down to zero, up through one
+accepted pod), the strategy's `pre`/`mid`/`post` hooks as pods
+`<rc>-hook-<pre|mid|post>` from the named container's image with
+`failurePolicy` applied (`oc set deployment-hook`), and records the log the
+deployer would print on the ReplicationController
+(`deploy.rustkube.io/log`, its last 64 KiB) — that is what `oc logs dc/…`
+shows, a hook pod's own output included. A cancelled version is marked
+Failed and its hook pods deleted; a failed one leaves the last complete
+version running. The rollouts restart from their records when a new
+controller-manager leader takes over.
 
 **Groups** (`user.openshift.io/v1` `groups`, cluster-scoped, #372) are what
 `oc adm groups new|add-users|remove-users|sync|prune` and `oc adm prune

@@ -94,6 +94,13 @@ authoritative — the exact `oc adm` set shifts slightly by cluster version.
 |---|---|
 | `rollout` | `status`, `history`, `undo`, `pause`, `resume`, `restart`, `latest`, `retry`, `cancel` (Deployment **and** DeploymentConfig) |
 | `rollback` | Revert a DeploymentConfig to a prior revision |
+
+DeploymentConfigs (#375): `rollout latest|status|history|undo|cancel|retry|pause|resume`,
+`rollback`, `logs dc/…`, `scale dc/…`, `set env|image|deployment-hook` on a DC, and
+`get dc` work against rustkube (rig `deploymentconfigs`, not yet run on a test
+machine). The rollout runs in the controller-manager, not a deployer pod: `oc
+logs dc/…` is its recorded log. Custom strategies, `tagImages` hooks and
+ImageChange triggers are refused.
 | `start-build` | Trigger a build (`--from-dir`, `--from-file`, `--from-repo`, `-F` follow, `--wait`) |
 | `cancel-build` | Cancel pending/running/new builds |
 | `import-image` | Import/refresh tags into an image stream (`--all`, `--from`, `--confirm`) |
@@ -200,7 +207,8 @@ on fastetcd, with no kubelet — Nodes are API objects and pods are bound by
 | `groups new/add-users/remove-users` | ✅ | `user.openshift.io/v1` Groups (#372); a Group's users carry it at authentication, so a binding to the Group grants them (SSAR in the script). ServiceAccount user names may be members |
 | `prune groups` | ✅ | lists the Groups synced from the config's LDAP host; the script has no LDAP server, so it prunes none (#372) |
 | `groups sync` | 🟡 | the Groups it writes are served (#372); it reads an LDAP server, which the script has none of, so it is not run there |
-| `prune builds/deployments/images` | 🔴 | BuildConfigs, DeploymentConfigs, ImageStreams (#70) |
+| `prune deployments` | ✅ | `apps.openshift.io/v1` DeploymentConfigs and their version ReplicationControllers (#375); rig `deploymentconfigs`, not yet run on a test machine |
+| `prune builds/images` | 🔴 | BuildConfigs (#374), ImageStreams (#70) |
 | `upgrade`, `wait-for-stable-cluster`, `reboot-machine-config-pool`, `wait-for-node-reboot`, `ocp-certificates`, `node-image`, `release`, `catalog`, `build-chain`, `migrate`, `verify-image-signature` | 🔴 out of scope | the OpenShift platform: ClusterVersion, ClusterOperators, MachineConfigPools, the release payload, OLM (#70) |
 | `pod-network …` | — | OpenShift SDN, removed upstream |
 
