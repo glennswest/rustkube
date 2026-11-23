@@ -20,8 +20,9 @@ oc `pkg/cli/deployer` (read 2026-11-23).
 - [x] 21dcdfd: sc-build — workspace build, apiserver 430/430,
   controller-manager 156/156, clippy clean in the new files.
 - [x] Rig `deploymentconfigs` (suite `rigs`), docs, CHANGELOG.
-- [ ] Gaps filed: Custom strategy (needs a `deployer` account and its RBAC),
-  `tagImages` hooks and ImageChange triggers (need ImageStreams).
+- [x] Gaps: Custom strategy filed as #392 (proposed); `tagImages` hooks and
+  ImageChange triggers belong to #385 (ImageStreams) and #386 (image
+  triggers) — noted there to lift the refusals.
 - [ ] Run the rig: every pve test machine refuses runs until one installs the
   stormcluster#128 fix (as #372, #373, #388).
 
