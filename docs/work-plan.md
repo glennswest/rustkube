@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — IN PROGRESS 2026-11-23
+### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, RIG BLOCKED 2026-11-23
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
   `kubeconfig` (server = `--apiserver`, CA = the `kube-root-ca.crt` bundle;
   kept, a changed one put back) and `jws-kubeconfig-<id>` per token with
@@ -25,8 +25,11 @@ Kept here whole, newest notes as they were. Write new intentions here.
 - [x] sc-build at 5b67427 (build VM 69d7274f43): workspace build; apiserver
   424/424, controller-manager 151/151 (the 8 new tests by name, job on the
   same commit); clippy silent on the touched files.
-- [ ] Rig `cluster-info` on a test machine (pve machines blocked at the infra
-  gate since #372/#373, stormcluster#128).
+- [ ] Rig `cluster-info` (suite `rigs`) on a test machine. 2026-11-23:
+  `stormcentral test run rustkube rigs --tag pvetest1|2|3` is refused (400:
+  the machine's apiserver not answering, stormcluster API down since
+  2026-11-21/22, stormcluster#128), as for #372/#373. Then run it at main and
+  close #388 when `cluster-info` passes.
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
   (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
 
