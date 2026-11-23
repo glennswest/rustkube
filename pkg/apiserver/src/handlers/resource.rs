@@ -662,6 +662,12 @@ pub(crate) async fn builtin_update(
     if key.starts_with("/registry/securitycontextconstraints/") {
         crate::scc_policy::admit(body)?; // #373
     }
+    for resource in [crate::builds::BUILDS, crate::builds::BUILD_CONFIGS] {
+        if key.starts_with(&format!("/registry/{resource}/")) {
+            let ns = existing["metadata"]["namespace"].as_str().unwrap_or("").to_string();
+            crate::builds::admit(resource, &ns, body, Some(existing)).await?; // #374
+        }
+    }
     if key.starts_with("/registry/services/") {
         // Upstream defaults every write, not just a create.
         crate::builtin_admission::default_service_ports(body);
@@ -2380,6 +2386,8 @@ fn resource_to_list_kind(resource: &str) -> String {
         "apiservices" => "APIService",
         "podmigrations" => "PodMigration",
         "routes" => "Route",
+        "builds" => "Build",
+        "buildconfigs" => "BuildConfig",
         "groups" => "Group",
         "securitycontextconstraints" => "SecurityContextConstraints",
         "podsecuritypolicyreviews" => "PodSecurityPolicyReview",
@@ -2443,6 +2451,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "apiservices" => "apiregistration.k8s.io/v1",
         "podmigrations" => "rustkube.io/v1alpha1",
         "routes" => "route.openshift.io/v1",
+        "builds" | "buildconfigs" => "build.openshift.io/v1",
         "groups" => "user.openshift.io/v1",
         "securitycontextconstraints" | "podsecuritypolicyreviews" | "podsecuritypolicyselfsubjectreviews"
         | "podsecuritypolicysubjectreviews" => "security.openshift.io/v1",

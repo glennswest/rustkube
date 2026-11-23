@@ -78,6 +78,10 @@ pub fn controller_manager_role() -> Value {
             rule(&["storage.k8s.io"], &["volumeattachments"], &["create"]),
             rule(&["kubevirt.io"], &["virtualmachineinstances", "virtualmachineinstancemigrations"], &["create"]),
             rule(&["rustkube.io"], &["podmigrations"], &["create"]),
+            // The build controller (#374): its updates of a build are held to
+            // the strategy restriction, as OpenShift's build-controller is.
+            rule(&["build.openshift.io"], &["builds/docker", "builds/optimizeddocker", "builds/source",
+                                            "builds/custom"], &["create"]),
             // Its metrics port asks the apiserver who a scraper is and whether
             // it may read /metrics (#90), as upstream's delegated auth does.
             rule(&["authentication.k8s.io"], &["tokenreviews"], &["create"]),

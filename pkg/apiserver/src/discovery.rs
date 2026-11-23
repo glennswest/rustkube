@@ -233,6 +233,13 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "security.openshift.io/v1", "version": "v1"}
         }),
         json!({
+            // Builds and BuildConfigs (#374): `oc start-build`, `oc logs
+            // bc/…`, `oc cancel-build`, `oc adm prune builds`.
+            "name": "build.openshift.io",
+            "versions": [{"groupVersion": "build.openshift.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "build.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             // Groups (#372): what `oc adm groups` and `oc adm prune groups`
             // act on; a Group's users carry it at authentication.
             "name": "user.openshift.io",
@@ -868,6 +875,7 @@ pub(crate) async fn builtin_lists() -> &'static std::collections::BTreeMap<(Stri
         gv!("autoscaling", "v2", api_autoscaling_v2_resources());
         gv!("networking.k8s.io", "v1", api_networking_v1_resources());
         gv!("route.openshift.io", "v1", api_route_v1_resources());
+        gv!("build.openshift.io", "v1", api_build_v1_resources());
         gv!("user.openshift.io", "v1", api_user_v1_resources());
         gv!("security.openshift.io", "v1", api_security_v1_resources());
         gv!("scheduling.k8s.io", "v1", api_scheduling_v1_resources());
@@ -1100,6 +1108,7 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
         ("policy", "v1") => vec![("poddisruptionbudgets", "PodDisruptionBudget", true)],
         ("scheduling.k8s.io", "v1") => vec![("priorityclasses", "PriorityClass", false)],
         ("route.openshift.io", "v1") => vec![("routes", "Route", true)],
+        ("build.openshift.io", "v1") => vec![("builds", "Build", true), ("buildconfigs", "BuildConfig", true)],
         ("user.openshift.io", "v1") => vec![("groups", "Group", false)],
         ("security.openshift.io", "v1") => vec![("securitycontextconstraints", "SecurityContextConstraints", false)],
         ("apiregistration.k8s.io", "v1") => vec![("apiservices", "APIService", false)],
@@ -1692,6 +1701,30 @@ pub async fn api_route_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/build.openshift.io/v1 — Builds and BuildConfigs (#374), with
+/// the subresources this cluster serves. `buildconfigs/instantiatebinary`
+/// and `buildconfigs/webhooks` are not: what they would start (binary
+/// builds, webhook triggers) is refused at validation.
+pub async fn api_build_v1_resources() -> impl IntoResponse {
+    let all = ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"];
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "build.openshift.io/v1",
+        "resources": [
+            {"name": "buildconfigs", "singularName": "buildconfig", "namespaced": true, "kind": "BuildConfig",
+             "verbs": all, "shortNames": ["bc"], "categories": ["all"]},
+            {"name": "buildconfigs/instantiate", "singularName": "", "namespaced": true, "kind": "BuildRequest",
+             "verbs": ["create"]},
+            {"name": "builds", "singularName": "build", "namespaced": true, "kind": "Build", "verbs": all,
+             "categories": ["all"]},
+            {"name": "builds/clone", "singularName": "", "namespaced": true, "kind": "BuildRequest", "verbs": ["create"]},
+            {"name": "builds/details", "singularName": "", "namespaced": true, "kind": "Build", "verbs": ["update"]},
+            {"name": "builds/log", "singularName": "", "namespaced": true, "kind": "BuildLog", "verbs": ["get"]},
+        ]
+    }))
+}
+
 /// GET /apis/security.openshift.io/v1 — SCCs and the three
 /// PodSecurityPolicy reviews (#373), as OpenShift's discovery lists them.
 /// OpenShift's `rangeallocations` are not served (rustkube's UID block
@@ -2060,7 +2093,8 @@ mod tests {
             ("certificates.k8s.io", "v1"), ("rbac.authorization.k8s.io", "v1"), ("autoscaling", "v2"),
             ("networking.k8s.io", "v1"), ("scheduling.k8s.io", "v1"), ("admissionregistration.k8s.io", "v1"),
             ("node.k8s.io", "v1"), ("flowcontrol.apiserver.k8s.io", "v1"), ("gateway.networking.k8s.io", "v1"),
-            ("route.openshift.io", "v1"), ("user.openshift.io", "v1"), ("security.openshift.io", "v1")];
+            ("route.openshift.io", "v1"), ("user.openshift.io", "v1"), ("security.openshift.io", "v1"),
+            ("build.openshift.io", "v1")];
         for (g, v) in generic {
             let served = advertised(g, v).await.unwrap_or_else(|| panic!("{g}/{v} not in the table"));
             let lists = builtin_lists().await;
@@ -2186,6 +2220,7 @@ mod tests {
             "authorization.openshift.io",
             "gateway.networking.k8s.io",
             "route.openshift.io",
+            "build.openshift.io",
             "project.openshift.io",
             "user.openshift.io",
             "security.openshift.io",

@@ -520,6 +520,7 @@ const WORKLOADS: &[(&str, &[&str])] = &[
     ("networking.k8s.io", &["ingresses", "networkpolicies"]),
     ("gateway.networking.k8s.io", &["gateways", "httproutes"]),
     ("route.openshift.io", &["routes"]),
+    ("build.openshift.io", &["builds", "buildconfigs"]),
     ("kubevirt.io", &["virtualmachines", "virtualmachineinstances"]),
     ("snapshot.storage.k8s.io", &["volumesnapshots"]),
 ];
@@ -544,6 +545,7 @@ const OBSERVED: &[(&str, &[&str])] = &[
     ("events.k8s.io", &["events"]),
     ("gateway.networking.k8s.io", &["gateways/status", "httproutes/status"]),
     ("route.openshift.io", &["routes/status"]),
+    ("build.openshift.io", &["builds/log"]),
 ];
 
 fn view_rules() -> Vec<Value> {
@@ -646,6 +648,9 @@ fn edit_rules() -> Vec<Value> {
         &["get", "create"],
     ));
     rules.push(rule(&[""], &["pods/eviction"], &["create"]));
+    // Start, rebuild and record builds, as OpenShift's edit (#374).
+    rules.push(rule(&["build.openshift.io"], &["buildconfigs/instantiate", "builds/clone"], &["create"]));
+    rules.push(rule(&["build.openshift.io"], &["builds/details"], &["update"]));
     rules.push(rule(
         &["subresources.kubevirt.io"],
         &["virtualmachines/start", "virtualmachines/stop", "virtualmachines/restart"],
@@ -754,6 +759,25 @@ pub fn bootstrap_cluster_roles() -> Vec<Value> {
             "Push and pull the project's images.",
             vec![rule(IMAGE_GROUPS, LAYERS, &["get", "update"])],
         ),
+        // Which build strategies a user may run (#374), as OpenShift's
+        // BuildByStrategy admission asks: `create` on `builds/<strategy>`.
+        // Docker and Source are bound to everyone authenticated; Custom
+        // runs an image of the user's choosing as the builder, so it is not.
+        cluster_role(
+            "system:build-strategy-docker",
+            "Allows builds of the Docker strategy.",
+            vec![rule(&["build.openshift.io"], &["builds/docker", "builds/optimizeddocker"], &["create"])],
+        ),
+        cluster_role(
+            "system:build-strategy-source",
+            "Allows builds of the Source strategy.",
+            vec![rule(&["build.openshift.io"], &["builds/source"], &["create"])],
+        ),
+        cluster_role(
+            "system:build-strategy-custom",
+            "Allows builds of the Custom strategy.",
+            vec![rule(&["build.openshift.io"], &["builds/custom"], &["create"])],
+        ),
         cluster_role(
             "system:registry",
             "A node's registry service, bound in its own project: writes the images pushed to it.",
@@ -772,6 +796,8 @@ pub fn bootstrap_cluster_role_bindings() -> Vec<Value> {
         ("basic-users", "basic-user"),
         ("self-provisioners", "self-provisioner"),
         ("system:openshift:scc:restricted-v2", "system:openshift:scc:restricted-v2"),
+        ("system:build-strategy-docker-binding", "system:build-strategy-docker"),
+        ("system:build-strategy-source-binding", "system:build-strategy-source"),
     ]
         .iter()
         .map(|(name, role)| {

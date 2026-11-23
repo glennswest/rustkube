@@ -76,6 +76,11 @@ pub async fn admit_create(
     if resource == crate::scc_policy::RESOURCE && namespace.is_none() {
         crate::scc_policy::admit(obj)?;
     }
+    // build.openshift.io (#374): OpenShift's registry strategies, validation
+    // and BuildByStrategy.
+    if let (crate::builds::BUILDS | crate::builds::BUILD_CONFIGS, Some(ns)) = (resource, namespace) {
+        crate::builds::admit(resource, ns, obj, None).await?;
+    }
 
     // Served (#119) but not evaluated yet (#234): say so, rather than let
     // the policy's author believe it protects anything.
