@@ -98,6 +98,13 @@ handlers (read 2026-11-21).
   machine since 2026-11-20 13:21Z (stormcluster#128, fix f1de3f6 not
   installed). Then `stormcentral test run rustkube rigs --tag <that machine>
   --commit <main>`; close #372 when oc-adm's Groups checks pass.
+- 2026-11-23: re-built at main 9c84433 (sc-build c5c5f4e065): workspace
+  build and every test pass, the Groups units by name (`user_groups`,
+  `auth::a_group_listing_the_user_is_among_its_groups`,
+  `table::groups_print_their_users`). The rig is still blocked:
+  `stormcentral test run rustkube rigs --tag pvetest1|2|3` is refused (400,
+  the machine's apiserver not answering); stormcluster#128 open, f1de3f6
+  not installed.
 
 ### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
 - [x] 96a66790f5c4: the inventory is not keyed by the directory's path; a
