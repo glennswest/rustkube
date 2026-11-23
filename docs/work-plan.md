@@ -70,6 +70,11 @@ handlers (read 2026-11-21).
   for #372 (stormcluster/stormlb APIs down on every pve test machine,
   stormcluster#128). Then `stormcentral test run rustkube rigs --tag
   <machine> --commit <main>`; close #373 when both rigs pass.
+- 2026-11-23: main 9c84433 (which carries #373 plus #388) passed sc-build
+  c5c5f4e065: workspace build and `cargo test --workspace` (apiserver 424/424,
+  every SCC unit among them). Rigs still blocked: `stormcentral test run
+  rustkube rigs --tag pvetest1|2|3` is refused (400, the machine's apiserver
+  not answering); stormcluster#128 open, f1de3f6 not installed.
 
 ### user.openshift.io Groups (#372, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
