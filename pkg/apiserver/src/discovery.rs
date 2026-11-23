@@ -238,6 +238,8 @@ fn builtin_groups() -> Vec<Value> {
             "name": "apps.openshift.io",
             "versions": [{"groupVersion": "apps.openshift.io/v1", "version": "v1"}],
             "preferredVersion": {"groupVersion": "apps.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             // Builds and BuildConfigs (#374): `oc start-build`, `oc logs
             // bc/…`, `oc cancel-build`, `oc adm prune builds`.
             "name": "build.openshift.io",
