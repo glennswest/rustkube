@@ -710,6 +710,37 @@ fn build_router(
                 .delete(resource::delete_cluster_resource)
                 .patch(resource::patch_cluster_resource),
         )
+        // quota.openshift.io/v1 (#391): ClusterResourceQuotas, cluster-scoped
+        // and stored with a /status the controller-manager writes; the
+        // AppliedClusterResourceQuotas a namespace reads.
+        .route("/apis/quota.openshift.io/v1", get(discovery::api_quota_v1_resources))
+        .route(
+            "/apis/quota.openshift.io/v1/namespaces/{namespace}/appliedclusterresourcequotas",
+            get(crate::handlers::cluster_quota::list_applied),
+        )
+        .route(
+            "/apis/quota.openshift.io/v1/namespaces/{namespace}/appliedclusterresourcequotas/{name}",
+            get(crate::handlers::cluster_quota::get_applied),
+        )
+        .route(
+            "/apis/quota.openshift.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection)
+                .post(resource::create_cluster_resource),
+        )
+        .route(
+            "/apis/quota.openshift.io/v1/{resource}/{name}",
+            get(resource::get_cluster_resource)
+                .put(resource::update_cluster_resource)
+                .delete(resource::delete_cluster_resource)
+                .patch(resource::patch_cluster_resource),
+        )
+        .route(
+            "/apis/quota.openshift.io/v1/{resource}/{name}/status",
+            get(resource::get_cluster_status)
+                .put(resource::update_cluster_status)
+                .merge(patch(resource::patch_cluster_status)),
+        )
         // security.openshift.io/v1 (#373): SCCs, cluster-scoped and stored;
         // the three PodSecurityPolicy reviews, answered by SCC admission's
         // providers.

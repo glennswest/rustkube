@@ -17,9 +17,17 @@ pub async fn create(State(state): State<AppState>, Json(body): Json<Value>) -> R
     Ok((StatusCode::CREATED, Json(mapping)))
 }
 
-/// GET `useridentitymappings/{name}`.
-pub async fn get(State(state): State<AppState>, Path(name): Path<String>) -> Result<impl IntoResponse, ApiError> {
-    Ok(Json(crate::user_identities::get_mapping(&state.storage, &name).await?))
+/// GET `useridentitymappings/{name}`; a Table when asked (`oc get`).
+pub async fn get(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let mapping = crate::user_identities::get_mapping(&state.storage, &name).await?;
+    if crate::table::wants_table(&headers) {
+        return Ok(Json(crate::table::to_table(crate::user_identities::MAPPINGS, mapping)));
+    }
+    Ok(Json(mapping))
 }
 
 /// PUT `useridentitymappings/{name}`: maps the Identity to the User the body

@@ -14,10 +14,20 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 
+/// A single object, or its Table when the client asked for one: `oc get
+/// <kind> <name>` asks, and printed only NAME and AGE without it.
+fn object_or_table(resource: &str, obj: Value, headers: &axum::http::HeaderMap) -> Json<Value> {
+    if crate::table::wants_table(headers) {
+        return Json(crate::table::to_table(resource, obj));
+    }
+    Json(obj)
+}
+
 /// GET a single cluster-scoped resource.
 pub async fn get_cluster_resource(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
     RawQuery(query): RawQuery,
     user: Option<axum::Extension<crate::auth::UserInfo>>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -26,20 +36,22 @@ pub async fn get_cluster_resource(
     if resource == crate::user_identities::USERS {
         if name == "~" {
             let user = user.map(|u| u.0).unwrap_or(crate::auth::UserInfo { username: String::new(), groups: vec![] });
-            return Ok(Json(crate::user_identities::current_user(&state.storage, &user).await?));
+            let me = crate::user_identities::current_user(&state.storage, &user).await?;
+            return Ok(object_or_table(&resource, me, &headers));
         }
         crate::user_identities::check_user_get(&name)?;
     }
     let key = ResourceStorage::cluster_key(&resource, &name);
     let read = WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
     let obj = state.storage.get_read(&ResourceStorage::cluster_prefix(&resource), &key, read).await?;
-    Ok(Json(obj))
+    Ok(object_or_table(&resource, obj, &headers))
 }
 
 /// GET a single namespace-scoped resource.
 pub async fn get_namespaced_resource(
     State(state): State<AppState>,
     Path((namespace, resource, name)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
     let key = ResourceStorage::namespaced_key(&resource, &namespace, &name);
@@ -49,7 +61,7 @@ pub async fn get_namespaced_resource(
         .storage
         .get_read(&ResourceStorage::all_namespaces_prefix(&resource), &key, read)
         .await?;
-    Ok(Json(obj))
+    Ok(object_or_table(&resource, obj, &headers))
 }
 
 /// Build a watch `Response` for `prefix`, honoring `sendInitialEvents`
@@ -673,6 +685,11 @@ pub(crate) async fn builtin_update(
     }
     if key.starts_with("/registry/groups/") {
         crate::user_groups::admit(body)?; // #372
+    }
+    if key.starts_with("/registry/clusterresourcequotas/") {
+        // #391: an object write keeps the status, a status write the spec.
+        let status_write = crate::admission::subresource().as_deref() == Some("status");
+        crate::cluster_quota::admit(body, Some(existing), status_write)?;
     }
     if key.starts_with("/registry/users/") {
         crate::user_identities::admit_user(body)?; // #390
@@ -1836,6 +1853,8 @@ pub(crate) async fn patch_stored_object(
                         .await?;
                 } else if resource == crate::user_groups::RESOURCE {
                     crate::user_groups::admit(&mut obj)?; // #372
+                } else if resource == crate::cluster_quota::RESOURCE {
+                    crate::cluster_quota::admit(&mut obj, None, false)?; // #391
                 } else if resource == crate::user_identities::USERS {
                     crate::user_identities::admit_user(&mut obj)?; // #390
                 } else if resource == crate::user_identities::IDENTITIES {
@@ -2422,6 +2441,8 @@ fn resource_to_list_kind(resource: &str) -> String {
         "users" => "User",
         "identities" => "Identity",
         "useridentitymappings" => "UserIdentityMapping",
+        "clusterresourcequotas" => "ClusterResourceQuota",
+        "appliedclusterresourcequotas" => "AppliedClusterResourceQuota",
         "securitycontextconstraints" => "SecurityContextConstraints",
         "podsecuritypolicyreviews" => "PodSecurityPolicyReview",
         "podsecuritypolicyselfsubjectreviews" => "PodSecurityPolicySelfSubjectReview",
@@ -2487,6 +2508,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "deploymentconfigs" => "apps.openshift.io/v1",
         "builds" | "buildconfigs" => "build.openshift.io/v1",
         "groups" | "users" | "identities" | "useridentitymappings" => "user.openshift.io/v1",
+        "clusterresourcequotas" | "appliedclusterresourcequotas" => "quota.openshift.io/v1",
         "securitycontextconstraints" | "podsecuritypolicyreviews" | "podsecuritypolicyselfsubjectreviews"
         | "podsecuritypolicysubjectreviews" => "security.openshift.io/v1",
         // Core group.

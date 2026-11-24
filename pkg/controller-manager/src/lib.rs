@@ -28,6 +28,7 @@ pub mod pdb;
 pub mod node;
 pub mod replicaset;
 pub mod resourcequota;
+pub mod clusterresourcequota;
 pub mod rollout;
 pub mod owned;
 pub mod rootca;

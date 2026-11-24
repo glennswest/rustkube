@@ -141,6 +141,7 @@ there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated AP
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
 `user.openshift.io/v1` (Groups, Users, Identities and UserIdentityMappings, below),
+`quota.openshift.io/v1` (ClusterResourceQuotas and AppliedClusterResourceQuotas, below),
 `apps.openshift.io/v1` (DeploymentConfigs, below),
 `build.openshift.io/v1` (Builds and BuildConfigs, below),
 `security.openshift.io/v1` (SecurityContextConstraints and the three
@@ -393,6 +394,33 @@ request from a listed user carries the Group (read from the watch cache,
 rebuilt when a Group changes), so a RoleBinding to the Group grants its
 members; impersonation carries only the groups it names.
 
+**ClusterResourceQuotas** (`quota.openshift.io/v1`, #391) are what `oc
+create clusterresourcequota NAME --project-label-selector=…
+--project-annotation-selector=… --hard=…` writes: one quota over every
+namespace its `spec.selector` picks — the label selector matching the
+namespace's labels and every named annotation on it with that value.
+Ported from OpenShift's openshift-apiserver, library-go,
+apiserver-library-go and cluster-policy-controller. Cluster-scoped, stored,
+with a `/status` subresource and the short name `clusterquota`; a create
+starts with an empty status, a write of the object keeps the stored status,
+a status write keeps the spec; validated as OpenShift's (a selector that
+restricts nothing, a bad operator or label, a non-standard or negative or,
+for a count, fractional `hard` are 422s). The controller-manager's
+`clusterresourcequota` controller writes `status.namespaces[]` (each
+selected namespace's usage, counted as a ResourceQuota with the same
+`spec.quota` would count it there) and `status.total`. Quota admission
+treats each one selecting the namespace as the ResourceQuota `{spec:
+spec.quota, status: status.total}`: refused in the same words (`exceeded
+quota: q, requested: pods=1, used: pods=1, limited: pods=1`; `status
+unknown` until the controller's first pass), charged to the total and the
+namespace's entry with the namespace's ResourceQuotas, all given back if any
+refuses. `oc get clusterresourcequota` prints NAME, LABELS SELECTOR,
+ANNOTATIONS SELECTOR. **AppliedClusterResourceQuotas** are the quotas that
+select a namespace, read there (`get` and `list` only, a `labelSelector`
+honoured, a field selector or watch refused); `view`, `edit` and `admin` read
+them, so a project member sees the quota over the project without reading
+every ClusterResourceQuota (cluster-admin only).
+
 **Users, Identities and UserIdentityMappings** (`user.openshift.io/v1`,
 #390) are what `oc create user|identity|useridentitymapping` write. Ported
 from OpenShift's oauth-apiserver. `users` and `identities` are cluster-scoped
@@ -614,7 +642,9 @@ Secret data-key validation, pod sysctl-name validation, a pod's
 its request first, as upstream defaults it), ResourceQuota (#124: a create checked against every quota of its namespace
 whose scopes cover it — 403 `exceeded quota`, `must specify <resource>`, or
 `status unknown` before the controller's first pass — and charged to
-`status.used` by compare-and-swap, so concurrent creates cannot overrun it),
+`status.used` by compare-and-swap, so concurrent creates cannot overrun it;
+every ClusterResourceQuota selecting the namespace is checked and charged in
+the same plan, #391),
 LimitRanger (#131: a
 namespace's LimitRanges fill `defaultRequest`/`default` into containers that
 set none and annotate `kubernetes.io/limit-ranger`, then refuse — 403 in
@@ -933,7 +963,10 @@ that name the Pod does not own is left alone with a Warning Event, #94),
 ResourceQuota (`status.hard` and `status.used` per quota from
 its namespace's objects — Pods' compute and counts, Services, Secrets,
 ConfigMaps, PVCs and per-class storage, RCs, quotas, `count/<resource>` —
-honouring scopes; recomputed on change and every 5 minutes, #124), Service (Endpoints and EndpointSlices from the selected Pods, as upstream:
+honouring scopes; recomputed on change and every 5 minutes, #124),
+ClusterResourceQuota (`status.namespaces[]` per selected namespace by the
+same rules, `status.total` their sum; recomputed when a counted object or a
+namespace changes and every 5 minutes, #391), Service (Endpoints and EndpointSlices from the selected Pods, as upstream:
 a named `targetPort` resolved per Pod against its container ports and
 protocol — a Pod without it backs no such port — one Endpoints subset and
 one EndpointSlice per resolved port set; a Pod not Ready is a

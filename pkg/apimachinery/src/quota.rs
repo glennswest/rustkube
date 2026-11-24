@@ -216,9 +216,57 @@ pub fn same(a: &Value, b: &Value) -> bool {
     a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| parse(k, v) == parse(k, w)))
 }
 
+/// Does a ClusterResourceQuota's `spec.selector` (#391) pick the namespace
+/// `ns`? As OpenShift's `GetObjectMatcher`: the label selector, when set,
+/// matches the namespace's labels, and every annotation it names is on the
+/// namespace with that value. Neither set selects nothing (validation
+/// refuses such a quota).
+pub fn selects_namespace(selector: &Value, ns: &Value) -> bool {
+    let labels = &selector["labels"];
+    let annotations = selector["annotations"].as_object().filter(|a| !a.is_empty());
+    if labels.is_null() && annotations.is_none() {
+        return false;
+    }
+    let ns_labels = if ns["metadata"]["labels"].is_object() { ns["metadata"]["labels"].clone() } else { json!({}) };
+    if !labels.is_null() && !crate::selector::matches(labels, &ns_labels) {
+        return false;
+    }
+    annotations.into_iter().flatten().all(|(k, v)| ns["metadata"]["annotations"].get(k) == Some(v))
+}
+
+/// A ClusterResourceQuota as the ResourceQuota it is in each namespace it
+/// selects, as OpenShift's admission converts it: its `spec.quota` and its
+/// `status.total`.
+pub fn cluster_quota_view(crq: &Value) -> Value {
+    json!({
+        "metadata": {"name": crq["metadata"]["name"]},
+        "spec": crq["spec"]["quota"],
+        "status": crq["status"]["total"],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cluster_quota_selects_namespaces_by_labels_and_annotations() {
+        let ns = json!({"metadata": {"name": "a", "labels": {"team": "a"}, "annotations": {"openshift.io/requester": "alice"}}});
+        let bare = json!({"metadata": {"name": "b"}});
+        assert!(selects_namespace(&json!({"labels": {"matchLabels": {"team": "a"}}, "annotations": null}), &ns));
+        assert!(!selects_namespace(&json!({"labels": {"matchLabels": {"team": "a"}}}), &bare));
+        assert!(selects_namespace(&json!({"labels": null, "annotations": {"openshift.io/requester": "alice"}}), &ns));
+        assert!(!selects_namespace(&json!({"annotations": {"openshift.io/requester": "bob"}}), &ns));
+        // Both must hold.
+        assert!(!selects_namespace(&json!({"labels": {"matchLabels": {"team": "a"}}, "annotations": {"x": "y"}}), &ns));
+        assert!(selects_namespace(
+            &json!({"labels": {"matchExpressions": [{"key": "team", "operator": "In", "values": ["a", "b"]}]}}), &ns));
+        assert!(!selects_namespace(&json!({"labels": null, "annotations": null}), &ns), "no criteria: nothing");
+        assert!(!selects_namespace(&json!({"annotations": {}}), &ns));
+        let v = cluster_quota_view(&json!({"metadata": {"name": "q"}, "spec": {"quota": {"hard": {"pods": "1"}}},
+                                           "status": {"total": {"hard": {"pods": "1"}, "used": {"pods": "0"}}}}));
+        assert_eq!(v, json!({"metadata": {"name": "q"}, "spec": {"hard": {"pods": "1"}}, "status": {"hard": {"pods": "1"}, "used": {"pods": "0"}}}));
+    }
 
     #[test]
     fn a_pod_charges_its_compute_and_its_count() {

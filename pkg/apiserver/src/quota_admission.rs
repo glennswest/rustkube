@@ -20,6 +20,13 @@
 //!   controller's next pass, at the latest its 5-minute resync.
 //!
 //! Usage and scopes are `apimachinery::quota`'s, shared with the controller.
+//!
+//! **ClusterResourceQuotas** (#391) are checked and charged in the same
+//! plan, as OpenShift's `quota.openshift.io/ClusterResourceQuota` plugin
+//! runs the same evaluator: each one whose selector picks the namespace is
+//! the ResourceQuota `{spec: spec.quota, status: status.total}` there, and a
+//! charge adds to both `status.total.used` and the namespace's entry in
+//! `status.namespaces`. Their refusals read as a ResourceQuota's.
 
 use crate::error::ApiError;
 use crate::storage::ResourceStorage;
@@ -77,11 +84,38 @@ fn rev(v: &Value) -> Option<u64> {
     v["metadata"]["resourceVersion"].as_str().and_then(|r| r.parse().ok())
 }
 
+/// Which kind of quota a charge goes to.
+#[derive(Clone)]
+enum Kind {
+    /// A ResourceQuota in the namespace.
+    Namespaced,
+    /// A ClusterResourceQuota selecting the namespace (#391).
+    Cluster { namespace: String },
+}
+
+impl Kind {
+    /// The quota as a ResourceQuota (`spec.hard`, `status.hard`/`used`).
+    fn view(&self, stored: &Value) -> Value {
+        match self {
+            Kind::Namespaced => stored.clone(),
+            Kind::Cluster { .. } => quota::cluster_quota_view(stored),
+        }
+    }
+}
+
+fn add(used: &mut Usage, delta: &Usage, sign: i128) {
+    for (k, n) in delta {
+        let e = used.entry(k.clone()).or_default();
+        *e = (*e + sign * n).max(0);
+    }
+}
+
 /// Add `delta` (negative to give it back) to the quota at `key`'s used, by
 /// compare-and-swap; `Err` carries a refusal found on a re-read.
 async fn charge(
     storage: &ResourceStorage,
     key: &str,
+    kind: &Kind,
     resource: &str,
     obj: &Value,
     delta: &Usage,
@@ -89,18 +123,22 @@ async fn charge(
 ) -> Result<(), ApiError> {
     for _ in 0..10 {
         let mut q = storage.get(key).await?;
+        let view = kind.view(&q);
         if sign > 0 {
-            if let Some(why) = refusal(&q, resource, obj, delta) {
+            if let Some(why) = refusal(&view, resource, obj, delta) {
                 return Err(ApiError::forbidden(&why));
             }
         }
-        let mut used = used_of(&q);
-        for (k, n) in delta {
-            let e = used.entry(k.clone()).or_default();
-            *e = (*e + sign * n).max(0);
+        let mut used = used_of(&view);
+        add(&mut used, delta, sign);
+        let Some(hard) = view["spec"]["hard"].as_object().cloned() else { return Ok(()) };
+        match kind {
+            Kind::Namespaced => q["status"]["used"] = quota::resource_list(&hard, &used),
+            Kind::Cluster { namespace } => {
+                q["status"]["total"]["used"] = quota::resource_list(&hard, &used);
+                charge_namespace(&mut q, namespace, &hard, delta, sign);
+            }
         }
-        let Some(hard) = q["spec"]["hard"].as_object().cloned() else { return Ok(()) };
-        q["status"]["used"] = quota::resource_list(&hard, &used);
         if !q["metadata"]["annotations"].is_object() {
             q["metadata"]["annotations"] = json!({});
         }
@@ -115,12 +153,60 @@ async fn charge(
     Err(ApiError::conflict("quota charge kept losing its race; try again"))
 }
 
+/// A ClusterResourceQuota's `status.namespaces[namespace]` with `delta`
+/// added, the entry made (with the quota's hard) when there is none.
+fn charge_namespace(q: &mut Value, namespace: &str, hard: &serde_json::Map<String, Value>, delta: &Usage, sign: i128) {
+    if !q["status"]["namespaces"].is_array() {
+        q["status"]["namespaces"] = json!([]);
+    }
+    let list = q["status"]["namespaces"].as_array_mut().expect("an array");
+    let i = match list.iter().position(|e| e["namespace"] == namespace) {
+        Some(i) => i,
+        None => {
+            list.push(json!({"namespace": namespace, "status": {"hard": hard, "used": {}}}));
+            list.len() - 1
+        }
+    };
+    let mut used = used_of(&list[i]);
+    add(&mut used, delta, sign);
+    list[i]["status"]["used"] = quota::resource_list(hard, &used);
+}
+
+/// The stored objects under `prefix`, from the watch cache when it answers.
+async fn list_cached(storage: &ResourceStorage, prefix: &str) -> Vec<Value> {
+    if let Ok((_, items)) = storage.watch_cache().snapshot(prefix).await {
+        return items.iter().filter_map(|(_, b)| serde_json::from_slice(b).ok()).collect();
+    }
+    storage.list(prefix, 500, None).await.map(|(items, _, _)| items).unwrap_or_default()
+}
+
+/// The ClusterResourceQuotas whose selectors pick `namespace` (#391).
+async fn cluster_quotas(storage: &ResourceStorage, namespace: &str) -> Vec<Value> {
+    let crqs = list_cached(storage, &ResourceStorage::cluster_prefix(crate::cluster_quota::RESOURCE)).await;
+    if crqs.is_empty() {
+        return crqs;
+    }
+    let Ok(ns) = storage.get(&ResourceStorage::cluster_key("namespaces", namespace)).await else {
+        return Vec::new();
+    };
+    crqs.into_iter().filter(|q| quota::selects_namespace(&q["spec"]["selector"], &ns)).collect()
+}
+
 /// Check a create of `obj` (`resource` in the core or a built-in group)
 /// in `namespace` against its quotas, and charge them.
 pub async fn admit(storage: &ResourceStorage, resource: &str, namespace: &str, obj: &Value) -> Result<(), ApiError> {
-    let Ok((quotas, _, _)) = storage.list(&ResourceStorage::namespace_prefix("resourcequotas", namespace), 500, None).await else {
-        return Ok(());
-    };
+    let mut quotas: Vec<(Value, String, Kind)> = Vec::new();
+    if let Ok((rqs, _, _)) = storage.list(&ResourceStorage::namespace_prefix("resourcequotas", namespace), 500, None).await {
+        for q in rqs {
+            let qname = q["metadata"]["name"].as_str().unwrap_or("").to_string();
+            quotas.push((q, ResourceStorage::namespaced_key("resourcequotas", namespace, &qname), Kind::Namespaced));
+        }
+    }
+    for crq in cluster_quotas(storage, namespace).await {
+        let qname = crq["metadata"]["name"].as_str().unwrap_or("").to_string();
+        let kind = Kind::Cluster { namespace: namespace.to_string() };
+        quotas.push((kind.view(&crq), ResourceStorage::cluster_key(crate::cluster_quota::RESOURCE, &qname), kind));
+    }
     if quotas.is_empty() {
         return Ok(());
     }
@@ -130,7 +216,7 @@ pub async fn admit(storage: &ResourceStorage, resource: &str, namespace: &str, o
     let name = obj["metadata"]["name"].as_str().unwrap_or("");
     let forbidden = |why: &str| ApiError::forbidden(&format!("{resource} \"{name}\" is forbidden: {why}"));
     let mut plan = Vec::new();
-    for q in &quotas {
+    for (q, key, kind) in &quotas {
         if !quota::matches(q, resource, group, obj) {
             continue;
         }
@@ -143,14 +229,13 @@ pub async fn admit(storage: &ResourceStorage, resource: &str, namespace: &str, o
         if let Some(why) = refusal(q, resource, obj, &delta) {
             return Err(forbidden(&why));
         }
-        let qname = q["metadata"]["name"].as_str().unwrap_or("").to_string();
-        plan.push((ResourceStorage::namespaced_key("resourcequotas", namespace, &qname), delta));
+        plan.push((key.clone(), kind.clone(), delta));
     }
-    let mut done: Vec<&(String, Usage)> = Vec::new();
+    let mut done: Vec<&(String, Kind, Usage)> = Vec::new();
     for item in &plan {
-        if let Err(e) = charge(storage, &item.0, resource, obj, &item.1, 1).await {
-            for (key, delta) in &done {
-                let _ = charge(storage, key, resource, obj, delta, -1).await;
+        if let Err(e) = charge(storage, &item.0, &item.1, resource, obj, &item.2, 1).await {
+            for (key, kind, delta) in &done {
+                let _ = charge(storage, key, kind, resource, obj, delta, -1).await;
             }
             return Err(if e.status == axum::http::StatusCode::FORBIDDEN { forbidden(&e.message) } else { e });
         }
@@ -165,6 +250,41 @@ mod tests {
 
     fn q(hard: Value, used: Value) -> Value {
         json!({"metadata": {"name": "q"}, "spec": {"hard": hard}, "status": {"hard": hard, "used": used}})
+    }
+
+    /// #391: a ClusterResourceQuota selecting the namespace is checked and
+    /// charged with its ResourceQuotas; one that does not select it is not.
+    #[tokio::test]
+    async fn a_cluster_quota_is_charged_in_the_namespaces_it_selects() {
+        use std::sync::Arc;
+        let st = ResourceStorage::new(Arc::new(crate::test_store::MemStore::default()));
+        for (ns, team) in [("a1", "a"), ("b1", "b")] {
+            st.create(&ResourceStorage::cluster_key("namespaces", ns),
+                      json!({"metadata": {"name": ns, "labels": {"team": team}}})).await.unwrap();
+        }
+        let crq = json!({"metadata": {"name": "q"},
+            "spec": {"selector": {"labels": {"matchLabels": {"team": "a"}}, "annotations": null}, "quota": {"hard": {"pods": "1"}}},
+            "status": {"total": {"hard": {"pods": "1"}, "used": {"pods": "0"}}, "namespaces": []}});
+        let key = ResourceStorage::cluster_key(crate::cluster_quota::RESOURCE, "q");
+        st.create(&key, crq).await.unwrap();
+        let pod = |n: &str| json!({"metadata": {"name": n}, "spec": {"containers": [{"name": "c"}]}});
+        admit(&st, "pods", "a1", &pod("p1")).await.unwrap();
+        let q = st.get(&key).await.unwrap();
+        assert_eq!(q["status"]["total"]["used"], json!({"pods": "1"}));
+        assert_eq!(q["status"]["namespaces"], json!([{"namespace": "a1", "status": {"hard": {"pods": "1"}, "used": {"pods": "1"}}}]));
+        assert!(q["metadata"]["annotations"][CHARGED_AT].is_string());
+        let e = admit(&st, "pods", "a1", &pod("p2")).await.unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(e.message, "pods \"p2\" is forbidden: exceeded quota: q, requested: pods=1, used: pods=1, limited: pods=1");
+        // Not selected: not charged.
+        admit(&st, "pods", "b1", &pod("p3")).await.unwrap();
+        assert_eq!(st.get(&key).await.unwrap()["status"]["total"]["used"], json!({"pods": "1"}));
+        // A refusal by the cluster quota gives a namespace quota's charge back.
+        st.create(&ResourceStorage::namespaced_key("resourcequotas", "a1", "rq"), json!({"metadata": {"name": "rq", "namespace": "a1"},
+            "spec": {"hard": {"pods": "5"}}, "status": {"hard": {"pods": "5"}, "used": {"pods": "1"}}})).await.unwrap();
+        admit(&st, "pods", "a1", &pod("p4")).await.unwrap_err();
+        let rq = st.get(&ResourceStorage::namespaced_key("resourcequotas", "a1", "rq")).await.unwrap();
+        assert_eq!(rq["status"]["used"], json!({"pods": "1"}));
     }
 
     #[test]

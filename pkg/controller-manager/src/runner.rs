@@ -720,6 +720,13 @@ impl ControllerManager {
             crate::resourcequota::ResourceQuotaController::new(api).run().await;
         });
 
+        // ClusterResourceQuota status (#391): usage across the namespaces
+        // each selects.
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::clusterresourcequota::ClusterResourceQuotaController::new(api).run().await;
+        });
+
         // ReplicationController: the same reconcile over core/v1 (#125).
         let api = self.api.clone();
         tasks.spawn(async move {
