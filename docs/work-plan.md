@@ -134,6 +134,9 @@ it reaches the registry" to us; the privileged-pod question went to option A
   unions: apply table, apiVersion map, rigs DAY list); sc-build-a16fdee363 at
   342559c: workspace build, apiserver 454/454, controller-manager 163/163.
   `main` → branch is still a fast-forward. The merge is still the owner's.
+  2026-11-24 (later): 75b75a6 merged main (#391) in, list unions only;
+  sc-build-b18cc2b8cb at 75b75a6: workspace build, apiserver 460/460,
+  controller-manager 165/165. Asked the owner again.
 - [ ] Rig `builds`: pve test machines refuse runs until the stormcluster#128
   fix is installed (as #372, #373, #375, #388).
 
