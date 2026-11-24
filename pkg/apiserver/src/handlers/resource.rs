@@ -19,7 +19,17 @@ pub async fn get_cluster_resource(
     State(state): State<AppState>,
     Path((resource, name)): Path<(String, String)>,
     RawQuery(query): RawQuery,
+    user: Option<axum::Extension<crate::auth::UserInfo>>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // user.openshift.io Users (#390): `~` is the requester (`oc whoami`), and
+    // a name no User can have is a 422 rather than a lookup.
+    if resource == crate::user_identities::USERS {
+        if name == "~" {
+            let user = user.map(|u| u.0).unwrap_or(crate::auth::UserInfo { username: String::new(), groups: vec![] });
+            return Ok(Json(crate::user_identities::current_user(&state.storage, &user).await?));
+        }
+        crate::user_identities::check_user_get(&name)?;
+    }
     let key = ResourceStorage::cluster_key(&resource, &name);
     let read = WatchParams::from_query(query.as_deref().unwrap_or("")).read()?;
     let obj = state.storage.get_read(&ResourceStorage::cluster_prefix(&resource), &key, read).await?;
@@ -381,6 +391,11 @@ pub async fn create_cluster_resource(
     Path(resource): Path<String>,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // An Identity's name is its provider's and login's (#390), whatever
+    // the body says.
+    if resource == crate::user_identities::IDENTITIES {
+        crate::user_identities::identity_name(&mut body);
+    }
     let name = object_name(&mut body)?;
 
     let id = new_identity(&mut body, &name, None);
@@ -658,6 +673,12 @@ pub(crate) async fn builtin_update(
     }
     if key.starts_with("/registry/groups/") {
         crate::user_groups::admit(body)?; // #372
+    }
+    if key.starts_with("/registry/users/") {
+        crate::user_identities::admit_user(body)?; // #390
+    }
+    if key.starts_with("/registry/identities/") {
+        crate::user_identities::admit_identity(body, Some(existing))?; // #390
     }
     if key.starts_with("/registry/securitycontextconstraints/") {
         crate::scc_policy::admit(body)?; // #373
@@ -1809,6 +1830,10 @@ pub(crate) async fn patch_stored_object(
                         .await?;
                 } else if resource == crate::user_groups::RESOURCE {
                     crate::user_groups::admit(&mut obj)?; // #372
+                } else if resource == crate::user_identities::USERS {
+                    crate::user_identities::admit_user(&mut obj)?; // #390
+                } else if resource == crate::user_identities::IDENTITIES {
+                    crate::user_identities::admit_identity(&mut obj, None)?; // #390
                 } else if resource == crate::scc_policy::RESOURCE {
                     crate::scc_policy::admit(&mut obj)?; // #373
                 }
@@ -2386,6 +2411,9 @@ fn resource_to_list_kind(resource: &str) -> String {
         "routes" => "Route",
         "deploymentconfigs" => "DeploymentConfig",
         "groups" => "Group",
+        "users" => "User",
+        "identities" => "Identity",
+        "useridentitymappings" => "UserIdentityMapping",
         "securitycontextconstraints" => "SecurityContextConstraints",
         "podsecuritypolicyreviews" => "PodSecurityPolicyReview",
         "podsecuritypolicyselfsubjectreviews" => "PodSecurityPolicySelfSubjectReview",
@@ -2449,7 +2477,7 @@ pub fn resource_to_api_version(resource: &str) -> &'static str {
         "podmigrations" => "rustkube.io/v1alpha1",
         "routes" => "route.openshift.io/v1",
         "deploymentconfigs" => "apps.openshift.io/v1",
-        "groups" => "user.openshift.io/v1",
+        "groups" | "users" | "identities" | "useridentitymappings" => "user.openshift.io/v1",
         "securitycontextconstraints" | "podsecuritypolicyreviews" | "podsecuritypolicyselfsubjectreviews"
         | "podsecuritypolicysubjectreviews" => "security.openshift.io/v1",
         // Core group.

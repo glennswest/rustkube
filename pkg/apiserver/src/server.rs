@@ -683,8 +683,20 @@ fn build_router(
                 .post(crate::handlers::project::create_project_request),
         )
         // user.openshift.io/v1 — Groups (#372), cluster-scoped and stored
-        // as written; their users carry them at authentication.
+        // as written; their users carry them at authentication. Users and
+        // Identities (#390) the same way (`users/~` is the requester);
+        // UserIdentityMappings are the link between the two, not stored.
         .route("/apis/user.openshift.io/v1", get(discovery::api_user_v1_resources))
+        .route(
+            "/apis/user.openshift.io/v1/useridentitymappings",
+            post(crate::handlers::user_identity_mapping::create),
+        )
+        .route(
+            "/apis/user.openshift.io/v1/useridentitymappings/{name}",
+            get(crate::handlers::user_identity_mapping::get)
+                .put(crate::handlers::user_identity_mapping::update)
+                .delete(crate::handlers::user_identity_mapping::delete),
+        )
         .route(
             "/apis/user.openshift.io/v1/{resource}",
             get(resource::list_cluster_resources)

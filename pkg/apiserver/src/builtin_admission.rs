@@ -72,6 +72,14 @@ pub async fn admit_create(
     if resource == crate::user_groups::RESOURCE && namespace.is_none() {
         crate::user_groups::admit(obj)?;
     }
+    // user.openshift.io Users and Identities (#390): OpenShift's strategies
+    // and validation.
+    if resource == crate::user_identities::USERS && namespace.is_none() {
+        crate::user_identities::admit_user(obj)?;
+    }
+    if resource == crate::user_identities::IDENTITIES && namespace.is_none() {
+        crate::user_identities::admit_identity(obj, None)?;
+    }
     // security.openshift.io SCCs (#373): OpenShift's defaulting and validation.
     if resource == crate::scc_policy::RESOURCE && namespace.is_none() {
         crate::scc_policy::admit(obj)?;

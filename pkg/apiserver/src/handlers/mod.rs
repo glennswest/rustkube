@@ -20,6 +20,7 @@ pub mod scale;
 pub mod scc_review;
 pub mod streaming;
 pub mod token;
+pub mod user_identity_mapping;
 
 use crate::crd::CrdRegistry;
 use crate::storage::ResourceStorage;
