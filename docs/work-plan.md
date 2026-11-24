@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### user.openshift.io Users, Identities, UserIdentityMappings (#390, sc#50) — IN PROGRESS 2026-11-24
+### user.openshift.io Users, Identities, UserIdentityMappings (#390, sc#50) — CODE DONE, RIG BLOCKED 2026-11-24
 Ported from openshift/oauth-apiserver `pkg/user` (validation, strategies,
 `registry/user/etcd` `~`, `registry/useridentitymapping/rest.go`, printers)
 and apiserver-library-go `ValidateUserName` (read 2026-11-24; the user
@@ -15,9 +15,17 @@ registry moved there from openshift-apiserver).
   link, not stored; `users/~`; basic-user `get users ~`; printers; discovery.
 - [x] 7bfdb60 (code + units), rig `oc-users` (suite `rigs`), README,
   oc-compatibility, test/README, CHANGELOG.
-- [ ] sc-build: workspace build, apiserver tests, clippy on the touched files.
-- [ ] Rig `oc-users` on a test machine — blocked as #372/#373/#388 until a pve
-  machine installs the stormcluster#128 fix.
+- [x] sc-build-0b4777d71b at 7bfdb60: apiserver build + 441/441 tests (the
+  10 `user_identities` units, the table and basic-user units). At feef4d0:
+  workspace build and `cargo test --workspace` all pass (apiserver 441,
+  controller-manager 156); clippy: no warning on a changed line (the 24 are
+  older). That job exited 1 only on `command -v shellcheck` (none on the VM)
+  and sc-build filed #394 for it — not a failure, to be closed.
+- [ ] Rig `oc-users` (suite `rigs`) on a test machine: 2026-11-24
+  `stormcentral test run rustkube rigs --tag pvetest1|2|3` refused (400, the
+  machine's apiserver not answering; stormcluster#128 open), as #372/#373/#388.
+  Held with `stormcentral propose --after-install 'stormcluster>=f1de3f6@any:pve'`
+  (item 6772095bd62d). Close #390 when `oc-users` passes.
 - Not done (optional in the issue): an Identity's user from authentication —
   rustkube has no identity provider / OAuth server to map a login.
 - Noticed, not changed: oauth-apiserver's `ValidateGroup` now allows `b64:`
