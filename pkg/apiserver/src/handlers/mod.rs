@@ -7,6 +7,7 @@
 //! `server.rs`.
 
 pub mod authorization;
+pub mod cluster_quota;
 pub mod deployment_configs;
 pub mod openshift_authorization;
 pub mod hpa_v1;

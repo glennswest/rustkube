@@ -37,6 +37,7 @@ pub fn groups_for(resource: &str, group: &str) -> Vec<String> {
         "projects" | "projectrequests" => Some("project.openshift.io"),
         "routes" | "routes/status" => Some("route.openshift.io"),
         "groups" | "users" | "identities" | "useridentitymappings" => Some("user.openshift.io"),
+        "clusterresourcequotas" | "clusterresourcequotas/status" | "appliedclusterresourcequotas" => Some("quota.openshift.io"),
         "securitycontextconstraints" | "podsecuritypolicyreviews" | "podsecuritypolicyselfsubjectreviews"
         | "podsecuritypolicysubjectreviews" => Some("security.openshift.io"),
         "resourceaccessreviews" | "localresourceaccessreviews" | "subjectaccessreviews" | "localsubjectaccessreviews" => {

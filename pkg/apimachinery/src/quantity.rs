@@ -121,7 +121,7 @@ pub fn format_bytes(bytes: u64) -> String {
 pub const QUANTITY_RESOURCES: &[&str] = &[
     "pods", "podtemplates", "replicationcontrollers", "replicasets", "deployments",
     "statefulsets", "daemonsets", "jobs", "cronjobs", "nodes", "persistentvolumeclaims",
-    "persistentvolumes", "resourcequotas", "limitranges", "runtimeclasses",
+    "persistentvolumes", "resourcequotas", "clusterresourcequotas", "limitranges", "runtimeclasses",
     "horizontalpodautoscalers", "csistoragecapacities", "resourceslices", "resourceclaims",
     "resourceclaimtemplates",
 ];

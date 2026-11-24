@@ -80,6 +80,11 @@ pub async fn admit_create(
     if resource == crate::user_identities::IDENTITIES && namespace.is_none() {
         crate::user_identities::admit_identity(obj, None)?;
     }
+    // quota.openshift.io ClusterResourceQuotas (#391): OpenShift's strategy
+    // (no status on create) and validation.
+    if resource == crate::cluster_quota::RESOURCE && namespace.is_none() {
+        crate::cluster_quota::admit(obj, None, false)?;
+    }
     // security.openshift.io SCCs (#373): OpenShift's defaulting and validation.
     if resource == crate::scc_policy::RESOURCE && namespace.is_none() {
         crate::scc_policy::admit(obj)?;

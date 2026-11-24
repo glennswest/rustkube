@@ -24,11 +24,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const CHARGED_AT: &str = "quota.rustkube.io/charged-at";
-const RESYNC: Duration = Duration::from_secs(300);
+pub(crate) const RESYNC: Duration = Duration::from_secs(300);
 const SETTLE: Duration = Duration::from_secs(5);
 
 /// The watched kinds: (path, plural, group), in `dependencies()` order.
-const WATCHED: [(&str, &str, &str); 8] = [
+/// Shared with the ClusterResourceQuota controller (#391).
+pub(crate) const WATCHED: [(&str, &str, &str); 8] = [
     ("/api/v1/pods", "pods", ""),
     ("/api/v1/services", "services", ""),
     ("/api/v1/secrets", "secrets", ""),
@@ -51,19 +52,47 @@ impl ResourceQuotaController {
     pub async fn run(&self) {
         owned::run(&self.api, self).await;
     }
+}
 
-    /// The number of `resource.group` objects in `ns`, by LIST.
-    async fn count(&self, ns: &str, resource: &str, group: &str) -> anyhow::Result<i128> {
-        let base = if group.is_empty() {
-            "/api/v1".to_string()
-        } else {
-            let g = self.api.list(&format!("/apis/{group}")).await?;
-            let v = g["preferredVersion"]["version"].as_str().unwrap_or("v1").to_string();
-            format!("/apis/{group}/{v}")
-        };
-        let list = self.api.list(&format!("{base}/namespaces/{ns}/{resource}")).await?;
-        Ok(list["items"].as_array().map_or(0, |i| i.len()) as i128)
+/// The number of `resource.group` objects in `ns`, by LIST.
+async fn count(api: &ApiClient, ns: &str, resource: &str, group: &str) -> anyhow::Result<i128> {
+    let base = if group.is_empty() {
+        "/api/v1".to_string()
+    } else {
+        let g = api.list(&format!("/apis/{group}")).await?;
+        let v = g["preferredVersion"]["version"].as_str().unwrap_or("v1").to_string();
+        format!("/apis/{group}/{v}")
+    };
+    let list = api.list(&format!("{base}/namespaces/{ns}/{resource}")).await?;
+    Ok(list["items"].as_array().map_or(0, |i| i.len()) as i128)
+}
+
+/// What a quota (`spec.hard`, `spec.scopes`, `spec.scopeSelector`) holds in
+/// `ns`: the watched kinds from their feeds (`deps.feed(i)` for `WATCHED[i]`),
+/// any other `count/…` it names by a LIST. Shared by the ResourceQuota and
+/// ClusterResourceQuota (#391) controllers.
+pub(crate) async fn usage_in(api: &ApiClient, q: &Value, ns: &str, deps: &Deps) -> anyhow::Result<Usage> {
+    let hard = q["spec"]["hard"].as_object().cloned().unwrap_or_default();
+    let mut used = Usage::new();
+    for (i, (_, resource, group)) in WATCHED.iter().enumerate() {
+        for obj in deps.feed(i).select(&Index::Namespace(ns.into()))? {
+            if !quota::matches(q, resource, group, &obj) {
+                continue;
+            }
+            for (k, n) in quota::tracked(q, &quota::usage(resource, group, &obj)) {
+                *used.entry(k).or_default() += n;
+            }
+        }
     }
+    let scoped = q["spec"]["scopes"].as_array().is_some_and(|s| !s.is_empty()) || q["spec"]["scopeSelector"].is_object();
+    for key in hard.keys() {
+        let Some((resource, group)) = count_target(key) else { continue };
+        if scoped || WATCHED.iter().any(|(_, r, g)| *r == resource && *g == group) {
+            continue;
+        }
+        used.insert(key.clone(), count(api, ns, resource, group).await?);
+    }
+    Ok(used)
 }
 
 /// `count/<plural>` or `count/<plural>.<group>` into (plural, group).
@@ -74,7 +103,7 @@ fn count_target(key: &str) -> Option<(&str, &str)> {
 
 /// Whether the stored usage may be lowered now: not within [`SETTLE`] of an
 /// admission charge. `Some(wait)` when it may not.
-fn settling(q: &Value) -> Option<Duration> {
+pub(crate) fn settling(q: &Value) -> Option<Duration> {
     let at = q["metadata"]["annotations"][CHARGED_AT].as_str()?;
     let at = chrono::DateTime::parse_from_rfc3339(at).ok()?;
     let age = (chrono::Utc::now() - at.with_timezone(&chrono::Utc)).to_std().unwrap_or_default();
@@ -102,25 +131,7 @@ impl Controller for ResourceQuotaController {
         let ns = q["metadata"]["namespace"].as_str().unwrap_or("default");
         let name = q["metadata"]["name"].as_str().unwrap_or("");
         let hard = q["spec"]["hard"].as_object().cloned().unwrap_or_default();
-        let mut used = Usage::new();
-        for (i, (_, resource, group)) in WATCHED.iter().enumerate() {
-            for obj in deps.feed(i).select(&Index::Namespace(ns.into()))? {
-                if !quota::matches(q, resource, group, &obj) {
-                    continue;
-                }
-                for (k, n) in quota::tracked(q, &quota::usage(resource, group, &obj)) {
-                    *used.entry(k).or_default() += n;
-                }
-            }
-        }
-        let scoped = q["spec"]["scopes"].as_array().is_some_and(|s| !s.is_empty()) || q["spec"]["scopeSelector"].is_object();
-        for key in hard.keys() {
-            let Some((resource, group)) = count_target(key) else { continue };
-            if scoped || WATCHED.iter().any(|(_, r, g)| *r == resource && *g == group) {
-                continue;
-            }
-            used.insert(key.clone(), self.count(ns, resource, group).await?);
-        }
+        let used = usage_in(&self.api, q, ns, deps).await?;
         let desired_used = quota::resource_list(&hard, &used);
         let desired_hard = Value::Object(hard.clone());
         let stored = &q["status"]["used"];

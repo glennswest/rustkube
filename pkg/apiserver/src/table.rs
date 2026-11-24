@@ -67,6 +67,40 @@ pub async fn refuse_table(req: axum::extract::Request, next: axum::middleware::N
     .into_response()
 }
 
+/// apimachinery `labels.FormatLabels`: `k=v,…` sorted by key, `<none>`
+/// when empty.
+fn format_labels(m: &Value) -> String {
+    let mut pairs: Vec<String> = m.as_object().into_iter().flatten()
+        .map(|(k, v)| format!("{k}={}", v.as_str().unwrap_or(""))).collect();
+    pairs.sort();
+    if pairs.is_empty() { "<none>".into() } else { pairs.join(",") }
+}
+
+/// metav1 `FormatLabelSelector`: the selector's string form (`k=v`,
+/// `k in (a,b)`, `k notin (a)`, `k`, `!k`), sorted by key; `<none>` for no
+/// selector or an empty one.
+fn format_label_selector(sel: &Value) -> String {
+    let mut reqs: Vec<(String, String)> = Vec::new();
+    for (k, v) in sel["matchLabels"].as_object().into_iter().flatten() {
+        reqs.push((k.clone(), format!("{k}={}", v.as_str().unwrap_or(""))));
+    }
+    for e in sel["matchExpressions"].as_array().into_iter().flatten() {
+        let k = e["key"].as_str().unwrap_or("").to_string();
+        let mut values: Vec<&str> = e["values"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        values.sort();
+        let r = match e["operator"].as_str().unwrap_or("") {
+            "In" => format!("{k} in ({})", values.join(",")),
+            "NotIn" => format!("{k} notin ({})", values.join(",")),
+            "Exists" => k.clone(),
+            "DoesNotExist" => format!("!{k}"),
+            _ => return "<error>".into(),
+        };
+        reqs.push((k, r));
+    }
+    reqs.sort();
+    if reqs.is_empty() { "<none>".into() } else { reqs.into_iter().map(|(_, r)| r).collect::<Vec<_>>().join(",") }
+}
+
 /// A column definition, in the shape `meta.k8s.io/v1` expects.
 fn col(name: &str, kind: &str, priority: i64, desc: &str) -> Value {
     json!({
@@ -318,6 +352,18 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                 let users: Vec<&str> =
                     o["users"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                 vec![json!(name_of(o)), json!(users.join(", "))]
+            }) as RowFn,
+        )),
+        // OpenShift's quota printer (#391), for both kinds.
+        "clusterresourcequotas" | "appliedclusterresourcequotas" => Some((
+            vec![
+                col("Name", "string", 0, "Name must be unique within a namespace."),
+                col("Labels Selector", "string", 0, "labels are the labels the namespaces must carry"),
+                col("Annotations Selector", "string", 0, "annotations are the annotations the namespaces must carry"),
+            ],
+            (|o: &Value| {
+                let sel = &o["spec"]["selector"];
+                vec![json!(name_of(o)), json!(format_label_selector(&sel["labels"])), json!(format_labels(&sel["annotations"]))]
             }) as RowFn,
         )),
         // OpenShift's user printers (#390).
@@ -922,6 +968,19 @@ mod tests {
         assert_eq!(t["columnDefinitions"][1]["name"], json!("Users"));
         assert_eq!(t["rows"][0]["cells"], json!(["devs", "alice, bob"]));
         assert_eq!(t["rows"][1]["cells"], json!(["empty", ""]));
+    }
+
+    #[test]
+    fn cluster_quotas_print_their_selectors() {
+        let t = to_table("clusterresourcequotas", json!({"items": [
+            {"metadata": {"name": "q"}, "spec": {"selector": {"labels": {"matchLabels": {"team": "a"},
+                "matchExpressions": [{"key": "env", "operator": "In", "values": ["prod", "dev"]}, {"key": "x", "operator": "DoesNotExist"}]},
+                "annotations": null}}},
+            {"metadata": {"name": "r"}, "spec": {"selector": {"labels": null, "annotations": {"openshift.io/requester": "alice", "a": "b"}}}},
+        ]}));
+        assert_eq!(t["columnDefinitions"][1]["name"], json!("Labels Selector"));
+        assert_eq!(t["rows"][0]["cells"], json!(["q", "env in (dev,prod),team=a,!x", "<none>"]));
+        assert_eq!(t["rows"][1]["cells"], json!(["r", "<none>", "a=b,openshift.io/requester=alice"]));
     }
 
     #[test]

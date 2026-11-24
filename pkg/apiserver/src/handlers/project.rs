@@ -546,6 +546,9 @@ const OBSERVED: &[(&str, &[&str])] = &[
     ("gateway.networking.k8s.io", &["gateways/status", "httproutes/status"]),
     ("route.openshift.io", &["routes/status"]),
     ("apps.openshift.io", &["deploymentconfigs/log", "deploymentconfigs/status"]),
+    // The ClusterResourceQuotas over the project (#391), as OpenShift's
+    // admin, edit and view read them.
+    ("quota.openshift.io", &["appliedclusterresourcequotas"]),
 ];
 
 fn view_rules() -> Vec<Value> {

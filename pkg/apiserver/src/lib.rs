@@ -11,6 +11,7 @@ pub mod admission;
 pub mod aggregation;
 pub mod apply;
 pub mod bootstrap_token;
+pub mod cluster_quota;
 pub mod builtin_admission;
 pub mod auth;
 pub mod compactor;

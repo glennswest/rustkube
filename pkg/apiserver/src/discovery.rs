@@ -240,6 +240,13 @@ fn builtin_groups() -> Vec<Value> {
             "preferredVersion": {"groupVersion": "apps.openshift.io/v1", "version": "v1"}
         }),
         json!({
+            // ClusterResourceQuotas (#391): `oc create clusterresourcequota`,
+            // enforced across the namespaces each selects.
+            "name": "quota.openshift.io",
+            "versions": [{"groupVersion": "quota.openshift.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "quota.openshift.io/v1", "version": "v1"}
+        }),
+        json!({
             // Groups (#372): what `oc adm groups` and `oc adm prune groups`
             // act on; a Group's users carry it at authentication.
             "name": "user.openshift.io",
@@ -877,6 +884,7 @@ pub(crate) async fn builtin_lists() -> &'static std::collections::BTreeMap<(Stri
         gv!("route.openshift.io", "v1", api_route_v1_resources());
         gv!("apps.openshift.io", "v1", api_apps_openshift_v1_resources());
         gv!("user.openshift.io", "v1", api_user_v1_resources());
+        gv!("quota.openshift.io", "v1", api_quota_v1_resources());
         gv!("security.openshift.io", "v1", api_security_v1_resources());
         gv!("scheduling.k8s.io", "v1", api_scheduling_v1_resources());
         gv!("authentication.k8s.io", "v1", api_authentication_v1_resources());
@@ -1115,6 +1123,7 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
             ("identities", "Identity", false),
         ],
         ("security.openshift.io", "v1") => vec![("securitycontextconstraints", "SecurityContextConstraints", false)],
+        ("quota.openshift.io", "v1") => vec![("clusterresourcequotas", "ClusterResourceQuota", false)],
         ("apiregistration.k8s.io", "v1") => vec![("apiservices", "APIService", false)],
         ("rustkube.io", "v1alpha1") => vec![("podmigrations", "PodMigration", true)],
         ("apps", "v1") => vec![
@@ -1803,6 +1812,37 @@ pub async fn api_user_v1_resources() -> impl IntoResponse {
     }))
 }
 
+/// GET /apis/quota.openshift.io/v1 — ClusterResourceQuotas (#391), stored
+/// with a `/status`, and AppliedClusterResourceQuotas, the ones that select a
+/// namespace, read there (get and list only, as OpenShift serves them).
+pub async fn api_quota_v1_resources() -> impl IntoResponse {
+    Json(json!({
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "quota.openshift.io/v1",
+        "resources": [{
+            "name": "appliedclusterresourcequotas",
+            "singularName": "appliedclusterresourcequota",
+            "namespaced": true,
+            "kind": "AppliedClusterResourceQuota",
+            "verbs": ["get", "list"]
+        }, {
+            "name": "clusterresourcequotas",
+            "singularName": "clusterresourcequota",
+            "namespaced": false,
+            "kind": "ClusterResourceQuota",
+            "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"],
+            "shortNames": ["clusterquota"]
+        }, {
+            "name": "clusterresourcequotas/status",
+            "singularName": "",
+            "namespaced": false,
+            "kind": "ClusterResourceQuota",
+            "verbs": ["get", "patch", "update"]
+        }]
+    }))
+}
+
 /// GET /apis/scheduling.k8s.io/v1 — PriorityClass (#85).
 pub async fn api_scheduling_v1_resources() -> impl IntoResponse {
     Json(json!({
@@ -2119,6 +2159,7 @@ mod tests {
             ("networking.k8s.io", "v1"), ("scheduling.k8s.io", "v1"), ("admissionregistration.k8s.io", "v1"),
             ("node.k8s.io", "v1"), ("flowcontrol.apiserver.k8s.io", "v1"), ("gateway.networking.k8s.io", "v1"),
             ("route.openshift.io", "v1"), ("user.openshift.io", "v1"), ("security.openshift.io", "v1"),
+            ("quota.openshift.io", "v1"),
             ("apps.openshift.io", "v1")];
         for (g, v) in generic {
             let served = advertised(g, v).await.unwrap_or_else(|| panic!("{g}/{v} not in the table"));
@@ -2248,6 +2289,7 @@ mod tests {
             "apps.openshift.io",
             "project.openshift.io",
             "user.openshift.io",
+            "quota.openshift.io",
             "security.openshift.io",
             "scheduling.k8s.io",
             "authentication.k8s.io",
