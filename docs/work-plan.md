@@ -4,6 +4,20 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Secret scan findings (#393, stormcentral#1679) — DONE 2026-11-23
+Scan of 7e517dc61971: `generic-api-key` at `bootstrap_token.rs:140,182`, `private-key`
+at `pkg/apiserver/testdata/sa-test.key:1`. All test fixtures, not secrets; fixed per
+the test-secrets rule (generate keys in tests, plain placeholders), no allowlist.
+- [x] 4b385c0: SA test RSA keypair generated once per run (`rsa` dev-dep),
+  `testdata/` removed; bootstrap token test secret `example000000000` (units + rigs
+  `bootstrap-token`, `cluster-info`).
+- [x] ba4c5a3: Cargo.lock adds rsa 0.9.10 and its deps only (nothing bumped).
+- [x] sc-build-ffc1a45209 at ba4c5a3: `cargo build --locked && cargo test --locked`
+  passed (apiserver 430, incl. the auth and bootstrap_token tests).
+- [ ] The next nightly scan closes #393 (gitleaks not run here; no PEM private key
+  left in the tree, the new value's entropy 2.09 < the rule's 3.5).
+- The two rigs changed only in the value; they run with the next `rigs` suite.
+
 ### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, RIG BLOCKED 2026-11-23
 Option A of the question on #375 (stormcentral's owner queue refused it:
 "a gap: session work — build it", #1680): rollouts run in the
