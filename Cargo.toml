@@ -51,6 +51,13 @@ codegen-units = 1
 strip = "debuginfo"
 debug = "line-tables-only"
 
+# Test-only RSA key generation (#393) is slow unoptimised; tests and dev
+# builds compile just these two crates at opt-level 3.
+[profile.dev.package.rsa]
+opt-level = 3
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+
 [workspace.package]
 version = "0.18.0"
 edition = "2021"
@@ -97,6 +104,8 @@ rustls-pemfile = { version = "2" }
 webpki-roots = { version = "1" }
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 x509-parser = { version = "0.16" }
+# Test-only: generates the RSA ServiceAccount test key (ring cannot, #393).
+rsa = { version = "0.9", features = ["pem"] }
 
 # gRPC (CRI/CSI client)
 tonic = { version = "0.12", features = ["tls"] }
