@@ -36,7 +36,7 @@ pub fn groups_for(resource: &str, group: &str) -> Vec<String> {
     let own = match resource {
         "projects" | "projectrequests" => Some("project.openshift.io"),
         "routes" | "routes/status" => Some("route.openshift.io"),
-        "groups" => Some("user.openshift.io"),
+        "groups" | "users" | "identities" | "useridentitymappings" => Some("user.openshift.io"),
         "securitycontextconstraints" | "podsecuritypolicyreviews" | "podsecuritypolicyselfsubjectreviews"
         | "podsecuritypolicysubjectreviews" => Some("security.openshift.io"),
         "resourceaccessreviews" | "localresourceaccessreviews" | "subjectaccessreviews" | "localsubjectaccessreviews" => {

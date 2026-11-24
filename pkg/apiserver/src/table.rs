@@ -320,6 +320,47 @@ fn printer(resource: &str) -> Option<(Vec<Value>, RowFn)> {
                 vec![json!(name_of(o)), json!(users.join(", "))]
             }) as RowFn,
         )),
+        // OpenShift's user printers (#390).
+        "users" => Some((
+            vec![
+                col("Name", "string", 0, "Name must be unique within a namespace."),
+                col("UID", "string", 0, "UID is the unique in time and space value for this object."),
+                col("Full Name", "string", 0, "fullName is the full name of user"),
+                col("Identities", "string", 0, "identities are the identities associated with this user"),
+            ],
+            (|o: &Value| {
+                let ids: Vec<&str> =
+                    o["identities"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                vec![json!(name_of(o)), json!(o["metadata"]["uid"].as_str().unwrap_or("")),
+                     json!(o["fullName"].as_str().unwrap_or("")), json!(ids.join(", "))]
+            }) as RowFn,
+        )),
+        "identities" => Some((
+            vec![
+                col("Name", "string", 0, "Name must be unique within a namespace."),
+                col("IDP Name", "string", 0, "providerName is the source of identity information"),
+                col("IDP User Name", "string", 0, "providerUserName uniquely represents this identity in the scope of the provider"),
+                col("User Name", "string", 0, "user is a reference to the user this identity is associated with"),
+                col("User UID", "string", 0, "UID is the unique in time and space value for this object."),
+            ],
+            (|o: &Value| {
+                let s = |v: &Value| json!(v.as_str().unwrap_or(""));
+                vec![json!(name_of(o)), s(&o["providerName"]), s(&o["providerUserName"]),
+                     s(&o["user"]["name"]), s(&o["user"]["uid"])]
+            }) as RowFn,
+        )),
+        "useridentitymappings" => Some((
+            vec![
+                col("Name", "string", 0, "Name must be unique within a namespace."),
+                col("Identity", "string", 0, "identity is a reference to an identity"),
+                col("User Name", "string", 0, "user is a reference to a user"),
+                col("User UID", "string", 0, "UID is the unique in time and space value for this object."),
+            ],
+            (|o: &Value| {
+                let s = |v: &Value| json!(v.as_str().unwrap_or(""));
+                vec![json!(name_of(o)), s(&o["identity"]["name"]), s(&o["user"]["name"]), s(&o["user"]["uid"])]
+            }) as RowFn,
+        )),
         // `oc get scc` (#373): the columns of OpenShift's SCC CRD, each
         // cell as apiextensions prints a `string` column — arrays as
         // compact JSON, a null as `<no value>`.
@@ -881,6 +922,25 @@ mod tests {
         assert_eq!(t["columnDefinitions"][1]["name"], json!("Users"));
         assert_eq!(t["rows"][0]["cells"], json!(["devs", "alice, bob"]));
         assert_eq!(t["rows"][1]["cells"], json!(["empty", ""]));
+    }
+
+    #[test]
+    fn users_identities_and_mappings_print_as_openshift_prints_them() {
+        let t = to_table("users", json!({"items": [
+            {"metadata": {"name": "u1", "uid": "1"}, "fullName": "U", "identities": ["p:a", "q:b"]},
+        ]}));
+        assert_eq!(t["columnDefinitions"][2]["name"], json!("Full Name"));
+        assert_eq!(t["rows"][0]["cells"], json!(["u1", "1", "U", "p:a, q:b"]));
+        let t = to_table("identities", json!({"items": [
+            {"metadata": {"name": "p:a"}, "providerName": "p", "providerUserName": "a", "user": {"name": "u1", "uid": "1"}},
+            {"metadata": {"name": "q:b"}, "providerName": "q", "providerUserName": "b", "user": {}},
+        ]}));
+        assert_eq!(t["columnDefinitions"][1]["name"], json!("IDP Name"));
+        assert_eq!(t["rows"][0]["cells"], json!(["p:a", "p", "a", "u1", "1"]));
+        assert_eq!(t["rows"][1]["cells"], json!(["q:b", "q", "b", "", ""]));
+        let t = to_table("useridentitymappings", json!(
+            {"metadata": {"name": "p:a"}, "identity": {"name": "p:a"}, "user": {"name": "u1", "uid": "1"}}));
+        assert_eq!(t["rows"][0]["cells"], json!(["p:a", "p:a", "u1", "1"]));
     }
 
     /// A Route prints what `oc get route` prints. The DaemonSet columns matter

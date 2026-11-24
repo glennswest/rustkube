@@ -35,9 +35,9 @@ use std::sync::{Arc, Mutex};
 /// The stored plural.
 pub const RESOURCE: &str = "groups";
 
-/// Why `name` is not a valid Group or user name, as OpenShift's
-/// `ValidateGroupName` / `ValidateUserName` (path segment, then `:` and `~`).
-fn name_reasons(name: &str) -> Vec<&'static str> {
+/// Why `name` is not a path segment, as apimachinery's
+/// `ValidatePathSegmentName`.
+pub(crate) fn path_segment_reasons(name: &str) -> Vec<&'static str> {
     let mut reasons = Vec::new();
     match name {
         "." => reasons.push("may not be '.'"),
@@ -50,6 +50,13 @@ fn name_reasons(name: &str) -> Vec<&'static str> {
     if name.contains('%') {
         reasons.push("may not contain '%'");
     }
+    reasons
+}
+
+/// Why `name` is not a valid Group or user name, as OpenShift's
+/// `ValidateGroupName` / `ValidateUserName` (path segment, then `:` and `~`).
+fn name_reasons(name: &str) -> Vec<&'static str> {
+    let mut reasons = path_segment_reasons(name);
     if !reasons.is_empty() {
         return reasons;
     }

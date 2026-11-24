@@ -730,10 +730,12 @@ pub fn bootstrap_cluster_roles() -> Vec<Value> {
         ),
         cluster_role(
             "basic-user",
-            "List one's own projects (the server filters) and ask whether one may request one.",
+            "List one's own projects (the server filters), ask whether one may request one, and read one's own User.",
             vec![
                 rule(&["project.openshift.io"], &["projects"], &["list", "watch"]),
                 rule(&["project.openshift.io"], &["projectrequests"], &["list"]),
+                // `oc whoami` (#390): `users/~` is the requester.
+                json!({"apiGroups": ["user.openshift.io"], "resources": ["users"], "resourceNames": ["~"], "verbs": ["get"]}),
             ],
         ),
         cluster_role(
@@ -1041,6 +1043,15 @@ mod tests {
         // Everyone: list own projects and request one; nothing else.
         assert!(allows("basic-user", "list", "project.openshift.io", "projects", None));
         assert!(!allows("basic-user", "get", "project.openshift.io", "projects", None));
+        // Oneself (`users/~`, #390), and no other User.
+        let r = bootstrap_cluster_roles().into_iter().find(|r| r["metadata"]["name"] == "basic-user").unwrap();
+        let get_user = |name: &str| AuthorizationRequest {
+            verb: "get".into(), resource: "users".into(), subresource: None,
+            api_group: "user.openshift.io".into(), namespace: None, name: Some(name.into()),
+        };
+        let grants = |req: &AuthorizationRequest| r["rules"].as_array().unwrap().iter().any(|rule| crate::rbac_engine::rule_matches(rule, req));
+        assert!(grants(&get_user("~")));
+        assert!(!grants(&get_user("alice")));
         assert!(allows("self-provisioner", "create", "project.openshift.io", "projectrequests", None));
     }
 

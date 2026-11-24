@@ -1118,7 +1118,11 @@ pub(crate) fn resources_for(group: &str, version: &str) -> Vec<(&'static str, &'
         ("route.openshift.io", "v1") => vec![("routes", "Route", true)],
         ("apps.openshift.io", "v1") => vec![("deploymentconfigs", "DeploymentConfig", true)],
         ("build.openshift.io", "v1") => vec![("builds", "Build", true), ("buildconfigs", "BuildConfig", true)],
-        ("user.openshift.io", "v1") => vec![("groups", "Group", false)],
+        ("user.openshift.io", "v1") => vec![
+            ("groups", "Group", false),
+            ("users", "User", false),
+            ("identities", "Identity", false),
+        ],
         ("security.openshift.io", "v1") => vec![("securitycontextconstraints", "SecurityContextConstraints", false)],
         ("apiregistration.k8s.io", "v1") => vec![("apiservices", "APIService", false)],
         ("rustkube.io", "v1alpha1") => vec![("podmigrations", "PodMigration", true)],
@@ -1794,11 +1798,12 @@ pub async fn api_security_v1_resources() -> impl IntoResponse {
     }))
 }
 
-/// GET /apis/user.openshift.io/v1 — Groups (#372), stored as written.
-///
-/// Only `groups`: OpenShift's Users, Identities and UserIdentityMappings are
-/// not served here (`oc adm groups` needs none of them).
+/// GET /apis/user.openshift.io/v1 — Groups (#372), Users and Identities
+/// (#390), stored as written, and UserIdentityMappings, which are the link
+/// between an Identity and a User (create, get, update and delete only, as
+/// OpenShift serves them).
 pub async fn api_user_v1_resources() -> impl IntoResponse {
+    const STORED: [&str; 8] = ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"];
     Json(json!({
         "kind": "APIResourceList",
         "apiVersion": "v1",
@@ -1808,7 +1813,25 @@ pub async fn api_user_v1_resources() -> impl IntoResponse {
             "singularName": "group",
             "namespaced": false,
             "kind": "Group",
-            "verbs": ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+            "verbs": STORED
+        }, {
+            "name": "identities",
+            "singularName": "identity",
+            "namespaced": false,
+            "kind": "Identity",
+            "verbs": STORED
+        }, {
+            "name": "useridentitymappings",
+            "singularName": "useridentitymapping",
+            "namespaced": false,
+            "kind": "UserIdentityMapping",
+            "verbs": ["create", "delete", "get", "update"]
+        }, {
+            "name": "users",
+            "singularName": "user",
+            "namespaced": false,
+            "kind": "User",
+            "verbs": STORED
         }]
     }))
 }

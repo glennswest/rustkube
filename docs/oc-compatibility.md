@@ -26,9 +26,11 @@ State on 2026-10-09, from the code on main and from running oc against it
   works from cadvisor, #89); `oc adm node-logs` (`nodes/{name}/proxy` is served, #108, but the kubelet
   serves no `/logs/`, rustkube-node#198);
   `oc explain` on built-in types (their OpenAPI schemas are empty; on
-  custom resources it works, #120); `oc whoami` (`user.openshift.io`
-  serves only Groups here, #372, not `users/~`; SelfSubjectReview is served, #116, so `kubectl auth
-  whoami` works); `clusterversion`, `dc` (their groups are not served).
+  custom resources it works, #120); `clusterversion` (its group is not
+  served).
+- 2026-11-24: `oc whoami` works (`users/~`, #390; `kubectl auth whoami` from
+  SelfSubjectReview, #116), and `oc create user|identity|useridentitymapping`
+  with `oc get user|identity|useridentitymapping` (`test/e2e/oc-users.sh`).
 -->
 
 # `oc` command reference and compatibility checklist
@@ -70,7 +72,7 @@ authoritative — the exact `oc adm` set shifts slightly by cluster version.
 
 | Command | Purpose |
 |---|---|
-| `create` | Create from file/stdin; generators: `secret`, `configmap`, `serviceaccount`, `route`, `deployment`, `job`, `token`, … |
+| `create` | Create from file/stdin; generators: `secret`, `configmap`, `serviceaccount`, `route`, `deployment`, `job`, `token`, `user`, `identity`, `useridentitymapping` (#390), … |
 | `apply` | Declarative apply; `edit-last-applied`, `set-last-applied`, `view-last-applied` |
 | `get` | Display resources (`-o wide/yaml/json/jsonpath/custom-columns`, `-w` watch) |
 | `edit` | Edit a live resource in `$EDITOR` |
@@ -156,7 +158,7 @@ yet run on a test machine.
 | Command | Purpose |
 |---|---|
 | `config` | kubeconfig mgmt: `view`, `use-context`, `set-context`, `current-context`, `get-contexts`, `set-cluster`, `set-credentials`, `rename-context`, `delete-context`, `unset` |
-| `whoami` | Current user (`-t` token, `-c` context, `--show-server`, `--show-console`) |
+| `whoami` | Current user (`-t` token, `-c` context, `--show-server`, `--show-console`); `users/~`, which every authenticated user may get (#390) |
 | `completion` | Shell completion (`bash`, `zsh`, `fish`, `powershell`) |
 | `version` | Client + server version (`-o yaml`, `--client`) |
 
