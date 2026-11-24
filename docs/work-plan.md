@@ -101,6 +101,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   6f26d68 (2026-11-23) merged main (#393) into the branch, so the
   fast-forward stays clean; sc-build-VM at 6f26d68: workspace build,
   apiserver 443/443, controller-manager 163/163. Asked again on #374.
+  2026-11-24: 342559c merged main (#390) into the branch (conflicts were list
+  unions: apply table, apiVersion map, rigs DAY list); sc-build-a16fdee363 at
+  342559c: workspace build, apiserver 454/454, controller-manager 163/163.
+  `main` → branch is still a fast-forward. The merge is still the owner's.
 - [ ] Rig `builds`: pve test machines refuse runs until the stormcluster#128
   fix is installed (as #372, #373, #375, #388).
 
