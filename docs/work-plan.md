@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### quota.openshift.io ClusterResourceQuotas (#391, sc#50) — IN PROGRESS 2026-11-24
+### quota.openshift.io ClusterResourceQuotas (#391, sc#50) — CODE DONE, RIG BLOCKED 2026-11-24
 Ported from openshift-apiserver `pkg/quota` (validation, strategy,
 `appliedclusterresourcequota/filter.go`, printer), library-go
 `pkg/quota/clusterquotamapping` (`GetObjectMatcher`), apiserver-library-go
@@ -23,9 +23,12 @@ OpenShift 4 the kind is a CRD on kube-apiserver; here it is built in.
   apiserver 447, controller-manager 158, all pass.
 - [x] Rig `cluster-quota` (suite `rigs`), README, oc-compatibility,
   test/README, CHANGELOG.
-- [ ] clippy on the touched files.
-- [ ] Rig on a test machine — blocked until a pve machine installs the
-  stormcluster#128 fix (as #372/#373/#388/#390).
+- [x] clippy (workspace, all targets) at 25b4f82: 42 warnings, none in a
+  changed file or line.
+- [ ] Rig `cluster-quota` on a test machine: 2026-11-24 `stormcentral test run
+  rustkube rigs --tag pvetest1|2|3` refused (400, stormcluster#128 open), as
+  #372/#373/#388/#390. Held with `stormcentral propose --after-install
+  'stormcluster>=f1de3f6@any:pve'`. Close #391 when it passes.
 - Not ported: OpenShift's admission also charges *updates* through the
   evaluator; rustkube's quota admission (#124) checks creates only, and the
   CRQ path follows it.
