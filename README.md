@@ -140,7 +140,7 @@ unchanged value — #240; `format`, `allOf`/`anyOf`/`oneOf`/`not`, CEL
 there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated APIs, below),
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
 routes for it, #70), `project.openshift.io/v1` (Projects, below),
-`user.openshift.io/v1` (Groups only, below),
+`user.openshift.io/v1` (Groups, Users, Identities and UserIdentityMappings, below),
 `apps.openshift.io/v1` (DeploymentConfigs, below),
 `security.openshift.io/v1` (SecurityContextConstraints and the three
 PodSecurityPolicy reviews, below),
@@ -355,8 +355,36 @@ ServiceAccount's user name `system:serviceaccount:<namespace>:<name>` may be
 listed (OpenShift refuses it; StormCOS's users are ServiceAccounts). A
 request from a listed user carries the Group (read from the watch cache,
 rebuilt when a Group changes), so a RoleBinding to the Group grants its
-members; impersonation carries only the groups it names. OpenShift's Users,
-Identities and UserIdentityMappings are not served.
+members; impersonation carries only the groups it names.
+
+**Users, Identities and UserIdentityMappings** (`user.openshift.io/v1`,
+#390) are what `oc create user|identity|useridentitymapping` write. Ported
+from OpenShift's oauth-apiserver. `users` and `identities` are cluster-scoped
+and stored as written (every verb, RBAC as any cluster-scoped kind;
+cluster-admin only), with OpenShift's strategies and validation: a User's
+`groups` is cleared on every write and written `null`, its name a path
+segment with no `:` unless it begins `b64:` and not `~` (so there is no User
+for a ServiceAccount, nor any need of one), each of its `identities` a
+`<provider>:<login>` name; an Identity is named `<providerName>:<providerUserName>`
+by the server whatever the body says, both fixed after create, and its
+`user` is `{}` until mapped. `oc get users` prints NAME, UID, FULL NAME,
+IDENTITIES and `oc get identities` NAME, IDP NAME, IDP USER NAME, USER NAME,
+USER UID, as OpenShift's printers. **`useridentitymappings`** are not stored
+(create, get, update and delete; no list or watch): creating `p:login` → `u1`
+adds `p:login` to u1's `identities` and sets the Identity's `user` to u1's
+name and uid; get reads that link back (both halves must agree; the
+mapping's name, uid and resourceVersion are the Identity's); update (PUT)
+moves the Identity to another User, which the old one stops listing; delete
+undoes the link and leaves both objects. A second create of a mapped Identity
+is AlreadyExists; an Identity or User that does not exist is a 422
+(`referenced user does not exist`); `?dryRun=All` writes nothing.
+**`users/~`** is the requester (`oc whoami`): the stored User of that name
+with the request's groups in `groups`, or one made from the request alone
+when there is none or the name cannot be a User's (a ServiceAccount); every
+authenticated user may `get` it (the `basic-user` ClusterRole, reconciled at
+boot). Nothing authenticates through an Identity (there is no OAuth server
+or identity provider here): Users and Identities are records, and a User's
+name is what RBAC subjects of kind User match anyway.
 
 **API aggregation** (#83). An `apiregistration.k8s.io/v1` APIService with
 a `service` makes its group/version an aggregated API, as with upstream's

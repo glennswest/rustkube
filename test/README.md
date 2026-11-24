@@ -577,6 +577,14 @@ ordinary users and an administrator, and RBAC escalation prevention.
 to work or to fail for the reason docs/oc-compatibility.md records, and a
 verb doing the other thing is a failure.
 
+`e2e/oc-users.sh` (#390, sc#50, suite `rigs`): `oc create user u1
+--full-name=U`, `oc create identity p:login`, `oc create useridentitymapping
+p:login u1`, then `oc get user u1 -o yaml` lists `p:login` under
+`identities` and the Identity names u1; AlreadyExists on a second mapping, a
+PUT moving it to u2, delete unmapping it; OpenShift's validation and
+printers; `oc whoami` for the admin and for a user with no User object, who
+may not read or create Users.
+
 `e2e/vm-runstrategy.sh` (#104, #209, suite `rigs`): the VirtualMachine
 controller's `runStrategy` on a failed VMI (Always replaced after backoff,
 Once left), `ready` following the VMI, and `CrashLoopBackOff` while the
