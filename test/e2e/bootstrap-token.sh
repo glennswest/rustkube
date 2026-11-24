@@ -43,9 +43,9 @@ csr() { # <name> <signer> — a CSR body claiming to be the victim node
     "$1" "$2" "$(cat "$W/req.b64")"
 }
 
-expect 201 "$(secret abcdef 0123456789abcdef "$(iso '+1 hour')")" "setup: bootstrap token Secret"
-expect 201 "$(secret zzzzzz 0123456789abcdef "$(iso '-1 minute')")" "setup: expired bootstrap token Secret"
-BOOT=abcdef.0123456789abcdef
+expect 201 "$(secret abcdef example000000000 "$(iso '+1 hour')")" "setup: bootstrap token Secret"
+expect 201 "$(secret zzzzzz example000000000 "$(iso '-1 minute')")" "setup: expired bootstrap token Secret"
+BOOT=abcdef.example000000000
 
 # 1.
 expect 201 "$(api $BOOT POST $CSRS "$(csr forge-1 storm.io/forge-node)")" "bootstrap token creates a forge-node CSR"
@@ -68,13 +68,13 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 --cacert "$W/ca.crt" 
 expect 403 "$code" "bootstrap token cannot watch another's CSR"
 
 # 3.
-expect 401 "$(api zzzzzz.0123456789abcdef GET $CSRS/forge-1)" "expired bootstrap token refused"
-expect 401 "$(api abcdef.0123456789abcdee GET $CSRS/forge-1)" "wrong secret refused"
-expect 201 "$(secret qqqqqq 0123456789abcdef "$(iso '+1 hour')")" "setup: a third token"
-expect 201 "$(api qqqqqq.0123456789abcdef POST $CSRS "$(csr q-1 storm.io/forge-node)")" "a third token authenticates"
+expect 401 "$(api zzzzzz.example000000000 GET $CSRS/forge-1)" "expired bootstrap token refused"
+expect 401 "$(api abcdef.example000000001 GET $CSRS/forge-1)" "wrong secret refused"
+expect 201 "$(secret qqqqqq example000000000 "$(iso '+1 hour')")" "setup: a third token"
+expect 201 "$(api qqqqqq.example000000000 POST $CSRS "$(csr q-1 storm.io/forge-node)")" "a third token authenticates"
 expect 200 "$(api "$ADMIN" DELETE /api/v1/namespaces/kube-system/secrets/bootstrap-token-qqqqqq)" "setup: its Secret deleted"
 sleep 1
-expect 401 "$(api qqqqqq.0123456789abcdef GET $CSRS/forge-1)" "deleted Secret: token refused"
+expect 401 "$(api qqqqqq.example000000000 GET $CSRS/forge-1)" "deleted Secret: token refused"
 
 # 4.
 NODE=$(token system:node:n1 '["system:nodes"]')

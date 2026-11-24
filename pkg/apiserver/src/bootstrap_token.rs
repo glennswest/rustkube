@@ -137,7 +137,7 @@ mod tests {
         let mut data = serde_json::Map::new();
         for (k, v) in [
             ("token-id", "abcdef"),
-            ("token-secret", "0123456789abcdef"),
+            ("token-secret", "example000000000"),
             ("usage-bootstrap-authentication", "true"),
         ]
         .into_iter()
@@ -150,9 +150,9 @@ mod tests {
 
     #[test]
     fn token_shape() {
-        assert_eq!(parse("abcdef.0123456789abcdef"), Some(("abcdef", "0123456789abcdef")));
-        for bad in ["abcdef0123456789abcdef", "ABCDEF.0123456789abcdef", "abcde.0123456789abcdef", "abcdef.0123456789abcde",
-                    "abcdef.0123456789abcdeff", "eyJhbGciOi.x.y", ""] {
+        assert_eq!(parse("abcdef.example000000000"), Some(("abcdef", "example000000000")));
+        for bad in ["abcdefexample000000000", "ABCDEF.example000000000", "abcde.example000000000", "abcdef.example00000000",
+                    "abcdef.example0000000000", "eyJhbGciOi.x.y", ""] {
             assert_eq!(parse(bad), None, "{bad}");
         }
     }
@@ -160,11 +160,11 @@ mod tests {
     #[test]
     fn a_valid_secret_authenticates() {
         let now = chrono::Utc::now();
-        let (user, groups) = validate(&secret(&[]), "abcdef", "0123456789abcdef", now).unwrap();
+        let (user, groups) = validate(&secret(&[]), "abcdef", "example000000000", now).unwrap();
         assert_eq!(user, "system:bootstrap:abcdef");
         assert_eq!(groups, vec!["system:bootstrappers"]);
         let s = secret(&[("auth-extra-groups", "system:bootstrappers:forge, system:bootstrappers:forge")]);
-        let (_, groups) = validate(&s, "abcdef", "0123456789abcdef", now).unwrap();
+        let (_, groups) = validate(&s, "abcdef", "example000000000", now).unwrap();
         assert_eq!(groups, vec!["system:bootstrappers", "system:bootstrappers:forge"]);
     }
 
@@ -172,25 +172,25 @@ mod tests {
     fn refusals() {
         let now = chrono::Utc::now();
         let ok = |s: &Value, sec: &str| validate(s, "abcdef", sec, now).is_some();
-        assert!(!ok(&secret(&[]), "0123456789abcdee"), "wrong secret");
-        assert!(validate(&secret(&[]), "zzzzzz", "0123456789abcdef", now).is_none(), "wrong id");
+        assert!(!ok(&secret(&[]), "example000000001"), "wrong secret");
+        assert!(validate(&secret(&[]), "zzzzzz", "example000000000", now).is_none(), "wrong id");
         let mut wrong_type = secret(&[]);
         wrong_type["type"] = json!("Opaque");
-        assert!(!ok(&wrong_type, "0123456789abcdef"));
+        assert!(!ok(&wrong_type, "example000000000"));
         let mut not_for_auth = secret(&[]);
         not_for_auth["data"]["usage-bootstrap-authentication"] = json!(b64("false"));
-        assert!(!ok(&not_for_auth, "0123456789abcdef"));
+        assert!(!ok(&not_for_auth, "example000000000"));
         let mut deleting = secret(&[]);
         deleting["metadata"]["deletionTimestamp"] = json!("2026-01-01T00:00:00Z");
-        assert!(!ok(&deleting, "0123456789abcdef"));
+        assert!(!ok(&deleting, "example000000000"));
         // Expired, and an expiration that does not parse.
         let past = (now - chrono::Duration::seconds(1)).to_rfc3339();
-        assert!(!ok(&secret(&[("expiration", &past)]), "0123456789abcdef"));
+        assert!(!ok(&secret(&[("expiration", &past)]), "example000000000"));
         let future = (now + chrono::Duration::hours(1)).to_rfc3339();
-        assert!(ok(&secret(&[("expiration", &future)]), "0123456789abcdef"));
-        assert!(!ok(&secret(&[("expiration", "tomorrow")]), "0123456789abcdef"));
+        assert!(ok(&secret(&[("expiration", &future)]), "example000000000"));
+        assert!(!ok(&secret(&[("expiration", "tomorrow")]), "example000000000"));
         // An extra group outside system:bootstrappers: refused, not dropped.
-        assert!(!ok(&secret(&[("auth-extra-groups", "system:masters")]), "0123456789abcdef"));
-        assert!(!ok(&secret(&[("auth-extra-groups", "system:bootstrappers:")]), "0123456789abcdef"));
+        assert!(!ok(&secret(&[("auth-extra-groups", "system:masters")]), "example000000000"));
+        assert!(!ok(&secret(&[("auth-extra-groups", "system:bootstrappers:")]), "example000000000"));
     }
 }

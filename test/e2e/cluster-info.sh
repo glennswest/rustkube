@@ -75,27 +75,27 @@ assert "kind: Config\n" in d, d
 PY
 
 # 2.
-expect 201 "$(secret abcdef 0123456789abcdef '"usage-bootstrap-signing":"true"')" "setup: a signing token"
-expect 201 "$(secret nosign 0123456789abcdef '"usage-bootstrap-signing":"false"')" "setup: a token that does not sign"
-expect 201 "$(secret expire 0123456789abcdef "\"usage-bootstrap-signing\":\"true\",\"expiration\":\"$(iso '+60 seconds')\"")" \
+expect 201 "$(secret abcdef example000000000 '"usage-bootstrap-signing":"true"')" "setup: a signing token"
+expect 201 "$(secret nosign example000000000 '"usage-bootstrap-signing":"false"')" "setup: a token that does not sign"
+expect 201 "$(secret expire example000000000 "\"usage-bootstrap-signing\":\"true\",\"expiration\":\"$(iso '+60 seconds')\"")" \
   "setup: a signing token expiring in 60 s"
-wait_for 30 signed abcdef 0123456789abcdef ok && pass "the signing token's jws-kubeconfig verifies" \
-  || fail "jws-kubeconfig-abcdef: $(verify abcdef 0123456789abcdef)"
-signed expire 0123456789abcdef ok && pass "the expiring token signs until it expires" \
-  || fail "jws-kubeconfig-expire: $(verify expire 0123456789abcdef)"
-expect absent "$(verify nosign 0123456789abcdef)" "a token without usage-bootstrap-signing does not sign"
+wait_for 30 signed abcdef example000000000 ok && pass "the signing token's jws-kubeconfig verifies" \
+  || fail "jws-kubeconfig-abcdef: $(verify abcdef example000000000)"
+signed expire example000000000 ok && pass "the expiring token signs until it expires" \
+  || fail "jws-kubeconfig-expire: $(verify expire example000000000)"
+expect absent "$(verify nosign example000000000)" "a token without usage-bootstrap-signing does not sign"
 api "$ADMIN" GET $CM >/dev/null
 python3 -c "import json; d=json.load(open('$W/out')); d['data']['kubeconfig']='forged'; print(json.dumps(d))" >"$W/cm.json"
 expect 200 "$(api "$ADMIN" PUT $CM "$(cat "$W/cm.json")")" "setup: kubeconfig overwritten"
 wait_for 30 eval 'api "$ADMIN" GET $CM >/dev/null; ! grep -q forged "$W/out"' && pass "a changed kubeconfig is put back" \
   || fail "kubeconfig left forged"
-signed abcdef 0123456789abcdef ok && pass "re-signed over the restored kubeconfig" \
-  || fail "after restore: $(verify abcdef 0123456789abcdef)"
-wait_for 90 signed expire 0123456789abcdef absent && pass "an expired token's signature is removed" \
-  || fail "jws-kubeconfig-expire after expiry: $(verify expire 0123456789abcdef)"
+signed abcdef example000000000 ok && pass "re-signed over the restored kubeconfig" \
+  || fail "after restore: $(verify abcdef example000000000)"
+wait_for 90 signed expire example000000000 absent && pass "an expired token's signature is removed" \
+  || fail "jws-kubeconfig-expire after expiry: $(verify expire example000000000)"
 expect 200 "$(api "$ADMIN" DELETE /api/v1/namespaces/kube-system/secrets/bootstrap-token-abcdef)" "setup: signing token deleted"
-wait_for 30 signed abcdef 0123456789abcdef absent && pass "a deleted token's signature is removed" \
-  || fail "jws-kubeconfig-abcdef after delete: $(verify abcdef 0123456789abcdef)"
+wait_for 30 signed abcdef example000000000 absent && pass "a deleted token's signature is removed" \
+  || fail "jws-kubeconfig-abcdef after delete: $(verify abcdef example000000000)"
 
 # 3.
 expect 200 "$(api - GET $CM)" "anonymous reads cluster-info"
@@ -106,10 +106,10 @@ expect 403 "$(api - GET /api/v1/namespaces/kube-public/configmaps)" "anonymous c
 expect 403 "$(api - PUT $CM "$(cat "$W/cm.json")")" "anonymous cannot write cluster-info"
 
 # 4.
-expect 201 "$(secret scntrl 0123456789abcdef '"auth-extra-groups":"system:bootstrappers:stormcentral"')" \
+expect 201 "$(secret scntrl example000000000 '"auth-extra-groups":"system:bootstrappers:stormcentral"')" \
   "setup: a stormcentral bootstrap token"
-expect 201 "$(secret plain0 0123456789abcdef '')" "setup: a plain bootstrap token"
-SC=scntrl.0123456789abcdef PLAIN=plain0.0123456789abcdef
+expect 201 "$(secret plain0 example000000000 '')" "setup: a plain bootstrap token"
+SC=scntrl.example000000000 PLAIN=plain0.example000000000
 csr() { # <name> <subject> <usages json> [san]
   openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$W/$1.key" -subj "$2" \
     ${4:+-addext "subjectAltName=DNS:$4"} 2>/dev/null | base64 -w0 >"$W/$1.b64"

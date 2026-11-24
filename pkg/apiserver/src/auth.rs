@@ -850,18 +850,37 @@ pub(crate) mod tests {
     use super::*;
 
     /// The test ServiceAccount keypair — the shape of stormcert's
-    /// `sa-token.key` / `sa-token.pub` and of `--service-account-*-file`.
-    pub(crate) const TEST_SA_KEY: &str = include_str!("../testdata/sa-test.key");
-    pub(crate) const TEST_SA_PUB: &str = include_str!("../testdata/sa-test.pub");
+    /// `sa-token.key` / `sa-token.pub` and of `--service-account-*-file`:
+    /// RSA, PKCS#1 private and SPKI public PEM. Generated once per test run,
+    /// never committed (#393: secret scanners flag a committed private key).
+    fn test_sa_pair() -> &'static (String, String) {
+        static PAIR: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+        PAIR.get_or_init(|| {
+            use rsa::pkcs1::EncodeRsaPrivateKey;
+            use rsa::pkcs8::{EncodePublicKey, LineEnding};
+            let key = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap();
+            let private = key.to_pkcs1_pem(LineEnding::LF).unwrap().to_string();
+            let public = key.to_public_key().to_public_key_pem(LineEnding::LF).unwrap();
+            (private, public)
+        })
+    }
+
+    pub(crate) fn test_sa_key() -> &'static str {
+        &test_sa_pair().0
+    }
+
+    pub(crate) fn test_sa_pub() -> &'static str {
+        &test_sa_pair().1
+    }
 
     pub(crate) fn test_keys() -> SigningKeys {
-        SigningKeys::from_rsa_pem(TEST_SA_KEY.as_bytes(), TEST_SA_PUB.as_bytes()).unwrap()
+        SigningKeys::from_rsa_pem(test_sa_key().as_bytes(), test_sa_pub().as_bytes()).unwrap()
     }
 
     /// Sign `payload` with the test key, as a minter outside the apiserver
     /// does: whatever claims it chooses, RS256, nothing added.
     pub(crate) fn sign(payload: serde_json::Value) -> String {
-        let key = EncodingKey::from_rsa_pem(TEST_SA_KEY.as_bytes()).unwrap();
+        let key = EncodingKey::from_rsa_pem(test_sa_key().as_bytes()).unwrap();
         encode(&Header::new(Algorithm::RS256), &payload, &key).unwrap()
     }
 
@@ -1135,8 +1154,8 @@ pub(crate) mod tests {
         let new = rcgen::KeyPair::generate().unwrap();
         let (new_priv, new_pub) = (new.serialize_pem(), new.public_key_pem());
         let old_token = sign(serde_json::json!({"sub": "system:serviceaccount:a:b", "exp": in_ten_years()}));
-        let both_in_one_file = format!("{TEST_SA_PUB}\n{new_pub}");
-        for verifying in [vec![TEST_SA_PUB.as_bytes(), new_pub.as_bytes()], vec![both_in_one_file.as_bytes()]] {
+        let both_in_one_file = format!("{}\n{new_pub}", test_sa_pub());
+        for verifying in [vec![test_sa_pub().as_bytes(), new_pub.as_bytes()], vec![both_in_one_file.as_bytes()]] {
             let keys = SigningKeys::from_pem(new_priv.as_bytes(), &verifying).unwrap();
             assert_eq!(keys.verifying_keys(), 2);
             assert!(keys.validate_token(&old_token).is_some(), "the old key's token still verifies");
