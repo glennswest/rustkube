@@ -70,6 +70,9 @@ it reaches the registry" to us; the privileged-pod question went to option A
   real Docker build that pushes, on a node.
 - [ ] Onto main: the fast-forward of `main` to `issue-374-v2` is the owner's
   to allow (refused to this session 2026-11-23).
+  6f26d68 (2026-11-23) merged main (#393) into the branch, so the
+  fast-forward stays clean; sc-build-VM at 6f26d68: workspace build,
+  apiserver 443/443, controller-manager 163/163. Asked again on #374.
 - [ ] Rig `builds`: pve test machines refuse runs until the stormcluster#128
   fix is installed (as #372, #373, #375, #388).
 
