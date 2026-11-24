@@ -30,7 +30,11 @@ State on 2026-10-09, from the code on main and from running oc against it
   served).
 - 2026-11-24: `oc whoami` works (`users/~`, #390; `kubectl auth whoami` from
   SelfSubjectReview, #116), and `oc create user|identity|useridentitymapping`
-  with `oc get user|identity|useridentitymapping` (`test/e2e/oc-users.sh`).
+  with `oc get user|identity|useridentitymapping` (`test/e2e/oc-users.sh`);
+  `oc create clusterresourcequota`, `oc get|describe clusterresourcequota`
+  and `appliedclusterresourcequota` (#391, `test/e2e/cluster-quota.sh`).
+  `oc get <kind> <name>` prints the kind's columns (a single GET answers a
+  Table when asked; it printed NAME and AGE).
 -->
 
 # `oc` command reference and compatibility checklist
@@ -72,7 +76,7 @@ authoritative — the exact `oc adm` set shifts slightly by cluster version.
 
 | Command | Purpose |
 |---|---|
-| `create` | Create from file/stdin; generators: `secret`, `configmap`, `serviceaccount`, `route`, `deployment`, `job`, `token`, `user`, `identity`, `useridentitymapping` (#390), … |
+| `create` | Create from file/stdin; generators: `secret`, `configmap`, `serviceaccount`, `route`, `deployment`, `job`, `token`, `user`, `identity`, `useridentitymapping` (#390), `clusterresourcequota` (#391), … |
 | `apply` | Declarative apply; `edit-last-applied`, `set-last-applied`, `view-last-applied` |
 | `get` | Display resources (`-o wide/yaml/json/jsonpath/custom-columns`, `-w` watch) |
 | `edit` | Edit a live resource in `$EDITOR` |

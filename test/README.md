@@ -585,6 +585,16 @@ PUT moving it to u2, delete unmapping it; OpenShift's validation and
 printers; `oc whoami` for the admin and for a user with no User object, who
 may not read or create Users.
 
+`e2e/cluster-quota.sh` (#391, sc#50, suite `rigs`): `oc create
+clusterresourcequota q --project-label-selector=team=a --hard=pods=1`, then
+one pod in a `team=a` namespace admitted and a second in another `team=a`
+namespace refused (`exceeded quota: q …`), an unlabelled namespace not held,
+`oc get clusterresourcequota q -o yaml` showing the total and per-namespace
+usage; a deleted pod's usage given back; an annotation selector; validation;
+printing; AppliedClusterResourceQuotas in a selected namespace only, read by
+a project viewer who cannot read the ClusterResourceQuota. Runs the
+controller-manager; no kubelet.
+
 `e2e/vm-runstrategy.sh` (#104, #209, suite `rigs`): the VirtualMachine
 controller's `runStrategy` on a failed VMI (Always replaced after backoff,
 Once left), `ready` following the VMI, and `CrashLoopBackOff` while the
