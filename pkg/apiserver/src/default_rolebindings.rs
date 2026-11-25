@@ -11,8 +11,11 @@ use crate::storage::ResourceStorage;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Each binding a namespace gets: its name and how to make it.
-fn bindings() -> [(&'static str, fn(&str) -> Value); 2] {
+/// A binding's name and how to make it for a namespace.
+type Binding = (&'static str, fn(&str) -> Value);
+
+/// Each binding a namespace gets.
+fn bindings() -> [Binding; 2] {
     [
         (crate::builds::IMAGE_BUILDERS_BINDING, crate::builds::image_builders_binding),
         (crate::deployment_configs::DEPLOYERS_BINDING, crate::deployment_configs::deployers_binding),
