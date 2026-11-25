@@ -97,7 +97,7 @@ oc `pkg/cli/deployer` (read 2026-11-23).
 - [ ] Run the rig: every pve test machine refuses runs until one installs the
   stormcluster#128 fix (as #372, #373, #388).
 
-### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — CODE DONE, RIG BLOCKED 2026-11-23
+### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — ON MAIN, CHECK + RIG BLOCKED 2026-11-24
 Ported from openshift-apiserver and openshift-controller-manager `pkg/build`
 (read 2026-11-23). The issue left "what runs the build in the pod, and how
 it reaches the registry" to us; the privileged-pod question went to option A
@@ -125,8 +125,8 @@ it reaches the registry" to us; the privileged-pod question went to option A
 - [ ] stormcos#1558: ship the builder image as a golden and pass
   `--build-image` / `--build-insecure-registries`; then the issue's check, a
   real Docker build that pushes, on a node.
-- [ ] Onto main: the fast-forward of `main` to `issue-374-v2` is the owner's
-  to allow (refused to this session 2026-11-23).
+- [x] Onto main: the owner allowed it 2026-11-24; `main` fast-forwarded
+  6163f9a → bde4c1d (`issue-374-v2`). History of the wait:
   6f26d68 (2026-11-23) merged main (#393) into the branch, so the
   fast-forward stays clean; sc-build-VM at 6f26d68: workspace build,
   apiserver 443/443, controller-manager 163/163. Asked again on #374.
@@ -137,6 +137,8 @@ it reaches the registry" to us; the privileged-pod question went to option A
   2026-11-24 (later): 75b75a6 merged main (#391) in, list unions only;
   sc-build-b18cc2b8cb at 75b75a6: workspace build, apiserver 460/460,
   controller-manager 165/165. Asked the owner again.
+- The issue stays open until its check (a real Docker build pushes, then
+  `oc adm prune builds --keep-complete=0 --confirm` removes it) passes.
 - [ ] Rig `builds`: pve test machines refuse runs until the stormcluster#128
   fix is installed (as #372, #373, #375, #388).
 
