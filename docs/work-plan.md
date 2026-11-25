@@ -39,6 +39,8 @@ below are engineering.
 - [x] Rig `image-triggers` (suite `rigs`); rigs `builds`, `deploymentconfigs`
   updated for what is no longer refused; README, oc-compatibility,
   test/README, CHANGELOG (66f8fff).
+- [x] clippy (workspace, all targets) at 7bbad9d, sc-build-4c0a6c88f0: 42
+  warnings, as before; none in a file #386 changed.
 - [ ] Rig `image-triggers` on a test machine: 2026-11-25 pvetest1|2|3 refuse
   (400, no known release; stormcluster#128 open). Parked
   `--after-install stormcluster>=f1de3f6@any:pve` (item 5e042215104c).
