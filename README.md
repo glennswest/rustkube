@@ -377,7 +377,7 @@ starting one, needs `create` on `builds/<strategy>` (`docker`, `source`,
 `-source` are bound to `system:authenticated`, `-custom` is not. Refused,
 because nothing here can run them: the JenkinsPipeline strategy, Binary
 sources (`instantiatebinary` is not served), webhook triggers (`webhooks` is
-not served), ImageChange triggers (no ImageStreams, #385/#386) and a Custom
+not served), ImageChange triggers (#386) and a Custom
 build's `exposeDockerSocket`; an ImageStreamTag `from` fails as OpenShift's
 does when the stream is missing, and an ImageStreamTag output gets
 InvalidOutputReference. The controller-manager runs them: a BuildConfig's
@@ -489,8 +489,11 @@ kube-aggregator:
   with their negotiation headers; its `101` is handed back and the two
   connections spliced, any other answer passed back as it came (#322);
 - aggregated groups are in `/apis` and `/apis/{group}`; `/apis/{group}/{version}`
-  is the backend's own answer; in aggregated discovery their versions are
-  listed without resources, `freshness: Stale` (#107);
+  is the backend's own answer; in aggregated discovery (#107) their versions
+  carry the resources the backend listed at the last passed check, as
+  upstream's aggregator does (#385: client-go drops a `Stale` version, so
+  `oc` could not map an aggregated resource), and are `freshness: Stale`
+  without resources until a check has passed;
 - a built-in group is never proxied, whatever an APIService says;
 - `kube-system/extension-apiserver-authentication` publishes `client-ca-file`,
   `requestheader-client-ca-file` (`--requestheader-client-ca-file`),
@@ -769,6 +772,32 @@ quirks are kept: a ServiceAccount alone is not in `system:authenticated`, so
 before the one that allowed; `status.template` carries the assigned spec only
 when the template names a ServiceAccount. `admin` may create the reviews.
 OpenShift's `rangeallocations` are not served.
+
+**Image policy** (#385, sc#162), OpenShift's `imagepolicy` admission as its
+default configuration runs it, on create and update of a Pod,
+ReplicationController, DeploymentConfig, Deployment, ReplicaSet,
+StatefulSet, DaemonSet, Job (create only) or CronJob — never a subresource,
+and not an object with a controller owner (its owner's template was
+resolved). A **local name** — an image (container, init container or image
+volume) with no registry and no namespace, `<stream>[:<tag>]` — is looked up
+as the ImageStreamTag `<stream>:<tag>` (`latest` by default) in the object's
+namespace. When the tag's `lookupPolicy.local` is true (`oc set image-lookup
+<stream>`), the image becomes the tag's `image.dockerImageReference` by
+digest (`<host>/<ns>/<stream>@sha256:…`). When the object or its pod template
+carries `alpha.image.policy.openshift.io/resolve-names: "*"` (`oc set
+image-lookup deploy/web` sets it on the template), every image is looked up
+so, whatever the stream's `lookupPolicy`. A tag the resolving stream does not
+have yet becomes `<status.dockerImageRepository>:<tag>`. On an update, an
+image the stored object already has in the same container is not looked up
+again unless the annotation came or went; so `--enabled=false` leaves
+resolved images resolved and stops resolving new ones. ImageStreams are the
+registry's (stormblock-registry#258, the `image.openshift.io/v1` APIService):
+they are read through the aggregator as `system:apiserver`, 2 s per lookup.
+Whatever cannot be resolved — no APIService, the registry down or slow, no
+such stream or tag — is **left as written; a write is never refused** for
+it, and after the first failure to reach the registry the rest of that
+write's images are not looked up. Builds' `from` are not resolved here. It
+runs before the admission webhooks.
 
 **Admission webhooks** (#82) run after the built-in admission, on create
 (built-in and custom resources, server-side apply's upsert, `pods/eviction`),

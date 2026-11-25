@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### image.openshift.io ImageStreams + image policy admission (#385, sc#162) — AFTER stormblock-registry#258 (decided 2026-11-25)
+### image.openshift.io ImageStreams + image policy admission (#385, sc#162) — BUILT 2026-11-25 (stormblock-registry#258 closed in its v0.93.0)
 Master decided option A (2026-11-25): the registry serves `image.openshift.io/v1`
 (stormblock-registry#235, APIService by stormcos#1557) and will serve
 ImageStreams as full objects: create, `spec.lookupPolicy`, watch
@@ -12,14 +12,33 @@ ImageStreams as full objects: create, `spec.lookupPolicy`, watch
 - [x] Registry gap filed: stormblock-registry#258. #385 proposed
   `--after stormblock-registry#258`. (Proposing #258 itself is the registry's or
   the master's: the rustkube token is refused.)
-- [ ] Mutating image policy admission, as OpenShift's `imagepolicy`: resolve a
+- [x] Mutating image policy admission, as OpenShift's `imagepolicy`: resolve a
   container's `image: <stream>:<tag>` to the tag's `dockerImageReference` by
   digest, for pods in a namespace whose stream has `lookupPolicy.local`, and
   every pod template of a workload with
   `alpha.image.policy.openshift.io/resolve-names: "*"`. Streams are read through
   the aggregator. **Registry unreachable → the image is left unchanged; the pod
   is never refused.**
-- [ ] Rig (the issue's three checks), README, CHANGELOG.
+- [x] Rig (the issue's three checks), README, CHANGELOG, oc-compatibility.
+- 2026-11-25 (build): `pkg/apiserver/src/image_policy.rs`, called first in
+  `admission::admit` (create/update with an object). Ported from
+  apiserver-library-go `imagepolicy` (read 2026-11-25): under the default
+  config every rule is `DoNotAttempt`, so only local names (`LocalRewrite`)
+  are ever rewritten; controller-owned objects and subresources skipped;
+  Jobs not on update; unchanged images on update skipped unless the
+  resolve-names annotation changed (`resolveAnnotationChanged`). Lookups by
+  `Aggregator::get_own` (X-Remote-User `system:apiserver`, groups
+  `system:masters`, `system:authenticated`; 2 s). Builds not covered (#386).
+- [x] Found on the way: aggregated discovery said `Stale` for every
+  aggregated version, and client-go drops Stale GVs (`aggregated_discovery.go`
+  `convertAPIGroup`), so `oc set image-lookup <stream>` could never map
+  `imagestreams`. The availability check now keeps the backend's
+  `APIResourceList`; discovery serves it Current.
+- Rig `image-policy` (in `rigs`): a Python stand-in for the registry's
+  image.openshift.io (as the aggregation rig's stub), real `oc set
+  image-lookup` on the stream and `deploy/web`, `--enabled=false`, the
+  registry killed (never refused). Waits for a test-machine run like the
+  other rigs (stormcluster#128).
 - 2026-11-25 (later): stormblock-registry#258 still open. Noted for the build:
   the hook is `admission::admit` before the mutating webhooks (it has the
   state, the operation and the old object on every write path), as

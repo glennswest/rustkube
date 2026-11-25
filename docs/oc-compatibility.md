@@ -94,6 +94,13 @@ authoritative — the exact `oc adm` set shifts slightly by cluster version.
 `serviceaccount`, `route-backends`, `build-hook`, `build-secret`, `deployment-hook`,
 `image-lookup`, `subject`, `data`, `triggers`, `last-applied`.
 
+`oc set image-lookup` (#385): on an ImageStream it sets `spec.lookupPolicy.local`
+on the registry's stream (stormblock-registry#258, through the aggregator,
+whose discovery now lists the registry's resources); on a workload it sets
+`alpha.image.policy.openshift.io/resolve-names: "*"` on the pod template.
+rustkube's image policy admission then stores `<stream>:<tag>` as the tag's
+image by digest (README, *Image policy*). `--enabled=false` stops it.
+
 ## Build & Deploy
 
 | Command | Purpose |
