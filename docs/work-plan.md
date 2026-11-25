@@ -4,6 +4,22 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### image.openshift.io ImageStreams + image policy admission (#385, sc#162) — HELD ON OWNER DECISION 2026-11-25
+The issue's own comment says to settle who serves `image.openshift.io/v1`
+before building. Since then the registry has been serving it:
+stormblock-registry#235 (v0.78.0) serves Images and ImageStreams as views
+(get/list, plus `imagestreams/status` for prune), and stormcos#1557 part 1
+(front-proxy client) is staged. When its APIService `v1.image.openshift.io` is
+registered, rustkube's aggregator proxies the whole group/version, so
+rustkube cannot also serve ImageStreams with `spec.lookupPolicy`,
+create and watch there.
+- [ ] Owner: (A) the registry serves the full ImageStream (create, `spec`,
+  `lookupPolicy`, watch), and rustkube builds only the admission, reading
+  streams through the aggregator; or (B) rustkube serves the group, the
+  registry feeds `status.tags`, and the APIService is dropped.
+- [ ] After that: the mutating image policy step (`lookupPolicy.local`, the
+  `alpha.image.policy.openshift.io/resolve-names` annotation), a rig, docs.
+
 ### route.openshift.io `routes/status` (#397, stormcos#1491, stormlb#48) — DONE 2026-11-25
 Discovery listed `routes/status`, `server.rs` had no route: a router's
 status PATCH was a 404.
