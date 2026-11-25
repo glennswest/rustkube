@@ -20,6 +20,11 @@ ImageStreams as full objects: create, `spec.lookupPolicy`, watch
   the aggregator. **Registry unreachable → the image is left unchanged; the pod
   is never refused.**
 - [ ] Rig (the issue's three checks), README, CHANGELOG.
+- 2026-11-25 (later): stormblock-registry#258 still open. Noted for the build:
+  the hook is `admission::admit` before the mutating webhooks (it has the
+  state, the operation and the old object on every write path), as
+  OpenShift's built-in `imagepolicy` runs before webhooks; the stream read is a
+  GET through `Aggregator` with a short timeout, as `system:apiserver`.
 
 ### route.openshift.io `routes/status` (#397, stormcos#1491, stormlb#48) — DONE 2026-11-25
 Discovery listed `routes/status`, `server.rs` had no route: a router's
@@ -171,6 +176,8 @@ oc `pkg/cli/deployer` (read 2026-11-23).
   triggers) — noted there to lift the refusals.
 - [ ] Run the rig: every pve test machine refuses runs until one installs the
   stormcluster#128 fix (as #372, #373, #388).
+- [x] 2026-11-25: held with `stormcentral propose --after-install
+  'stormcluster>=f1de3f6@any:pve'` (item b5ec48cd2449), as #372/#373/#388.
 
 ### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — ON MAIN, CHECK + RIG BLOCKED 2026-11-24
 Ported from openshift-apiserver and openshift-controller-manager `pkg/build`
