@@ -75,7 +75,7 @@ the test-secrets rule (generate keys in tests, plain placeholders), no allowlist
   left in the tree, the new value's entropy 2.09 < the rule's 3.5).
 - The two rigs changed only in the value; they run with the next `rigs` suite.
 
-### minReadySeconds in the workload controllers (#379, from #369) — CODE DONE 2026-11-25
+### minReadySeconds in the workload controllers (#379, from #369) — CODE DONE, RIG BLOCKED 2026-11-25
 Upstream's `podutil.IsPodAvailable` as `controller-manager::availability`, with
 a requeue at the moment the next Ready pod becomes available (the indexed
 runner's `reactor::requeue_after`, which #379 thought missing, exists).
@@ -85,8 +85,11 @@ runner's `reactor::requeue_after`, which #379 thought missing, exists).
   `minReadySeconds` to its new ReplicaSet (and patches the current one).
 - [x] Units: availability, DaemonSet rollout, StatefulSet plan.
 - [x] Rig `min-ready` (suite `rigs`), README, test/README, CHANGELOG.
-- [ ] sc-build.
-- [ ] Run the rig (pve test machines, stormcluster#128 install).
+- [x] sc-build at d12cbe4 (sc-build-605e2d3338): workspace build, every
+  crate's tests (controller-manager 171/171, apiserver 462/462); no new
+  clippy finding (deployment.rs's items-after-test-module is older).
+- [ ] Run the rig `min-ready` (suite `rigs`): parked
+  `--after-install stormcluster>=f1de3f6@any:pve` (the #128 fix).
 
 ### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, RIG BLOCKED 2026-11-25
 Ported from openshift-controller-manager `pkg/apps/deployer`
