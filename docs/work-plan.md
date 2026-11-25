@@ -126,7 +126,9 @@ it reaches the registry" to us; the privileged-pod question went to option A
   `--build-image` / `--build-insecure-registries`; then the issue's check, a
   real Docker build that pushes, on a node.
 - [x] Onto main: the owner allowed it 2026-11-24; `main` fast-forwarded
-  6163f9a → bde4c1d (`issue-374-v2`). History of the wait:
+  6163f9a → bde4c1d (`issue-374-v2`); 0fd9d7b records it. sc-build-170bf484ee
+  at 0fd9d7b on main: workspace build, apiserver 460/460, controller-manager
+  165/165, scheduler 79/79, apimachinery 139/139. History of the wait:
   6f26d68 (2026-11-23) merged main (#393) into the branch, so the
   fast-forward stays clean; sc-build-VM at 6f26d68: workspace build,
   apiserver 443/443, controller-manager 163/163. Asked again on #374.
