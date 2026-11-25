@@ -6,6 +6,7 @@
 //! represent semantic deadlines or failure recovery, not successful idle work.
 
 pub mod attachdetach;
+pub mod availability;
 pub mod backoff;
 pub mod bootstrapsigner;
 pub mod builds;

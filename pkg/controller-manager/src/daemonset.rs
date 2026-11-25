@@ -267,12 +267,21 @@ impl DaemonSetController {
             }
         }
 
+        // Available: Ready for `minReadySeconds` (#379), which is what the
+        // rollout waits on and `numberAvailable` counts. A Ready pod not yet
+        // there wakes this reconcile when it will be.
+        let min_ready = crate::availability::min_ready_seconds(ds);
+        let now = chrono::Utc::now();
+        crate::availability::requeue_until_available(active.iter().copied(), min_ready);
+
         // Rolling update (#369): replace the pods made from an older template.
         // `OnDelete` leaves them until someone deletes them; the create pass
         // above then makes the replacement from the current template.
         if update_strategy(ds) == "RollingUpdate" {
             let (max_surge, max_unavailable) = rolling_limits(ds, eligible.len());
-            let step = plan_rollout(&by_node, &hash, max_surge, max_unavailable);
+            let step = plan_rollout(&by_node, &hash, max_surge, max_unavailable, |p| {
+                crate::availability::is_pod_available(p, min_ready, now)
+            });
             for pod in &step.delete {
                 let pod_name = pod["metadata"]["name"].as_str().unwrap_or("");
                 let node = pod["spec"]["nodeName"].as_str().unwrap_or("");
@@ -342,6 +351,13 @@ impl DaemonSetController {
             .values()
             .filter(|p| p.iter().any(|pod| is_pod_ready(pod)))
             .count();
+        let available_count = by_node
+            .values()
+            .filter(|p| {
+                p.iter()
+                    .any(|pod| crate::availability::is_pod_available(pod, min_ready, now))
+            })
+            .count();
 
         // A node running a Ready pod has recovered — clear its backoff so future
         // failures start from the base delay again.
@@ -356,8 +372,8 @@ impl DaemonSetController {
             "currentNumberScheduled": current_scheduled,
             "updatedNumberScheduled": updated_scheduled,
             "numberReady": ready_count,
-            "numberAvailable": ready_count,
-            "numberUnavailable": desired.saturating_sub(ready_count),
+            "numberAvailable": available_count,
+            "numberUnavailable": desired.saturating_sub(available_count),
             "numberMisscheduled": misscheduled,
             "observedGeneration": ds["metadata"]["generation"].as_u64().unwrap_or(1)
         });
@@ -484,6 +500,10 @@ struct RolloutStep<'a> {
 /// a pod made before pods carried the label is old too, which is how a
 /// keep-data install's pods reach the new template (stormcos#811).
 ///
+/// `available` says whether a pod serves: Ready for the DaemonSet's
+/// `minReadySeconds` (#379), as upstream's `IsPodAvailable`; "Ready" below
+/// means that.
+///
 /// Without surge, at most `max_unavailable` nodes are without an available
 /// (Ready) pod at once: a node with no pod, or with a new pod not yet Ready,
 /// spends the budget, and an old pod that is Ready is deleted only while
@@ -499,6 +519,7 @@ fn plan_rollout<'a>(
     hash: &str,
     max_surge: usize,
     max_unavailable: usize,
+    available: impl Fn(&Value) -> bool,
 ) -> RolloutStep<'a> {
     let mut step = RolloutStep::default();
     if max_surge == 0 {
@@ -507,7 +528,7 @@ fn plan_rollout<'a>(
         for pods in by_node.values() {
             let (new, old): (Vec<&Value>, Vec<&Value>) =
                 pods.iter().copied().partition(|p| is_current(p, hash));
-            let new_ready = new.iter().any(|p| is_pod_ready(p));
+            let new_ready = new.iter().any(|p| available(p));
             if old.is_empty() {
                 if !new_ready {
                     unavailable += 1;
@@ -520,7 +541,7 @@ fn plan_rollout<'a>(
                 } else {
                     unavailable += 1;
                 }
-            } else if !old.iter().any(|p| is_pod_ready(p)) {
+            } else if !old.iter().any(|p| available(p)) {
                 step.delete.extend(old);
             } else {
                 candidates.push(old);
@@ -540,12 +561,12 @@ fn plan_rollout<'a>(
                 continue;
             }
             if !new.is_empty() {
-                if new.iter().any(|p| is_pod_ready(p)) {
+                if new.iter().any(|p| available(p)) {
                     step.delete.extend(old);
                 } else {
                     surging += 1;
                 }
-            } else if !old.iter().any(|p| is_pod_ready(p)) {
+            } else if !old.iter().any(|p| available(p)) {
                 step.surge.push(node.to_string());
             } else {
                 candidates.push(node.to_string());
@@ -739,16 +760,7 @@ fn node_matches_ds(node: &Value, ds: &Value) -> bool {
     sel.iter().all(|(k, v)| labels.get(k) == Some(v))
 }
 
-fn is_pod_ready(pod: &Value) -> bool {
-    pod["status"]["conditions"]
-        .as_array()
-        .map(|conds| {
-            conds.iter().any(|c| {
-                c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True")
-            })
-        })
-        .unwrap_or(false)
-}
+use crate::availability::is_pod_ready;
 
 #[cfg(test)]
 mod tests {
@@ -932,11 +944,11 @@ mod tests {
             pod("p3", "n3", Some("old"), true),
         ];
         let by = nodes(&pods, &["n1", "n2", "n3"]);
-        let step = plan_rollout(&by, "new", 0, 1);
+        let step = plan_rollout(&by, "new", 0, 1, is_pod_ready);
         assert_eq!(names(&step.delete), ["p1"]);
         assert!(step.surge.is_empty());
         // Two at a time with maxUnavailable 2.
-        assert_eq!(names(&plan_rollout(&by, "new", 0, 2).delete), ["p1", "p2"]);
+        assert_eq!(names(&plan_rollout(&by, "new", 0, 2, is_pod_ready).delete), ["p1", "p2"]);
     }
 
     /// A node whose replacement is missing or not yet Ready spends the
@@ -947,7 +959,7 @@ mod tests {
             pod("p1", "n1", Some("new"), false),
             pod("p2", "n2", Some("old"), true),
         ];
-        let step = plan_rollout(&nodes(&pods, &["n1", "n2", "n3"]), "new", 0, 2);
+        let step = plan_rollout(&nodes(&pods, &["n1", "n2", "n3"]), "new", 0, 2, is_pod_ready);
         // n1 (new, not Ready) and n3 (no pod) use both slots.
         assert!(step.delete.is_empty(), "{:?}", names(&step.delete));
         // Once n1's pod is Ready and n3 has a Ready new pod, n2 rolls.
@@ -956,7 +968,7 @@ mod tests {
             pod("p2", "n2", Some("old"), true),
             pod("p3", "n3", Some("new"), true),
         ];
-        let step = plan_rollout(&nodes(&pods, &["n1", "n2", "n3"]), "new", 0, 1);
+        let step = plan_rollout(&nodes(&pods, &["n1", "n2", "n3"]), "new", 0, 1, is_pod_ready);
         assert_eq!(names(&step.delete), ["p2"]);
     }
 
@@ -969,15 +981,38 @@ mod tests {
             pod("p2", "n2", Some("old"), false),
             pod("p3", "n3", Some("new"), false),
         ];
-        let step = plan_rollout(&nodes(&pods, &["n1", "n2", "n3"]), "new", 0, 1);
+        let step = plan_rollout(&nodes(&pods, &["n1", "n2", "n3"]), "new", 0, 1, is_pod_ready);
         assert_eq!(names(&step.delete), ["p1", "p2"]);
+    }
+
+    /// With `minReadySeconds`, a Ready replacement that has not been Ready
+    /// that long still holds the rollout, and an old pod in the same state
+    /// counts as not serving (#379).
+    #[test]
+    fn min_ready_seconds_holds_the_rollout_until_the_new_pod_is_available() {
+        let since = |p: &mut Value, t: &str| {
+            p["status"]["conditions"][0]["lastTransitionTime"] = json!(t);
+        };
+        let mut p1 = pod("p1", "n1", Some("new"), true);
+        since(&mut p1, "2026-11-25T10:00:00Z");
+        let mut p2 = pod("p2", "n2", Some("old"), true);
+        since(&mut p2, "2026-11-25T09:00:00Z");
+        let pods = [p1, p2];
+        let by = nodes(&pods, &["n1", "n2"]);
+        let at = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap().with_timezone(&chrono::Utc);
+        let early = at("2026-11-25T10:00:05Z");
+        let step = plan_rollout(&by, "new", 0, 1, |p| crate::availability::is_pod_available(p, 10, early));
+        assert!(step.delete.is_empty(), "n1's pod is Ready 5s of 10: {:?}", names(&step.delete));
+        let late = at("2026-11-25T10:00:11Z");
+        let step = plan_rollout(&by, "new", 0, 1, |p| crate::availability::is_pod_available(p, 10, late));
+        assert_eq!(names(&step.delete), ["p2"]);
     }
 
     /// Pods already of the current template are left alone.
     #[test]
     fn current_pods_are_not_touched() {
         let pods = [pod("p1", "n1", Some("new"), true)];
-        let step = plan_rollout(&nodes(&pods, &["n1"]), "new", 0, 1);
+        let step = plan_rollout(&nodes(&pods, &["n1"]), "new", 0, 1, is_pod_ready);
         assert!(step.delete.is_empty() && step.surge.is_empty());
     }
 
@@ -989,7 +1024,7 @@ mod tests {
             pod("p1", "n1", Some("old"), true),
             pod("p2", "n2", Some("old"), true),
         ];
-        let step = plan_rollout(&nodes(&pods, &["n1", "n2"]), "new", 1, 0);
+        let step = plan_rollout(&nodes(&pods, &["n1", "n2"]), "new", 1, 0, is_pod_ready);
         assert!(step.delete.is_empty());
         assert_eq!(step.surge, ["n1"]);
         // n1's new pod not Ready yet: it is the one surging, n2 waits.
@@ -998,7 +1033,7 @@ mod tests {
             pod("q1", "n1", Some("new"), false),
             pod("p2", "n2", Some("old"), true),
         ];
-        let step = plan_rollout(&nodes(&pods, &["n1", "n2"]), "new", 1, 0);
+        let step = plan_rollout(&nodes(&pods, &["n1", "n2"]), "new", 1, 0, is_pod_ready);
         assert!(step.delete.is_empty() && step.surge.is_empty());
         // Ready: the old on n1 goes, and n2 may surge.
         let pods = [
@@ -1006,7 +1041,7 @@ mod tests {
             pod("q1", "n1", Some("new"), true),
             pod("p2", "n2", Some("old"), true),
         ];
-        let step = plan_rollout(&nodes(&pods, &["n1", "n2"]), "new", 1, 0);
+        let step = plan_rollout(&nodes(&pods, &["n1", "n2"]), "new", 1, 0, is_pod_ready);
         assert_eq!(names(&step.delete), ["p1"]);
         assert_eq!(step.surge, ["n2"]);
     }

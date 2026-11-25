@@ -80,7 +80,12 @@ impl StatefulSetController {
             return Ok(());
         }
 
-        match plan(desired, &ordinals) {
+        // OrderedReady waits for each lower Pod to be available: Ready for
+        // `minReadySeconds` (#379), and woken when it will be.
+        let min_ready = crate::availability::min_ready_seconds(sts);
+        let now = chrono::Utc::now();
+        crate::availability::requeue_until_available(owned_pods.iter().copied(), min_ready);
+        match plan(desired, &ordinals, |p| crate::availability::is_pod_available(p, min_ready, now)) {
             Step::Create(ordinal) => {
                 let pod = build_statefulset_pod(namespace, sts_name, sts_uid, ordinal, service_name, sts)?;
                 match self.api.create(&format!("/api/v1/namespaces/{namespace}/pods"), &pod).await {
@@ -89,7 +94,7 @@ impl StatefulSetController {
                 }
             }
             Step::WaitFor(ordinal) => {
-                debug!("StatefulSet {sts_name}: waiting for pod ordinal {ordinal} to be ready");
+                debug!("StatefulSet {sts_name}: waiting for pod ordinal {ordinal} to be available");
             }
             Step::Delete(ordinal) => {
                 let pod = ordinals[&ordinal];
@@ -121,12 +126,19 @@ impl StatefulSetController {
         owned_pods: &[&Value],
     ) {
         let ready_count = owned_pods.iter().filter(|p| is_pod_ready(p)).count();
+        let min_ready = crate::availability::min_ready_seconds(sts);
+        let now = chrono::Utc::now();
+        let available_count = owned_pods
+            .iter()
+            .filter(|p| crate::availability::is_pod_available(p, min_ready, now))
+            .count();
         let current = owned_pods.len();
 
         let mut updated = sts.clone();
         updated["status"] = json!({
             "replicas": current,
             "readyReplicas": ready_count,
+            "availableReplicas": available_count,
             "currentReplicas": current,
             "updatedReplicas": current,
             "observedGeneration": sts["metadata"]["generation"].as_u64().unwrap_or(1)
@@ -176,9 +188,13 @@ enum Step {
 /// next ordinal is the lowest one missing, not the count of Pods: with 0
 /// and 2 present and 3 wanted, it is 1. The count re-created 2 on every
 /// pass (AlreadyExists) and 1 never came.
-fn plan(replicas: usize, ordinals: &std::collections::BTreeMap<usize, &Value>) -> Step {
+fn plan(
+    replicas: usize,
+    ordinals: &std::collections::BTreeMap<usize, &Value>,
+    available: impl Fn(&Value) -> bool,
+) -> Step {
     if let Some(missing) = (0..replicas).find(|o| !ordinals.contains_key(o)) {
-        return match ordinals.range(..missing).find(|(_, p)| !is_pod_ready(p)) {
+        return match ordinals.range(..missing).find(|(_, p)| !available(p)) {
             Some((&o, _)) => Step::WaitFor(o),
             None => Step::Create(missing),
         };
@@ -245,16 +261,7 @@ fn build_statefulset_pod(
     Ok(pod)
 }
 
-fn is_pod_ready(pod: &Value) -> bool {
-    pod["status"]["conditions"]
-        .as_array()
-        .map(|conds| {
-            conds.iter().any(|c| {
-                c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True")
-            })
-        })
-        .unwrap_or(false)
-}
+use crate::availability::is_pod_ready;
 
 #[async_trait::async_trait]
 impl crate::owned::Controller for StatefulSetController {
@@ -314,21 +321,35 @@ mod ordinal_tests {
         // Review finding c1b3be631b68: 0 and 2 present, 3 wanted.
         let (p0, p2) = (pod("web-0", true), pod("web-2", true));
         let ords: BTreeMap<usize, &Value> = [(0, &p0), (2, &p2)].into_iter().collect();
-        assert_eq!(plan(3, &ords), Step::Create(1));
+        assert_eq!(plan(3, &ords, is_pod_ready), Step::Create(1));
         // OrderedReady: not past a lower Pod that is not Ready.
         let p0_down = pod("web-0", false);
         let ords: BTreeMap<usize, &Value> = [(0, &p0_down), (2, &p2)].into_iter().collect();
-        assert_eq!(plan(3, &ords), Step::WaitFor(0));
+        assert_eq!(plan(3, &ords, is_pod_ready), Step::WaitFor(0));
         // From nothing: 0.
-        assert_eq!(plan(2, &BTreeMap::new()), Step::Create(0));
+        assert_eq!(plan(2, &BTreeMap::new(), is_pod_ready), Step::Create(0));
         // All present, one beyond replicas: the highest goes.
         let (p1, p3) = (pod("web-1", true), pod("web-3", true));
         let ords: BTreeMap<usize, &Value> = [(0, &p0), (1, &p1), (2, &p2), (3, &p3)].into_iter().collect();
-        assert_eq!(plan(2, &ords), Step::Delete(3));
-        assert_eq!(plan(4, &ords), Step::Settled);
+        assert_eq!(plan(2, &ords, is_pod_ready), Step::Delete(3));
+        assert_eq!(plan(4, &ords, is_pod_ready), Step::Settled);
         // A gap is filled before anything is scaled down.
         let ords: BTreeMap<usize, &Value> = [(0, &p0), (3, &p3)].into_iter().collect();
-        assert_eq!(plan(2, &ords), Step::Create(1));
+        assert_eq!(plan(2, &ords, is_pod_ready), Step::Create(1));
+    }
+
+    /// OrderedReady with `minReadySeconds` (#379): a lower Pod that is Ready
+    /// but not yet available holds the next one back.
+    #[test]
+    fn the_next_ordinal_waits_for_the_last_to_be_available() {
+        let mut p0 = pod("web-0", true);
+        p0["status"]["conditions"][0]["lastTransitionTime"] = json!("2026-11-25T10:00:00Z");
+        let ords: BTreeMap<usize, &Value> = [(0, &p0)].into_iter().collect();
+        let at = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap().with_timezone(&chrono::Utc);
+        let early = at("2026-11-25T10:00:03Z");
+        assert_eq!(plan(2, &ords, |p| crate::availability::is_pod_available(p, 5, early)), Step::WaitFor(0));
+        let late = at("2026-11-25T10:00:06Z");
+        assert_eq!(plan(2, &ords, |p| crate::availability::is_pod_available(p, 5, late)), Step::Create(1));
     }
 
     #[test]

@@ -102,6 +102,18 @@ impl DeploymentController {
 
         let new_view = match current {
             Some(rs) => {
+                // The new ReplicaSet counts availability with the
+                // Deployment's `minReadySeconds` (#379), kept in step as
+                // upstream's `getNewReplicaSet` does.
+                let want = crate::availability::min_ready_seconds(deploy);
+                if crate::availability::min_ready_seconds(rs) != want {
+                    self.api
+                        .patch_merge(
+                            &format!("/apis/apps/v1/namespaces/{namespace}/replicasets/{rs_name}"),
+                            &json!({"spec": {"minReadySeconds": want}}),
+                        )
+                        .await?;
+                }
                 // Re-selected after being scaled down: it becomes the newest
                 // revision rather than reclaiming its old number, so
                 // `rollout history` stays ordered and unambiguous.
@@ -335,6 +347,7 @@ impl DeploymentController {
             },
             "spec": {
                 "replicas": 0,
+                "minReadySeconds": crate::availability::min_ready_seconds(deploy),
                 "selector": { "matchLabels": rs_labels },
                 "template": template
             }

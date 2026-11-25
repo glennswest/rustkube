@@ -968,12 +968,20 @@ eligible node, Ready or not; places pods itself; each pod labelled
 `pod-template-generation`. Under `updateStrategy` `RollingUpdate`, the default,
 a pod of an older template, or one with no hash label, is replaced as
 upstream's `rollingUpdate`: without `maxSurge` at most `maxUnavailable`
-(default 1; a percentage of eligible nodes, rounded up) nodes are without a
-Ready pod at once, and an old pod not Ready is replaced at once; with
+(default 1; a percentage of eligible nodes, rounded up) nodes are without an
+available pod at once, and an old pod not available is replaced at once; with
 `maxSurge` the new pod starts beside the old, which is deleted once the new is
-Ready. `OnDelete` leaves old pods until they are deleted.
-`updatedNumberScheduled` counts the nodes running a current-template pod; a
-pod counts as available once Ready — `minReadySeconds` is not read, #379; #369), Job (one whose `spec.managedBy` names another controller is left to it, #285; the field is validated and immutable), CronJob (a run's Job is named `<cronjob>-<unix minutes of the scheduled time>`, as upstream; `lastScheduleTime` advances only once that Job is created, or already exists owned by the CronJob — a failed create fails the pass and is retried, #364), ephemeral volumes (a Pod's generic ephemeral volume gets its
+available. `OnDelete` leaves old pods until they are deleted.
+`updatedNumberScheduled` counts the nodes running a current-template pod; #369.
+A pod is **available** once its Ready condition has been True for the
+workload's `minReadySeconds`, counted from that condition's
+`lastTransitionTime` (upstream's `IsPodAvailable`; a Ready pod without one is
+not available while `minReadySeconds` is set), and the controller runs again
+when the next pod will be. That is what `availableReplicas` (ReplicaSet,
+ReplicationController, StatefulSet, Deployment), `numberAvailable`
+(DaemonSet), a DaemonSet or Deployment rollout and a StatefulSet's
+OrderedReady creation wait on; a Deployment's new ReplicaSet carries its
+`minReadySeconds`, #379), Job (one whose `spec.managedBy` names another controller is left to it, #285; the field is validated and immutable), CronJob (a run's Job is named `<cronjob>-<unix minutes of the scheduled time>`, as upstream; `lastScheduleTime` advances only once that Job is created, or already exists owned by the CronJob — a failed create fails the pass and is retried, #364), ephemeral volumes (a Pod's generic ephemeral volume gets its
 `<pod>-<volume>` PVC from `volumeClaimTemplate`, owned by the Pod; a claim of
 that name the Pod does not own is left alone with a Warning Event, #94),
 ResourceQuota (`status.hard` and `status.used` per quota from

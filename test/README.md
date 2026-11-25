@@ -362,6 +362,17 @@ full 1-CPU node evicts exactly one low Pod (Preempted Event), binds and
 loses its nominatedNodeName; Never and equal priority preempt nothing; a
 PDB-protected Pod is spared for an unprotected victim.
 
+`e2e/min-ready.sh` (#379, suite `rigs`): two stand-in nodes, the script as
+kubelet (a pod Ready from the moment it binds, its Ready
+`lastTransitionTime` to the second); every workload has `minReadySeconds`
+6. A ReplicaSet's `availableReplicas` stays 0 while 2 are Ready, then reaches
+2 about 6 s later with nothing else to wake the controller; a Deployment's
+ReplicaSet carries `minReadySeconds` and, on a template change (maxSurge 1,
+maxUnavailable 0), its old ReplicaSet is scaled down only once a new pod has
+been Ready 6 s; a DaemonSet's `numberAvailable` lags `numberReady` and its
+rollout moves to the second node only once the first node's new pod is
+available; a StatefulSet makes web-1 only once web-0 is available.
+
 `e2e/statefulset-ordinals.sh` (#363, suite `rigs`): replicas 3 come up
 db-0, db-1, db-2 in order; db-1 deleted is made again (no db-3, db-2
 untouched); a Failed db-2 is deleted and made again; replicas 1 leaves db-0.

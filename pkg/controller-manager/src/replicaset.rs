@@ -257,6 +257,15 @@ impl ReplicaSetController {
 
         // Update ReplicaSet status
         let ready_count = active.iter().filter(|pod| is_pod_ready(pod)).count();
+        // Available: Ready for `minReadySeconds` (#379). A Ready pod not yet
+        // there wakes this reconcile when it will be.
+        let min_ready = crate::availability::min_ready_seconds(rs);
+        let now = chrono::Utc::now();
+        let available_count = active
+            .iter()
+            .filter(|pod| crate::availability::is_pod_available(pod, min_ready, now))
+            .count();
+        crate::availability::requeue_until_available(active.iter().copied(), min_ready);
         // Pods whose labels carry every label of the template (upstream's
         // fullyLabeledReplicas).
         let template_labels = rs["spec"]["template"]["metadata"]["labels"].as_object();
@@ -274,7 +283,7 @@ impl ReplicaSetController {
             "replicas": current,
             "fullyLabeledReplicas": fully_labeled,
             "readyReplicas": ready_count,
-            "availableReplicas": ready_count,
+            "availableReplicas": available_count,
             "observedGeneration": rs["metadata"]["generation"].as_u64().unwrap_or(1)
         });
         let settled = attempted || current == desired;
@@ -503,16 +512,7 @@ fn build_pod_from_template(
     Ok(pod)
 }
 
-fn is_pod_ready(pod: &Value) -> bool {
-    pod["status"]["conditions"]
-        .as_array()
-        .map(|conds| {
-            conds.iter().any(|c| {
-                c["type"].as_str() == Some("Ready") && c["status"].as_str() == Some("True")
-            })
-        })
-        .unwrap_or(false)
-}
+use crate::availability::is_pod_ready;
 
 #[async_trait::async_trait]
 impl crate::owned::Controller for ReplicaSetController {

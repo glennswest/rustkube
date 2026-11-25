@@ -75,6 +75,19 @@ the test-secrets rule (generate keys in tests, plain placeholders), no allowlist
   left in the tree, the new value's entropy 2.09 < the rule's 3.5).
 - The two rigs changed only in the value; they run with the next `rigs` suite.
 
+### minReadySeconds in the workload controllers (#379, from #369) — CODE DONE 2026-11-25
+Upstream's `podutil.IsPodAvailable` as `controller-manager::availability`, with
+a requeue at the moment the next Ready pod becomes available (the indexed
+runner's `reactor::requeue_after`, which #379 thought missing, exists).
+- [x] ReplicaSet/RC `availableReplicas`; DaemonSet `numberAvailable` and
+  `plan_rollout` (an availability predicate); StatefulSet
+  `availableReplicas` and OrderedReady `plan`; Deployment copies
+  `minReadySeconds` to its new ReplicaSet (and patches the current one).
+- [x] Units: availability, DaemonSet rollout, StatefulSet plan.
+- [x] Rig `min-ready` (suite `rigs`), README, test/README, CHANGELOG.
+- [ ] sc-build.
+- [ ] Run the rig (pve test machines, stormcluster#128 install).
+
 ### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, RIG BLOCKED 2026-11-25
 Ported from openshift-controller-manager `pkg/apps/deployer`
 (`makeDeployerPod`, `makeDeployerContainer`, the pod-phase → version-phase
