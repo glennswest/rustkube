@@ -12,7 +12,8 @@
 //! subresource, namespace, name, dryRun) in a task-local. The write paths
 //! call [`admit`] with the object they are about to store, after the built-in
 //! admission (`builtin_admission`), as upstream runs its built-in plugins
-//! before the webhooks:
+//! before the webhooks. The first thing [`admit`] does with a create or
+//! update is image policy (`image_policy`, #385), also before the webhooks:
 //!
 //! - CREATE: built-in and custom-resource POST, server-side apply's upsert,
 //!   `pods/eviction`;
@@ -255,6 +256,11 @@ pub async fn admit(
         "admissionregistration.k8s.io" | "events.k8s.io"
     ) {
         return Ok(());
+    }
+    // Image policy (#385): a local image name resolved to its digest, before
+    // the webhooks, as OpenShift's built-in `imagepolicy` runs. Never refuses.
+    if let Some(object) = object.as_deref_mut() {
+        crate::image_policy::admit(state, &request, op, object, old).await;
     }
     let mutating = state.admission.hooks(&state.storage, MUTATING).await;
     let validating = state.admission.hooks(&state.storage, VALIDATING).await;

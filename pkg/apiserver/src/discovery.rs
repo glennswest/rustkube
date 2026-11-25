@@ -397,8 +397,11 @@ pub(crate) fn to_v2_resources(group: &str, version: &str, list: &[Value]) -> Vec
 /// #107): `/api`'s core group, or every group `/apis` lists — built-in,
 /// CRD and aggregated — with every version's resources, from the same
 /// lists as `/api/v1`, `/apis/<g>/<v>` and the CRD registry. An aggregated
-/// API's versions are listed without resources, `freshness: Stale`, so a
-/// client asks the backend's own discovery.
+/// API's versions carry the resources its backend's discovery listed at the
+/// last passed availability check (#385); until one has passed they are
+/// listed without resources, `freshness: Stale`. (client-go drops a Stale
+/// version outright: it never asks the backend, so `oc get is` could not
+/// map `imagestreams`.)
 async fn aggregated(state: &AppState, core: bool, version: &str) -> axum::response::Response {
     let lists = builtin_lists().await;
     let mut items = Vec::new();
@@ -424,7 +427,16 @@ async fn aggregated(state: &AppState, core: bool, version: &str) -> axum::respon
                         list.push(crd);
                     }
                 }
-                let stale = list.is_empty() && !builtin && aggregated_groups.contains(&name);
+                // An aggregated API's resources are its backend's own list,
+                // as the last passed availability check read it (#385);
+                // Stale until a check has passed.
+                let mut stale = false;
+                if list.is_empty() && !builtin && aggregated_groups.contains(&name) {
+                    match state.aggregator.discovered(&name, &v) {
+                        Some(r) => list = r,
+                        None => stale = true,
+                    }
+                }
                 out.push(json!({"version": v, "resources": to_v2_resources(&name, &v, &list),
                                 "freshness": if stale { "Stale" } else { "Current" }}));
             }
@@ -2339,6 +2351,50 @@ mod tests {
     /// `oc get all` expands the `all` category from discovery; with no
     /// resource in it, it fails with `the server doesn't have a resource type
     /// "all"` (#97). The members are upstream's.
+    /// An aggregated API's resources are in aggregated discovery once a
+    /// check has read them (#385): client-go drops a `Stale` version, so
+    /// `oc set image-lookup <stream>` could not map `imagestreams`.
+    #[tokio::test]
+    async fn an_aggregated_version_lists_its_backends_resources_once_checked() {
+        use std::sync::Arc;
+        let state = AppState {
+            storage: Arc::new(crate::storage::ResourceStorage::new(Arc::new(crate::test_store::MemStore::default()))),
+            crd_registry: Arc::new(crate::crd::CrdRegistry::new()),
+            service_cidr: "10.96.0.0/12".into(),
+            admission: Default::default(),
+            aggregator: Arc::new(crate::aggregation::Aggregator::new(None)),
+            resource_metrics: Arc::new(crate::resource_metrics::ResourceMetrics::new("http", 9096, None, None).unwrap()),
+        };
+        let api = crate::aggregation::ApiService::parse(&json!({"metadata": {"name": "v1.image.openshift.io"},
+            "spec": {"group": "image.openshift.io", "version": "v1", "groupPriorityMinimum": 900, "versionPriority": 15,
+                     "service": {"namespace": "sbregistry", "name": "registry", "port": 5000}},
+            "status": {"conditions": [{"type": "Available", "status": "True"}]}})).unwrap();
+        state.aggregator.set(vec![api.clone()]);
+        async fn image_version(state: &AppState) -> Value {
+            let r = aggregated(state, false, "v2").await;
+            let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+            let v: Value = serde_json::from_slice(&body).unwrap();
+            v["items"].as_array().unwrap().iter().find(|g| g["metadata"]["name"] == "image.openshift.io")
+                .map(|g| g["versions"][0].clone()).unwrap_or(Value::Null)
+        }
+        let v = image_version(&state).await;
+        assert_eq!(v["freshness"], "Stale", "not checked yet: {v}");
+        let list = crate::aggregation::resource_list(br#"{"kind":"APIResourceList","groupVersion":"image.openshift.io/v1",
+            "resources":[{"name":"imagestreams","singularName":"imagestream","namespaced":true,"kind":"ImageStream",
+                          "verbs":["create","get","list","patch","watch"],"shortNames":["is"]},
+                         {"name":"imagestreams/status","namespaced":true,"kind":"ImageStream","verbs":["get","update"]}]}"#);
+        state.aggregator.set_discovered(&api, list);
+        let v = image_version(&state).await;
+        assert_eq!(v["freshness"], "Current", "{v}");
+        let is = &v["resources"][0];
+        assert_eq!((is["resource"].as_str(), is["scope"].as_str(), is["responseKind"]["kind"].as_str()),
+                   (Some("imagestreams"), Some("Namespaced"), Some("ImageStream")));
+        assert_eq!(is["subresources"][0]["subresource"], "status");
+        // A failed check takes them away again.
+        state.aggregator.set_discovered(&api, None);
+        assert_eq!(image_version(&state).await["freshness"], "Stale");
+    }
+
     #[tokio::test]
     async fn get_all_has_a_category_to_expand() {
         async fn members(r: impl IntoResponse) -> Vec<String> {

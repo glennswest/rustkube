@@ -32,7 +32,8 @@
 //!   connections are spliced. Any other answer is passed back as it came.
 //!
 //! In aggregated discovery (#107) an aggregated group's versions are listed
-//! without resources, `freshness: Stale`.
+//! with the resources its backend listed at the last passed check (#385),
+//! or without resources, `freshness: Stale`, until a check has passed.
 
 use crate::auth::UserInfo;
 use crate::error::ApiError;
@@ -128,6 +129,10 @@ pub struct Aggregator {
     clients: Mutex<HashMap<ClientKey, reqwest::Client>>,
     /// `--proxy-client-cert-file` / `--proxy-client-key-file`, followed.
     identity: Option<Arc<ReloadingKey>>,
+    /// Each backend's `APIResourceList` resources by (group, version), as
+    /// its last passed discovery check answered (#385: aggregated discovery
+    /// lists them, as upstream's aggregator does, so a client can map them).
+    discovered: RwLock<HashMap<(String, String), Vec<Value>>>,
 }
 
 impl Aggregator {
@@ -137,7 +142,62 @@ impl Aggregator {
             builtin: crate::discovery::builtin_group_names(),
             clients: Mutex::new(HashMap::new()),
             identity,
+            discovered: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// The resources the backend of `group`/`version` last listed in its
+    /// discovery, or `None` when no check of it has passed.
+    pub fn discovered(&self, group: &str, version: &str) -> Option<Vec<Value>> {
+        self.discovered.read().unwrap().get(&(group.to_string(), version.to_string())).cloned()
+    }
+
+    pub(crate) fn set_discovered(&self, api: &ApiService, resources: Option<Vec<Value>>) {
+        let key = (api.group.clone(), api.version.clone());
+        let mut d = self.discovered.write().unwrap();
+        match resources {
+            Some(r) => {
+                d.insert(key, r);
+            }
+            None => {
+                d.remove(&key);
+            }
+        }
+    }
+
+    /// A GET this apiserver makes for itself of an aggregated API (#385:
+    /// image policy admission reads ImageStreams from the registry), as
+    /// upstream's loopback client: `system:apiserver` in `system:masters`.
+    /// `Ok(None)` is the backend's 404; anything else that is not a 2xx
+    /// JSON answer — no APIService, not Available, unreachable, too slow —
+    /// is `Err`.
+    pub async fn get_own(&self, storage: &ResourceStorage, path: &str, timeout: Duration) -> Result<Option<Value>, String> {
+        let api = self.claims(path).ok_or_else(|| format!("{path}: no APIService serves it"))?;
+        if !api.available {
+            return Err(format!("APIService {} is not available", api.name));
+        }
+        let (base, client) = self.endpoint(storage, &api).await.map_err(|e| e.message().to_string())?;
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
+        headers.insert("x-remote-user", HeaderValue::from_static("system:apiserver"));
+        headers.append("x-remote-group", HeaderValue::from_static("system:masters"));
+        headers.append("x-remote-group", HeaderValue::from_static("system:authenticated"));
+        let resp = client
+            .get(format!("{base}{path}"))
+            .headers(headers)
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| error_chain(&e))?;
+        let status = resp.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(format!("{path}: {}", status.as_u16()));
+        }
+        let body = resp.bytes().await.map_err(|e| error_chain(&e))?;
+        serde_json::from_slice(&body).map(Some).map_err(|e| format!("{path}: {e}"))
     }
 
     /// Replace the table with what is stored.
@@ -325,7 +385,8 @@ pub async fn keep_available(storage: Arc<ResourceStorage>, aggregator: Arc<Aggre
     loop {
         tick.tick().await;
         for api in aggregator.services().iter() {
-            let (ok, reason, message) = check(&storage, &aggregator, api).await;
+            let (ok, reason, message, resources) = check(&storage, &aggregator, api).await;
+            aggregator.set_discovered(api, resources);
             // Proxied (or refused) here before anyone can read the status.
             aggregator.set_available(&api.name, ok);
             write_available(&storage, &api.name, ok, reason, &message).await;
@@ -333,19 +394,39 @@ pub async fn keep_available(storage: Arc<ResourceStorage>, aggregator: Arc<Aggre
     }
 }
 
-async fn check(storage: &ResourceStorage, aggregator: &Aggregator, api: &ApiService) -> (bool, &'static str, String) {
+/// One check of a backend: available or not, the condition's reason and
+/// message, and on a pass the resources its discovery lists.
+async fn check(
+    storage: &ResourceStorage,
+    aggregator: &Aggregator,
+    api: &ApiService,
+) -> (bool, &'static str, String, Option<Vec<Value>>) {
     let (base, client) = match aggregator.endpoint(storage, api).await {
         Ok(e) => e,
-        Err(Unreachable::Local) => return (true, "Local", "Local APIServices are always available".into()),
-        Err(Unreachable::NoService(m)) => return (false, "ServiceNotFound", m),
-        Err(Unreachable::Other(m)) => return (false, "FailedDiscoveryCheck", m),
+        Err(Unreachable::Local) => return (true, "Local", "Local APIServices are always available".into(), None),
+        Err(Unreachable::NoService(m)) => return (false, "ServiceNotFound", m, None),
+        Err(Unreachable::Other(m)) => return (false, "FailedDiscoveryCheck", m, None),
     };
     let url = format!("{base}/apis/{}/{}", api.group, api.version);
-    match client.get(&url).timeout(CHECK_TIMEOUT).send().await {
-        Ok(r) if r.status().is_success() => (true, "Passed", "all checks passed".into()),
-        Ok(r) => (false, "FailedDiscoveryCheck", format!("failing or missing response from {url}: bad status from {url}: {}", r.status().as_u16())),
-        Err(e) => (false, "FailedDiscoveryCheck", format!("failing or missing response from {url}: {}", error_chain(&e))),
+    let request = client.get(&url).header(header::ACCEPT, "application/json").timeout(CHECK_TIMEOUT);
+    match request.send().await {
+        Ok(r) if r.status().is_success() => {
+            let resources = match r.bytes().await {
+                Ok(b) => resource_list(&b),
+                Err(_) => None,
+            };
+            (true, "Passed", "all checks passed".into(), resources)
+        }
+        Ok(r) => (false, "FailedDiscoveryCheck", format!("failing or missing response from {url}: bad status from {url}: {}", r.status().as_u16()), None),
+        Err(e) => (false, "FailedDiscoveryCheck", format!("failing or missing response from {url}: {}", error_chain(&e)), None),
     }
+}
+
+/// The `resources` of a backend's `APIResourceList`, or `None` when the
+/// body is not one.
+pub(crate) fn resource_list(body: &[u8]) -> Option<Vec<Value>> {
+    let list: Value = serde_json::from_slice(body).ok()?;
+    list["resources"].as_array().cloned()
 }
 
 fn error_chain(e: &dyn std::error::Error) -> String {
