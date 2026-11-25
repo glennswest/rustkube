@@ -143,6 +143,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   `oc adm prune builds --keep-complete=0 --confirm` removes it) passes.
 - [ ] Rig `builds`: pve test machines refuse runs until the stormcluster#128
   fix is installed (as #372, #373, #375, #388).
+  2026-11-25: item parked `--after-install stormcluster>=f1de3f6@any:pve`
+  (the #128 fix). `--after stormcos#1558` is refused as circular, because
+  #1558's item waits for #374 to close. Raised with the master and on
+  stormcos#1558: what #1558 needs, #374 on main, is done.
 
 ### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, RIG BLOCKED 2026-11-23
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
