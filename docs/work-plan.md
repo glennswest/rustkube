@@ -75,7 +75,7 @@ the test-secrets rule (generate keys in tests, plain placeholders), no allowlist
   left in the tree, the new value's entropy 2.09 < the rule's 3.5).
 - The two rigs changed only in the value; they run with the next `rigs` suite.
 
-### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE 2026-11-25
+### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, RIG BLOCKED 2026-11-25
 Ported from openshift-controller-manager `pkg/apps/deployer`
 (`makeDeployerPod`, `makeDeployerContainer`, the pod-phase → version-phase
 map) and bootstrappolicy (`system:deployer`, `system:deployers`).
@@ -92,9 +92,14 @@ map) and bootstrappolicy (`system:deployer`, `system:deployers`).
   follows the pod, output copied onto the RC, deadline, a missing pod fails it.
 - [x] Rig `deploymentconfigs` section 8 (the script plays the image with a
   `deployer` token), README, oc-compatibility, test/README, CHANGELOG.
-- [ ] sc-build.
-- [ ] Run the rig (pve test machines, stormcluster#128 install), and the
-  issue's Check with a real image on a node.
+- [x] sc-build at b6c446d (sc-build-03cc42fddb): workspace build, apiserver
+  462/462, controller-manager 166/166; clippy clean in the changed files
+  (one type_complexity in default_rolebindings fixed at b6c446d). At 3a8937d
+  (sc-build-cba5fea44a) the whole workspace's tests passed too.
+- [ ] Run the rig `deploymentconfigs` (suite `rigs`): parked
+  `--after-install stormcluster>=f1de3f6@any:pve` (the #128 fix).
+- [ ] The issue's Check with a real image on a node: a Custom image that
+  scales new up and old down, and `oc logs dc/x` shows its output.
 
 ### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, RIG BLOCKED 2026-11-23
 Option A of the question on #375 (stormcentral's owner queue refused it:
