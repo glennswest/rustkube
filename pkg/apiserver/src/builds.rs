@@ -12,15 +12,24 @@
 //! `BuildByStrategy` admission plugin ([`authorize_strategy`]).
 //!
 //! **What this cluster cannot run is refused, not stored** (the no-stubs
-//! rule): the JenkinsPipeline strategy (no Jenkins), a Binary source (no
-//! `instantiatebinary`), webhook triggers (no `webhooks` subresource) and
-//! ImageChange triggers (no ImageStreams are served) are each a field error,
-//! `Unsupported value`. An `ImageStreamTag` or `ImageStreamImage` reference
-//! is valid, as in OpenShift, and resolving it fails as OpenShift's does
-//! when the stream does not exist.
+//! rule): the JenkinsPipeline strategy (no Jenkins) and a Binary source (no
+//! `instantiatebinary`) are each a field error, `Unsupported value`.
+//!
+//! **Triggers** (#386): ConfigChange, ImageChange and the four webhooks
+//! (GitHub, Generic, GitLab, Bitbucket), validated as upstream's. An
+//! `ImageStreamTag` or `ImageStreamImage` reference is resolved through the
+//! aggregator — ImageStreams are the registry's (#385) — and fails as
+//! OpenShift's does when the stream or tag is not there. [`instantiate`]
+//! records each ImageChange trigger's image (`updateImageTriggers`, in the
+//! spec's `lastTriggeredImageID` and `status.imageChangeTriggers`); the
+//! controller-manager's `imagetrigger` controller starts a build when a
+//! trigger's tag moves. [`webhook`] is `buildconfigs/<name>/webhooks/
+//! <secret>/<type>`.
 
 use crate::auth::UserInfo;
 use crate::error::ApiError;
+use crate::image_policy::Fetched;
+use std::future::Future;
 use crate::rbac_engine::{AuthorizationRequest, RbacEngine};
 use crate::storage::ResourceStorage;
 use serde_json::{json, Map, Value};
@@ -47,7 +56,9 @@ const CUSTOM_BASE_IMAGE_ENV: &str = "OPENSHIFT_CUSTOM_BUILD_BASE_IMAGE";
 /// The strategies this cluster runs, as `spec.strategy.type` names them.
 const STRATEGIES: [&str; 3] = ["Docker", "Source", "Custom"];
 /// The trigger types this cluster fires.
-const TRIGGERS: [&str; 1] = ["ConfigChange"];
+const TRIGGERS: [&str; 6] = ["ConfigChange", "ImageChange", "GitHub", "Generic", "GitLab", "Bitbucket"];
+/// The key of a webhook trigger's `secretReference` Secret.
+pub const WEBHOOK_SECRET_KEY: &str = "WebHookSecretKey";
 /// OpenShift's `KnownTriggerTypes`: any other is dropped on write.
 const KNOWN_TRIGGERS: [&str; 6] = ["GitHub", "Generic", "ImageChange", "ConfigChange", "GitLab", "Bitbucket"];
 /// The source types a build can take here (`Binary` needs `instantiatebinary`).
@@ -646,17 +657,112 @@ fn validate_common(spec: &Value, errs: &mut Vec<String>) {
     }
 }
 
+/// The field a webhook trigger type keeps its secret under.
+pub fn webhook_field(ty: &str) -> Option<&'static str> {
+    Some(match ty {
+        "GitHub" => "github",
+        "Generic" => "generic",
+        "GitLab" => "gitlab",
+        "Bitbucket" => "bitbucket",
+        _ => return None,
+    })
+}
+
+/// `GetInputReference`: the strategy's base image reference.
+pub fn strategy_from(spec: &Value) -> &Value {
+    let st = &spec["strategy"];
+    for k in ["sourceStrategy", "dockerStrategy", "customStrategy"] {
+        if st[k]["from"].is_object() {
+            return &st[k]["from"];
+        }
+    }
+    &Value::Null
+}
+
+/// `validateTrigger` for every trigger, and the config-wide rules on
+/// ImageChange triggers (one default, no two the same).
+fn validate_triggers(bc: &Value, errs: &mut Vec<String>) {
+    let mut defaults = 0;
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for (i, t) in bc["spec"]["triggers"].as_array().into_iter().flatten().enumerate() {
+        let at = format!("spec.triggers[{i}]");
+        let ty = s(t, "type");
+        if ty.is_empty() {
+            errs.push(required(&format!("{at}.type"), ""));
+            continue;
+        }
+        if !TRIGGERS.contains(&ty) {
+            errs.push(not_supported(&format!("{at}.type"), ty, &TRIGGERS));
+            continue;
+        }
+        if let Some(field) = webhook_field(ty) {
+            let w = &t[field];
+            if !w.is_object() {
+                errs.push(required(&format!("{at}.{field}"), ""));
+                continue;
+            }
+            let has_ref = w["secretReference"].is_object();
+            match (s(w, "secret").is_empty(), has_ref) {
+                (true, false) => errs.push(required(&format!("{at}.{field}.secret"), "")),
+                (false, true) => errs.push(invalid(&format!("{at}.{field}.secretReference"), "{}",
+                                                   "secret and secretReference may not both be set")),
+                _ => {}
+            }
+            if has_ref && s(&w["secretReference"], "name").is_empty() {
+                errs.push(required(&format!("{at}.{field}.secretReference.name"), ""));
+            }
+            continue;
+        }
+        if ty != "ImageChange" {
+            continue;
+        }
+        let ic = &t["imageChange"];
+        if !ic.is_object() {
+            errs.push(required(&format!("{at}.imageChange"), ""));
+            continue;
+        }
+        let from = &ic["from"];
+        let effective = if from.is_object() {
+            let (kind, name) = (s(from, "kind"), s(from, "name"));
+            if kind != "ImageStreamTag" {
+                errs.push(invalid(&format!("{at}.imageChange.from.kind"), &q(kind), "only an ImageStreamTag type of reference is allowed"));
+            }
+            if name.is_empty() {
+                errs.push(required(&format!("{at}.imageChange.from.name"), ""));
+            } else if !apimachinery::imagestream::valid_tag_name(name) {
+                errs.push(invalid(&format!("{at}.imageChange.from.name"), &q(name),
+                                  "ImageStreamTag object references must be in the form <name>:<tag>"));
+            }
+            from
+        } else {
+            defaults += 1;
+            let sf = strategy_from(&bc["spec"]);
+            if s(sf, "kind") != "ImageStreamTag" {
+                errs.push(invalid(&format!("{at}.imageChange"), "{}",
+                                  "a default ImageChange trigger can only be used when the strategy includes an ImageStreamTag reference."));
+                continue;
+            }
+            sf
+        };
+        let ns = match s(effective, "namespace") {
+            "" => s(&bc["metadata"], "namespace"),
+            n => n,
+        };
+        let key = (ns.to_string(), s(effective, "name").to_string());
+        if seen.contains(&key) {
+            errs.push(invalid(&format!("{at}.imageChange"), "{}", "multiple ImageChange triggers with the same reference are not allowed"));
+        }
+        seen.push(key);
+    }
+    if defaults > 1 {
+        errs.push(invalid("spec.triggers", "[]", "only one ImageChange trigger may have no from reference"));
+    }
+}
+
 pub fn validate_config(bc: &Value) -> Result<(), ApiError> {
     let mut errs = Vec::new();
     validate_name(bc, &mut errs);
-    for (i, t) in bc["spec"]["triggers"].as_array().into_iter().flatten().enumerate() {
-        let ty = s(t, "type");
-        if ty.is_empty() {
-            errs.push(required(&format!("spec.triggers[{i}].type"), ""));
-        } else if !TRIGGERS.contains(&ty) {
-            errs.push(not_supported(&format!("spec.triggers[{i}].type"), ty, &TRIGGERS));
-        }
-    }
+    validate_triggers(bc, &mut errs);
     let rp = s(&bc["spec"], "runPolicy");
     if !["Parallel", "Serial", "SerialLatestOnly"].contains(&rp) {
         errs.push(invalid("spec.runPolicy", &q(rp), "run policy must Parallel, Serial, or SerialLatestOnly"));
@@ -1039,31 +1145,59 @@ fn apply_request(build: &mut Value, req: &Value, bc_name: &str, ns: &str) -> Res
     Ok(())
 }
 
-/// `resolveImageStreamReference`: a DockerImage is itself; an ImageStream
-/// reference needs the stream, and no ImageStreams are served here, so it
-/// fails as OpenShift's does when the stream is missing.
-fn resolve_image(from: &Value, default_ns: &str) -> Result<String, ApiError> {
+fn unresolved(kind: &str, name: &str, ns: &str, resource: &str, missing: &str) -> ApiError {
+    let msg = format!("Error resolving {kind} {name} in namespace {ns}: {resource} {missing:?} not found");
+    ApiError {
+        status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+        reason: "Invalid".into(),
+        message: msg.clone(),
+        continue_token: None,
+        details: Some(json!({"kind": kind, "name": name, "causes": [{"field": "from", "message": msg}]})),
+    }
+}
+
+fn path_part_ok(s: &str) -> bool {
+    !s.is_empty() && !s.contains(['/', '?', '#', '%'])
+}
+
+/// `resolveImageStreamReference`: a DockerImage is itself; an
+/// ImageStreamTag is the tag's latest image (`ResolveLatestTaggedImage`) and
+/// an ImageStreamImage the image's pull spec, read from the registry
+/// through the aggregator (`get`, #386). A stream or tag that is not there
+/// fails as OpenShift's does; a registry that cannot answer is a 500.
+pub async fn resolve_image<F, Fut>(get: &F, from: &Value, default_ns: &str) -> Result<String, ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
     let (kind, name) = (s(from, "kind"), s(from, "name"));
     let ns = if s(from, "namespace").is_empty() { default_ns } else { s(from, "namespace") };
+    let base = format!("/apis/image.openshift.io/v1/namespaces/{ns}");
     match kind {
         "DockerImage" => Ok(name.to_string()),
-        "ImageStreamTag" | "ImageStreamImage" => {
-            let (resource, short) = if kind == "ImageStreamTag" {
-                ("imagestreamtags.image.openshift.io", name)
-            } else {
-                ("imagestreamimages.image.openshift.io", name)
-            };
-            let msg = format!(
-                "Error resolving {kind} {name} in namespace {ns}: {resource} {:?} not found",
-                short
-            );
-            Err(ApiError {
-                status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                reason: "Invalid".into(),
-                message: msg.clone(),
-                continue_token: None,
-                details: Some(json!({"kind": kind, "name": name, "causes": [{"field": "from", "message": msg}]})),
-            })
+        "ImageStreamTag" => {
+            let (stream, tag, _) = apimachinery::imagestream::split_tag(name);
+            let missing = || unresolved(kind, name, ns, "imagestreamtags.image.openshift.io", name);
+            if !path_part_ok(stream) || !path_part_ok(ns) {
+                return Err(missing());
+            }
+            match get(format!("{base}/imagestreams/{stream}")).await {
+                Fetched::Found(v) => apimachinery::imagestream::resolve_latest_tagged_image(&v, tag).ok_or_else(missing),
+                Fetched::NotFound => Err(unresolved(kind, name, ns, "imagestreams.image.openshift.io", stream)),
+                Fetched::Failed(e) => Err(ApiError::internal(&format!("error resolving ImageStreamTag {ns}/{name}: {e}"))),
+            }
+        }
+        "ImageStreamImage" => {
+            let missing = || unresolved(kind, name, ns, "imagestreamimages.image.openshift.io", name);
+            if !path_part_ok(name) || !path_part_ok(ns) {
+                return Err(missing());
+            }
+            match get(format!("{base}/imagestreamimages/{name}")).await {
+                Fetched::Found(v) => v["image"]["dockerImageReference"].as_str().filter(|r| !r.is_empty())
+                    .map(str::to_string).ok_or_else(missing),
+                Fetched::NotFound => Err(missing()),
+                Fetched::Failed(e) => Err(ApiError::internal(&format!("error resolving ImageStreamImage {ns}/{name}: {e}"))),
+            }
         }
         other => Err(ApiError::bad_request(&format!("unable to locate any images in image repositories with kind {other:?}"))),
     }
@@ -1122,13 +1256,26 @@ async fn service_account_secrets(storage: &ResourceStorage, ns: &str, sa: &str) 
 }
 
 /// `setBaseImageAndPullSecretForBuildStrategy` and `setBuildSourceImage`:
-/// every image reference resolved to a pull spec, pull secrets found.
-async fn resolve_images(storage: &ResourceStorage, spec: &mut Value, ns: &str, sa: &str) -> Result<(), ApiError> {
+/// every image reference resolved to a pull spec, pull secrets found. The
+/// strategy's image is `strategy_image` when its default ImageChange
+/// trigger has just recorded one, as upstream takes it from the trigger.
+async fn resolve_images<F, Fut>(
+    storage: &ResourceStorage,
+    get: &F,
+    spec: &mut Value,
+    ns: &str,
+    sa: &str,
+    strategy_image: Option<String>,
+) -> Result<(), ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
     let secrets = service_account_secrets(storage, ns, sa).await?;
     let images = spec["source"]["images"].as_array().cloned().unwrap_or_default();
     let mut resolved = Vec::new();
     for mut image in images {
-        let spec_ref = resolve_image(&image["from"], ns)?;
+        let spec_ref = resolve_image(get, &image["from"], ns).await?;
         if image["pullSecret"].is_null() {
             if let Some(found) = find_docker_secret(&secrets, &spec_ref) {
                 image["pullSecret"] = found;
@@ -1147,7 +1294,10 @@ async fn resolve_images(storage: &ResourceStorage, spec: &mut Value, ns: &str, s
         if k == "dockerStrategy" && !st["from"].is_object() {
             continue;
         }
-        let image = resolve_image(&st["from"], ns)?;
+        let image = match &strategy_image {
+            Some(i) => i.clone(),
+            None => resolve_image(get, &st["from"], ns).await?,
+        };
         st["from"] = json!({"kind": "DockerImage", "name": image});
         if st["pullSecret"].is_null() {
             if let Some(found) = find_docker_secret(&secrets, &image) {
@@ -1164,6 +1314,90 @@ async fn resolve_images(storage: &ResourceStorage, spec: &mut Value, ns: &str, s
         }
     }
     Ok(())
+}
+
+/// The effective `from` of an ImageChange trigger, its namespace filled.
+fn trigger_from(bc: &Value, trigger: &Value) -> Option<Value> {
+    let own = &trigger["imageChange"]["from"];
+    let from = if own.is_object() { own } else { strategy_from(&bc["spec"]) };
+    if !from.is_object() {
+        return None;
+    }
+    let mut from = from.clone();
+    if s(&from, "namespace").is_empty() {
+        from["namespace"] = json!(s(&bc["metadata"], "namespace"));
+    }
+    Some(from)
+}
+
+/// `updateImageTriggers`: every ImageChange trigger's image recorded — the
+/// request's image for the trigger that asked (refused when it is the one
+/// already built), the stream's latest for the others. A default trigger's
+/// stream that cannot be resolved fails the request; another's is recorded
+/// empty, as upstream's. Returns the default trigger's image: the build's
+/// strategy image.
+async fn update_image_triggers<F, Fut>(get: &F, bc: &mut Value, req: &Value) -> Result<Option<String>, ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
+    let (ns, name) = (s(&bc["metadata"], "namespace").to_string(), s(&bc["metadata"], "name").to_string());
+    let by_image = s(&req["triggeredByImage"], "name").to_string();
+    let asked = req["from"].is_object().then(|| {
+        let mut f = req["from"].clone();
+        if s(&f, "namespace").is_empty() {
+            f["namespace"] = json!(ns);
+        }
+        f
+    });
+    let n = bc["spec"]["triggers"].as_array().map_or(0, Vec::len);
+    let previous = bc["status"]["imageChangeTriggers"].as_array().cloned().unwrap_or_default();
+    let mut statuses = Vec::new();
+    let mut strategy_image = None;
+    for i in 0..n {
+        let t = bc["spec"]["triggers"][i].clone();
+        if t["type"] != "ImageChange" {
+            continue;
+        }
+        let Some(from) = trigger_from(bc, &t) else { continue };
+        let default = !t["imageChange"]["from"].is_object();
+        let is_asked = asked.as_ref().is_some_and(|a| a["name"] == from["name"] && a["namespace"] == from["namespace"]);
+        let status_from = json!({"name": from["name"], "namespace": from["namespace"]});
+        let old = previous.iter().find(|p| p["from"]["name"] == status_from["name"]
+            && (s(&p["from"], "namespace").is_empty() || p["from"]["namespace"] == status_from["namespace"]));
+        let last_before = old.map(|o| s(o, "lastTriggeredImageID")).filter(|l| !l.is_empty())
+            .unwrap_or_else(|| s(&t["imageChange"], "lastTriggeredImageID")).to_string();
+        let (image, at) = if is_asked && !by_image.is_empty() {
+            if last_before == by_image {
+                return Err(ApiError::bad_request(&format!(
+                    "build config {ns}/{name} has already instantiated a build for imageid {by_image}"
+                )));
+            }
+            (by_image.clone(), Some(now()))
+        } else {
+            match resolve_image(get, &from, &ns).await {
+                Ok(i) => (i, None),
+                Err(e) if default => return Err(e),
+                Err(e) => {
+                    tracing::warn!(namespace = %ns, buildconfig = %name, "could not resolve an ImageChange trigger's reference: {}", e.message);
+                    (String::new(), None)
+                }
+            }
+        };
+        bc["spec"]["triggers"][i]["imageChange"]["lastTriggeredImageID"] = json!(image);
+        let mut st = json!({"lastTriggeredImageID": image, "from": status_from});
+        if let Some(t) = at.or_else(|| old.and_then(|o| o["lastTriggerTime"].as_str().map(String::from))) {
+            st["lastTriggerTime"] = json!(t);
+        }
+        statuses.push(st);
+        if default && !image.is_empty() {
+            strategy_image = Some(image);
+        }
+    }
+    if !statuses.is_empty() {
+        bc["status"]["imageChangeTriggers"] = json!(statuses);
+    }
+    Ok(strategy_image)
 }
 
 /// A BuildConfig's generation moves on with its `lastVersion`, as its
@@ -1225,23 +1459,23 @@ async fn create_build(storage: &ResourceStorage, ns: &str, mut build: Value) -> 
 /// `lastVersion` bumped by a conditional update (a conflict is retried, as
 /// upstream retries it), then the build created. `rbac`/`user` are the
 /// requester's, for the strategy restriction.
-pub async fn instantiate(
+pub async fn instantiate<F, Fut>(
     storage: &ResourceStorage,
+    get: &F,
     rbac: Option<&RbacEngine>,
     user: &UserInfo,
     ns: &str,
     name: &str,
     req: &Value,
-) -> Result<Value, ApiError> {
+) -> Result<Value, ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
     if !req["binary"].is_null() {
         return Err(ApiError::bad_request(
             "a BuildRequest with binary input must use buildconfigs/instantiatebinary, which this cluster does not serve",
         ));
-    }
-    if !req["triggeredByImage"].is_null() || !req["from"].is_null() {
-        return Err(ApiError::bad_request(&format!(
-            "can't instantiate from BuildConfig {ns}/{name}: ImageChange triggers are not served by this cluster"
-        )));
     }
     let key = ResourceStorage::namespaced_key(BUILD_CONFIGS, ns, name);
     for _ in 0..3 {
@@ -1266,6 +1500,7 @@ pub async fn instantiate(
                 )));
             }
         }
+        let strategy_image = update_image_triggers(get, &mut bc, req).await?;
         let version = last + 1;
         let build_name = get_name(name, &version.to_string(), 253);
         let sa = match s(&bc["spec"], "serviceAccount") {
@@ -1287,7 +1522,7 @@ pub async fn instantiate(
         if let Some(src) = spec["source"].as_object_mut() {
             src.remove("binary");
         }
-        resolve_images(storage, &mut spec, ns, &sa).await?;
+        resolve_images(storage, get, &mut spec, ns, &sa, strategy_image).await?;
         let mut labels: Map<String, Value> = bc["metadata"]["labels"].as_object().cloned().unwrap_or_default();
         labels.insert(BUILD_CONFIG_LABEL_DEPRECATED.into(), json!(label_value(name)));
         labels.insert(BUILD_CONFIG_LABEL.into(), json!(label_value(name)));
@@ -1332,6 +1567,266 @@ pub async fn instantiate(
     Err(ApiError::conflict(&format!(
         "Operation cannot be fulfilled on buildconfigs.{GROUP} {name:?}: the object has been modified; please apply your changes to the latest version and try again"
     )))
+}
+
+// --- webhooks ---------------------------------------------------------------------
+
+/// `webhook.DefaultConfigRef`: the branch a config without a ref builds.
+const DEFAULT_CONFIG_REF: &str = "master";
+
+/// `GitRefMatches`: the event's branch is the config's (`master` when it
+/// names none), `refs/heads/` ignored on both.
+pub fn git_ref_matches(event_ref: &str, source: &Value) -> bool {
+    let config = match s(&source["git"], "ref") {
+        "" => DEFAULT_CONFIG_REF,
+        r => r,
+    };
+    event_ref.trim_start_matches("refs/heads/") == config.trim_start_matches("refs/heads/")
+}
+
+/// What a webhook delivery asks for.
+#[derive(Debug, PartialEq)]
+pub enum HookCall {
+    /// A build, with this request's revision, env and Docker options.
+    Build { revision: Value, env: Value, docker: Value },
+    /// Nothing to build (a ping, another branch): answered 200.
+    Skip(String),
+}
+
+fn header<'a>(headers: &'a axum::http::HeaderMap, name: &str) -> &'a str {
+    headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("")
+}
+
+fn json_body(headers: &axum::http::HeaderMap, body: &[u8]) -> Result<Value, ApiError> {
+    let ct = header(headers, "content-type");
+    let media = ct.split(';').next().unwrap_or("").trim();
+    if media != "application/json" {
+        return Err(ApiError::bad_request(&format!("unsupported Content-Type {ct}")));
+    }
+    serde_json::from_slice(body).map_err(|e| ApiError::bad_request(&format!("error decoding the webhook payload: {e}")))
+}
+
+fn person(p: &Value) -> Value {
+    json!({"name": s(p, "name"), "email": s(p, "email")})
+}
+
+fn git_revision(commit: &str, author: Value, committer: Value, message: &str) -> Value {
+    json!({"type": "Git", "git": {"commit": commit, "author": author, "committer": committer, "message": message}})
+}
+
+/// `Extract` of each webhook plugin: GitHub (and Gogs) `push`, GitLab `Push
+/// Hook`, Bitbucket `repo:push`, or the generic payload (optional; `env`
+/// only when the trigger has `allowEnv`).
+pub fn extract_hook(
+    ty: &str,
+    trigger: &Value,
+    source: &Value,
+    headers: &axum::http::HeaderMap,
+    body: &[u8],
+) -> Result<HookCall, ApiError> {
+    let other_branch = |r: &str| HookCall::Skip(format!("skipping build: branch reference {r:?} does not match the configuration"));
+    match ty {
+        "GitHub" => {
+            let event = match header(headers, "x-github-event") {
+                "" => header(headers, "x-gogs-event"),
+                e => e,
+            };
+            match event {
+                "" => return Err(ApiError::bad_request("missing X-GitHub-Event or X-Gogs-Event")),
+                "ping" => return Ok(HookCall::Skip("ping".into())),
+                "push" => {}
+                _ => return Err(ApiError::bad_request("Unknown X-GitHub-Event or X-Gogs-Event")),
+            }
+            let ev = json_body(headers, body)?;
+            let r = s(&ev, "ref");
+            if !git_ref_matches(r, source) {
+                return Ok(other_branch(r));
+            }
+            let c = &ev["head_commit"];
+            let revision = git_revision(s(c, "id"), person(&c["author"]), person(&c["committer"]), s(c, "message"));
+            Ok(HookCall::Build { revision, env: Value::Null, docker: Value::Null })
+        }
+        "GitLab" => {
+            match header(headers, "x-gitlab-event") {
+                "" => return Err(ApiError::bad_request("missing X-Gitlab-Event")),
+                "Push Hook" => {}
+                _ => return Err(ApiError::bad_request("Unknown X-Gitlab-Event")),
+            }
+            let ev = json_body(headers, body)?;
+            let r = s(&ev, "ref");
+            if !git_ref_matches(r, source) {
+                return Ok(other_branch(r));
+            }
+            let last = ev["commits"].as_array().and_then(|c| c.last()).cloned().unwrap_or(Value::Null);
+            let commit = match s(&last, "id") {
+                "" => s(&ev, "checkout_sha"),
+                id => id,
+            };
+            let author = person(&last["author"]);
+            let revision = git_revision(commit, author.clone(), author, s(&last, "message"));
+            Ok(HookCall::Build { revision, env: Value::Null, docker: Value::Null })
+        }
+        "Bitbucket" => {
+            match header(headers, "x-event-key") {
+                "" => return Err(ApiError::bad_request("missing X-Event-Key")),
+                "repo:push" => {}
+                _ => return Err(ApiError::bad_request("Unknown X-Event-Key")),
+            }
+            let ev = json_body(headers, body)?;
+            let change = ev["push"]["changes"].as_array().and_then(|c| c.iter().rev().find(|c| c["new"]["type"] == "branch"));
+            let Some(new) = change.map(|c| &c["new"]) else {
+                return Ok(HookCall::Skip("no branch was pushed".into()));
+            };
+            let r = format!("refs/heads/{}", s(new, "name"));
+            if !git_ref_matches(&r, source) {
+                return Ok(other_branch(&r));
+            }
+            let target = &new["target"];
+            // "Name <email>", as Bitbucket gives an author.
+            let raw = s(&target["author"], "raw");
+            let (name, email) = match raw.split_once('<') {
+                Some((n, e)) => (n.trim().to_string(), e.trim_end_matches('>').trim().to_string()),
+                None => (raw.to_string(), String::new()),
+            };
+            let author = json!({"name": name, "email": email});
+            let revision = git_revision(s(target, "hash"), author.clone(), author, s(target, "message"));
+            Ok(HookCall::Build { revision, env: Value::Null, docker: Value::Null })
+        }
+        "Generic" => {
+            if body.iter().all(u8::is_ascii_whitespace) {
+                return Ok(HookCall::Build { revision: Value::Null, env: Value::Null, docker: Value::Null });
+            }
+            let ct = header(headers, "content-type");
+            let media = ct.split(';').next().unwrap_or("").trim();
+            let ev: Value = match media {
+                "application/json" => serde_json::from_slice(body)
+                    .map_err(|e| ApiError::bad_request(&format!("error decoding the webhook payload: {e}")))?,
+                "application/yaml" | "application/x-yaml" | "text/yaml" => serde_yaml::from_slice(body)
+                    .map_err(|e| ApiError::bad_request(&format!("error decoding the webhook payload: {e}")))?,
+                _ => return Err(ApiError::bad_request(&format!("unsupported Content-Type {ct}"))),
+            };
+            let mut revision = Value::Null;
+            let git = &ev["git"];
+            if git.is_object() {
+                let r = s(git, "ref");
+                if !r.is_empty() && !git_ref_matches(r, source) {
+                    return Ok(other_branch(r));
+                }
+                revision = git_revision(s(git, "commit"), person(&git["author"]), person(&git["committer"]), s(git, "message"));
+            }
+            let env = if trigger["allowEnv"] == true { ev["env"].clone() } else { Value::Null };
+            Ok(HookCall::Build { revision, env, docker: ev["dockerStrategyOptions"].clone() })
+        }
+        other => Err(ApiError::not_found("buildconfighook", other)),
+    }
+}
+
+/// The secret a webhook trigger holds: its own, or its Secret's
+/// `WebHookSecretKey`.
+async fn trigger_secret(storage: &ResourceStorage, ns: &str, hook: &Value) -> Option<String> {
+    use base64::Engine;
+    if let Some(own) = hook["secret"].as_str().filter(|s| !s.is_empty()) {
+        return Some(own.to_string());
+    }
+    let name = s(&hook["secretReference"], "name");
+    if name.is_empty() {
+        return None;
+    }
+    let secret = storage.get(&ResourceStorage::namespaced_key("secrets", ns, name)).await.ok()?;
+    let raw = secret["data"][WEBHOOK_SECRET_KEY].as_str()?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(raw).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// `POST buildconfigs/<name>/webhooks/<secret>/<type>`: a build of the
+/// config, when a trigger of that type holds the secret and the delivery
+/// asks for one; `Ok(None)` when it asks for nothing (200, no build). The
+/// build is instantiated as the apiserver's (upstream's webhook REST uses
+/// its loopback client): the caller needs only `create
+/// buildconfigs/webhooks`, which `system:webhook` grants.
+#[allow(clippy::too_many_arguments)]
+pub async fn webhook<F, Fut>(
+    storage: &ResourceStorage,
+    get: &F,
+    ns: &str,
+    name: &str,
+    secret: &str,
+    hook_type: &str,
+    headers: &axum::http::HeaderMap,
+    body: &[u8],
+) -> Result<Option<Value>, ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
+    let ty = match hook_type {
+        "github" => "GitHub",
+        "generic" => "Generic",
+        "gitlab" => "GitLab",
+        "bitbucket" => "Bitbucket",
+        other => return Err(ApiError::not_found("buildconfighook", other)),
+    };
+    let field = webhook_field(ty).unwrap_or_default();
+    let bc = storage.get(&ResourceStorage::namespaced_key(BUILD_CONFIGS, ns, name)).await.map_err(|e| {
+        if e.status == axum::http::StatusCode::NOT_FOUND { ApiError::not_found("buildconfigs.build.openshift.io", name) } else { e }
+    })?;
+    let mut matched = None;
+    for t in bc["spec"]["triggers"].as_array().into_iter().flatten().filter(|t| t["type"] == ty) {
+        if trigger_secret(storage, ns, &t[field]).await.is_some_and(|s| !s.is_empty() && s == secret) {
+            matched = Some(t[field].clone());
+            break;
+        }
+    }
+    let Some(trigger) = matched else {
+        return Err(ApiError::unauthorized(&format!("the webhook {hook_type:?} for {name:?} did not accept your secret")));
+    };
+    let (revision, env, docker) = match extract_hook(ty, &trigger, &bc["spec"]["source"], headers, body)? {
+        HookCall::Skip(why) => {
+            tracing::info!(namespace = ns, buildconfig = name, "{ty} webhook: {why}");
+            return Ok(None);
+        }
+        HookCall::Build { revision, env, docker } => (revision, env, docker),
+    };
+    let cause_field = format!("{field}WebHook");
+    let mut cause = json!({"message": format!("{ty} WebHook")});
+    cause[cause_field] = json!({"revision": revision, "secret": "<secret>"});
+    let mut req = json!({"kind": "BuildRequest", "apiVersion": API_VERSION, "metadata": {"name": name, "namespace": ns},
+                         "triggeredBy": [cause]});
+    if !revision.is_null() {
+        req["revision"] = revision;
+    }
+    if env.as_array().is_some_and(|e| !e.is_empty()) {
+        req["env"] = env;
+    }
+    if docker.is_object() {
+        req["dockerStrategyOptions"] = docker;
+    }
+    let apiserver = UserInfo { username: "system:apiserver".into(), groups: vec!["system:masters".into()] };
+    instantiate(storage, get, None, &apiserver, ns, name, &req).await.map(Some)
+}
+
+/// `system:webhook`: who may deliver a build webhook. Bound to
+/// `system:authenticated` (`system:webhooks`), as OpenShift 4.16 binds it;
+/// a cluster that takes deliveries from an outside service binds it to
+/// `system:unauthenticated` too.
+pub fn webhook_role() -> Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRole",
+        "metadata": {"name": "system:webhook",
+                     "annotations": {"rustkube.io/description": "Deliver BuildConfig webhooks (#386)."}},
+        "rules": [{"apiGroups": ["", GROUP], "resources": ["buildconfigs/webhooks"], "verbs": ["create", "get"]}],
+    })
+}
+
+pub fn webhooks_binding() -> Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRoleBinding",
+        "metadata": {"name": "system:webhooks"},
+        "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "system:webhook"},
+        "subjects": [{"apiGroup": "rbac.authorization.k8s.io", "kind": "Group", "name": "system:authenticated"}],
+    })
 }
 
 /// `builds/clone` (`oc start-build --from-build`): a new build of the same
@@ -1542,13 +2037,10 @@ mod tests {
             assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
             assert!(e.message.contains(want), "{}", e.message);
         }
-        for t in ["GitHub", "Generic", "GitLab", "Bitbucket", "ImageChange", "github", "imageChange"] {
-            let mut bc = docker_bc();
-            bc["spec"]["triggers"] = json!([{"type": t, "github": {"secret": "s"}, "generic": {"secret": "s"}}]);
-            let e = admit_config_create(&mut bc).unwrap_err();
-            assert!(e.message.contains("spec.triggers[0].type: Unsupported value:"), "{t}: {}", e.message);
-            assert!(e.message.contains("supported values: \"ConfigChange\""), "{}", e.message);
-        }
+        let mut bc = docker_bc();
+        bc["spec"]["triggers"] = json!([{"type": "Nonsense"}]);
+        normalize_config(&mut bc);
+        assert_eq!(bc["spec"]["triggers"], json!([]), "unknown types are dropped before validation");
     }
 
     #[test]
@@ -1693,12 +2185,150 @@ mod tests {
         assert_eq!(find_docker_secret(&secrets, "quay.io/x/y"), None);
     }
 
+    const RUBY: &str = "node1.lo:5000/demo/ruby@sha256:3333";
+
+    /// The registry: `demo/ruby` with tag `3`; `down` cannot be reached.
+    fn registry(path: String) -> std::future::Ready<Fetched> {
+        std::future::ready(match path.as_str() {
+            "/apis/image.openshift.io/v1/namespaces/demo/imagestreams/ruby" => Fetched::Found(json!({
+                "metadata": {"name": "ruby", "namespace": "demo"},
+                "status": {"tags": [{"tag": "3", "items": [{"dockerImageReference": RUBY, "image": "sha256:3333"}]}]}})),
+            "/apis/image.openshift.io/v1/namespaces/demo/imagestreamimages/ruby@sha256:3333" => Fetched::Found(json!({
+                "image": {"dockerImageReference": RUBY}})),
+            p if p.contains("/namespaces/down/") => Fetched::Failed("connection refused".into()),
+            _ => Fetched::NotFound,
+        })
+    }
+
+    #[tokio::test]
+    async fn image_stream_references_resolve_through_the_registry() {
+        let ist = |name: &str, ns: &str| json!({"kind": "ImageStreamTag", "name": name, "namespace": ns});
+        assert_eq!(resolve_image(&registry, &ist("ruby:3", ""), "demo").await.unwrap(), RUBY);
+        assert_eq!(resolve_image(&registry, &json!({"kind": "ImageStreamImage", "name": "ruby@sha256:3333"}), "demo").await.unwrap(), RUBY);
+        for (name, ns, missing) in [("ruby:4", "", "imagestreamtags"), ("node:20", "", "imagestreams"), ("ruby:3", "other", "imagestreams")] {
+            let e = resolve_image(&registry, &ist(name, ns), "demo").await.unwrap_err();
+            assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(e.message.starts_with(&format!("Error resolving ImageStreamTag {name} in namespace")), "{}", e.message);
+            assert!(e.message.contains(missing), "{}", e.message);
+        }
+        let e = resolve_image(&registry, &ist("ruby:3", "down"), "demo").await.unwrap_err();
+        assert_eq!(e.status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(resolve_image(&registry, &json!({"kind": "DockerImage", "name": "nginx"}), "demo").await.unwrap(), "nginx");
+    }
+
+    fn source_bc() -> Value {
+        json!({"metadata": {"name": "web", "namespace": "demo"},
+               "spec": {"source": {"git": {"uri": "https://git.example/web.git"}},
+                        "strategy": {"sourceStrategy": {"from": {"kind": "ImageStreamTag", "name": "ruby:3"}}},
+                        "triggers": [{"type": "ImageChange", "imageChange": {}}]}})
+    }
+
     #[test]
-    fn an_image_stream_reference_does_not_resolve_here() {
-        let e = resolve_image(&json!({"kind": "ImageStreamTag", "name": "ruby:3"}), "demo").unwrap_err();
-        assert_eq!(e.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(e.message.starts_with("Error resolving ImageStreamTag ruby:3 in namespace demo:"), "{}", e.message);
-        assert_eq!(resolve_image(&json!({"kind": "DockerImage", "name": "nginx"}), "demo").unwrap(), "nginx");
+    fn triggers_validate_as_upstreams() {
+        let mut ok = source_bc();
+        ok["spec"]["triggers"] = json!([{"type": "ConfigChange"}, {"type": "ImageChange", "imageChange": {}},
+            {"type": "ImageChange", "imageChange": {"from": {"kind": "ImageStreamTag", "name": "base:1"}}},
+            {"type": "GitHub", "github": {"secret": "s3cret"}}, {"type": "Generic", "generic": {"secretReference": {"name": "hook"}}},
+            {"type": "GitLab", "gitlab": {"secret": "x"}}, {"type": "Bitbucket", "bitbucket": {"secret": "y"}}]);
+        admit_config_create(&mut ok).unwrap();
+        let cases: Vec<(&str, Value)> = vec![
+            ("spec.triggers[0].github: Required value", json!([{"type": "GitHub"}])),
+            ("spec.triggers[0].generic.secret: Required value", json!([{"type": "Generic", "generic": {}}])),
+            ("spec.triggers[0].gitlab.secretReference: Invalid value",
+             json!([{"type": "GitLab", "gitlab": {"secret": "a", "secretReference": {"name": "b"}}}])),
+            ("spec.triggers[0].imageChange.from.name: Invalid value: \"base\"",
+             json!([{"type": "ImageChange", "imageChange": {"from": {"kind": "ImageStreamTag", "name": "base"}}}])),
+            ("spec.triggers[0].imageChange.from.kind: Invalid value: \"DockerImage\"",
+             json!([{"type": "ImageChange", "imageChange": {"from": {"kind": "DockerImage", "name": "a:b"}}}])),
+            ("spec.triggers: Invalid value", json!([{"type": "ImageChange"}, {"type": "imageChange"}])),
+            ("spec.triggers[1].imageChange: Invalid value: {}: multiple ImageChange triggers",
+             json!([{"type": "ImageChange", "imageChange": {"from": {"kind": "ImageStreamTag", "name": "ruby:3"}}}, {"type": "ImageChange"}])),
+        ];
+        for (want, triggers) in cases {
+            let mut bc = source_bc();
+            bc["spec"]["triggers"] = triggers;
+            let e = admit_config_create(&mut bc).unwrap_err();
+            assert!(e.message.contains(want), "{want}: {}", e.message);
+        }
+        let mut docker = docker_bc();
+        docker["spec"]["triggers"] = json!([{"type": "ImageChange"}]);
+        assert!(admit_config_create(&mut docker).unwrap_err().message.contains("a default ImageChange trigger can only be used"));
+    }
+
+    fn headers(pairs: &[(&'static str, &str)]) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(*k, v.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn webhook_deliveries_as_upstreams_plugins_read_them() {
+        let source = json!({"git": {"uri": "https://git.example/web.git", "ref": "main"}});
+        let json_ct = ("content-type", "application/json");
+        let push = |r: &str| json!({"ref": r, "head_commit": {"id": "abc123", "message": "fix",
+            "author": {"name": "A", "email": "a@x"}, "committer": {"name": "C", "email": "c@x"}}}).to_string();
+        let gh = headers(&[("x-github-event", "push"), json_ct]);
+        match extract_hook("GitHub", &json!({}), &source, &gh, push("refs/heads/main").as_bytes()).unwrap() {
+            HookCall::Build { revision, .. } => {
+                assert_eq!(revision["git"]["commit"], "abc123");
+                assert_eq!(revision["git"]["committer"]["email"], "c@x");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(extract_hook("GitHub", &json!({}), &source, &gh, push("refs/heads/dev").as_bytes()).unwrap(), HookCall::Skip(_)));
+        assert!(matches!(extract_hook("GitHub", &json!({}), &source, &headers(&[("x-github-event", "ping")]), b"{}").unwrap(),
+                         HookCall::Skip(_)));
+        assert!(extract_hook("GitHub", &json!({}), &source, &headers(&[("x-github-event", "issues"), json_ct]), b"{}").is_err());
+        assert!(extract_hook("GitHub", &json!({}), &source, &headers(&[("x-github-event", "push")]), b"{}").is_err(), "not JSON");
+        // No ref in the config: master.
+        assert!(git_ref_matches("refs/heads/master", &json!({"git": {"uri": "u"}})));
+        assert!(!git_ref_matches("refs/heads/main", &json!({"git": {"uri": "u"}})));
+        // GitLab, Bitbucket.
+        let gl = json!({"ref": "refs/heads/main", "checkout_sha": "sha",
+                        "commits": [{"id": "c1", "message": "one", "author": {"name": "A", "email": "a@x"}}]}).to_string();
+        let call = extract_hook("GitLab", &json!({}), &source, &headers(&[("x-gitlab-event", "Push Hook"), json_ct]), gl.as_bytes()).unwrap();
+        assert!(matches!(call, HookCall::Build { ref revision, .. } if revision["git"]["commit"] == "c1"));
+        let bb = json!({"push": {"changes": [{"new": {"type": "branch", "name": "main",
+            "target": {"hash": "h1", "message": "m", "author": {"raw": "Ann <ann@x>"}}}}]}}).to_string();
+        let call = extract_hook("Bitbucket", &json!({}), &source, &headers(&[("x-event-key", "repo:push"), json_ct]), bb.as_bytes()).unwrap();
+        assert!(matches!(call, HookCall::Build { ref revision, .. }
+                         if revision["git"]["commit"] == "h1" && revision["git"]["author"]["email"] == "ann@x"));
+        // Generic: no body is a build; env only when allowed.
+        assert!(matches!(extract_hook("Generic", &json!({}), &source, &headers(&[]), b"").unwrap(), HookCall::Build { .. }));
+        let gen = json!({"git": {"ref": "main", "commit": "g1"}, "env": [{"name": "A", "value": "1"}]}).to_string();
+        let call = extract_hook("Generic", &json!({}), &source, &headers(&[json_ct]), gen.as_bytes()).unwrap();
+        assert!(matches!(call, HookCall::Build { ref env, ref revision, .. } if env.is_null() && revision["git"]["commit"] == "g1"));
+        let call = extract_hook("Generic", &json!({"allowEnv": true}), &source, &headers(&[json_ct]), gen.as_bytes()).unwrap();
+        assert!(matches!(call, HookCall::Build { ref env, .. } if env[0]["name"] == "A"));
+        let yaml = "git:\n  ref: dev\n";
+        assert!(matches!(extract_hook("Generic", &json!({}), &source, &headers(&[("content-type", "application/yaml")]), yaml.as_bytes()).unwrap(),
+                         HookCall::Skip(_)));
+    }
+
+    #[tokio::test]
+    async fn update_image_triggers_records_each_image() {
+        let mut bc = source_bc();
+        admit_config_create(&mut bc).unwrap();
+        // The first build: the default trigger resolves, and is the strategy's image.
+        let image = update_image_triggers(&registry, &mut bc, &json!({})).await.unwrap();
+        assert_eq!(image.as_deref(), Some(RUBY));
+        assert_eq!(bc["spec"]["triggers"][0]["imageChange"]["lastTriggeredImageID"], RUBY);
+        assert_eq!(bc["status"]["imageChangeTriggers"][0]["from"], json!({"name": "ruby:3", "namespace": "demo"}));
+        // The trigger controller's request for the same image is refused; a new one is taken.
+        let req = |img: &str| json!({"triggeredByImage": {"kind": "DockerImage", "name": img},
+                                     "from": {"kind": "ImageStreamTag", "name": "ruby:3"}});
+        let e = update_image_triggers(&registry, &mut bc, &req(RUBY)).await.unwrap_err();
+        assert!(e.message.contains("has already instantiated a build for imageid"), "{}", e.message);
+        let newer = "node1.lo:5000/demo/ruby@sha256:4444";
+        assert_eq!(update_image_triggers(&registry, &mut bc, &req(newer)).await.unwrap().as_deref(), Some(newer));
+        assert_eq!(bc["status"]["imageChangeTriggers"][0]["lastTriggeredImageID"], newer);
+        assert!(bc["status"]["imageChangeTriggers"][0]["lastTriggerTime"].is_string());
+        // A default trigger whose stream is missing fails the build.
+        let mut gone = source_bc();
+        gone["spec"]["strategy"]["sourceStrategy"]["from"]["name"] = json!("ruby:9");
+        assert!(update_image_triggers(&registry, &mut gone, &json!({})).await.is_err());
     }
 
     #[test]

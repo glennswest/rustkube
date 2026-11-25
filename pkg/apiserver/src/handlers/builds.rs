@@ -59,8 +59,28 @@ pub async fn instantiate(
 ) -> Result<Response, ApiError> {
     let req = request_of(body, &name)?;
     let rbac = rbac.as_ref().map(|Extension(r)| r.as_ref());
-    let build = builds::instantiate(&state.storage, rbac, &user, &namespace, &name, &req).await?;
+    let get = |path: String| crate::image_policy::fetch(&state, path);
+    let build = builds::instantiate(&state.storage, &get, rbac, &user, &namespace, &name, &req).await?;
     Ok(created(build))
+}
+
+/// `POST …/buildconfigs/{name}/webhooks/{secret}/{type}` (#386): a build
+/// from a GitHub, GitLab, Bitbucket or generic webhook delivery. 200 with
+/// the Build, or a Success Status when the delivery asks for none (a ping,
+/// another branch).
+pub async fn webhook(
+    State(state): State<AppState>,
+    Path((namespace, name, secret, hook_type)): Path<(String, String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    let get = |path: String| crate::image_policy::fetch(&state, path);
+    match builds::webhook(&state.storage, &get, &namespace, &name, &secret, &hook_type, &headers, &body).await? {
+        Some(build) => Ok((StatusCode::OK, Json(build)).into_response()),
+        None => Ok((StatusCode::OK, Json(json!({"kind": "Status", "apiVersion": "v1", "metadata": {},
+                                                 "status": "Success", "code": 200,
+                                                 "message": "no build was started for this delivery"}))).into_response()),
+    }
 }
 
 /// `POST …/builds/{name}/clone`

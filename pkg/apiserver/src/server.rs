@@ -825,6 +825,10 @@ fn build_router(
             post(crate::handlers::builds::instantiate),
         )
         .route(
+            "/apis/build.openshift.io/v1/namespaces/{namespace}/buildconfigs/{name}/webhooks/{secret}/{type}",
+            post(crate::handlers::builds::webhook),
+        )
+        .route(
             "/apis/build.openshift.io/v1/namespaces/{namespace}/builds/{name}/clone",
             post(crate::handlers::builds::clone),
         )
@@ -2383,6 +2387,8 @@ async fn bootstrap_rbac(
     for role in [
         // The builder's (#374), bound per namespace by `builds`.
         crate::builds::image_builder_role(),
+        // Who may deliver a build webhook (#386), bound below.
+        crate::builds::webhook_role(),
         // A Custom rollout's deployer's (#392), bound per namespace likewise.
         crate::deployment_configs::deployer_role(),
         crate::control_plane_rbac::controller_manager_role(),
@@ -2399,6 +2405,14 @@ async fn bootstrap_rbac(
     for user in [crate::control_plane_rbac::CONTROLLER_MANAGER, crate::control_plane_rbac::SCHEDULER] {
         reconcile_bootstrap_binding(storage, crate::control_plane_rbac::binding(user)).await;
     }
+    // system:webhooks (#386): created once, so an admin's change stays.
+    create_bootstrap(
+        storage,
+        &ResourceStorage::cluster_key("clusterrolebindings", "system:webhooks"),
+        crate::builds::webhooks_binding(),
+        "clusterrolebindings system:webhooks",
+    )
+    .await;
 
     // kube-system/node-admin: the identity of a node's ssh login (#79).
     let (node_admin_sa, node_admin_binding) = node_admin_objects();

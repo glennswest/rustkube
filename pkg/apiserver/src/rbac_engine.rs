@@ -1216,8 +1216,11 @@ pub(crate) fn parse_path_segments(
             Some(name.to_string()),
             None,
         )),
-        // /apis/{group}/{version}/namespaces/{ns}/{resource}/{name}/{subresource}
-        ["apis", group, _version, "namespaces", ns, resource, name, sub] => Some((
+        // /apis/{group}/{version}/namespaces/{ns}/{resource}/{name}/{subresource}[/...]
+        // — what follows the subresource is its own (upstream's
+        // RequestInfo): `buildconfigs/webhooks` for
+        // `…/buildconfigs/web/webhooks/<secret>/github` (#386).
+        ["apis", group, _version, "namespaces", ns, resource, name, sub, ..] => Some((
             group.to_string(),
             resource.to_string(),
             Some(ns.to_string()),
@@ -1277,6 +1280,14 @@ mod subresource_tests {
             namespace: Some("default".into()),
             name: Some("p1".into()),
         }
+    }
+
+    #[test]
+    fn segments_past_a_subresource_are_its_own() {
+        let segs = ["apis", "build.openshift.io", "v1", "namespaces", "demo", "buildconfigs", "web", "webhooks", "s3cret", "github"];
+        let (group, resource, ns, name, sub) = parse_path_segments(&segs).unwrap();
+        assert_eq!((group.as_str(), resource.as_str()), ("build.openshift.io", "buildconfigs"));
+        assert_eq!((ns.as_deref(), name.as_deref(), sub.as_deref()), (Some("demo"), Some("web"), Some("webhooks")));
     }
 
     #[test]

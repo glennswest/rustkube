@@ -1763,8 +1763,8 @@ pub async fn api_apps_openshift_v1_resources() -> impl IntoResponse {
 
 /// GET /apis/build.openshift.io/v1 — Builds and BuildConfigs (#374), with
 /// the subresources this cluster serves. `buildconfigs/instantiatebinary`
-/// and `buildconfigs/webhooks` are not: what they would start (binary
-/// builds, webhook triggers) is refused at validation.
+/// is not: a binary build is refused at validation. `buildconfigs/webhooks`
+/// is (#386).
 pub async fn api_build_v1_resources() -> impl IntoResponse {
     let all = ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"];
     Json(json!({
@@ -1775,6 +1775,8 @@ pub async fn api_build_v1_resources() -> impl IntoResponse {
             {"name": "buildconfigs", "singularName": "buildconfig", "namespaced": true, "kind": "BuildConfig",
              "verbs": all, "shortNames": ["bc"], "categories": ["all"]},
             {"name": "buildconfigs/instantiate", "singularName": "", "namespaced": true, "kind": "BuildRequest",
+             "verbs": ["create"]},
+            {"name": "buildconfigs/webhooks", "singularName": "", "namespaced": true, "kind": "Build",
              "verbs": ["create"]},
             {"name": "builds", "singularName": "build", "namespaced": true, "kind": "Build", "verbs": all,
              "categories": ["all"]},
