@@ -290,6 +290,70 @@ pub fn calculate_status(dc: &Value, rcs: &[Value], update_observed: bool, extra:
     status
 }
 
+/// `RecordConfigChangeCause`.
+fn config_change_cause() -> Value {
+    json!({"message": "config change", "causes": [{"type": "ConfigChange"}]})
+}
+
+/// `HasUpdatedImages`: the automatic ImageChange triggers' last images that
+/// the version's containers do not run.
+fn updated_images(dc: &Value, rc: &Value) -> Vec<String> {
+    let spec = &rc["spec"]["template"]["spec"];
+    let running: Vec<&str> = ["containers", "initContainers"]
+        .iter()
+        .flat_map(|l| spec[*l].as_array().into_iter().flatten())
+        .map(|c| s(c, "image"))
+        .collect();
+    let mut out = Vec::new();
+    for t in dc["spec"]["triggers"].as_array().into_iter().flatten() {
+        let p = &t["imageChangeParams"];
+        if t["type"] != "ImageChange" || p["automatic"] != true {
+            continue;
+        }
+        let last = s(p, "lastTriggeredImage");
+        if last.is_empty() || running.contains(&last) || out.iter().any(|o| o == last) {
+            continue;
+        }
+        out.push(last.to_string());
+    }
+    out
+}
+
+/// `triggerActivated`: the details of the version a trigger asks for. An
+/// initial version waits for every ImageChange trigger's image; after that
+/// an automatic trigger's image the latest version does not run fires
+/// (cause ImageChange), then a ConfigChange trigger on a template change.
+pub fn trigger_activated(dc: &Value, latest_rc: Option<&Value>) -> Option<Value> {
+    let triggers = dc["spec"]["triggers"].as_array()?;
+    let images: Vec<&Value> = triggers.iter().filter(|t| t["type"] == "ImageChange").collect();
+    let config = triggers.iter().any(|t| t["type"] == "ConfigChange");
+    if dc["spec"]["paused"] == true || (images.is_empty() && !config) {
+        return None;
+    }
+    if dc["status"]["latestVersion"].as_i64().unwrap_or(0) == 0 {
+        if !images.is_empty() {
+            let resolved = images.iter().all(|t| !s(&t["imageChangeParams"], "lastTriggeredImage").is_empty());
+            return resolved.then(config_change_cause);
+        }
+        return Some(config_change_cause());
+    }
+    let rc = latest_rc?;
+    if !images.is_empty() {
+        let updated = updated_images(dc, rc);
+        if !updated.is_empty() {
+            let causes: Vec<Value> = updated
+                .iter()
+                .map(|i| json!({"type": "ImageChange", "imageTrigger": {"from": {"kind": "DockerImage", "name": i}}}))
+                .collect();
+            return Some(json!({"message": "image change", "causes": causes}));
+        }
+    }
+    if config && decode(rc).is_none_or(|d| d["spec"]["template"] != dc["spec"]["template"]) {
+        return Some(config_change_cause());
+    }
+    None
+}
+
 /// `DeploymentsForCleanup`: what `revisionHistoryLimit` counts, oldest first.
 fn for_cleanup<'a>(dc: &Value, rcs: &'a [Value]) -> Vec<&'a Value> {
     let mut sorted: Vec<&Value> = rcs.iter().collect();
@@ -333,13 +397,14 @@ impl DeploymentConfigController {
     }
 
     /// A trigger fired: the next version, with its cause.
-    async fn bump(&self, dc: &Value) -> anyhow::Result<()> {
+    async fn bump(&self, dc: &Value, details: Value) -> anyhow::Result<()> {
         let mut body = dc.clone();
         let v = dc["status"]["latestVersion"].as_i64().unwrap_or(0) + 1;
         body["status"]["latestVersion"] = json!(v);
-        body["status"]["details"] = json!({"message": "config change", "causes": [{"type": "ConfigChange"}]});
+        let why = s(&details, "message").to_string();
+        body["status"]["details"] = details;
         self.api.update_status(&Self::dc_path(dc), &body).await?;
-        info!("DeploymentConfig {}/{}: version {v} (config change)", ns_of(dc), name_of(dc));
+        info!("DeploymentConfig {}/{}: version {v} ({why})", ns_of(dc), name_of(dc));
         Ok(())
     }
 
@@ -420,17 +485,8 @@ impl Controller for DeploymentConfigController {
         if empty_image {
             return self.update_status(dc, &rcs, true, None).await;
         }
-        // triggerActivated: only ConfigChange triggers are admitted here.
-        let config_trigger = triggers.iter().any(|t| t["type"] == "ConfigChange");
-        if config_trigger {
-            let fire = match (&latest_rc, latest) {
-                (_, 0) => true,
-                (Some(rc), _) => decode(rc).is_none_or(|d| d["spec"]["template"] != dc["spec"]["template"]),
-                (None, _) => false,
-            };
-            if fire {
-                return self.bump(dc).await;
-            }
+        if let Some(details) = trigger_activated(dc, latest_rc.as_ref()) {
+            return self.bump(dc, details).await;
         }
         if let Some(rc) = latest_rc {
             if !is_terminated(&rc) {
@@ -964,10 +1020,13 @@ impl Rollout {
 
     /// A lifecycle hook, with its failure policy applied.
     async fn hook(&self, hook: &Value, suffix: &str, label: &str, dc: &Value) -> anyhow::Result<()> {
-        if !hook["execNewPod"].is_object() {
+        let result = if hook["tagImages"].as_array().is_some_and(|t| !t.is_empty()) {
+            self.tag_images(hook, label).await
+        } else if hook["execNewPod"].is_object() {
+            self.exec_new_pod(hook, suffix, label, dc).await
+        } else {
             return Ok(());
-        }
-        let result = self.exec_new_pod(hook, suffix, label, dc).await;
+        };
         match (result, s(hook, "failurePolicy")) {
             (Ok(()), _) => Ok(()),
             (Err(e), "Ignore") => {
@@ -976,6 +1035,45 @@ impl Rollout {
             }
             (Err(e), _) => anyhow::bail!("the {label} hook failed: {e}, aborting rollout of {}/{}", self.ns, self.name),
         }
+    }
+
+    /// `tagImages` (#386): each named container's image, as this version
+    /// runs it, tagged into an ImageStreamTag — a PUT of the tag, which the
+    /// registry takes as an upsert into an existing stream, else a create.
+    async fn tag_images(&self, hook: &Value, label: &str) -> anyhow::Result<()> {
+        let rc = self.rc(&self.name).await?;
+        let mut errs = Vec::new();
+        for action in hook["tagImages"].as_array().into_iter().flatten() {
+            let container = s(action, "containerName");
+            let image = rc["spec"]["template"]["spec"]["containers"].as_array().into_iter().flatten()
+                .find(|c| c["name"] == container)
+                .map(|c| s(c, "image").to_string());
+            let Some(image) = image else {
+                errs.push(format!("unable to find image for container {container:?}, container could not be found"));
+                continue;
+            };
+            let to = &action["to"];
+            let ns = match s(to, "namespace") {
+                "" => self.ns.clone(),
+                n => n.to_string(),
+            };
+            let name = s(to, "name");
+            let body = json!({"kind": "ImageStreamTag", "apiVersion": "image.openshift.io/v1",
+                              "metadata": {"name": name, "namespace": ns},
+                              "tag": {"name": imagestream_tag(name), "from": {"kind": "DockerImage", "name": image}}});
+            let base = format!("/apis/image.openshift.io/v1/namespaces/{ns}/imagestreamtags");
+            let result = match self.api.update(&format!("{base}/{name}"), &body).await {
+                Err(e) if apimachinery::api_status::status_of(&e).is_some_and(|s| s.as_u16() == 404) => {
+                    self.api.create(&base, &body).await
+                }
+                r => r,
+            };
+            match result {
+                Ok(_) => self.say(&format!("--> {label}: Tagged {image:?} into {ns}/{name}")).await,
+                Err(e) => errs.push(format!("{e:#}")),
+            }
+        }
+        if errs.is_empty() { Ok(()) } else { anyhow::bail!("{}", errs.join("; ")) }
     }
 
     async fn exec_new_pod(&self, hook: &Value, suffix: &str, label: &str, dc: &Value) -> anyhow::Result<()> {
@@ -1036,6 +1134,11 @@ impl Rollout {
         self.say(&format!("--> {label}: Success")).await;
         Ok(())
     }
+}
+
+/// The tag half of `<stream>:<tag>`.
+fn imagestream_tag(name: &str) -> &str {
+    apimachinery::imagestream::split_tag(name).1
 }
 
 /// library-go's `naming.GetPodName`: `base-suffix`, shortened with an FNV
@@ -1332,5 +1435,38 @@ mod tests {
         assert_eq!(fenceposts(&json!(0), &json!(0), 3), (0, 1));
         assert_eq!(pod_name("web-2", "hook-pre"), "web-2-hook-pre");
         assert!(pod_name(&"a".repeat(70), "hook-post").len() <= 63);
+    }
+
+    #[test]
+    fn image_triggers_activate_as_upstreams_trigger_activated() {
+        const IMG: &str = "node1.lo:5000/demo/web@sha256:1111";
+        let mut d = dc();
+        d["status"]["latestVersion"] = json!(0);
+        d["spec"]["triggers"] = json!([{"type": "ImageChange", "imageChangeParams": {"automatic": true, "containerNames": ["web"],
+                                        "from": {"kind": "ImageStreamTag", "name": "web:latest"}}}]);
+        assert!(trigger_activated(&d, None).is_none(), "the first version waits for the image");
+        d["spec"]["triggers"][0]["imageChangeParams"]["lastTriggeredImage"] = json!(IMG);
+        assert_eq!(trigger_activated(&d, None).unwrap()["causes"][0]["type"], "ConfigChange");
+        // Version 1 runs the image: nothing; a new image: ImageChange.
+        d["status"]["latestVersion"] = json!(1);
+        d["spec"]["template"]["spec"]["containers"][0]["image"] = json!(IMG);
+        let mut v1 = make_deployment(&d);
+        assert!(trigger_activated(&d, Some(&v1)).is_none());
+        let img2 = "node1.lo:5000/demo/web@sha256:2222";
+        d["spec"]["triggers"][0]["imageChangeParams"]["lastTriggeredImage"] = json!(img2);
+        d["spec"]["template"]["spec"]["containers"][0]["image"] = json!(img2);
+        let details = trigger_activated(&d, Some(&v1)).unwrap();
+        assert_eq!(details["message"], "image change");
+        assert_eq!(details["causes"][0], json!({"type": "ImageChange", "imageTrigger": {"from": {"kind": "DockerImage", "name": img2}}}));
+        // A manual trigger never fires by itself; no ConfigChange: no template rollout.
+        d["spec"]["triggers"][0]["imageChangeParams"]["automatic"] = json!(false);
+        assert!(trigger_activated(&d, Some(&v1)).is_none());
+        d["spec"]["triggers"] = json!([{"type": "ConfigChange"}]);
+        assert_eq!(trigger_activated(&d, Some(&v1)).unwrap()["message"], "config change");
+        v1["metadata"]["annotations"][ENCODED_CONFIG_ANNOTATION] = json!(d.to_string());
+        assert!(trigger_activated(&d, Some(&v1)).is_none());
+        d["spec"]["paused"] = json!(true);
+        d["spec"]["template"]["spec"]["containers"][0]["image"] = json!("x");
+        assert!(trigger_activated(&d, Some(&v1)).is_none(), "paused");
     }
 }

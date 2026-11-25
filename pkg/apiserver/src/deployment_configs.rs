@@ -16,13 +16,23 @@
 //!
 //! **What this cluster cannot run is refused, not stored** (no stubs):
 //! `customParams` on a Rolling or Recreate strategy (it swaps the deployer
-//! image, and those rollouts have none here), a Custom strategy without an
-//! image (there is no default deployer image), `tagImages` hooks and
-//! ImageChange triggers (no ImageStreams are served) are each a field error.
+//! image, and those rollouts have none here) and a Custom strategy without
+//! an image (there is no default deployer image) are each a field error.
+//!
+//! **ImageChange triggers** (#386): validated as upstream's (an
+//! `ImageStreamTag` `<stream>:<tag>`, container names in the template; a
+//! container an image trigger names may have no image yet). The
+//! controller-manager's `imagetrigger` controller resolves an automatic
+//! trigger into its containers and `lastTriggeredImage`;
+//! [`instantiate`] does it here for `oc rollout latest` (`processTriggers`),
+//! reading the stream through the aggregator — ImageStreams are the
+//! registry's (#385). `tagImages` hooks are run by the deployer.
 
 use crate::error::ApiError;
+use crate::image_policy::Fetched;
 use crate::storage::ResourceStorage;
 use serde_json::{json, Value};
+use std::future::Future;
 
 pub const GROUP: &str = "apps.openshift.io";
 pub const API_VERSION: &str = "apps.openshift.io/v1";
@@ -90,6 +100,19 @@ pub fn normalize(dc: &mut Value) {
     let spec = &mut dc["spec"];
     if spec.get("triggers").is_none_or(Value::is_null) {
         spec["triggers"] = json!([{"type": "ConfigChange"}]);
+    }
+    // SetDefaults_DeploymentTriggerPolicy: an image trigger's `from` is an
+    // ImageStreamTag unless it says otherwise.
+    for t in spec["triggers"].as_array_mut().into_iter().flatten() {
+        if t["type"] == "ImageChange" && t["imageChangeParams"].is_object() {
+            let from = &mut t["imageChangeParams"]["from"];
+            if !from.is_object() {
+                *from = json!({});
+            }
+            if s(from, "kind").is_empty() {
+                from["kind"] = json!("ImageStreamTag");
+            }
+        }
     }
     if spec["selector"].as_object().is_none_or(|m| m.is_empty()) && spec["template"]["metadata"]["labels"].is_object() {
         spec["selector"] = spec["template"]["metadata"]["labels"].clone();
@@ -234,12 +257,31 @@ fn validate_hook(hook: &Value, path: &str, containers: &[String], errs: &mut Vec
         "Abort" | "Retry" | "Ignore" => {}
         other => errs.push(not_supported(&format!("{path}.failurePolicy"), other, &["Abort", "Retry", "Ignore"])),
     }
-    if hook["tagImages"].as_array().is_some_and(|t| !t.is_empty()) {
-        // Tagging needs ImageStreams, which are not served.
-        errs.push(format!("{path}.tagImages: Forbidden: tagImages hooks need ImageStreams, which this cluster does not serve"));
+    let tags = hook["tagImages"].as_array().filter(|t| !t.is_empty());
+    let exec = &hook["execNewPod"];
+    if let Some(tags) = tags {
+        if exec.is_object() {
+            errs.push(invalid(path, "\"<hook>\"", "only one of execNewPod or tagImages may be specified"));
+            return;
+        }
+        for (i, image) in tags.iter().enumerate() {
+            let at = format!("{path}.tagImages[{i}]");
+            let c = s(image, "containerName");
+            if c.is_empty() {
+                errs.push(required(&format!("{at}.containerName"), "a containerName is required"));
+            } else if !containers.iter().any(|n| n == c) {
+                errs.push(invalid(&format!("{at}.containerName"), &q(c), &format!("no container {c:?} found")));
+            }
+            let kind = s(&image["to"], "kind");
+            if kind != "ImageStreamTag" {
+                errs.push(invalid(&format!("{at}.to.kind"), &q(kind), "Must be 'ImageStreamTag'"));
+            }
+            if s(&image["to"], "name").is_empty() {
+                errs.push(required(&format!("{at}.to.name"), "a destination tag name is required"));
+            }
+        }
         return;
     }
-    let exec = &hook["execNewPod"];
     if !exec.is_object() {
         errs.push(invalid(path, "\"<empty>\"", "One of execNewPod or tagImages must be specified"));
         return;
@@ -359,6 +401,37 @@ fn validate_strategy(spec: &Value, errs: &mut Vec<String>) {
     }
 }
 
+/// `validateImageChangeParams`, and the container names it lists against
+/// the template.
+fn validate_image_change_params(p: &Value, path: &str, containers: &[&str], errs: &mut Vec<String>) {
+    let from = &p["from"];
+    let name = s(from, "name");
+    if name.is_empty() {
+        errs.push(required(&format!("{path}.from"), ""));
+    } else {
+        if s(from, "kind") != "ImageStreamTag" {
+            errs.push(invalid(&format!("{path}.from.kind"), &q(s(from, "kind")), "kind must be one of: ImageStreamTag"));
+        }
+        if !apimachinery::imagestream::valid_tag_name(name) {
+            errs.push(invalid(&format!("{path}.from.name"), &q(name), "must be of the form <stream_name>:<tag>"));
+        }
+        let ns = s(from, "namespace");
+        if !ns.is_empty() && !crate::user_groups::is_dns_subdomain(ns) {
+            errs.push(invalid(&format!("{path}.from.namespace"), &q(ns), "namespace must be a valid subdomain"));
+        }
+    }
+    let names = p["containerNames"].as_array().cloned().unwrap_or_default();
+    if names.is_empty() {
+        errs.push(required(&format!("{path}.containerNames"), ""));
+    }
+    for (j, n) in names.iter().enumerate() {
+        let n = n.as_str().unwrap_or("");
+        if !containers.contains(&n) {
+            errs.push(invalid(&format!("{path}.containerNames[{j}]"), &q(n), &format!("container {n:?} not found in pod template")));
+        }
+    }
+}
+
 /// `ValidateDeploymentConfigSpec` and the object's name.
 pub fn validate(dc: &Value) -> Result<(), ApiError> {
     let name = s(&dc["metadata"], "name");
@@ -369,12 +442,33 @@ pub fn validate(dc: &Value) -> Result<(), ApiError> {
         errs.push(invalid("metadata.name", &q(name), "a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character"));
     }
     let spec = &dc["spec"];
+    let template_containers: Vec<&str> = ["containers", "initContainers"]
+        .iter()
+        .flat_map(|l| spec["template"]["spec"][*l].as_array().into_iter().flatten())
+        .map(|c| s(c, "name"))
+        .collect();
+    // Containers an image trigger fills in: their image may be empty.
+    let mut triggered: Vec<&str> = Vec::new();
     for (i, t) in spec["triggers"].as_array().into_iter().flatten().enumerate() {
+        let at = format!("spec.triggers[{i}]");
         match s(t, "type") {
-            "" => errs.push(required(&format!("spec.triggers[{i}].type"), "")),
-            "ConfigChange" => {}
-            // ImageChange needs ImageStreams, which are not served.
-            other => errs.push(not_supported(&format!("spec.triggers[{i}].type"), other, &["ConfigChange"])),
+            "" => errs.push(required(&format!("{at}.type"), "trigger type must be present")),
+            "ConfigChange" => {
+                if !t["imageChangeParams"].is_null() {
+                    errs.push(invalid(&format!("{at}.imageChangeParams"), "{}",
+                                      "imageChangeParams must not be present when the type is ConfigChange"));
+                }
+            }
+            "ImageChange" => {
+                let p = &t["imageChangeParams"];
+                if !p.is_object() {
+                    errs.push(required(&format!("{at}.imageChangeParams"), ""));
+                    continue;
+                }
+                validate_image_change_params(p, &format!("{at}.imageChangeParams"), &template_containers, &mut errs);
+                triggered.extend(p["containerNames"].as_array().into_iter().flatten().filter_map(Value::as_str));
+            }
+            other => errs.push(not_supported(&format!("{at}.type"), other, &["ConfigChange", "ImageChange"])),
         }
     }
     if spec["template"].is_object() {
@@ -413,7 +507,7 @@ pub fn validate(dc: &Value) -> Result<(), ApiError> {
             if s(c, "name").is_empty() {
                 errs.push(required(&format!("spec.template.spec.containers[{i}].name"), ""));
             }
-            if s(c, "image").trim().is_empty() {
+            if s(c, "image").trim().is_empty() && !triggered.contains(&s(c, "name")) {
                 errs.push(required(&format!("spec.template.spec.containers[{i}].image"), ""));
             }
         }
@@ -491,10 +585,144 @@ fn not_found(name: &str) -> ApiError {
     ApiError::not_found("deploymentconfigs.apps.openshift.io", name)
 }
 
-/// `deploymentconfigs/instantiate` (`oc rollout latest`): a new version when
-/// forced, when there is none yet, or when the template differs from the
-/// latest version's; `None` (a 204 Status) when nothing would change.
-pub async fn instantiate(storage: &ResourceStorage, ns: &str, name: &str, req: &Value) -> Result<Option<Value>, ApiError> {
+/// The ImageStream a trigger's `from` names, as `processTriggers` reads it.
+async fn get_stream<F, Fut>(get: &F, ns: &str, stream: &str) -> Result<Option<Value>, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
+    if stream.is_empty() || stream.contains(['/', '?', '#', '%']) || ns.contains(['/', '?', '#', '%']) {
+        return Ok(None);
+    }
+    match get(format!("/apis/image.openshift.io/v1/namespaces/{ns}/imagestreams/{stream}")).await {
+        Fetched::Found(v) => Ok(Some(v)),
+        Fetched::NotFound => Ok(None),
+        Fetched::Failed(e) => Err(e),
+    }
+}
+
+/// `processTriggers`: each ImageChange trigger's tag, as the stream has it
+/// now, into the containers it names and its `lastTriggeredImage` — every
+/// trigger when forced, else the automatic ones of an unpaused config. A
+/// stream that is not there is skipped; one that cannot be read fails the
+/// request.
+pub async fn process_triggers<F, Fut>(get: &F, dc: &mut Value, force: bool) -> Result<(), ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
+    let ns = s(&dc["metadata"], "namespace").to_string();
+    let paused = dc["spec"]["paused"] == true;
+    let n = dc["spec"]["triggers"].as_array().map_or(0, Vec::len);
+    let mut errs = Vec::new();
+    for i in 0..n {
+        let t = dc["spec"]["triggers"][i].clone();
+        let p = &t["imageChangeParams"];
+        if t["type"] != "ImageChange" || !p.is_object() || (!force && (paused || p["automatic"] != true)) {
+            continue;
+        }
+        let (stream, tag, _) = apimachinery::imagestream::split_tag(s(&p["from"], "name"));
+        let from_ns = match s(&p["from"], "namespace") {
+            "" => ns.as_str(),
+            other => other,
+        };
+        let found = match get_stream(get, from_ns, stream).await {
+            Ok(Some(v)) => v,
+            Ok(None) => continue,
+            Err(e) => {
+                errs.push(e);
+                continue;
+            }
+        };
+        let Some(latest) = apimachinery::imagestream::resolve_latest_tagged_image(&found, tag) else { continue };
+        let last = s(p, "lastTriggeredImage").to_string();
+        if latest == last {
+            continue;
+        }
+        let names: Vec<String> = p["containerNames"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
+        let mut set_last = false;
+        for list in ["containers", "initContainers"] {
+            for c in dc["spec"]["template"]["spec"][list].as_array_mut().into_iter().flatten() {
+                if names.iter().any(|n| c["name"] == n.as_str()) && (c["image"] != latest.as_str() || last != latest) {
+                    c["image"] = json!(latest);
+                    set_last = true;
+                }
+            }
+        }
+        if set_last {
+            dc["spec"]["triggers"][i]["imageChangeParams"]["lastTriggeredImage"] = json!(latest);
+        }
+    }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::internal(&errs.join("; ")))
+    }
+}
+
+fn same_from(a: &Value, b: &Value) -> bool {
+    a["imageChangeParams"]["from"]["name"] == b["imageChangeParams"]["from"]["name"]
+        && s(&a["imageChangeParams"]["from"], "namespace") == s(&b["imageChangeParams"]["from"], "namespace")
+}
+
+fn image_triggers(dc: &Value) -> Vec<&Value> {
+    dc["spec"]["triggers"].as_array().into_iter().flatten().filter(|t| t["type"] == "ImageChange").collect()
+}
+
+/// `canTrigger`: the causes of a new version, or `None`. Every image
+/// trigger must have resolved first (a 400 otherwise, forced or not).
+fn can_trigger(dc: &Value, decoded: Option<&Value>, force: bool) -> Result<Option<Value>, ApiError> {
+    let version = dc["status"]["latestVersion"].as_i64().unwrap_or(0);
+    let name = s(&dc["metadata"], "name");
+    let (mut count, mut resolved) = (0, 0);
+    let mut causes = Vec::new();
+    let previous = decoded.map(image_triggers).unwrap_or_default();
+    for t in image_triggers(dc) {
+        count += 1;
+        let p = &t["imageChangeParams"];
+        if s(p, "lastTriggeredImage").is_empty() {
+            continue;
+        }
+        resolved += 1;
+        if p["automatic"] != true {
+            continue;
+        }
+        let updated_triggers = !previous.iter().any(|pt| same_from(t, pt));
+        let different_image = previous
+            .iter()
+            .find(|pt| same_from(t, pt))
+            .is_some_and(|pt| pt["imageChangeParams"]["lastTriggeredImage"] != p["lastTriggeredImage"]);
+        if version == 0 || updated_triggers || different_image {
+            causes.push(json!({"type": "ImageChange", "imageTrigger": {"from": {
+                "kind": "ImageStreamTag", "name": p["from"]["name"], "namespace": p["from"]["namespace"]}}}));
+        }
+    }
+    if count != resolved {
+        return Err(ApiError::bad_request(&format!(
+            "cannot trigger a deployment for {name:?} because it contains unresolved images"
+        )));
+    }
+    if force {
+        return Ok(Some(json!([{"type": "Manual"}])));
+    }
+    let config_trigger = dc["spec"]["triggers"].as_array().into_iter().flatten().any(|t| t["type"] == "ConfigChange");
+    let template_changed = version == 0 || decoded.is_none_or(|d| d["spec"]["template"] != dc["spec"]["template"]);
+    if config_trigger && template_changed {
+        causes.push(json!({"type": "ConfigChange"}));
+    }
+    Ok((!causes.is_empty()).then(|| json!(causes)))
+}
+
+/// `deploymentconfigs/instantiate` (`oc rollout latest`): image triggers
+/// resolved first (`processTriggers`, through `get`, unless the request
+/// excludes ImageChange), then a new version when forced, when there is
+/// none yet, on a trigger's new image, or when the template differs from
+/// the latest version's; `None` (a 204 Status) when nothing would change.
+pub async fn instantiate<F, Fut>(storage: &ResourceStorage, get: &F, ns: &str, name: &str, req: &Value) -> Result<Option<Value>, ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Fetched>,
+{
     let key = ResourceStorage::namespaced_key(RESOURCE, ns, name);
     for _ in 0..5 {
         let mut dc = storage.get(&key).await.map_err(|e| if e.status == axum::http::StatusCode::NOT_FOUND { not_found(name) } else { e })?;
@@ -509,22 +737,24 @@ pub async fn instantiate(storage: &ResourceStorage, ns: &str, name: &str, req: &
         refuse("DeploymentRequest", name, errs)?;
         let version = dc["status"]["latestVersion"].as_i64().unwrap_or(0);
         let force = req["force"] == true;
-        let causes = if force {
-            Some(json!([{"type": "Manual"}]))
+        let excluded = req["excludeTriggers"].as_array().into_iter().flatten().any(|t| t == "ImageChange");
+        if !excluded {
+            process_triggers(get, &mut dc, force).await?;
+        }
+        let decoded = if version == 0 {
+            None
         } else {
-            let has_config_trigger = dc["spec"]["triggers"].as_array().into_iter().flatten().any(|t| t["type"] == "ConfigChange");
-            let template_changed = if version == 0 {
-                true
-            } else {
-                let rc = storage
-                    .get(&ResourceStorage::namespaced_key("replicationcontrollers", ns, &rc_name(name, version)))
-                    .await?;
-                decode(&rc).is_none_or(|d| d["spec"]["template"] != dc["spec"]["template"])
-            };
-            (has_config_trigger && template_changed).then(|| json!([{"type": "ConfigChange"}]))
+            let rc = storage
+                .get(&ResourceStorage::namespaced_key("replicationcontrollers", ns, &rc_name(name, version)))
+                .await?;
+            decode(&rc)
         };
-        let Some(causes) = causes else { return Ok(None) };
-        let message = if force { "manual change" } else { "config change" };
+        let Some(causes) = can_trigger(&dc, decoded.as_ref(), force)? else { return Ok(None) };
+        let message = match causes[0]["type"].as_str() {
+            Some("Manual") => "manual change",
+            Some("ImageChange") => "image change",
+            _ => "config change",
+        };
         dc["status"]["details"] = json!({"message": message, "causes": causes});
         dc["status"]["latestVersion"] = json!(version + 1);
         let g = dc["metadata"]["generation"].as_i64().unwrap_or(1);
@@ -596,6 +826,13 @@ pub async fn rollback(storage: &ResourceStorage, ns: &str, name: &str, req: &Val
     if spec["includeStrategy"] == true {
         out["spec"]["strategy"] = to["spec"]["strategy"].clone();
     }
+    // Image triggers are turned off, so the rollback is not rolled forward
+    // again at once (as upstream's rollback generator does).
+    for t in out["spec"]["triggers"].as_array_mut().into_iter().flatten() {
+        if t["type"] == "ImageChange" && t["imageChangeParams"].is_object() {
+            t["imageChangeParams"]["automatic"] = json!(false);
+        }
+    }
     out["status"]["latestVersion"] = json!(latest + 1);
     Ok(out)
 }
@@ -655,13 +892,102 @@ mod tests {
             let e = admit_create(&mut d).unwrap_err();
             assert!(e.message.contains(want), "{}", e.message);
         }
+    }
+
+    #[test]
+    fn image_change_triggers_and_tag_images_hooks_validate_as_upstreams() {
         let mut d = dc();
-        d["spec"]["triggers"] = json!([{"type": "ImageChange", "imageChangeParams": {"from": {"name": "x:1"}}}]);
-        assert!(admit_create(&mut d).unwrap_err().message.contains("spec.triggers[0].type: Unsupported value: \"ImageChange\""));
+        d["spec"]["template"]["spec"]["containers"][0]["image"] = json!("");
+        d["spec"]["triggers"] = json!([{"type": "ImageChange", "imageChangeParams": {"automatic": true, "containerNames": ["web"],
+                                        "from": {"name": "web:latest"}}}]);
+        admit_create(&mut d).unwrap();
+        assert_eq!(d["spec"]["triggers"][0]["imageChangeParams"]["from"]["kind"], "ImageStreamTag", "defaulted");
+        let cases: Vec<(&str, Value)> = vec![
+            ("spec.triggers[0].imageChangeParams: Required value", json!({"type": "ImageChange"})),
+            ("spec.triggers[0].imageChangeParams.from.name: Invalid value: \"web\"",
+             json!({"type": "ImageChange", "imageChangeParams": {"containerNames": ["web"], "from": {"name": "web"}}})),
+            ("spec.triggers[0].imageChangeParams.from.kind: Invalid value: \"DockerImage\"",
+             json!({"type": "ImageChange", "imageChangeParams": {"containerNames": ["web"], "from": {"kind": "DockerImage", "name": "a:b"}}})),
+            ("spec.triggers[0].imageChangeParams.containerNames: Required value",
+             json!({"type": "ImageChange", "imageChangeParams": {"from": {"name": "a:b"}}})),
+            ("spec.triggers[0].imageChangeParams.containerNames[0]: Invalid value: \"nope\"",
+             json!({"type": "ImageChange", "imageChangeParams": {"containerNames": ["nope"], "from": {"name": "a:b"}}})),
+            ("spec.triggers[0].type: Unsupported value: \"Webhook\"", json!({"type": "Webhook"})),
+        ];
+        for (want, trigger) in cases {
+            let mut d = dc();
+            d["spec"]["triggers"] = json!([trigger]);
+            let e = admit_create(&mut d).unwrap_err();
+            assert!(e.message.contains(want), "{want}: {}", e.message);
+        }
+        // An empty image no trigger fills is still required.
+        let mut d = dc();
+        d["spec"]["template"]["spec"]["containers"][0]["image"] = json!("");
+        assert!(admit_create(&mut d).unwrap_err().message.contains("spec.template.spec.containers[0].image: Required value"));
+        // tagImages: admitted, and checked.
         let mut d = dc();
         d["spec"]["strategy"] = json!({"type": "Recreate", "recreateParams": {"pre": {"failurePolicy": "Abort",
             "tagImages": [{"containerName": "web", "to": {"kind": "ImageStreamTag", "name": "a:b"}}]}}});
-        assert!(admit_create(&mut d).unwrap_err().message.contains("tagImages: Forbidden"));
+        admit_create(&mut d).unwrap();
+        let mut d = dc();
+        d["spec"]["strategy"] = json!({"type": "Recreate", "recreateParams": {"pre": {"failurePolicy": "Abort",
+            "tagImages": [{"containerName": "nope", "to": {"kind": "DockerImage"}}]}}});
+        let e = admit_create(&mut d).unwrap_err().message;
+        for want in ["tagImages[0].containerName: Invalid value: \"nope\"", "tagImages[0].to.kind: Invalid value",
+                     "tagImages[0].to.name: Required value"] {
+            assert!(e.contains(want), "{want}: {e}");
+        }
+    }
+
+    const IMG: &str = "node1.lo:5000/demo/web@sha256:1111";
+
+    fn registry(path: String) -> std::future::Ready<Fetched> {
+        std::future::ready(match path.as_str() {
+            "/apis/image.openshift.io/v1/namespaces/demo/imagestreams/web" => Fetched::Found(json!({
+                "metadata": {"name": "web"},
+                "status": {"tags": [{"tag": "latest", "items": [{"dockerImageReference": IMG, "image": "sha256:1111"}]}]}})),
+            "/apis/image.openshift.io/v1/namespaces/down/imagestreams/web" => Fetched::Failed("connection refused".into()),
+            _ => Fetched::NotFound,
+        })
+    }
+
+    fn triggered(automatic: bool) -> Value {
+        let mut d = dc();
+        d["spec"]["triggers"] = json!([{"type": "ImageChange", "imageChangeParams": {"automatic": automatic,
+            "containerNames": ["web"], "from": {"kind": "ImageStreamTag", "name": "web:latest"}}}]);
+        d
+    }
+
+    #[tokio::test]
+    async fn process_triggers_resolves_through_the_stream() {
+        let mut d = triggered(false);
+        process_triggers(&registry, &mut d, false).await.unwrap();
+        assert_eq!(d["spec"]["template"]["spec"]["containers"][0]["image"], "nginx:1.25", "manual, not forced");
+        process_triggers(&registry, &mut d, true).await.unwrap();
+        assert_eq!(d["spec"]["template"]["spec"]["containers"][0]["image"], IMG);
+        assert_eq!(d["spec"]["triggers"][0]["imageChangeParams"]["lastTriggeredImage"], IMG);
+        let mut gone = triggered(true);
+        gone["spec"]["triggers"][0]["imageChangeParams"]["from"]["name"] = json!("other:latest");
+        process_triggers(&registry, &mut gone, true).await.unwrap();
+        assert!(gone["spec"]["triggers"][0]["imageChangeParams"]["lastTriggeredImage"].is_null(), "no such stream: skipped");
+        let mut down = triggered(true);
+        down["spec"]["triggers"][0]["imageChangeParams"]["from"]["namespace"] = json!("down");
+        assert_eq!(process_triggers(&registry, &mut down, true).await.unwrap_err().status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn can_trigger_as_upstreams() {
+        let mut d = triggered(true);
+        admit_create(&mut d).unwrap();
+        assert!(can_trigger(&d, None, true).unwrap_err().message.contains("contains unresolved images"));
+        d["spec"]["triggers"][0]["imageChangeParams"]["lastTriggeredImage"] = json!(IMG);
+        assert_eq!(can_trigger(&d, None, false).unwrap().unwrap()[0]["type"], "ImageChange", "initial version");
+        d["status"]["latestVersion"] = json!(1);
+        let previous = d.clone();
+        assert!(can_trigger(&d, Some(&previous), false).unwrap().is_none(), "same image");
+        d["spec"]["triggers"][0]["imageChangeParams"]["lastTriggeredImage"] = json!("other@sha256:2");
+        assert_eq!(can_trigger(&d, Some(&previous), false).unwrap().unwrap()[0]["type"], "ImageChange");
+        assert_eq!(can_trigger(&d, Some(&previous), true).unwrap().unwrap()[0]["type"], "Manual");
     }
 
     #[test]

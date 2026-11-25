@@ -26,7 +26,8 @@ pub async fn instantiate(
             body["name"].as_str().unwrap_or("")
         )));
     }
-    match dcs::instantiate(&state.storage, &namespace, &name, &body).await? {
+    let get = |path: String| crate::image_policy::fetch(&state, path);
+    match dcs::instantiate(&state.storage, &get, &namespace, &name, &body).await? {
         Some(dc) => Ok((StatusCode::CREATED, Json(dc)).into_response()),
         // "cannot be instantiated": OpenShift's Status of code 204.
         None => Ok(StatusCode::NO_CONTENT.into_response()),

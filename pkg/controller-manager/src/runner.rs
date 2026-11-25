@@ -757,6 +757,14 @@ impl ControllerManager {
             crate::builds::BuildConfigController::new(api).run().await;
         });
 
+        // Image triggers (#386): workloads, DeploymentConfigs and
+        // BuildConfigs that follow an ImageStreamTag, while the registry's
+        // image API is Available.
+        let api = self.api.clone();
+        tasks.spawn(async move {
+            crate::imagetrigger::ImageTriggerController::new(api).run().await;
+        });
+
         // OpenShift DeploymentConfigs (#375): versions, and their rollouts.
         let api = self.api.clone();
         tasks.spawn(async move {

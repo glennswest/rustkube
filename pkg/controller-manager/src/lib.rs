@@ -19,6 +19,7 @@ pub mod events;
 pub mod gateway;
 pub mod gc;
 pub mod hpa;
+pub mod imagetrigger;
 pub mod job;
 pub mod leaderelection;
 pub mod metrics_server;

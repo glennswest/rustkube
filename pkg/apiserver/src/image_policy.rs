@@ -172,7 +172,7 @@ impl ImageRef {
 
 /// What a lookup through the aggregator came back with.
 #[derive(Debug, Clone)]
-pub(crate) enum Fetched {
+pub enum Fetched {
     Found(Value),
     NotFound,
     /// The registry could not answer: no APIService, down, slow, refused.
@@ -331,6 +331,21 @@ where
         }
     }
     rewritten
+}
+
+/// A GET of the image API through the aggregator, as this apiserver makes
+/// it for itself (#386: `instantiate` of a DeploymentConfig or
+/// BuildConfig, a build's ImageStreamTag). No APIService for the group at
+/// all is a missing stream: nothing serves ImageStreams here.
+pub(crate) async fn fetch(state: &AppState, path: String) -> Fetched {
+    if state.aggregator.claims(&path).is_none() {
+        return Fetched::NotFound;
+    }
+    match state.aggregator.get_own(&state.storage, &path, LOOKUP_TIMEOUT).await {
+        Ok(Some(v)) => Fetched::Found(v),
+        Ok(None) => Fetched::NotFound,
+        Err(e) => Fetched::Failed(e),
+    }
 }
 
 /// The admission step, on a create or update the request names. Called by

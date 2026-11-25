@@ -82,8 +82,12 @@ pub fn controller_manager_role() -> Value {
             // the strategy restriction, as OpenShift's build-controller is.
             rule(&["build.openshift.io"], &["builds/docker", "builds/optimizeddocker", "builds/source",
                                             "builds/custom"], &["create"]),
-            // A BuildConfig's first build (its ConfigChange trigger).
+            // A BuildConfig's first build (its ConfigChange trigger), and
+            // the builds its ImageChange triggers start (#386).
             rule(&["build.openshift.io"], &["buildconfigs/instantiate"], &["create"]),
+            // A DeploymentConfig's `tagImages` hook tags into a stream the
+            // registry has no object for yet (#386); updates are above.
+            rule(&["image.openshift.io"], &["imagestreamtags"], &["create"]),
             // Build pods are privileged (buildah), as OpenShift's
             // build-controller creates them (#374, option A): this SCC alone.
             json!({"apiGroups": ["security.openshift.io"], "resources": ["securitycontextconstraints"],
