@@ -39,6 +39,10 @@ ImageStreams as full objects: create, `spec.lookupPolicy`, watch
   image-lookup` on the stream and `deploy/web`, `--enabled=false`, the
   registry killed (never refused). Waits for a test-machine run like the
   other rigs (stormcluster#128).
+- [x] 991e8ad: sc-build-c932ce0d8f (fresh build VM) — workspace build;
+  apiserver 474 tests pass (463 + 11 new). 819914a: sc-build-f6ef955b95 —
+  the 11 by name (10 `image_policy`, 1 discovery); clippy: no warning in
+  `image_policy.rs`, `aggregation.rs`, `discovery.rs`.
 - 2026-11-25 (later): stormblock-registry#258 still open. Noted for the build:
   the hook is `admission::admit` before the mutating webhooks (it has the
   state, the operation and the old object on every write path), as
