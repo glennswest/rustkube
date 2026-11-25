@@ -4,6 +4,49 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
+### Image triggers (#386, sc#162) — CODE DONE, RIG BLOCKED 2026-11-25
+Ported from openshift-controller-manager `pkg/image/trigger` (annotations,
+deploymentconfigs, buildconfigs), `pkg/apps/deploymentconfig`
+(`triggerActivated`), openshift-apiserver `registry/deployconfig`
+(`processTriggers`, `canTrigger`, rollback), `apis/apps/validation`,
+`apis/build/validation`, `buildgenerator` (`updateImageTriggers`) and
+`pkg/build/apiserver/webhook` (github, gitlab, bitbucket, generic), library-go
+`imageutil` (read 2026-11-25). No owner decision needed: the design choices
+below are engineering.
+- [x] controller-manager `imagetrigger`: runs while `v1.image.openshift.io`
+  is Available; its own ImageStream reflector (`reflector::run_events`, keyed
+  by ns/name — the registry's push-only streams have no uid, which the
+  indexed informers require); annotation triggers on Deployments,
+  DaemonSets, StatefulSets, CronJobs (Jobs not: immutable template, as
+  upstream's sources); DC automatic ImageChange → containers +
+  `lastTriggeredImage`; BC ImageChange → instantiate with `triggeredByImage`
+  (skipped while its ConfigChange build has not run).
+- [x] DC: validation lifted (ImageChange, `tagImages`), defaults,
+  `triggerActivated` in the DC controller, `processTriggers`/`canTrigger` in
+  `instantiate`, rollback turns image triggers manual, the deployer runs
+  `tagImages` (PUT the ImageStreamTag, POST on 404; `create imagestreamtags`
+  added to the controller-manager role).
+- [x] BC: ImageChange + GitHub/Generic/GitLab/Bitbucket validated and run;
+  ImageStreamTag/Image `from` resolved through the aggregator
+  (`image_policy::fetch`); `updateImageTriggers` (spec + status);
+  `buildconfigs/<n>/webhooks/<secret>/<type>`, `system:webhook` +
+  `system:webhooks` (system:authenticated, as OpenShift 4.16); RBAC path
+  parse takes segments after a subresource as its own.
+- [x] c29eb39: sc-build-7593f28cce — workspace build; controller-manager
+  176/176, DC units 11/11, `apimachinery::imagestream` 3/3. 6086f20:
+  sc-build-47b4142dd0 — workspace build, `cargo test --workspace` all pass
+  (apiserver 481, controller-manager 176, apimachinery 142, scheduler 79).
+- [x] Rig `image-triggers` (suite `rigs`); rigs `builds`, `deploymentconfigs`
+  updated for what is no longer refused; README, oc-compatibility,
+  test/README, CHANGELOG (66f8fff).
+- [ ] Rig `image-triggers` on a test machine: 2026-11-25 pvetest1|2|3 refuse
+  (400, no known release; stormcluster#128 open). Parked
+  `--after-install stormcluster>=f1de3f6@any:pve` (item 5e042215104c).
+  Close #386 when it passes.
+- [ ] The issue's check against the real registry (stormblock-registry
+  v0.93+) on a node: `oc set triggers deploy/web --from-image=mystream:latest
+  -c web`, push, the Deployment rolls to the new digest.
+
 ### image.openshift.io ImageStreams + image policy admission (#385, sc#162) — BUILT 2026-11-25 (stormblock-registry#258 closed in its v0.93.0)
 Master decided option A (2026-11-25): the registry serves `image.openshift.io/v1`
 (stormblock-registry#235, APIService by stormcos#1557) and will serve
