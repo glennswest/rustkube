@@ -31,6 +31,30 @@ use crate::error::ApiError;
 use crate::storage::ResourceStorage;
 use serde_json::{json, Value};
 
+/// route.openshift.io Routes' resource, stored at `/registry/routes/` (#397).
+pub(crate) const ROUTES: &str = "routes";
+
+/// OpenShift's Route strategy for `status` (#397): a create starts with
+/// none, a write of the Route keeps the stored one, and only `routes/status`
+/// changes it — so a router (stormlb#48) owns `status.ingress` and a client
+/// re-applying the Route's spec cannot wipe the hosts it admitted. A
+/// `/status` write keeps the stored spec already (`apply_status_patch`,
+/// `put_status`).
+pub(crate) fn route_status(obj: &mut Value, existing: Option<&Value>, status_write: bool) {
+    if status_write {
+        return;
+    }
+    let Some(o) = obj.as_object_mut() else { return };
+    match existing.and_then(|e| e.get("status")) {
+        Some(st) => {
+            o.insert("status".into(), st.clone());
+        }
+        None => {
+            o.remove("status");
+        }
+    }
+}
+
 /// Run built-in admission for a create. Mutates `obj` in place; an `Err`
 /// rejects the request. A Namespace's SCC UID block, when one was taken, is
 /// returned: a create that does not then happen gives it back with
@@ -84,6 +108,10 @@ pub async fn admit_create(
     // (no status on create) and validation.
     if resource == crate::cluster_quota::RESOURCE && namespace.is_none() {
         crate::cluster_quota::admit(obj, None, false)?;
+    }
+    // route.openshift.io Routes (#397): a create starts with no status.
+    if resource == ROUTES && namespace.is_some() {
+        route_status(obj, None, false);
     }
     // security.openshift.io SCCs (#373): OpenShift's defaulting and validation.
     if resource == crate::scc_policy::RESOURCE && namespace.is_none() {

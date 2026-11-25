@@ -855,28 +855,7 @@ fn build_router(
                 .delete(resource::delete_cluster_collection),
         )
         // route.openshift.io/v1 — OpenShift Routes
-        .route(
-            "/apis/route.openshift.io/v1",
-            get(discovery::api_route_v1_resources),
-        )
-        .route(
-            "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}",
-            get(resource::list_namespaced_resources)
-                .delete(resource::delete_namespaced_collection)
-                .post(resource::create_namespaced_resource),
-        )
-        .route(
-            "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}/{name}",
-            get(resource::get_namespaced_resource)
-                .put(resource::update_namespaced_resource)
-                .delete(resource::delete_namespaced_resource)
-                .patch(resource::patch_namespaced_resource),
-        )
-        .route(
-            "/apis/route.openshift.io/v1/{resource}",
-            get(resource::list_cluster_resources)
-                .delete(resource::delete_cluster_collection),
-        )
+        .merge(route_openshift_routes())
         // networking.k8s.io/v1
         .route(
             "/apis/networking.k8s.io/v1",
@@ -1789,6 +1768,41 @@ async fn bootstrap_service_cidr(storage: &ResourceStorage, cidr: &str) {
 }
 
 /// The VMI control verbs, one PUT route each (#141).
+/// route.openshift.io/v1 — OpenShift Routes, and `routes/status`, which
+/// discovery advertised and nothing served until #397 (a router's write of
+/// `status.ingress` was a 404).
+fn route_openshift_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/apis/route.openshift.io/v1",
+            get(discovery::api_route_v1_resources),
+        )
+        .route(
+            "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}",
+            get(resource::list_namespaced_resources)
+                .delete(resource::delete_namespaced_collection)
+                .post(resource::create_namespaced_resource),
+        )
+        .route(
+            "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}/{name}",
+            get(resource::get_namespaced_resource)
+                .put(resource::update_namespaced_resource)
+                .delete(resource::delete_namespaced_resource)
+                .patch(resource::patch_namespaced_resource),
+        )
+        .route(
+            "/apis/route.openshift.io/v1/namespaces/{namespace}/{resource}/{name}/status",
+            get(resource::get_namespaced_status)
+                .put(resource::update_namespaced_status)
+                .merge(patch(resource::patch_namespaced_status)),
+        )
+        .route(
+            "/apis/route.openshift.io/v1/{resource}",
+            get(resource::list_cluster_resources)
+                .delete(resource::delete_cluster_collection),
+        )
+}
+
 fn vmi_verb_routes() -> Router<AppState> {
     let mut r = Router::new();
     for verb in crate::handlers::kubevirt::VMI_VERBS {
@@ -2829,6 +2843,100 @@ fn non_resource_label(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::first_service_ip;
+
+    /// #397: `routes/status` is served — get, put, and merge and JSON
+    /// patches, writing only `status` — and a Route's status belongs to it:
+    /// a create starts with none and a write of the Route keeps the stored
+    /// one. Through the router, as a client (stormlb#48) sends it, with the
+    /// admission attributes the RBAC layer sets.
+    #[tokio::test]
+    async fn routes_status_is_served_and_owns_status() {
+        use serde_json::{json, Value};
+        use std::sync::Arc;
+        use tower::ServiceExt;
+        let storage = Arc::new(crate::storage::ResourceStorage::new(Arc::new(crate::test_store::MemStore::default())));
+        storage.create(&crate::storage::ResourceStorage::cluster_key("namespaces", "mon"),
+            json!({"metadata": {"name": "mon"}, "status": {"phase": "Active"}})).await.unwrap();
+        let state = crate::handlers::AppState {
+            storage: storage.clone(),
+            crd_registry: Arc::new(crate::crd::CrdRegistry::new()),
+            service_cidr: "10.96.0.0/12".into(),
+            admission: Default::default(),
+            aggregator: Arc::new(crate::aggregation::Aggregator::new(None)),
+            resource_metrics: Arc::new(crate::resource_metrics::ResourceMetrics::new("http", 9096, None, None).unwrap()),
+        };
+        let app = super::route_openshift_routes().with_state(state);
+        let send = |method: &'static str, path: &'static str, ct: &'static str, body: Value| {
+            let app = app.clone();
+            async move {
+                let m: axum::http::Method = method.parse().unwrap();
+                let req = axum::http::Request::builder().method(m.clone()).uri(path)
+                    .header("content-type", ct)
+                    .body(axum::body::Body::from(if body.is_null() { vec![] } else { body.to_string().into_bytes() }))
+                    .unwrap();
+                let user = crate::auth::UserInfo { username: "system:serviceaccount:storm-lb:stormlb".into(),
+                    groups: vec!["system:authenticated".into()] };
+                let resp = match crate::admission::RequestAttrs::of(path, &m, None, user) {
+                    Some(attrs) => crate::admission::with_request(attrs, app.oneshot(req)).await,
+                    None => app.oneshot(req).await,
+                }.unwrap();
+                let code = resp.status().as_u16();
+                let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+                (code, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+            }
+        };
+        const ROUTES: &str = "/apis/route.openshift.io/v1/namespaces/mon/routes";
+        const ROUTE: &str = "/apis/route.openshift.io/v1/namespaces/mon/routes/prom";
+        const STATUS: &str = "/apis/route.openshift.io/v1/namespaces/mon/routes/prom/status";
+        const JSON: &str = "application/json";
+        let spec = json!({"host": "prom.example.lo", "to": {"kind": "Service", "name": "prom"}});
+        let ingress = |router: &str| json!({"ingress": [{"host": "prom.example.lo", "routerName": router,
+            "conditions": [{"type": "Admitted", "status": "True"}]}]});
+
+        // A create's status is dropped.
+        let (code, out) = send("POST", ROUTES, JSON, json!({"apiVersion": "route.openshift.io/v1", "kind": "Route",
+            "metadata": {"name": "prom"}, "spec": spec, "status": ingress("forged")})).await;
+        assert_eq!(code, 201, "{out}");
+        assert!(out.get("status").is_none(), "{out}");
+
+        // The issue's request: a merge patch of /status — 404 before #397.
+        let (code, out) = send("PATCH", STATUS, "application/merge-patch+json",
+            json!({"spec": {"host": "evil.example.lo"}, "status": ingress("stormlb")})).await;
+        assert_eq!(code, 200, "{out}");
+        assert_eq!((out["status"].clone(), out["spec"].clone()), (ingress("stormlb"), spec.clone()));
+
+        // GET /status.
+        let (code, out) = send("GET", STATUS, JSON, Value::Null).await;
+        assert_eq!((code, out["status"].clone()), (200, ingress("stormlb")));
+
+        // A JSON patch of /status.
+        let (code, out) = send("PATCH", STATUS, "application/json-patch+json",
+            json!([{"op": "replace", "path": "/status/ingress/0/routerName", "value": "lb2"}])).await;
+        assert_eq!((code, out["status"]["ingress"][0]["routerName"].clone()), (200, json!("lb2")), "{out}");
+
+        // PUT /status: only status lands.
+        let (code, out) = send("PUT", STATUS, JSON, json!({"metadata": {"name": "prom"},
+            "spec": {"host": "evil.example.lo"}, "status": ingress("stormlb")})).await;
+        assert_eq!(code, 200, "{out}");
+        assert_eq!((out["status"].clone(), out["spec"].clone()), (ingress("stormlb"), spec.clone()));
+
+        // Writes of the Route keep the stored status: a PUT without one, a
+        // PUT with another, and a merge patch.
+        let mut spec2 = spec.clone();
+        spec2["host"] = json!("prom2.example.lo");
+        for body in [json!({"metadata": {"name": "prom"}, "spec": spec2}),
+            json!({"metadata": {"name": "prom"}, "spec": spec2, "status": {"ingress": []}})]
+        {
+            let (code, out) = send("PUT", ROUTE, JSON, body).await;
+            assert_eq!(code, 200, "{out}");
+            assert_eq!((out["spec"]["host"].clone(), out["status"].clone()), (json!("prom2.example.lo"), ingress("stormlb")));
+        }
+        let (code, out) = send("PATCH", ROUTE, "application/merge-patch+json",
+            json!({"metadata": {"labels": {"a": "b"}}, "status": null})).await;
+        assert_eq!((code, out["status"].clone()), (200, ingress("stormlb")), "{out}");
+        let stored = storage.get(&crate::storage::ResourceStorage::namespaced_key("routes", "mon", "prom")).await.unwrap();
+        assert_eq!((stored["status"].clone(), stored["metadata"]["labels"]["a"].clone()), (ingress("stormlb"), json!("b")));
+    }
 
     #[test]
     fn bootstrap_endpoints_have_stable_uid_and_repair_legacy_objects() {

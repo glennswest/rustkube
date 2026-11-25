@@ -691,6 +691,11 @@ pub(crate) async fn builtin_update(
         let status_write = crate::admission::subresource().as_deref() == Some("status");
         crate::cluster_quota::admit(body, Some(existing), status_write)?;
     }
+    if key.starts_with("/registry/routes/") {
+        // #397: status belongs to `routes/status`.
+        let status_write = crate::admission::subresource().as_deref() == Some("status");
+        crate::builtin_admission::route_status(body, Some(existing), status_write);
+    }
     if key.starts_with("/registry/users/") {
         crate::user_identities::admit_user(body)?; // #390
     }

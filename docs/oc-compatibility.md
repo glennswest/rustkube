@@ -12,7 +12,7 @@ State on 2026-10-09, from the code on main and from running oc against it
 (`test/e2e/projects.sh`, `test/e2e/oc-adm.sh`):
 - works: `oc new-project`, `oc projects`, `oc project`, `oc get/delete
   project` (#97); `oc logs` (#54); `oc get route` (stored only, nothing
-  routes, #70); `oc auth can-i --list`; `oc events`; `oc scale` (`/scale`,
+  here routes, #70; a router writes `routes/status`, #397); `oc auth can-i --list`; `oc events`; `oc scale` (`/scale`,
   #86); `oc autoscale` (HPA v1/v2, #123, #89); `oc adm` node lifecycle,
   `policy` role verbs, `certificate`, `inspect` — see the `oc adm`
   checklist below (#69).

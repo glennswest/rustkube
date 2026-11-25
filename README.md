@@ -139,7 +139,9 @@ unchanged value — #240; `format`, `allOf`/`anyOf`/`oneOf`/`not`, CEL
 `x-kubernetes-validations` and `/status` validation are not checked, and
 there is no conversion), `apiregistration.k8s.io/v1` (APIServices: aggregated APIs, below),
 `gateway.networking.k8s.io/v1`, `route.openshift.io/v1` (stored; nothing
-routes for it, #70), `project.openshift.io/v1` (Projects, below),
+here routes for it, #70 — a router such as stormlb writes `routes/status`;
+status belongs to that subresource: a create starts with none and a write of
+the Route keeps the stored one, #397), `project.openshift.io/v1` (Projects, below),
 `user.openshift.io/v1` (Groups, Users, Identities and UserIdentityMappings, below),
 `quota.openshift.io/v1` (ClusterResourceQuotas and AppliedClusterResourceQuotas, below),
 `apps.openshift.io/v1` (DeploymentConfigs, below),
