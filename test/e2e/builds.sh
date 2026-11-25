@@ -21,7 +21,8 @@
 #   5. `oc adm prune builds --keep-complete=0 --keep-failed=0 --confirm`
 #   6. a user may run only the strategies bound to them (BuildByStrategy):
 #      without system:build-strategy-docker, 403
-#   7. JenkinsPipeline, Binary sources and webhook triggers are refused (422);
+#   7. JenkinsPipeline and Binary sources are refused (422), a GitHub trigger
+#      without a secret too (webhooks are served since #386, rig image-triggers);
 #      the namespace has `builder` and `system:image-builders`
 #
 # Exit status is the number of failed checks.
@@ -250,7 +251,7 @@ check(st == 201, f"with it bound again, alice creates it: {st}")
 for what, extra, want in (
         ("JenkinsPipeline", {"strategy": {"jenkinsPipelineStrategy": {"jenkinsfile": "node {}"}}}, "Unsupported value: \\\"JenkinsPipeline\\\""),
         ("a Binary source", {"source": {"binary": {}}}, "Unsupported value: \\\"Binary\\\""),
-        ("a GitHub trigger", {"triggers": [{"type": "GitHub", "github": {"secret": "s"}}]}, "Unsupported value: \\\"GitHub\\\"")):
+        ("a GitHub trigger without a secret", {"triggers": [{"type": "GitHub", "github": {}}]}, "spec.triggers[0].github.secret: Required value")):
     st, out = bc("refused", extra)
     check(st == 422 and want in json.dumps(out), f"{what} is refused: {st} {str(out)[:200]}")
 

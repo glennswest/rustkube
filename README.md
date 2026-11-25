@@ -331,10 +331,23 @@ Rolling with 25%/25%, timeouts 600 s, `activeDeadlineSeconds` 21600,
 `revisionHistoryLimit` 10, a lone container as every hook's) and validation;
 a spec write keeps the status but for a `latestVersion` one ahead, a
 `/status` write keeps the spec. Refused, because nothing here can run them:
-`tagImages` hooks and ImageChange triggers (no ImageStreams), a Custom
-strategy without `customParams.image` (there is no default deployer image)
-and `customParams` on a Rolling or Recreate strategy (it would swap a
-deployer image those rollouts do not have). Each version is a ReplicationController `<dc>-<version>`,
+a Custom strategy without `customParams.image` (there is no default deployer
+image) and `customParams` on a Rolling or Recreate strategy (it would swap a
+deployer image those rollouts do not have). **ImageChange triggers** (#386)
+are validated as OpenShift's (an `ImageStreamTag` `<stream>:<tag>` `from`,
+defaulted kind, container names that are in the template; a container an
+image trigger names may have no image yet) and run: the controller-manager's
+image trigger controller writes an automatic trigger's tag into its
+containers and `lastTriggeredImage`, and a version follows (cause
+`ImageChange`; the first version waits until every image trigger has
+resolved). `instantiate` (`oc rollout latest`) resolves the triggers first,
+a manual one too when forced, reading the stream through the aggregator
+(`processTriggers`; a stream that cannot be read is a 500, a missing one is
+skipped, an unresolved trigger a 400). A rollback turns the config's image
+triggers to manual, as OpenShift's does. `tagImages` hooks are run by the
+deployer: each named container's image, as the version runs it, is tagged
+into the ImageStreamTag (a PUT to the registry, a create when the stream has
+no object yet), and the hook's `failurePolicy` applies. Each version is a ReplicationController `<dc>-<version>`,
 made by the controller-manager with OpenShift's annotations (phase, version,
 the encoded config), so `oc rollout history|status|cancel|retry` and `oc adm
 prune deployments` read them as OpenShift's. **There is no deployer pod**
@@ -376,11 +389,31 @@ starting one, needs `create` on `builds/<strategy>` (`docker`, `source`,
 `custom`: OpenShift's BuildByStrategy); `system:build-strategy-docker` and
 `-source` are bound to `system:authenticated`, `-custom` is not. Refused,
 because nothing here can run them: the JenkinsPipeline strategy, Binary
-sources (`instantiatebinary` is not served), webhook triggers (`webhooks` is
-not served), ImageChange triggers (#386) and a Custom
-build's `exposeDockerSocket`; an ImageStreamTag `from` fails as OpenShift's
-does when the stream is missing, and an ImageStreamTag output gets
-InvalidOutputReference. The controller-manager runs them: a BuildConfig's
+sources (`instantiatebinary` is not served) and a Custom build's
+`exposeDockerSocket`. An ImageStreamTag or ImageStreamImage `from` is
+resolved through the aggregator from the registry's streams (#386: the tag's
+latest image, `Local` reference policy honoured) and fails as OpenShift's
+does when the stream or tag is not there (a 500 when the registry cannot
+answer); an ImageStreamTag output gets InvalidOutputReference. **Triggers**
+(#386): ConfigChange, ImageChange (its own `from` or, with none, the
+strategy's — at most one such, no two on one tag) and the GitHub, Generic,
+GitLab and Bitbucket webhooks (a `secret` or a `secretReference` to a
+Secret's `WebHookSecretKey`), validated as OpenShift's. `instantiate`
+records every ImageChange trigger's image (`lastTriggeredImageID` and
+`status.imageChangeTriggers`), refuses a request for the image a trigger
+already built (400), and builds from the default trigger's image. The
+controller-manager's image trigger controller starts a build (cause `Image
+change`) when a trigger's tag moves. `POST buildconfigs/<name>/webhooks/
+<secret>/<github|generic|gitlab|bitbucket>` (`create buildconfigs/webhooks`,
+which `system:webhook` grants; its binding `system:webhooks` is to
+`system:authenticated`, as OpenShift 4.16's — bind `system:unauthenticated`
+too for deliveries from outside) starts a build when a trigger of that type
+holds the secret (else 401): GitHub (and Gogs) `push` on the config's branch
+(`master` when it names none; a `ping` or another branch is a 200 and no
+build), GitLab `Push Hook`, Bitbucket `repo:push`, or the generic payload
+(`git` revision, `env` only with `allowEnv`, `dockerStrategyOptions`; JSON
+or YAML, or none). The build's cause is `<Type> WebHook` with the revision,
+and it is started as the apiserver's. The controller-manager runs them: a BuildConfig's
 ConfigChange trigger starts its first build; a build runs when its run
 policy lets it, in OpenShift's build pod `<build>-build` — **OpenShift's
 builder image** (`--build-image`), given the build as `BUILD`, with
@@ -796,8 +829,8 @@ they are read through the aggregator as `system:apiserver`, 2 s per lookup.
 Whatever cannot be resolved — no APIService, the registry down or slow, no
 such stream or tag — is **left as written; a write is never refused** for
 it, and after the first failure to reach the registry the rest of that
-write's images are not looked up. Builds' `from` are not resolved here. It
-runs before the admission webhooks.
+write's images are not looked up. Builds' `from` are not resolved here
+(`instantiate` resolves them, #386). It runs before the admission webhooks.
 
 **Admission webhooks** (#82) run after the built-in admission, on create
 (built-in and custom resources, server-side apply's upsert, `pods/eviction`),
@@ -973,6 +1006,27 @@ equivalent correct etcd implementation. The pinned API rig verifies
 concurrent complete/paginated LISTs and exact WATCH replay after them; this
 does not upgrade any deployed datastore. The historical intermittent rig
 failures #153/#154 were closed unreproduced.
+
+**Image triggers** (#386, OpenShift's `pkg/image/trigger`): while the
+`v1.image.openshift.io` APIService is Available (followed from the
+APIService feed; on a cluster without the registry nothing more is
+watched), the controller-manager lists and watches every ImageStream
+through the aggregator, as itself, with its own reflector keyed by
+namespace and name (a stream the registry shows only because something was
+pushed has no uid). When a tag moves: a Deployment, DaemonSet, StatefulSet
+or CronJob whose `image.openshift.io/triggers` annotation (`oc set triggers
+deploy/web --from-image=web:latest -c web`) follows it gets the tag's image
+in the container its `fieldPath` names (by name or index, containers or
+init containers; `paused` ones, `oc set triggers --manual`, are left), and
+its own controller rolls it; a DeploymentConfig's automatic ImageChange
+trigger gets it in its containers and `lastTriggeredImage`, and the
+DeploymentConfig controller makes a version; a BuildConfig's unpaused
+ImageChange trigger whose image differs from the one it last built from
+gets a build (`instantiate` with `triggeredByImage`), unless its
+ConfigChange trigger has not run yet. The tag's image is the newest event's
+`dockerImageReference`, or the stream's own repository by digest under a
+`Local` reference policy. Jobs are not followed: a Job's pod template is
+immutable.
 
 Pods made by the workload controllers (ReplicaSet, ReplicationController,
 StatefulSet, DaemonSet, Job) carry their template's labels, annotations and

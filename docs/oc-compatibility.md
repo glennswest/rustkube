@@ -101,6 +101,18 @@ whose discovery now lists the registry's resources); on a workload it sets
 rustkube's image policy admission then stores `<stream>:<tag>` as the tag's
 image by digest (README, *Image policy*). `--enabled=false` stops it.
 
+`oc set triggers` (#386): on a Deployment, DaemonSet, StatefulSet or CronJob,
+`--from-image=<stream>:<tag> -c <container>` writes the
+`image.openshift.io/triggers` annotation and the controller-manager's image
+trigger controller keeps the container on the tag's image as pushes move it
+(the workload rolls); `--manual` pauses, `--auto` resumes. On a
+DeploymentConfig it edits `spec.triggers` (ImageChange, ConfigChange), and a
+moved tag makes a version; on a BuildConfig, ImageChange and
+`--from-github|--from-gitlab|--from-bitbucket|--from-webhook` triggers, and
+a moved tag or a webhook delivery to
+`buildconfigs/<name>/webhooks/<secret>/<type>` starts a build. Rig
+`image-triggers`.
+
 ## Build & Deploy
 
 | Command | Purpose |
@@ -114,9 +126,9 @@ DeploymentConfigs (#375): `rollout latest|status|history|undo|cancel|retry|pause
 machine). A Rolling or Recreate rollout runs in the controller-manager, not a
 deployer pod: `oc logs dc/…` is its recorded log. A Custom strategy (#392)
 runs its image as the deployer pod `<rc>-deploy` under the namespace's
-`deployer` account, and `oc logs dc/…` is that pod's log. `tagImages` hooks
-and ImageChange triggers are refused, and so is a Custom strategy without an
-image.
+`deployer` account, and `oc logs dc/…` is that pod's log. ImageChange
+triggers and `tagImages` hooks run (#386); a Custom strategy without an
+image is refused.
 | `start-build` | Trigger a build (`--from-dir`, `--from-file`, `--from-repo`, `-F` follow, `--wait`) |
 
 Builds (#374): `start-build` (not `--from-dir|--from-file|--from-repo`, which need

@@ -26,8 +26,9 @@
 #      custom-2 and the image scales custom-1 down; the deployer account
 #      cannot read secrets; `oc logs dc/custom` serves the version's log;
 #      an image that fails fails its version and the DC stays on custom-2.
-#      An ImageChange trigger and a Custom strategy without an image are
-#      refused (422)
+#      A Custom strategy without an image, and an ImageChange trigger naming
+#      no container of the template, are refused (422); ImageChange triggers
+#      themselves run since #386 (rig image-triggers)
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -344,10 +345,10 @@ check(st == 422 and "customParams.image: Required value" in json.dumps(out), f"a
 st, out = req("POST", f"/apis/apps.openshift.io/v1/namespaces/{NS}/deploymentconfigs", {
     "apiVersion": "apps.openshift.io/v1", "kind": "DeploymentConfig", "metadata": {"name": "img"},
     "spec": {"replicas": 1, "selector": {"app": "img"},
-             "triggers": [{"type": "ImageChange", "imageChangeParams": {"automatic": True, "containerNames": ["web"],
+             "triggers": [{"type": "ImageChange", "imageChangeParams": {"automatic": True, "containerNames": ["nope"],
                            "from": {"kind": "ImageStreamTag", "name": "web:latest"}}}],
              "template": {"metadata": {"labels": {"app": "img"}}, "spec": {"containers": [{"name": "web", "image": "x"}]}}}})
-check(st == 422 and "ImageChange" in json.dumps(out), f"an ImageChange trigger is refused: {st}")
+check(st == 422 and "containerNames[0]" in json.dumps(out), f"an ImageChange trigger naming no container is refused: {st}")
 
 stop.set()
 sys.exit(failed)

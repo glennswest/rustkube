@@ -606,6 +606,18 @@ printing; AppliedClusterResourceQuotas in a selected namespace only, read by
 a project viewer who cannot read the ClusterResourceQuota. Runs the
 controller-manager; no kubelet.
 
+`e2e/image-triggers.sh` (#386, sc#162, suite `rigs`): a Python stand-in for
+the registry's `image.openshift.io/v1` (LIST/WATCH of ImageStreams, a
+`/_push` that moves a tag); `oc set triggers deploy/web
+--from-image=mystream:latest -c web` puts the tag's digest in the container,
+a push moves it and a new ReplicaSet runs it; `--manual`/`--auto`; a
+DeploymentConfig's ImageChange trigger resolves an empty image, its pre
+hook's `tagImages` tags into another stream, a push makes version 2 (cause
+ImageChange), `oc rollout latest` resolves a manual trigger; a BuildConfig's
+first build from the tag's digest, a push's build (`Image change`), the
+generic webhook's build at its commit, 401 on a wrong secret, a GitHub ping
+building nothing. Runs the controller-manager as itself; no kubelet.
+
 `e2e/vm-runstrategy.sh` (#104, #209, suite `rigs`): the VirtualMachine
 controller's `runStrategy` on a failed VMI (Always replaced after backoff,
 Once left), `ready` following the VMI, and `CrashLoopBackOff` while the
