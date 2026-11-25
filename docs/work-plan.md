@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### route.openshift.io `routes/status` (#397, stormcos#1491, stormlb#48) — IN PROGRESS 2026-11-25
+### route.openshift.io `routes/status` (#397, stormcos#1491, stormlb#48) — DONE 2026-11-25
 Discovery listed `routes/status`, `server.rs` had no route: a router's
 status PATCH was a 404.
 - [x] apiserver: `…/routes/{name}/status` get/put/patch (the shared status
@@ -13,7 +13,9 @@ status PATCH was a 404.
   the Route). README, oc-compatibility, CHANGELOG.
 - [x] Unit `server::tests::routes_status_is_served_and_owns_status` (HTTP
   through the router, with admission attributes).
-- [ ] sc-build.
+- [x] 9cc4a3c: sc-build-3be44868d4 (fresh build VM) — workspace build;
+  apiserver 463 tests pass incl. the new one; clippy: no warning on a
+  changed line.
 - No new rig: the unit drives the real handlers; rigs wait on
   stormcluster#128 anyway. stormcos's `deploy/test/prometheus-route.sh`
   is the end-to-end check.
