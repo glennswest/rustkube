@@ -4,21 +4,22 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### image.openshift.io ImageStreams + image policy admission (#385, sc#162) — HELD ON OWNER DECISION 2026-11-25
-The issue's own comment says to settle who serves `image.openshift.io/v1`
-before building. Since then the registry has been serving it:
-stormblock-registry#235 (v0.78.0) serves Images and ImageStreams as views
-(get/list, plus `imagestreams/status` for prune), and stormcos#1557 part 1
-(front-proxy client) is staged. When its APIService `v1.image.openshift.io` is
-registered, rustkube's aggregator proxies the whole group/version, so
-rustkube cannot also serve ImageStreams with `spec.lookupPolicy`,
-create and watch there.
-- [ ] Owner: (A) the registry serves the full ImageStream (create, `spec`,
-  `lookupPolicy`, watch), and rustkube builds only the admission, reading
-  streams through the aggregator; or (B) rustkube serves the group, the
-  registry feeds `status.tags`, and the APIService is dropped.
-- [ ] After that: the mutating image policy step (`lookupPolicy.local`, the
-  `alpha.image.policy.openshift.io/resolve-names` annotation), a rig, docs.
+### image.openshift.io ImageStreams + image policy admission (#385, sc#162) — AFTER stormblock-registry#258 (decided 2026-11-25)
+Master decided option A (2026-11-25): the registry serves `image.openshift.io/v1`
+(stormblock-registry#235, APIService by stormcos#1557) and will serve
+ImageStreams as full objects: create, `spec.lookupPolicy`, watch
+(stormblock-registry#258, filed 2026-11-25). rustkube serves no image objects.
+- [x] Registry gap filed: stormblock-registry#258. #385 proposed
+  `--after stormblock-registry#258`. (Proposing #258 itself is the registry's or
+  the master's: the rustkube token is refused.)
+- [ ] Mutating image policy admission, as OpenShift's `imagepolicy`: resolve a
+  container's `image: <stream>:<tag>` to the tag's `dockerImageReference` by
+  digest, for pods in a namespace whose stream has `lookupPolicy.local`, and
+  every pod template of a workload with
+  `alpha.image.policy.openshift.io/resolve-names: "*"`. Streams are read through
+  the aggregator. **Registry unreachable → the image is left unchanged; the pod
+  is never refused.**
+- [ ] Rig (the issue's three checks), README, CHANGELOG.
 
 ### route.openshift.io `routes/status` (#397, stormcos#1491, stormlb#48) — DONE 2026-11-25
 Discovery listed `routes/status`, `server.rs` had no route: a router's
