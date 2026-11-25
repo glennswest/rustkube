@@ -1482,64 +1482,6 @@ pub fn image_builders_binding(namespace: &str) -> Value {
     })
 }
 
-async fn ensure_image_builders(storage: &ResourceStorage, ns: &Value) {
-    if !ns["metadata"]["deletionTimestamp"].is_null() || ns["status"]["phase"] == "Terminating" {
-        return;
-    }
-    let Some(name) = ns["metadata"]["name"].as_str() else { return };
-    let key = ResourceStorage::namespaced_key("rolebindings", name, IMAGE_BUILDERS_BINDING);
-    if storage.get(&key).await.is_ok() {
-        return;
-    }
-    let mut binding = image_builders_binding(name);
-    crate::handlers::resource::ensure_metadata_pub(&mut binding, IMAGE_BUILDERS_BINDING, Some(name));
-    match storage.create(&key, binding).await {
-        Ok(_) => tracing::info!("rolebindings {name}/{IMAGE_BUILDERS_BINDING} created (#374)"),
-        Err(e) if e.reason == "AlreadyExists" => {}
-        Err(e) => tracing::warn!("rolebindings {name}/{IMAGE_BUILDERS_BINDING}: {}", e.message),
-    }
-}
-
-/// Every namespace has `system:image-builders`, as OpenShift's
-/// default-rolebindings controller keeps it: every namespace at start, then
-/// each one that appears or changes, whichever path created it (a POST, a
-/// ProjectRequest, a manifest). The controller-manager creates no RBAC
-/// objects (#176), so this is the apiserver's.
-pub fn spawn_image_builders(storage: std::sync::Arc<ResourceStorage>) {
-    tokio::spawn(async move {
-        let prefix = ResourceStorage::cluster_prefix("namespaces");
-        loop {
-            let (items, _, rev) = match storage.list(&prefix, 0, None).await {
-                Ok(page) => page,
-                Err(e) => {
-                    tracing::warn!("image-builders: namespace list: {}", e.message);
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    continue;
-                }
-            };
-            for ns in &items {
-                ensure_image_builders(&storage, ns).await;
-            }
-            match storage.watch(&prefix, rev).await {
-                Ok(mut rx) => {
-                    while let Some(ev) = rx.recv().await {
-                        let value = match ev {
-                            apimachinery::watch::WatchEvent::Added { value, .. }
-                            | apimachinery::watch::WatchEvent::Modified { value, .. } => value,
-                            _ => continue,
-                        };
-                        if let Ok(ns) = serde_json::from_slice::<Value>(&value) {
-                            ensure_image_builders(&storage, &ns).await;
-                        }
-                    }
-                }
-                Err(e) => tracing::warn!("image-builders: namespace watch: {}", e.message),
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        }
-    });
-}
-
 /// The pod a build runs in: `<build>-build`, shortened as `GetBuildPodName`.
 pub fn build_pod_name(build_name: &str) -> String {
     get_name(build_name, "build", 63)

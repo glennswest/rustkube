@@ -22,6 +22,11 @@
 //!   (`deploy.rustkube.io/log`), which is what `oc logs dc/…` reads. A
 //!   cancelled version (`oc rollout cancel`, or a newer one) is stopped and
 //!   marked Failed; `oc rollout retry` sets it New again and it reruns.
+//!   A **Custom** strategy (#392) is OpenShift's deployer pod after all:
+//!   `<rc>-deploy` from `customParams.image`, as the namespace's `deployer`
+//!   account, which does the scaling itself through the API; the version's
+//!   phase follows the pod's, and the pod's output is copied onto the
+//!   ReplicationController when it ends.
 //!
 //! Ported from openshift-controller-manager `pkg/apps` and openshift/oc
 //! `pkg/cli/deployer` (read 2026-11-23).
@@ -58,6 +63,9 @@ const MAX_DEPLOYMENT_DURATION: i64 = 21600;
 const DEFAULT_TIMEOUT: i64 = 600;
 const CANCELLED_BY_USER: &str = "cancelled by the user";
 const CANCELLED_BY_NEWER: &str = "newer deployment was found running";
+const DEPLOYER_POD_GONE: &str = "deployer pod no longer exists";
+/// The account a Custom deployer pod runs as (#392).
+const DEPLOYER_SERVICE_ACCOUNT: &str = "deployer";
 
 fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v[k].as_str().unwrap_or("")
@@ -624,6 +632,12 @@ impl Rollout {
 
     async fn run(self, text: String) {
         *self.log.lock().await = text;
+        let current = self.rc(&self.name).await.ok();
+        if let Some((rc, dc)) = current.as_ref().and_then(|rc| decode(rc).map(|dc| (rc, dc))) {
+            if dc["spec"]["strategy"]["type"] == "Custom" {
+                return self.custom(rc, &dc).await;
+            }
+        }
         if let Err(e) = self.annotate(json!({PHASE_ANNOTATION: "Running"})).await {
             warn!("rollout {}/{}: marking it Running: {e}", self.ns, self.name);
             return;
@@ -648,6 +662,91 @@ impl Rollout {
         };
         info!("rollout {}/{}: {phase}", self.ns, self.name);
         if let Err(e) = self.annotate(json!({PHASE_ANNOTATION: phase})).await {
+            warn!("rollout {}/{}: marking it {phase}: {e}", self.ns, self.name);
+        }
+    }
+
+    /// A Custom version (#392): OpenShift's deployer controller with the
+    /// deployer pod `<rc>-deploy` from the user's image. The pod does the
+    /// rollout; the version's phase follows it (Pending, Running, then
+    /// Complete or Failed), as `deploymentStatusFor` maps a pod's phase.
+    async fn custom(&self, rc: &Value, dc: &Value) {
+        let pod = deployer_pod(rc, dc);
+        let pod_name = name_of(&pod);
+        let path = format!("/api/v1/namespaces/{}/pods/{pod_name}", self.ns);
+        let deadline = dc["spec"]["strategy"]["activeDeadlineSeconds"].as_i64().unwrap_or(MAX_DEPLOYMENT_DURATION);
+        // The pod's own deadline ends it once it has started; this one also
+        // covers a pod that never starts (an image that cannot be pulled).
+        let until = self.started + Duration::from_secs(deadline.max(1) as u64 + 30);
+        let mut phase = phase_of(rc).to_string();
+        let result: anyhow::Result<(&str, Value)> = async {
+            if self.get(&path).await?.is_none() {
+                self.say(&format!("--> Running deployer pod {pod_name} ({})", s(&pod["spec"]["containers"][0], "image"))).await;
+                let pods = format!("/api/v1/namespaces/{}/pods", self.ns);
+                if let Err(e) = self.api.create(&pods, &pod).await {
+                    if self.get(&path).await?.is_none() {
+                        anyhow::bail!("couldn't create deployer pod for {}/{}: {e}", self.ns, self.name);
+                    }
+                }
+            }
+            loop {
+                let Some(p) = self.get(&path).await? else {
+                    anyhow::bail!(DEPLOYER_POD_GONE);
+                };
+                let next = match p["status"]["phase"].as_str().unwrap_or("") {
+                    "Succeeded" => return Ok(("Complete", p)),
+                    "Failed" => return Ok(("Failed", p)),
+                    "Running" => "Running",
+                    _ => "Pending",
+                };
+                if next != phase {
+                    self.annotate(json!({PHASE_ANNOTATION: next})).await?;
+                    phase = next.to_string();
+                }
+                if tokio::time::Instant::now() >= until {
+                    let _ = self.api.delete(&path).await;
+                    anyhow::bail!("the rollout exceeded its active deadline of {deadline}s");
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        .await;
+        let (phase, reason) = match result {
+            Ok((phase, p)) => {
+                // The image's own output, kept with the version once the pod
+                // has ended: `oc logs dc/…` reads the pod while it is there.
+                match self.api.get(&format!("{path}/log")).await {
+                    Ok(r) if r.status().is_success() => {
+                        let text = r.text().await.unwrap_or_default();
+                        for line in text.lines() {
+                            self.say(line).await;
+                        }
+                    }
+                    Ok(r) => self.say(&format!("warning: Unable to retrieve deployer logs from {pod_name}: {}", r.status())).await,
+                    Err(e) => self.say(&format!("warning: Unable to retrieve deployer logs from {pod_name}: {e}")).await,
+                }
+                let reason = if phase == "Failed" {
+                    let why = p["status"]["message"].as_str().filter(|m| !m.is_empty())
+                        .or(p["status"]["containerStatuses"][0]["state"]["terminated"]["reason"].as_str())
+                        .unwrap_or("the deployer pod failed");
+                    self.say(&format!("error: deployer pod {pod_name} failed: {why}")).await;
+                    why.to_string()
+                } else {
+                    String::new()
+                };
+                (phase, reason)
+            }
+            Err(e) => {
+                self.say(&format!("error: {e:#}")).await;
+                ("Failed", format!("{e:#}"))
+            }
+        };
+        info!("rollout {}/{}: {phase} (Custom)", self.ns, self.name);
+        let mut a = json!({PHASE_ANNOTATION: phase});
+        if !reason.is_empty() {
+            a[STATUS_REASON_ANNOTATION] = json!(reason);
+        }
+        if let Err(e) = self.annotate(a).await {
             warn!("rollout {}/{}: marking it {phase}: {e}", self.ns, self.name);
         }
     }
@@ -955,6 +1054,70 @@ fn pod_name(base: &str, suffix: &str) -> String {
     format!("{}-{h:08x}-{suffix}", &base[..keep])
 }
 
+/// `makeDeployerPod` with `makeDeployerContainer` (#392): the Custom
+/// strategy's image, command and environment with the version's name and
+/// namespace, run once as the namespace's `deployer`, owned by the version so
+/// it goes when the version does. Scheduling (node selector, tolerations,
+/// pull secrets, DNS) follows the version's pods.
+pub fn deployer_pod(rc: &Value, dc: &Value) -> Value {
+    let st = &dc["spec"]["strategy"];
+    let p = &st["customParams"];
+    let rc_name = name_of(rc);
+    let mut env: Vec<Value> = p["environment"].as_array().cloned().unwrap_or_default();
+    env.push(json!({"name": "OPENSHIFT_DEPLOYMENT_NAME", "value": rc_name}));
+    env.push(json!({"name": "OPENSHIFT_DEPLOYMENT_NAMESPACE", "value": ns_of(rc)}));
+    let mut container = json!({
+        "name": "deployment",
+        "image": s(p, "image").trim(),
+        "env": env,
+        "imagePullPolicy": "IfNotPresent",
+    });
+    if p["command"].as_array().is_some_and(|c| !c.is_empty()) {
+        container["command"] = p["command"].clone();
+    }
+    if st["resources"].is_object() {
+        container["resources"] = st["resources"].clone();
+    }
+    let mut labels = serde_json::Map::new();
+    labels.insert(DEPLOYER_POD_FOR_LABEL.into(), json!(rc_name));
+    for (k, v) in st["labels"].as_object().into_iter().flatten() {
+        labels.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+    let mut annotations = serde_json::Map::new();
+    annotations.insert(DEPLOYMENT_ANNOTATION.into(), json!(rc_name));
+    annotations.insert(CONFIG_ANNOTATION.into(), json!(ann(rc, CONFIG_ANNOTATION)));
+    for (k, v) in st["annotations"].as_object().into_iter().flatten() {
+        annotations.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+    let tspec = &rc["spec"]["template"]["spec"];
+    let mut spec = json!({
+        "containers": [container],
+        "activeDeadlineSeconds": st["activeDeadlineSeconds"].as_i64().unwrap_or(MAX_DEPLOYMENT_DURATION),
+        "restartPolicy": "Never",
+        "serviceAccountName": DEPLOYER_SERVICE_ACCOUNT,
+        "terminationGracePeriodSeconds": 10,
+        "shareProcessNamespace": false,
+    });
+    for k in ["dnsPolicy", "imagePullSecrets", "tolerations", "nodeSelector"] {
+        if !tspec[k].is_null() {
+            spec[k] = tspec[k].clone();
+        }
+    }
+    json!({
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": pod_name(&rc_name, "deploy"),
+            "namespace": ns_of(rc),
+            "labels": labels,
+            "annotations": annotations,
+            "ownerReferences": [{"apiVersion": "v1", "kind": "ReplicationController", "name": rc_name,
+                                 "uid": rc["metadata"]["uid"]}],
+        },
+        "spec": spec,
+    })
+}
+
 /// `createHookPodManifest`: the named container's image, the hook's
 /// command, the container's env with the hook's over it, the volumes the
 /// hook names.
@@ -1123,6 +1286,44 @@ mod tests {
         assert_eq!(p["spec"]["activeDeadlineSeconds"], 100);
         let abort = json!({"failurePolicy": "Abort", "execNewPod": {"containerName": "nope", "command": ["x"]}});
         assert!(hook_pod(&abort, &r, &d["spec"]["strategy"], "hook-mid", 1).is_err());
+    }
+
+    #[test]
+    fn a_custom_version_runs_the_users_image_as_the_deployer() {
+        let mut d = dc();
+        d["spec"]["strategy"] = json!({"type": "Custom", "activeDeadlineSeconds": 300,
+            "labels": {"x": "y", DEPLOYER_POD_FOR_LABEL: "not-this"}, "annotations": {"a": "b"},
+            "resources": {"limits": {"cpu": "100m"}},
+            "customParams": {"image": " quay.io/me/deployer:1 ", "command": ["/deploy", "--fast"],
+                             "environment": [{"name": "MODE", "value": "blue"}]}});
+        d["spec"]["template"]["spec"]["nodeSelector"] = json!({"zone": "a"});
+        let mut r = make_deployment(&d);
+        r["metadata"]["uid"] = json!("rc-uid");
+        let p = deployer_pod(&r, &decode(&r).unwrap());
+        assert_eq!(p["metadata"]["name"], "web-2-deploy");
+        assert_eq!(p["metadata"]["labels"][DEPLOYER_POD_FOR_LABEL], "web-2", "the strategy's labels never overwrite");
+        assert_eq!(p["metadata"]["labels"]["x"], "y");
+        assert_eq!(p["metadata"]["annotations"][DEPLOYMENT_ANNOTATION], "web-2");
+        assert_eq!(p["metadata"]["annotations"][CONFIG_ANNOTATION], "web");
+        assert_eq!(p["metadata"]["annotations"]["a"], "b");
+        assert_eq!(p["metadata"]["ownerReferences"][0]["uid"], "rc-uid");
+        assert_eq!(p["metadata"]["ownerReferences"][0]["kind"], "ReplicationController");
+        let sp = &p["spec"];
+        assert_eq!(sp["serviceAccountName"], "deployer");
+        assert_eq!(sp["restartPolicy"], "Never");
+        assert_eq!(sp["activeDeadlineSeconds"], 300);
+        assert_eq!(sp["nodeSelector"], json!({"zone": "a"}));
+        let c = &sp["containers"][0];
+        assert_eq!((c["name"].clone(), c["image"].clone(), c["command"].clone()),
+                   (json!("deployment"), json!("quay.io/me/deployer:1"), json!(["/deploy", "--fast"])));
+        assert_eq!(c["env"], json!([{"name": "MODE", "value": "blue"},
+                                    {"name": "OPENSHIFT_DEPLOYMENT_NAME", "value": "web-2"},
+                                    {"name": "OPENSHIFT_DEPLOYMENT_NAMESPACE", "value": "demo"}]));
+        assert_eq!(c["resources"], json!({"limits": {"cpu": "100m"}}));
+        assert!(sp["volumes"].is_null() && c["securityContext"].is_null(), "nothing of the app's pod but scheduling");
+        d["spec"]["strategy"]["customParams"]["command"] = json!([]);
+        let p = deployer_pod(&r, &d);
+        assert!(p["spec"]["containers"][0]["command"].is_null(), "no command: the image's entrypoint");
     }
 
     #[test]

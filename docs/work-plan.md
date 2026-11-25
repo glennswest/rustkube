@@ -75,6 +75,27 @@ the test-secrets rule (generate keys in tests, plain placeholders), no allowlist
   left in the tree, the new value's entropy 2.09 < the rule's 3.5).
 - The two rigs changed only in the value; they run with the next `rigs` suite.
 
+### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE 2026-11-25
+Ported from openshift-controller-manager `pkg/apps/deployer`
+(`makeDeployerPod`, `makeDeployerContainer`, the pod-phase → version-phase
+map) and bootstrappolicy (`system:deployer`, `system:deployers`).
+- [x] apiserver: Custom admitted; `customParams` required with an image (no
+  default deployer image here); environment names validated; `customParams`
+  on Rolling/Recreate refused (no deployer image to swap); hooks in a Custom
+  strategy's rolling/recreate params validated.
+- [x] apiserver: `system:deployer` ClusterRole at boot; `system:deployers`
+  per namespace by `default_rolebindings` (moved out of `builds`, now both
+  bindings); `deploymentconfigs/log` serves a Custom version's deployer pod
+  log, else the copy on the RC.
+- [x] controller-manager: `deployer` SA per namespace; the Deployer runs a
+  Custom version as `<rc>-deploy` (SA deployer, owned by the RC), phase
+  follows the pod, output copied onto the RC, deadline, a missing pod fails it.
+- [x] Rig `deploymentconfigs` section 8 (the script plays the image with a
+  `deployer` token), README, oc-compatibility, test/README, CHANGELOG.
+- [ ] sc-build.
+- [ ] Run the rig (pve test machines, stormcluster#128 install), and the
+  issue's Check with a real image on a node.
+
 ### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, RIG BLOCKED 2026-11-23
 Option A of the question on #375 (stormcentral's owner queue refused it:
 "a gap: session work — build it", #1680): rollouts run in the
@@ -91,7 +112,7 @@ oc `pkg/cli/deployer` (read 2026-11-23).
 - [x] 21dcdfd: sc-build — workspace build, apiserver 430/430,
   controller-manager 156/156, clippy clean in the new files.
 - [x] Rig `deploymentconfigs` (suite `rigs`), docs, CHANGELOG.
-- [x] Gaps: Custom strategy filed as #392 (proposed); `tagImages` hooks and
+- [x] Gaps: Custom strategy filed as #392 (built 2026-11-25); `tagImages` hooks and
   ImageChange triggers belong to #385 (ImageStreams) and #386 (image
   triggers) — noted there to lift the refusals.
 - [ ] Run the rig: every pve test machine refuses runs until one installs the

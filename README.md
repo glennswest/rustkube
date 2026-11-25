@@ -329,12 +329,14 @@ Rolling with 25%/25%, timeouts 600 s, `activeDeadlineSeconds` 21600,
 `revisionHistoryLimit` 10, a lone container as every hook's) and validation;
 a spec write keeps the status but for a `latestVersion` one ahead, a
 `/status` write keeps the spec. Refused, because nothing here can run them:
-the Custom strategy, `tagImages` hooks and ImageChange triggers (no
-ImageStreams). Each version is a ReplicationController `<dc>-<version>`,
+`tagImages` hooks and ImageChange triggers (no ImageStreams), a Custom
+strategy without `customParams.image` (there is no default deployer image)
+and `customParams` on a Rolling or Recreate strategy (it would swap a
+deployer image those rollouts do not have). Each version is a ReplicationController `<dc>-<version>`,
 made by the controller-manager with OpenShift's annotations (phase, version,
 the encoded config), so `oc rollout history|status|cancel|retry` and `oc adm
-prune deployments` read them as OpenShift's. **There is no deployer pod**: the
-controller-manager runs each rollout itself (Rolling: kubectl's rolling
+prune deployments` read them as OpenShift's. **There is no deployer pod**
+for Rolling and Recreate: the controller-manager runs each rollout itself (Rolling: kubectl's rolling
 updater, surge and readiness; Recreate: down to zero, up through one
 accepted pod), the strategy's `pre`/`mid`/`post` hooks as pods
 `<rc>-hook-<pre|mid|post>` from the named container's image with
@@ -344,7 +346,21 @@ deployer would print on the ReplicationController
 shows, a hook pod's own output included. A cancelled version is marked
 Failed and its hook pods deleted; a failed one leaves the last complete
 version running. The rollouts restart from their records when a new
-controller-manager leader takes over.
+controller-manager leader takes over. A **Custom** strategy (#392) does get
+OpenShift's deployer pod: `<rc>-deploy` runs `customParams.image` (its
+`command`, its `environment` plus `OPENSHIFT_DEPLOYMENT_NAME` and
+`_NAMESPACE`, the strategy's `resources`, labels and annotations, the
+version's node selector, tolerations and pull secrets) once, as the
+namespace's `deployer` ServiceAccount, owned by the version. The image does
+the rollout itself through the API; the version's phase follows the pod
+(Pending, Running, Complete or Failed with the pod's reason), and `oc logs
+dc/…` serves the pod's log while it exists (its output is also copied onto
+the version when it ends, and that copy is served once the pod is gone or
+its node cannot be reached). Every namespace has the `deployer`
+ServiceAccount (the controller-manager's) bound to OpenShift's
+`system:deployer` ClusterRole (scale and watch ReplicationControllers, read
+pods and their logs, write events) by the RoleBinding `system:deployers`
+(the apiserver's, beside `system:image-builders`).
 
 **Builds and BuildConfigs** (`build.openshift.io/v1` `builds`,
 `buildconfigs` (`bc`), #374) are OpenShift's, with `buildconfigs/instantiate`

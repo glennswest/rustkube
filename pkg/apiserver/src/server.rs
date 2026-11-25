@@ -1188,8 +1188,9 @@ pub async fn run(config: ApiServerConfig) -> anyhow::Result<()> {
 
     // Bootstrap RBAC resources
     bootstrap_rbac(&storage, config.anonymous_auth, config.dev_anonymous_admin).await;
-    // `system:image-builders` in every namespace, for builds' `builder` (#374).
-    crate::builds::spawn_image_builders(storage.clone());
+    // `system:image-builders` (#374) and `system:deployers` (#392) in every
+    // namespace, for builds' `builder` and Custom rollouts' `deployer`.
+    crate::default_rolebindings::spawn(storage.clone());
 
     // default/kubernetes Service + Endpoints, so in-cluster client-go can reach
     // the apiserver via KUBERNETES_SERVICE_HOST (#30). Re-run periodically so a
@@ -2368,6 +2369,8 @@ async fn bootstrap_rbac(
     for role in [
         // The builder's (#374), bound per namespace by `builds`.
         crate::builds::image_builder_role(),
+        // A Custom rollout's deployer's (#392), bound per namespace likewise.
+        crate::deployment_configs::deployer_role(),
         crate::control_plane_rbac::controller_manager_role(),
         crate::control_plane_rbac::scheduler_role(),
         // Not bound here: stormcos binds stormcert's identity (#264).

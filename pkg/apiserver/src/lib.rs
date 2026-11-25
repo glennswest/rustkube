@@ -20,6 +20,7 @@ pub mod config;
 pub mod control_plane_rbac;
 pub mod crd;
 pub mod deployment_configs;
+pub mod default_rolebindings;
 pub mod csr_admission;
 pub mod discovery;
 pub mod error;

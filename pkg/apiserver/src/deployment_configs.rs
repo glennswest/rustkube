@@ -2,7 +2,10 @@
 //! half — what openshift-apiserver's `pkg/apps` does. The rollouts are the
 //! controller-manager's (`deploymentconfig` there): each version is a
 //! ReplicationController, rolled out by the controller itself rather than a
-//! deployer pod (the choice recorded on #375).
+//! deployer pod (the choice recorded on #375). A Custom strategy is the
+//! exception (#392): its deployer pod `<rc>-deploy` runs the user's image
+//! under the namespace's `deployer` account, which `system:deployers` binds
+//! to `system:deployer` ([`deployers_binding`], kept by `default_rolebindings`).
 //!
 //! Ported from openshift/openshift-apiserver (read 2026-11-23):
 //! `apis/apps/v1/defaults.go` ([`normalize`]), `apis/apps/validation`
@@ -11,11 +14,11 @@
 //! `registry/instantiate` ([`instantiate`]) and `registry/rollback`
 //! ([`rollback`]).
 //!
-//! **What this cluster cannot run is refused, not stored** (no stubs): a
-//! Custom strategy (it runs a user's image as the deployer, under a
-//! `deployer` account this cluster does not provision), `tagImages` hooks
-//! and ImageChange triggers (no ImageStreams are served) are each a field
-//! error.
+//! **What this cluster cannot run is refused, not stored** (no stubs):
+//! `customParams` on a Rolling or Recreate strategy (it swaps the deployer
+//! image, and those rollouts have none here), a Custom strategy without an
+//! image (there is no default deployer image), `tagImages` hooks and
+//! ImageChange triggers (no ImageStreams are served) are each a field error.
 
 use crate::error::ApiError;
 use crate::storage::ResourceStorage;
@@ -40,7 +43,7 @@ const DEFAULT_TIMEOUT: i64 = 600;
 const MAX_DEPLOYMENT_DURATION: i64 = 21600;
 const DEFAULT_REVISION_HISTORY_LIMIT: i64 = 10;
 /// The strategies this cluster runs.
-const STRATEGIES: [&str; 2] = ["Rolling", "Recreate"];
+const STRATEGIES: [&str; 3] = ["Rolling", "Recreate", "Custom"];
 
 // --- field errors -----------------------------------------------------------------
 
@@ -148,6 +151,49 @@ pub fn normalize(dc: &mut Value) {
             }
         }
     }
+}
+
+// --- the deployer's own access ------------------------------------------------------
+
+/// The account a Custom deployer pod runs as, made in every namespace by the
+/// controller-manager's serviceaccounts pass.
+pub const DEPLOYER_SERVICE_ACCOUNT: &str = "deployer";
+/// OpenShift's `system:deployer` ClusterRole (bootstrappolicy): what a
+/// deployer pod does, scale and watch the versions and read their pods.
+pub const DEPLOYER_ROLE: &str = "system:deployer";
+/// The RoleBinding OpenShift puts in every namespace for its `deployer`.
+pub const DEPLOYERS_BINDING: &str = "system:deployers";
+
+pub fn deployer_role() -> Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRole",
+        "metadata": {"name": DEPLOYER_ROLE,
+                     "annotations": {"openshift.io/description": "Grants the right to deploy within a project.  Used primarily with service accounts for automated deployments."}},
+        "rules": [
+            // `delete`: kept by upstream for older deployer images.
+            {"apiGroups": [""], "resources": ["replicationcontrollers"], "verbs": ["delete"]},
+            {"apiGroups": [""], "resources": ["replicationcontrollers"], "verbs": ["get", "list", "watch", "update"]},
+            {"apiGroups": [""], "resources": ["replicationcontrollers/scale"], "verbs": ["get", "update"]},
+            {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list", "watch", "create"]},
+            {"apiGroups": [""], "resources": ["pods/log"], "verbs": ["get"]},
+            {"apiGroups": [""], "resources": ["events"], "verbs": ["create", "list"]},
+            {"apiGroups": ["image.openshift.io", ""], "resources": ["imagestreams"], "verbs": ["get"]},
+            {"apiGroups": ["image.openshift.io", ""], "resources": ["imagestreamtags", "imagestreammappings"], "verbs": ["create"]},
+            {"apiGroups": ["image.openshift.io", ""], "resources": ["imagestreamtags"], "verbs": ["update"]},
+        ],
+    })
+}
+
+pub fn deployers_binding(namespace: &str) -> Value {
+    json!({
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {"name": DEPLOYERS_BINDING, "namespace": namespace,
+                     "annotations": {"openshift.io/description": "Allows deploymentconfigs in this namespace to rollout pods in this namespace. Configured by the apiserver (#392)."}},
+        "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": DEPLOYER_ROLE},
+        "subjects": [{"kind": "ServiceAccount", "name": DEPLOYER_SERVICE_ACCOUNT, "namespace": namespace}],
+    })
 }
 
 // --- validation ---------------------------------------------------------------------
@@ -274,7 +320,32 @@ fn validate_strategy(spec: &Value, errs: &mut Vec<String>) {
                 validate_hook(&p[h], &format!("spec.strategy.rollingParams.{h}"), &containers, errs);
             }
         }
+        // #392: a deployer pod from the user's image.
+        "Custom" => {
+            let p = &st["customParams"];
+            if !p.is_object() {
+                errs.push(required("spec.strategy.customParams", ""));
+            } else if s(p, "image").trim().is_empty() {
+                errs.push(required("spec.strategy.customParams.image",
+                                   "this cluster has no default deployer image; a Custom strategy names its own"));
+            }
+            for (k, hooks) in [("recreateParams", &["pre", "mid", "post"][..]), ("rollingParams", &["pre", "post"][..])] {
+                for h in hooks {
+                    validate_hook(&st[k][h], &format!("spec.strategy.{k}.{h}"), &containers, errs);
+                }
+            }
+        }
         other => errs.push(not_supported("spec.strategy.type", other, &STRATEGIES)),
+    }
+    // `validateCustomParams`: the environment's names.
+    for (i, e) in st["customParams"]["environment"].as_array().into_iter().flatten().enumerate() {
+        if s(e, "name").is_empty() {
+            errs.push(required(&format!("spec.strategy.customParams.environment[{i}].name"), ""));
+        }
+    }
+    if st["customParams"].is_object() && ty != "Custom" && !ty.is_empty() {
+        errs.push(format!("spec.strategy.customParams: Forbidden: customParams with a {ty} strategy replaces the deployer image, \
+                           and this cluster rolls {ty} out itself; use type Custom to run an image"));
     }
     if let Some(ad) = st["activeDeadlineSeconds"].as_i64() {
         if ad < 0 {
@@ -571,8 +642,12 @@ mod tests {
     #[test]
     fn what_this_cluster_cannot_run_is_refused() {
         let cases: Vec<(&str, Value)> = vec![
-            ("spec.strategy.type: Unsupported value: \"Custom\"",
-             json!({"type": "Custom", "customParams": {"image": "x"}})),
+            ("spec.strategy.customParams: Required value", json!({"type": "Custom"})),
+            ("spec.strategy.customParams.image: Required value", json!({"type": "Custom", "customParams": {"command": ["x"]}})),
+            ("spec.strategy.customParams: Forbidden", json!({"type": "Recreate", "customParams": {"image": "x"}})),
+            ("spec.strategy.customParams.environment[0].name: Required value",
+             json!({"type": "Custom", "customParams": {"image": "x", "environment": [{"value": "v"}]}})),
+            ("spec.strategy.type: Unsupported value: \"Blue\"", json!({"type": "Blue"})),
         ];
         for (want, strategy) in cases {
             let mut d = dc();
@@ -587,6 +662,41 @@ mod tests {
         d["spec"]["strategy"] = json!({"type": "Recreate", "recreateParams": {"pre": {"failurePolicy": "Abort",
             "tagImages": [{"containerName": "web", "to": {"kind": "ImageStreamTag", "name": "a:b"}}]}}});
         assert!(admit_create(&mut d).unwrap_err().message.contains("tagImages: Forbidden"));
+    }
+
+    #[test]
+    fn a_custom_strategy_is_admitted_with_its_image() {
+        let mut d = dc();
+        d["spec"]["strategy"] = json!({"type": "Custom", "customParams": {"image": "quay.io/me/deployer:1",
+            "command": ["/deploy"], "environment": [{"name": "MODE", "value": "blue"}]},
+            "rollingParams": {"pre": {"failurePolicy": "Abort", "execNewPod": {"containerName": "web", "command": ["true"]}}}});
+        admit_create(&mut d).unwrap();
+        assert_eq!(d["spec"]["strategy"]["type"], "Custom");
+        assert_eq!(d["spec"]["strategy"]["activeDeadlineSeconds"], MAX_DEPLOYMENT_DURATION, "defaulted as for any strategy");
+        assert!(d["spec"]["strategy"]["rollingParams"]["timeoutSeconds"].is_number(), "params a Custom image may read are defaulted");
+        let mut bad = d.clone();
+        bad["spec"]["strategy"]["rollingParams"]["pre"]["execNewPod"]["containerName"] = json!("nope");
+        assert!(admit_create(&mut bad).unwrap_err().message.contains("spec.strategy.rollingParams.pre.execNewPod.containerName"));
+    }
+
+    #[test]
+    fn the_deployer_role_and_its_binding_are_openshifts() {
+        let r = deployer_role();
+        assert_eq!(r["metadata"]["name"], "system:deployer");
+        let grants = |res: &str, verb: &str| r["rules"].as_array().unwrap().iter().any(|x| {
+            x["apiGroups"].as_array().unwrap().contains(&json!(""))
+                && x["resources"].as_array().unwrap().contains(&json!(res))
+                && x["verbs"].as_array().unwrap().contains(&json!(verb))
+        });
+        for (res, verb) in [("replicationcontrollers", "update"), ("replicationcontrollers", "watch"),
+                            ("replicationcontrollers/scale", "update"), ("pods", "list"), ("pods/log", "get"), ("events", "create")] {
+            assert!(grants(res, verb), "{verb} {res}");
+        }
+        assert!(!grants("secrets", "get") && !grants("pods", "delete"));
+        let b = deployers_binding("demo");
+        assert_eq!((b["metadata"]["name"].clone(), b["metadata"]["namespace"].clone()), (json!("system:deployers"), json!("demo")));
+        assert_eq!(b["roleRef"]["name"], "system:deployer");
+        assert_eq!(b["subjects"], json!([{"kind": "ServiceAccount", "name": "deployer", "namespace": "demo"}]));
     }
 
     #[test]

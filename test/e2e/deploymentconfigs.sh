@@ -19,7 +19,15 @@
 #   6. `oc rollout cancel` stops a rollout whose pods never become ready
 #   7. `oc adm prune deployments --keep-complete=1 --confirm` deletes the
 #      oldest complete versions
-#   8. a Custom strategy and an ImageChange trigger are refused (422)
+#   8. a Custom strategy (#392): `custom-1-deploy` runs the strategy's image
+#      as the namespace's `deployer` account. The script plays that image,
+#      scaling with a token minted for `deployer`, so `system:deployers`
+#      is what lets it. Its version completes; `oc rollout latest` moves to
+#      custom-2 and the image scales custom-1 down; the deployer account
+#      cannot read secrets; `oc logs dc/custom` serves the version's log;
+#      an image that fails fails its version and the DC stays on custom-2.
+#      An ImageChange trigger and a Custom strategy without an image are
+#      refused (422)
 #
 # Exit status is the number of failed checks.
 # shellcheck source=lib.sh
@@ -49,10 +57,10 @@ def check(ok, what):
     print(("PASS  " if ok else "FAIL  ") + what, flush=True)
     failed += 0 if ok else 1
 
-def req(method, path, body=None, ctype="application/json", ok=(200, 201, 404, 409, 422)):
+def req(method, path, body=None, ctype="application/json", ok=(200, 201, 404, 409, 422), token=None):
     conn = http.client.HTTPSConnection(API.hostname, API.port, context=CTX, timeout=30)
     conn.request(method, path, body=None if body is None else json.dumps(body),
-                 headers={"Authorization": "Bearer " + TOKEN, "Content-Type": ctype})
+                 headers={"Authorization": "Bearer " + (token or TOKEN), "Content-Type": ctype})
     r = conn.getresponse(); data = r.read()
     if r.status not in ok:
         print(f"setup {method} {path}: {r.status} {data[:300]!r}"); sys.exit(100)
@@ -85,6 +93,62 @@ n["status"] = {"capacity": res, "allocatable": res, "conditions": [{"type": "Rea
 req("PUT", f"/api/v1/nodes/{NODE}/status", n)
 
 stop = threading.Event()
+deployer_calls = []  # (what, status) of the stand-in Custom image's API calls
+
+def custom_image(p):
+    """A Custom strategy's image, as a real one does it: the version up to
+    its desired replicas, the config's other versions down to 0, through
+    the API as the pod's own account; MODE=fail exits 1 instead."""
+    name = p["metadata"]["name"]
+    env = {e["name"]: e.get("value") for e in p["spec"]["containers"][0].get("env", [])}
+    ok = True
+    try:
+        sa = p["spec"]["serviceAccountName"]
+        _, tr = req("POST", f"/api/v1/namespaces/{NS}/serviceaccounts/{sa}/token",
+                    {"apiVersion": "authentication.k8s.io/v1", "kind": "TokenRequest", "spec": {}})
+        tok = tr["status"]["token"]
+        ok_codes = (200, 201, 403, 404, 409, 422)
+        if env.get("MODE") == "fail":
+            ok = False
+        else:
+            def scale(rcname, replicas):
+                # GET then PUT, again on a conflict, as client-go's retry does.
+                for _ in range(10):
+                    path = f"/api/v1/namespaces/{NS}/replicationcontrollers/{rcname}"
+                    st, r = req("GET", path, ok=ok_codes, token=tok)
+                    if st != 200:
+                        return st
+                    r["spec"]["replicas"] = replicas
+                    st, _ = req("PUT", path, r, ok=ok_codes, token=tok)
+                    if st != 409:
+                        return st
+                    time.sleep(0.2)
+                return st
+            new = env["OPENSHIFT_DEPLOYMENT_NAME"]
+            st, r = req("GET", f"/api/v1/namespaces/{NS}/replicationcontrollers/{new}", ok=ok_codes, token=tok)
+            deployer_calls.append(("get " + new, st))
+            want = int(r["metadata"]["annotations"]["kubectl.kubernetes.io/desired-replicas"])
+            deployer_calls.append(("scale up " + new, scale(new, want)))
+            until(lambda: (rc(new) or {}).get("status", {}).get("availableReplicas") == want, 60)
+            config = r["metadata"]["annotations"]["openshift.io/deployment-config.name"]
+            st, l = req("GET", f"/api/v1/namespaces/{NS}/replicationcontrollers?labelSelector="
+                        f"openshift.io%2Fdeployment-config.name%3D{config}", ok=ok_codes, token=tok)
+            deployer_calls.append(("list versions", st))
+            for o in l.get("items", []) if st == 200 else []:
+                if o["metadata"]["name"] != new and o["spec"].get("replicas"):
+                    deployer_calls.append(("scale down " + o["metadata"]["name"], scale(o["metadata"]["name"], 0)))
+            st, _ = req("GET", f"/api/v1/namespaces/{NS}/secrets", ok=ok_codes, token=tok)
+            deployer_calls.append(("secrets", st))
+    except Exception as e:
+        print("custom image:", e, flush=True)
+        ok = False
+    p = get(f"/api/v1/namespaces/{NS}/pods/{name}")
+    if p:
+        p["status"] = {"phase": "Succeeded" if ok else "Failed", "message": "" if ok else "exit code 1",
+                       "containerStatuses": [{"name": "deployment", "restartCount": 0, "state":
+                           {"terminated": {"exitCode": 0 if ok else 1, "reason": "Completed" if ok else "Error"}}}]}
+        req("PUT", f"/api/v1/namespaces/{NS}/pods/{name}/status", p)
+
 def kubelet():
     """The stand-in kubelet: Lease renewed; bound pods Running and Ready,
     but a pod labelled stall=yes never Ready; hook pods finish by their
@@ -104,7 +168,14 @@ def kubelet():
                     continue
                 if not p["spec"].get("nodeName") or p.get("status", {}).get("phase") in ("Running", "Succeeded", "Failed"):
                     continue
-                if p["metadata"].get("labels", {}).get("openshift.io/deployer-pod.type"):
+                labels = p["metadata"].get("labels", {})
+                if labels.get("openshift.io/deployer-pod-for.name") and not labels.get("openshift.io/deployer-pod.type"):
+                    p["status"] = {"phase": "Running", "conditions": [{"type": "PodScheduled", "status": "True"}]}
+                    req("PUT", f"/api/v1/namespaces/{NS}/pods/{name}/status", p)
+                    threading.Thread(target=custom_image, args=(get(f"/api/v1/namespaces/{NS}/pods/{name}"),),
+                                     daemon=True).start()
+                    continue
+                if labels.get("openshift.io/deployer-pod.type"):
                     bad = p["spec"]["containers"][0].get("command") == ["/bin/false"]
                     p["status"] = {"phase": "Failed" if bad else "Succeeded", "message": "exit code 1" if bad else "",
                                    "containerStatuses": [{"name": "lifecycle", "restartCount": 0, "state":
@@ -231,8 +302,45 @@ gone = [f"web-{v}" for v in (1, 2) if rc(f"web-{v}") is None]
 check(gone == ["web-1", "web-2"] and rc("web-7") is not None, f"the oldest complete versions are pruned: {gone}")
 
 # 8.
-st, out = make("custom", {"type": "Custom", "customParams": {"image": "x"}}, 1)
-check(st == 422 and "Unsupported value: \"Custom\"" in json.dumps(out), f"a Custom strategy is refused: {st}")
+sa = until(lambda: get(f"/api/v1/namespaces/{NS}/serviceaccounts/deployer"), 30)
+rb = until(lambda: get(f"/apis/rbac.authorization.k8s.io/v1/namespaces/{NS}/rolebindings/system:deployers"), 30)
+check(sa is not None and rb is not None and rb["roleRef"]["name"] == "system:deployer"
+      and rb["subjects"][0]["name"] == "deployer", f"the deployer account and system:deployers: {rb and rb['roleRef']}")
+custom = {"type": "Custom", "customParams": {"image": "registry.local/deployer:1", "command": ["/deploy"],
+                                             "environment": [{"name": "MODE", "value": "ok"}]}}
+st, out = make("custom", custom, 2)
+check(st == 201, f"a Custom DC is admitted: {st} {str(out)[:200]}")
+check(until(lambda: settled("custom", 1, 2)), f"custom-1 completes with 2 available: {phase('custom-1')}")
+pod = get(f"/api/v1/namespaces/{NS}/pods/custom-1-deploy")
+c = pod and pod["spec"]["containers"][0]
+env = {e["name"]: e.get("value") for e in (c or {}).get("env", [])}
+check(pod is not None and pod["spec"]["serviceAccountName"] == "deployer" and c["image"] == "registry.local/deployer:1"
+      and c["command"] == ["/deploy"] and env.get("MODE") == "ok" and env.get("OPENSHIFT_DEPLOYMENT_NAME") == "custom-1"
+      and env.get("OPENSHIFT_DEPLOYMENT_NAMESPACE") == NS and pod["status"].get("phase") == "Succeeded"
+      and pod["metadata"]["ownerReferences"][0]["name"] == "custom-1",
+      f"custom-1-deploy ran the strategy's image as deployer: {pod and pod['spec'].get('serviceAccountName')} {c and c.get('image')}")
+code, out = oc("rollout", "latest", "dc/custom")
+check(code == 0, f"oc rollout latest dc/custom: {out.strip()[:200]}")
+check(until(lambda: settled("custom", 2, 2) and (rc("custom-1") or {}).get("spec", {}).get("replicas") == 0),
+      f"custom-2 completes and the image scaled custom-1 down: {phase('custom-2')}")
+calls = dict(deployer_calls)
+check(calls.get("scale up custom-2") == 200 and calls.get("scale down custom-1") == 200 and calls.get("list versions") == 200,
+      f"the deployer account scaled the versions: {deployer_calls}")
+check(calls.get("secrets") == 403, f"and may not read secrets: {calls.get('secrets')}")
+code, out = oc("logs", "dc/custom")
+check(code == 0 and "Running deployer pod custom-2-deploy" in out, f"oc logs dc/custom: {out.strip()[:300]}")
+d = dc("custom")
+d["spec"]["strategy"]["customParams"]["environment"] = [{"name": "MODE", "value": "fail"}]
+req("PUT", f"/apis/apps.openshift.io/v1/namespaces/{NS}/deploymentconfigs/custom", d)
+code, out = oc("rollout", "latest", "dc/custom")
+check(until(lambda: phase("custom-3") == "Failed"), f"an image that fails fails custom-3: {phase('custom-3')}")
+r3 = rc("custom-3")
+check(r3 and "exit code 1" in r3["metadata"]["annotations"].get("openshift.io/deployment.status-reason", ""),
+      f"with the pod's reason: {r3 and r3['metadata']['annotations'].get('openshift.io/deployment.status-reason')}")
+check(until(lambda: (rc("custom-2") or {}).get("spec", {}).get("replicas") == 2 and (dc("custom") or {})
+            .get("status", {}).get("availableReplicas") == 2), "the DC stays on custom-2")
+st, out = make("noimage", {"type": "Custom", "customParams": {"command": ["x"]}}, 1)
+check(st == 422 and "customParams.image: Required value" in json.dumps(out), f"a Custom strategy without an image is refused: {st}")
 st, out = req("POST", f"/apis/apps.openshift.io/v1/namespaces/{NS}/deploymentconfigs", {
     "apiVersion": "apps.openshift.io/v1", "kind": "DeploymentConfig", "metadata": {"name": "img"},
     "spec": {"replicas": 1, "selector": {"app": "img"},

@@ -153,9 +153,10 @@ async fn terminate_namespace(
 }
 
 async fn ensure_default_service_account(api: &ApiClient, namespace: &str) -> anyhow::Result<()> {
-    // `builder` too: the account build pods run as (#374), as OpenShift's
-    // serviceaccounts controller makes it in every namespace.
-    for name in ["default", "builder"] {
+    // `builder` and `deployer` too: the accounts build pods (#374) and Custom
+    // deployer pods (#392) run as, as OpenShift's serviceaccounts controller
+    // makes them in every namespace.
+    for name in ["default", "builder", "deployer"] {
         ensure_service_account(api, namespace, name).await?;
     }
     Ok(())

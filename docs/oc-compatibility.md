@@ -104,9 +104,12 @@ authoritative — the exact `oc adm` set shifts slightly by cluster version.
 DeploymentConfigs (#375): `rollout latest|status|history|undo|cancel|retry|pause|resume`,
 `rollback`, `logs dc/…`, `scale dc/…`, `set env|image|deployment-hook` on a DC, and
 `get dc` work against rustkube (rig `deploymentconfigs`, not yet run on a test
-machine). The rollout runs in the controller-manager, not a deployer pod: `oc
-logs dc/…` is its recorded log. Custom strategies, `tagImages` hooks and
-ImageChange triggers are refused.
+machine). A Rolling or Recreate rollout runs in the controller-manager, not a
+deployer pod: `oc logs dc/…` is its recorded log. A Custom strategy (#392)
+runs its image as the deployer pod `<rc>-deploy` under the namespace's
+`deployer` account, and `oc logs dc/…` is that pod's log. `tagImages` hooks
+and ImageChange triggers are refused, and so is a Custom strategy without an
+image.
 | `start-build` | Trigger a build (`--from-dir`, `--from-file`, `--from-repo`, `-F` follow, `--wait`) |
 
 Builds (#374): `start-build` (not `--from-dir|--from-file|--from-repo`, which need

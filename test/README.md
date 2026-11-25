@@ -746,7 +746,13 @@ stays on the last good version, `--remove` and it rolls out; `oc rollout undo`
 restores the previous template; `oc scale`; a Rolling DC rolls 3 replicas with
 the rolling updater's log; `oc rollout cancel` stops a rollout whose pod never
 becomes ready (RolloutCancelled); `oc adm prune deployments` deletes the oldest
-complete versions; a Custom strategy and an ImageChange trigger are 422.
+complete versions; a Custom strategy (#392) runs `custom-1-deploy` from its
+image as `deployer` (the script plays the image, scaling with a token minted
+for `deployer`, so `system:deployers` is what lets it): its versions complete,
+the image scales the old one down, `deployer` cannot read secrets, `oc logs
+dc/custom` serves the version's log, and an image that fails fails its version
+while the DC stays on the last good one; an ImageChange trigger and a Custom
+strategy without an image are 422.
 
 `e2e/builds.sh` (#374, suite `rigs`): a real controller-manager (as itself:
 its role and the privileged SCC admit build pods) and scheduler, one stand-in

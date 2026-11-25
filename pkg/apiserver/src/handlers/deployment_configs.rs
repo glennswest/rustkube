@@ -7,7 +7,7 @@ use crate::deployment_configs as dcs;
 use crate::error::ApiError;
 use crate::handlers::AppState;
 use crate::storage::ResourceStorage;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -50,9 +50,13 @@ fn truthy(params: &HashMap<String, String>, k: &str) -> bool {
 /// `GET …/deploymentconfigs/{name}/log`: the rollout's log, which the
 /// controller that runs it records on the version's ReplicationController
 /// (#375: no deployer pod). `version` names one, `previous` the one before;
-/// `follow` streams it until the rollout ends.
+/// `follow` streams it until the rollout ends. A Custom version (#392) has a
+/// deployer pod: while it is there, its log is served, as upstream's
+/// `LogREST` does; after (or when its node cannot serve it), the copy kept
+/// on the version.
 pub async fn log(
     State(state): State<AppState>,
+    Extension(keys): Extension<crate::auth::SigningKeys>,
     Path((namespace, name)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
@@ -97,6 +101,24 @@ pub async fn log(
         .get(&key)
         .await
         .map_err(|_| ApiError::bad_request(&format!("replicationcontrollers {rc_name:?} not found")))?;
+    if dcs::decode(&rc).is_some_and(|d| d["spec"]["strategy"]["type"] == "Custom") {
+        let pod_name = crate::builds::get_name(&rc_name, "deploy", 63);
+        if state.storage.get(&ResourceStorage::namespaced_key("pods", &namespace, &pod_name)).await.is_ok() {
+            let mut q: HashMap<String, String> = HashMap::new();
+            for k in ["timestamps", "tailLines", "sinceSeconds", "sinceTime", "limitBytes", "follow"] {
+                if let Some(v) = params.get(k) {
+                    q.insert(k.into(), v.clone());
+                }
+            }
+            q.insert("container".into(), "deployment".into());
+            let resp = crate::handlers::logs::pod_logs(State(state.clone()), Extension(keys), Path((namespace.clone(), pod_name)),
+                                                        Query(q)).await;
+            // A pod whose node cannot be reached: the copy below instead.
+            if resp.status().is_success() {
+                return Ok(resp);
+            }
+        }
+    }
     let phase = |rc: &Value| rc["metadata"]["annotations"][dcs::PHASE_ANNOTATION].as_str().unwrap_or("").to_string();
     let text = |rc: &Value| rc["metadata"]["annotations"][dcs::LOG_ANNOTATION].as_str().unwrap_or("").to_string();
     let terminal = |p: &str| p == "Complete" || p == "Failed";
