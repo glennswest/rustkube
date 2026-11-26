@@ -196,6 +196,8 @@ runner's `reactor::requeue_after`, which #379 thought missing, exists).
   clippy finding (deployment.rs's items-after-test-module is older).
 - [ ] Run the rig `min-ready` (suite `rigs`): parked
   `--after-install stormcluster>=f1de3f6@any:pve` (the #128 fix).
+  2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b (carries
+  d12cbe4; `min-ready` is in the day list); held `--after-run cb87060b01`.
 
 ### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, RIG BLOCKED 2026-11-25
 Ported from openshift-controller-manager `pkg/apps/deployer`
