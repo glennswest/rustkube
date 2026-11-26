@@ -328,6 +328,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   'stormcluster>=f1de3f6@any:pve'` (item fa8d247ee3a7), after the service's
   parked notice: it returns once a pve test machine passes an install of a
   release carrying the stormcluster#128 fix, which is when the rig can run.
+- [x] 2026-11-26: handed back (install hold met). pvetest1 held by the image
+  gate (stormcentral#1601), pvetest2 refuses runs (sbregistry :5100 failing),
+  pvetest3 in a gate test. `rigs` be3c77b765 at 8a356d3 (carries 5b67427, and
+  #343's 1c0b6bb) waits in pvetest1's line; item held `--after-run be3c77b765`.
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
   (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
 
