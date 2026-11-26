@@ -696,6 +696,20 @@ One commit per finding, the finding id in each; a unit test each.
 - [x] e59512281f8c (7e729d2) — a continue key outside the listed prefix is a 400
   (apiserver) / `Invalid` (store adapter).
 
+### Own image build: deploy/build-image.sh (#403, P1, stormcentral#1836) — WAITING ON OWNER 2026-11-26
+- Move the stage recipe for rustkube-apiserver/-controller-manager/-scheduler
+  out of stormcos (`deploy/build-goldens.sh` 6875–8715 at stormcos f7f7ccb)
+  into this repo, per the component build contract (`deploy/build-golden.sh
+  <name> OUT`, kind `tree`; stormblock-registry#273 is the worked example).
+- Found: the apiserver golden is mostly stormcos's: 67 `deploy/manifests`
+  files baked into manifests.d/network, ~1430 lines of stormd config (≈80
+  mints for stormcos services, signers, NODE_IP/VIP), static-pod generators,
+  plus stormcert's three binaries and stormd. A faithful copy would move
+  stormcos content here.
+- [ ] Owner decision (asked on #403, wait-owner): A (recommended) slim goldens,
+  stormcos content to the planned `stormcos` golden; B take stormcos+stormcert
+  as input goldens; C copy all here. No code until answered.
+
 ### Protobuf /openapi/v2 (#343) — WAITING on a pve install carrying 1c0b6bb, then rigs (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:
   application/com.github.proto-openapi.spec.v2@v1.0+protobuf` answered JSON;
