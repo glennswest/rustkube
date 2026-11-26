@@ -629,7 +629,7 @@ key with the client's status and spec.
   Stage 97e53ab5e952. Closed. The rig additions run with the next `rigs` run
   (pve test machines down, stormcluster#128). #297 back in line.
 
-### Resource fit counts every scalar resource (#297) — WAITING on a pve test machine for the rig (2026-11-25)
+### Resource fit counts every scalar resource (#297) — WAITING on stormrdp#70 (pvetest3) or stormcentral#1798 (pvetest1) for the rig (2026-11-26)
 Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
 - [x] `NodeUsage.scalar` (6b9875e): ephemeral-storage, extended resources,
   hugepages, charged/uncharged from one rule (`filter::pod_scalar_requests`:
@@ -655,6 +655,10 @@ Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
   pvetest2 refused (last install 13.00-flowsdn failed, no known release);
   pvetest3 refused (14.06 install still running). No pve machine can take
   the run; rerun `rigs` at main on the first one that runs a known release.
+- [ ] 2026-11-26 00:2x CST, main 25deb6d: pvetest3 (14.06 cilium) run
+  4e253bf40e ended `infrastructure` — stormrdp `gateway` API probe HTTP 503
+  since 06:01Z (filed stormrdp#70). pvetest1 (14.06-flowsdn) refused: held
+  for its failing sbregistry :5100 (stormcentral#1798). Rerun when either clears.
 
 ### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
