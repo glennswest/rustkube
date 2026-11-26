@@ -308,6 +308,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   (the #128 fix). `--after stormcos#1558` is refused as circular, because
   #1558's item waits for #374 to close. Raised with the master and on
   stormcos#1558: what #1558 needs, #374 on main, is done.
+  2026-11-26: rig `builds` rides `rigs` cb87060b01 (pvetest2, main 455564b,
+  carries bde4c1d); item held `--after-run cb87060b01`. The cycle stands
+  (stormcentral refused `--after stormcos#1558` again); raised again in a
+  master note. The Check still needs #1558's builder image.
 
 ### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, RIG BLOCKED 2026-11-23
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
