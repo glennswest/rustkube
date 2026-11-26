@@ -332,6 +332,12 @@ it reaches the registry" to us; the privileged-pod question went to option A
   gate (stormcentral#1601), pvetest2 refuses runs (sbregistry :5100 failing),
   pvetest3 in a gate test. `rigs` be3c77b765 at 8a356d3 (carries 5b67427, and
   #343's 1c0b6bb) waits in pvetest1's line; item held `--after-run be3c77b765`.
+- 2026-11-26 (later): `rigs` be3c77b765 errored — infrastructure (pvetest1's
+  sbregistry got 502 from forge pulling the test image). Then no pve machine
+  takes a run: pvetest1 and pvetest3's 14.08 installs failed (no known
+  release); pvetest2 refuses (sbregistry :5100 failing). Held
+  `--after-install 'stormcos>=f7f7ccb@any:pve'` (a fresh passed pve install),
+  then rigs at main.
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
   (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
 
@@ -711,6 +717,12 @@ One commit per finding, the finding id in each; a unit test each.
 - [x] Serve the dotted spelling (`openapi_v2::CONTENT_TYPE`; `ACCEPT_TYPE` is the `@` one), rig expects it — 1c0b6bb; sc-build passed; stage build 4d697378aee0.
 - [ ] `rigs` at 1c0b6bb: no machine could take it (pvetest1/2 mid-install of 12.97). Held `--after-install rustkube>=1c0b6bb@any:pve`; then run rigs, close on crd-openapi 16/16.
   2026-11-26: pvetest1 runs 14.07-flowsdn (passed); `rigs` 52d5a95ee4 queued there at 8a356d3 (carries 1c0b6bb). pvetest3's stormblock is wedged (c1989dd262: apiserver no /readyz, ublk writes unanswered ~10000s). 52d5a95ee4 sat queued: pvetest1 is held by the image gate (failed golden-stormdrive revert, stormcentral#1601); cancelled it. pvetest2 refuses runs (sbregistry :5100 failing). Re-queued `rigs` be3c77b765 on pvetest1 (waits in its line); item held `--after-run be3c77b765`.
+- 2026-11-26 (later): `rigs` be3c77b765 errored — infrastructure (pvetest1's
+  sbregistry got 502 from forge pulling the test image). Then no pve machine
+  takes a run: pvetest1 and pvetest3's 14.08 installs failed (no known
+  release); pvetest2 refuses (sbregistry :5100 failing). Held
+  `--after-install 'stormcos>=f7f7ccb@any:pve'` (a fresh passed pve install),
+  then rigs at main.
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
   that is the built-in-schemas gap, #342, not this issue.
