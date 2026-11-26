@@ -435,6 +435,9 @@ handlers (read 2026-11-21).
 - [x] Held with `stormcentral propose --after-install
   'stormcluster>=f1de3f6@any:pve'` (item 0ea8542924f5): it returns once a pve
   test machine passes an install carrying the stormcluster#128 fix.
+- [x] 2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b
+  (carries d9c470e; `oc-adm` in the day list); held `--after-run cb87060b01`.
+  Close on oc-adm's Groups checks.
 
 ### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
 - [x] 96a66790f5c4: the inventory is not keyed by the directory's path; a
