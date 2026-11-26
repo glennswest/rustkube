@@ -162,6 +162,8 @@ registry moved there from openshift-apiserver).
   machine's apiserver not answering; stormcluster#128 open), as #372/#373/#388.
   Held with `stormcentral propose --after-install 'stormcluster>=f1de3f6@any:pve'`
   (item 6772095bd62d). Close #390 when `oc-users` passes.
+  2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b (carries
+  feef4d0); held `--after-run cb87060b01`.
 - Not done (optional in the issue): an Identity's user from authentication —
   rustkube has no identity provider / OAuth server to map a login.
 - Noticed, not changed: oauth-apiserver's `ValidateGroup` now allows `b64:`
@@ -397,6 +399,8 @@ handlers (read 2026-11-21).
 - [x] Held with `stormcentral propose --after-install
   'stormcluster>=f1de3f6@any:pve'` (item 233220744ec5): it returns once a pve
   test machine passes an install carrying the stormcluster#128 fix.
+- [x] 2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b
+  (carries a2e5883); held `--after-run cb87060b01`. Close when both rigs pass.
 
 ### user.openshift.io Groups (#372, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
