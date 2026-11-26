@@ -706,6 +706,7 @@ One commit per finding, the finding id in each; a unit test each.
   dotted `…spec.v2.v1.0+protobuf` whatever spelling was asked.
 - [x] Serve the dotted spelling (`openapi_v2::CONTENT_TYPE`; `ACCEPT_TYPE` is the `@` one), rig expects it — 1c0b6bb; sc-build passed; stage build 4d697378aee0.
 - [ ] `rigs` at 1c0b6bb: no machine could take it (pvetest1/2 mid-install of 12.97). Held `--after-install rustkube>=1c0b6bb@any:pve`; then run rigs, close on crd-openapi 16/16.
+  2026-11-26: pvetest1 runs 14.07-flowsdn (passed); `rigs` 52d5a95ee4 queued there at 8a356d3 (carries 1c0b6bb). pvetest3's stormblock is wedged (c1989dd262: apiserver no /readyz, ublk writes unanswered ~10000s).
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
   that is the built-in-schemas gap, #342, not this issue.
