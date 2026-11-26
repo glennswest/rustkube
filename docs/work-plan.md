@@ -704,7 +704,7 @@ One commit per finding, the finding id in each; a unit test each.
 - [x] e59512281f8c (7e729d2) — a continue key outside the listed prefix is a 400
   (apiserver) / `Invalid` (store adapter).
 
-### Own image build: deploy/build-image.sh (#403, P1, stormcentral#1836) — WAITING ON OWNER 2026-11-26
+### Own image build: deploy/build-image.sh (#403, P1, stormcentral#1836) — BUILT, VERIFYING 2026-11-26
 - Move the stage recipe for rustkube-apiserver/-controller-manager/-scheduler
   out of stormcos (`deploy/build-goldens.sh` 6875–8715 at stormcos f7f7ccb)
   into this repo, per the component build contract (`deploy/build-golden.sh
@@ -712,11 +712,26 @@ One commit per finding, the finding id in each; a unit test each.
 - Found: the apiserver golden is mostly stormcos's: 67 `deploy/manifests`
   files baked into manifests.d/network, ~1430 lines of stormd config (≈80
   mints for stormcos services, signers, NODE_IP/VIP), static-pod generators,
-  plus stormcert's three binaries and stormd. A faithful copy would move
-  stormcos content here.
-- [ ] Owner decision (asked on #403, wait-owner): A (recommended) slim goldens,
-  stormcos content to the planned `stormcos` golden; B take stormcos+stormcert
-  as input goldens; C copy all here. No code until answered.
+  plus stormcert's three binaries and stormd.
+- [x] Decision (the master, 2026-11-26): option A — the goldens carry only the
+  binary, stormd and a default config; manifests/cert policy/static pods go
+  to the stormcos content golden, stormcert binaries from stormcert's golden.
+  A golden-content split inside the plan is the master's call, never a stop.
+- [x] `deploy/build-image.sh` + `deploy/build-golden.sh` (b56c96a):
+  usr/bin/kube-<c>; stormdbase dirs; `/stormd -> .stormd/bin/stormd`
+  (stormcentral#1628 phase 3: no stormd input in a tree build); stormd's
+  applets (STANDALONE_COMMANDS at stormd d2cf426); default config = the
+  component's own [[process]] + API probe with the stage's flags (no
+  APISERVER_EXTRA, no cadvisor/VIP/API-TLS edits); empty manifests.d.
+  x86_64, aarch64 via zigbuild.
+- [x] `deploy/check-image.sh [stormcos]`: the three trees' shape, nothing of
+  stormcos/stormcert, reproducible bytes, unknown name/arch refused, and
+  stormcos's gen-static-pod.py on each giving the stage's command + args.
+- [ ] sc-build of check-image.sh against stormcos main (20261126-214943-b56c96ab).
+- [ ] stormcos issue for its half (manifests mount, cert plane, stormcert
+  binaries path, static pods, the stage deletion after the flip).
+- [ ] Flip (the master): `rustkube` row special → tree once stormcos carries
+  its half and a release proves it on pve.
 
 ### Protobuf /openapi/v2 (#343) — WAITING on a pve install carrying 1c0b6bb, then rigs (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:

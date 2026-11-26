@@ -1419,6 +1419,25 @@ checkout whose commit it records in the image manifest
 (`cargo build --release --locked --target x86_64-unknown-linux-musl`), not
 from a release.
 
+**This repo's own image build** (#403, stormcentral#1836, which retires
+stage mode): `deploy/build-golden.sh <rustkube-apiserver|rustkube-controller-manager|rustkube-scheduler> OUT`
+(stormcentral's `tree` contract; it execs `deploy/build-image.sh`) writes
+one golden's tree from this checkout. It holds only what is rustkube's:
+- `usr/bin/kube-<component>` (static musl, `--locked`, release profile);
+- the stormdbase mount points, with `/stormd` a link to the release's
+  stormd at `/.stormd` (stormcentral#1628 phase 3) and stormd's applets;
+- `etc/stormd/config.toml`, a default config with the component's own
+  `[[process]]` and the stage's flags for it, which is what stormcos's
+  static-pod generator reads;
+- for the apiserver, an empty `etc/kubernetes/manifests.d`.
+
+stormcos's cluster manifests, the node's stormcert mints and server, the
+static pod specs and stormcert's binaries are **not** in it: they move to
+stormcos's content golden and stormcert's own. Until that half exists, the
+stage still builds the goldens nodes run. `deploy/check-image.sh [stormcos
+checkout]` builds the three trees and checks them, including that stormcos's
+`gen-static-pod.py` gives each the stage's command and flags.
+
 The **component golden** — what `stormcentral component build rustkube`
 produces, `golden-rustkube-<digest>`, and what a stormcos release request
 names — carries the same three binaries, but no release mounts it yet:
