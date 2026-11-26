@@ -606,6 +606,10 @@ seccomp annotations), against the namespace's current enforce level.
 - [ ] Rig `replication-controller` with the next `rigs` run. Proposed
   `--after-install stormcluster>=f1de3f6`; then run `rigs` on main and close
   (#297 waits on the same run).
+  2026-11-26: stormcluster's fix is installed, but `rigs` is refused on all
+  three pve machines (pvetest1/pvetest3 14.08 installs failed; pvetest2
+  sbregistry :5100 failing). Held --after-install stormcos>=f7f7ccb@any:pve
+  with #343/#388/#96; one `rigs` run at main covers #295, #343 and #388.
 
 ### Pod updates around SCC (#359, P0, review 198fa7c65883) — DONE 2026-11-20
 The review ran at 112d7e1 (2026-11-18), before #350's fix 3cef5d0
