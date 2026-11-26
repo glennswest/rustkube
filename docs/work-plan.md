@@ -629,7 +629,7 @@ key with the client's status and spec.
   Stage 97e53ab5e952. Closed. The rig additions run with the next `rigs` run
   (pve test machines down, stormcluster#128). #297 back in line.
 
-### Resource fit counts every scalar resource (#297) — WAITING on stormrdp#70 (pvetest3) or stormcentral#1798 (pvetest1) for the rig (2026-11-26)
+### Resource fit counts every scalar resource (#297) — WAITING on install stormcentral>=78c9a8e (item 36c0c41666c1) for the rig (2026-11-26)
 Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
 - [x] `NodeUsage.scalar` (6b9875e): ephemeral-storage, extended resources,
   hugepages, charged/uncharged from one rule (`filter::pod_scalar_requests`:
@@ -659,6 +659,9 @@ Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
   4e253bf40e ended `infrastructure` — stormrdp `gateway` API probe HTTP 503
   since 06:01Z (filed stormrdp#70). pvetest1 (14.06-flowsdn) refused: held
   for its failing sbregistry :5100 (stormcentral#1798). Rerun when either clears.
+- [ ] 2026-11-26 08:02Z: stormcentral#1798 closed (fix 78c9a8e) but pvetest1
+  and pvetest2 still refuse runs for :5100. Proposed item 36c0c41666c1
+  `--after-install stormcentral>=78c9a8e@any:pve`; rerun `rigs` then.
 
 ### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
