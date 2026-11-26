@@ -332,6 +332,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   'stormcluster>=f1de3f6@any:pve'` (item fa8d247ee3a7), after the service's
   parked notice: it returns once a pve test machine passes an install of a
   release carrying the stormcluster#128 fix, which is when the rig can run.
+- [x] 2026-11-26: run be3c77b765 (8a356d3, pvetest1) errored on forge's 502
+  before any test. pvetest2 then took a run again: `rigs` cb87060b01 at main
+  455564b on pvetest2, and the item is held `--after-run cb87060b01`. Close on
+  `cluster-info`.
 - [x] 2026-11-26: handed back (install hold met). pvetest1 held by the image
   gate (stormcentral#1601), pvetest2 refuses runs (sbregistry :5100 failing),
   pvetest3 in a gate test. `rigs` be3c77b765 at 8a356d3 (carries 5b67427, and
