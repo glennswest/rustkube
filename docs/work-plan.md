@@ -629,7 +629,7 @@ key with the client's status and spec.
   Stage 97e53ab5e952. Closed. The rig additions run with the next `rigs` run
   (pve test machines down, stormcluster#128). #297 back in line.
 
-### Resource fit counts every scalar resource (#297) — WAITING on stormcluster#128, then the rig (2026-11-20)
+### Resource fit counts every scalar resource (#297) — WAITING on a pve test machine for the rig (2026-11-25)
 Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
 - [x] `NodeUsage.scalar` (6b9875e): ephemeral-storage, extended resources,
   hugepages, charged/uncharged from one rule (`filter::pod_scalar_requests`:
@@ -650,6 +650,11 @@ Found by #84's SchedulerPreemption conformance spec (`scheduling.k8s.io/foo`).
   in 12.97: proposed `--after-install stormcluster>=f1de3f6` (19:19Z). Then
   `stormcentral test run rustkube rigs --tag <that machine> --commit <main>`,
   which also runs #357/#358/#359's rig checks; close.
+- [ ] 2026-11-25 23:53 CST, main 0607f8b: run 2f7267c2d4 (pvetest1) ended
+  `infrastructure` — pvetest1's sbregistry (:5100) refused the golden GET.
+  pvetest2 refused (last install 13.00-flowsdn failed, no known release);
+  pvetest3 refused (14.06 install still running). No pve machine can take
+  the run; rerun `rigs` at main on the first one that runs a known release.
 
 ### Review findings, 5 critical (#350) — DONE 2026-11-20
 One commit per finding, the finding id in each; a unit test each.
