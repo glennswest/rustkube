@@ -44,7 +44,8 @@ below are engineering.
 - [ ] Rig `image-triggers` on a test machine: 2026-11-25 pvetest1|2|3 refuse
   (400, no known release; stormcluster#128 open). Parked
   `--after-install stormcluster>=f1de3f6@any:pve` (item 5e042215104c).
-  Close #386 when it passes.
+  Close #386 when it passes. 2026-11-26: `rigs` cb87060b01 queued on
+  pvetest2 at main 455564b (carries 7bbad9d); held `--after-run cb87060b01`.
 - [ ] The issue's check against the real registry (stormblock-registry
   v0.93+) on a node: `oc set triggers deploy/web --from-image=mystream:latest
   -c web`, push, the Deployment rolls to the new digest.
