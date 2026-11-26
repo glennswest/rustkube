@@ -139,6 +139,8 @@ OpenShift 4 the kind is a CRD on kube-apiserver; here it is built in.
 - Not ported: OpenShift's admission also charges *updates* through the
   evaluator; rustkube's quota admission (#124) checks creates only, and the
   CRQ path follows it.
+- [x] 2026-11-26: rig `cluster-quota` rides `rigs` cb87060b01 (pvetest2, main
+  455564b, carries 25b4f82); held `--after-run cb87060b01`. Close on its pass.
 
 ### user.openshift.io Users, Identities, UserIdentityMappings (#390, sc#50) — CODE DONE, RIG BLOCKED 2026-11-24
 Ported from openshift/oauth-apiserver `pkg/user` (validation, strategies,
