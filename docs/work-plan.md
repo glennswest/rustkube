@@ -220,6 +220,10 @@ map) and bootstrappolicy (`system:deployer`, `system:deployers`).
   (sc-build-cba5fea44a) the whole workspace's tests passed too.
 - [ ] Run the rig `deploymentconfigs` (suite `rigs`): parked
   `--after-install stormcluster>=f1de3f6@any:pve` (the #128 fix).
+  2026-11-26: that fix is installed, but `rigs` is refused on all three pve
+  machines (pvetest1/pvetest3 14.08 installs failed; pvetest2 sbregistry
+  :5100 failing). Held --after-install stormcos>=f7f7ccb@any:pve, with
+  #96/#295/#343/#388.
 - [ ] The issue's Check with a real image on a node: a Custom image that
   scales new up and old down, and `oc logs dc/x` shows its output.
 
