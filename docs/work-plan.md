@@ -704,7 +704,7 @@ One commit per finding, the finding id in each; a unit test each.
 - [x] e59512281f8c (7e729d2) — a continue key outside the listed prefix is a 400
   (apiserver) / `Invalid` (store adapter).
 
-### Own image build: deploy/build-image.sh (#403, P1, stormcentral#1836) — BUILT, VERIFYING 2026-11-26
+### Own image build: deploy/build-image.sh (#403, P1, stormcentral#1836) — DONE 2026-11-26 (flip is the master's, after stormcos#1665)
 - Move the stage recipe for rustkube-apiserver/-controller-manager/-scheduler
   out of stormcos (`deploy/build-goldens.sh` 6875–8715 at stormcos f7f7ccb)
   into this repo, per the component build contract (`deploy/build-golden.sh
@@ -727,11 +727,14 @@ One commit per finding, the finding id in each; a unit test each.
 - [x] `deploy/check-image.sh [stormcos]`: the three trees' shape, nothing of
   stormcos/stormcert, reproducible bytes, unknown name/arch refused, and
   stormcos's gen-static-pod.py on each giving the stage's command + args.
-- [ ] sc-build of check-image.sh against stormcos main (20261126-214943-b56c96ab).
-- [ ] stormcos issue for its half (manifests mount, cert plane, stormcert
-  binaries path, static pods, the stage deletion after the flip).
-- [ ] Flip (the master): `rustkube` row special → tree once stormcos carries
-  its half and a release proves it on pve.
+- [x] sc-build 20261126-214943-b56c96ab passed (318 s, fresh VM): three trees
+  2 files each, reproducible, refusals; against stormcos f7f7ccb
+  gen-static-pod.py gives the stage's command + args (36/14/12).
+- [x] stormcos#1665 filed for its half (manifests mount, cert plane,
+  stormcert binaries path, static pods, the stage deletion after the flip);
+  handoff on stormcentral#1836 (one tree row per golden, or per-golden runs).
+- Flip (the master's, not this repo's): `rustkube` row special → tree once
+  stormcos#1665 lands and a release proves it on pve.
 
 ### Protobuf /openapi/v2 (#343) — WAITING on a pve install carrying 1c0b6bb, then rigs (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:
