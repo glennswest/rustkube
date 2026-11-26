@@ -255,6 +255,8 @@ oc `pkg/cli/deployer` (read 2026-11-23).
   stormcluster#128 fix (as #372, #373, #388).
 - [x] 2026-11-25: held with `stormcentral propose --after-install
   'stormcluster>=f1de3f6@any:pve'` (item b5ec48cd2449), as #372/#373/#388.
+- [x] 2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b
+  (carries 86fef2d); held `--after-run cb87060b01`. Close on `deploymentconfigs`.
 
 ### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — ON MAIN, CHECK + RIG BLOCKED 2026-11-24
 Ported from openshift-apiserver and openshift-controller-manager `pkg/build`
