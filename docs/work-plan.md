@@ -353,7 +353,7 @@ it reaches the registry" to us; the privileged-pod question went to option A
   (stormcentral refused `--after stormcos#1558` again); raised again in a
   master note. The Check still needs #1558's builder image.
 
-### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, WAITING on rigs a07acbdcd0 (pvetest1, 14.10) 2026-11-27
+### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — DONE 2026-11-27 (rigs a07acbdcd0; stage fd005ed76827)
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
   `kubeconfig` (server = `--apiserver`, CA = the `kube-root-ca.crt` bundle;
   kept, a changed one put back) and `jws-kubeconfig-<id>` per token with
@@ -374,7 +374,7 @@ it reaches the registry" to us; the privileged-pod question went to option A
 - [x] sc-build at 5b67427 (build VM 69d7274f43): workspace build; apiserver
   424/424, controller-manager 151/151 (the 8 new tests by name, job on the
   same commit); clippy silent on the touched files.
-- [ ] Rig `cluster-info` (suite `rigs`) on a test machine. 2026-11-23:
+- [x] Rig `cluster-info` (suite `rigs`) on a test machine. 2026-11-23:
   `stormcentral test run rustkube rigs --tag pvetest1|2|3` is refused (400:
   the machine's apiserver not answering, stormcluster API down since
   2026-11-21/22, stormcluster#128), as for #372/#373. Then run it at main and
@@ -436,6 +436,15 @@ it reaches the registry" to us; the privileged-pod question went to option A
   (carries stormblock-registry 266fbfb4). `rigs` a07acbdcd0 queued on
   pvetest1 (pinned) at main f1890e4; held `--after-run a07acbdcd0`. On a
   pass: close #388, request the image, ship.
+- 2026-11-27: `rigs` a07acbdcd0 (pvetest1, 14.10-flowsdn, f1890e4) ended
+  failed 31/6/50 skipped (budget spent); `cluster-info` 34/34 and
+  `bootstrap-token` 32/32 passed. The six failures are not this change and
+  are filed: namespace-finalize #400/#329, deploymentconfigs #392/#375,
+  builds #374, ephemeral-volume #273, replication-controller #339,
+  csr-signers #405 (new; admin's CSR, untouched by the bootstrapper path).
+  #388 closed; stage build fd005ed76827 requested; marked `shipped` with
+  proof `api:…/kube-public/configmaps/cluster-info ~ jws-kubeconfig-…` on
+  any:pve.
 
 ### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
