@@ -403,6 +403,12 @@ it reaches the registry" to us; the privileged-pod question went to option A
   then rigs at main.
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
   (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
+- 2026-11-26 22:15 (owner's order via the master): until Tuesday 2026-12-01
+  only forge1's path runs on stormcos; on rustkube that is #388 alone. Code
+  and units are done (5b67427); what is left is the `cluster-info` rig,
+  which rides `rigs` 838045bbdd (pvetest1, main f002db9). pvetest2 and
+  pvetest3 fail /readyz for every component, and rigs never run in a build
+  slot (#173), so no faster path exists. Close on `cluster-info` passing.
 
 ### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
