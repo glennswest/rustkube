@@ -315,7 +315,7 @@ it reaches the registry" to us; the privileged-pod question went to option A
   (stormcentral refused `--after stormcos#1558` again); raised again in a
   master note. The Check still needs #1558's builder image.
 
-### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, RIG BLOCKED 2026-11-23
+### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-26
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
   `kubeconfig` (server = `--apiserver`, CA = the `kube-root-ca.crt` bundle;
   kept, a changed one put back) and `jws-kubeconfig-<id>` per token with
@@ -349,6 +349,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   before any test. pvetest2 then took a run again: `rigs` cb87060b01 at main
   455564b on pvetest2, and the item is held `--after-run cb87060b01`. Close on
   `cluster-info`.
+- [x] 2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted
+  at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
+  (`rigs`, pvetest2, main 9a61694, carries 5b67427; queued for #343). Close
+  on `cluster-info`.
 - [x] 2026-11-26: handed back (install hold met). pvetest1 held by the image
   gate (stormcentral#1601), pvetest2 refuses runs (sbregistry :5100 failing),
   pvetest3 in a gate test. `rigs` be3c77b765 at 8a356d3 (carries 5b67427, and
