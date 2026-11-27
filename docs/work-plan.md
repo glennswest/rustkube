@@ -414,6 +414,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   which rides `rigs` 838045bbdd (pvetest1, main f002db9). pvetest2 and
   pvetest3 fail /readyz for every component, and rigs never run in a build
   slot (#173), so no faster path exists. Close on `cluster-info` passing.
+- 2026-11-27: 838045bbdd errored (pvetest1 image pull, forge 502). pvetest2
+  reinstalled with 14.09-flowsdn and passed at 07:39Z; `rigs` 7c702898d4
+  queued there (pinned) at main e8495cd. Held `--after-run 7c702898d4`. On a
+  pass: close #388, request the image, ship.
 
 ### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
