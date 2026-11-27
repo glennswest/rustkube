@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Image triggers (#386, sc#162) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-25
+### Image triggers (#386, sc#162) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-25
 Ported from openshift-controller-manager `pkg/image/trigger` (annotations,
 deploymentconfigs, buildconfigs), `pkg/apps/deploymentconfig`
 (`triggerActivated`), openshift-apiserver `registry/deployconfig`
@@ -49,6 +49,11 @@ below are engineering.
   2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted at
   'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
   (`rigs`, pvetest2, main 9a61694, carries 7bbad9d).
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 - [ ] The issue's check against the real registry (stormblock-registry
   v0.93+) on a node: `oc set triggers deploy/web --from-image=mystream:latest
   -c web`, push, the Deployment rolls to the new digest.
@@ -189,7 +194,7 @@ the test-secrets rule (generate keys in tests, plain placeholders), no allowlist
   left in the tree, the new value's entropy 2.09 < the rule's 3.5).
 - The two rigs changed only in the value; they run with the next `rigs` suite.
 
-### minReadySeconds in the workload controllers (#379, from #369) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-25
+### minReadySeconds in the workload controllers (#379, from #369) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-25
 Upstream's `podutil.IsPodAvailable` as `controller-manager::availability`, with
 a requeue at the moment the next Ready pod becomes available (the indexed
 runner's `reactor::requeue_after`, which #379 thought missing, exists).
@@ -209,8 +214,13 @@ runner's `reactor::requeue_after`, which #379 thought missing, exists).
   2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted at
   'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
   (`rigs`, pvetest2, main 9a61694, carries d12cbe4).
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 
-### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-25
+### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-25
 Ported from openshift-controller-manager `pkg/apps/deployer`
 (`makeDeployerPod`, `makeDeployerContainer`, the pod-phase → version-phase
 map) and bootstrappolicy (`system:deployer`, `system:deployers`).
@@ -241,10 +251,15 @@ map) and bootstrappolicy (`system:deployer`, `system:deployers`).
   (stormcentral restarted at 'wait for the apiserver'); no test ran. Held
   `--after-run 0e2114d89b` (`rigs`, pvetest2, main 9a61694, carries b6c446d;
   shared with #295/#343/#388).
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 - [ ] The issue's Check with a real image on a node: a Custom image that
   scales new up and old down, and `oc logs dc/x` shows its output.
 
-### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-23
+### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-23
 Option A of the question on #375 (stormcentral's owner queue refused it:
 "a gap: session work — build it", #1680): rollouts run in the
 controller-manager, no deployer pod or image. Ported from
@@ -272,6 +287,11 @@ oc `pkg/cli/deployer` (read 2026-11-23).
 - [x] 2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted
   at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
   (`rigs`, pvetest2, main 9a61694, carries 86fef2d).
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 
 ### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — ON MAIN, CHECK + RIG BLOCKED 2026-11-24
 Ported from openshift-apiserver and openshift-controller-manager `pkg/build`
@@ -328,7 +348,7 @@ it reaches the registry" to us; the privileged-pod question went to option A
   (stormcentral refused `--after stormcos#1558` again); raised again in a
   master note. The Check still needs #1558's builder image.
 
-### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-26
+### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-26
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
   `kubeconfig` (server = `--apiserver`, CA = the `kube-root-ca.crt` bundle;
   kept, a changed one put back) and `jws-kubeconfig-<id>` per token with
@@ -366,6 +386,11 @@ it reaches the registry" to us; the privileged-pod question went to option A
   at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
   (`rigs`, pvetest2, main 9a61694, carries 5b67427; queued for #343). Close
   on `cluster-info`.
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 - [x] 2026-11-26: handed back (install hold met). pvetest1 held by the image
   gate (stormcentral#1601), pvetest2 refuses runs (sbregistry :5100 failing),
   pvetest3 in a gate test. `rigs` be3c77b765 at 8a356d3 (carries 5b67427, and
@@ -379,7 +404,7 @@ it reaches the registry" to us; the privileged-pod question went to option A
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
   (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
 
-### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-21
+### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
 `sccdefaults`, `util/sort` and openshift-apiserver's three review REST
 handlers (read 2026-11-21).
@@ -429,8 +454,13 @@ handlers (read 2026-11-21).
 - [x] 2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted
   at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
   (`rigs`, pvetest2, main 9a61694, carries a2e5883).
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 
-### user.openshift.io Groups (#372, sc#151) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-21
+### user.openshift.io Groups (#372, sc#151) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
   cluster handlers: discovery (`/apis` + the group-version), list kind
   `GroupList`, apiVersion `user.openshift.io/v1`, apply table, table printer
@@ -473,6 +503,11 @@ handlers (read 2026-11-21).
   at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
   (`rigs`, pvetest2, main 9a61694, carries d9c470e).
   Close on oc-adm's Groups checks.
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 
 ### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
 - [x] 96a66790f5c4: the inventory is not keyed by the directory's path; a
@@ -643,7 +678,7 @@ seccomp annotations), against the namespace's current enforce level.
 - [x] sc-build 3bf3ae1 passed (all tests; no new controller-manager lint).
   Stage b43516a11f2f. Closed.
 
-### RS/RC adoption and release (#295, P2) — WAITING on rigs 0e2114d89b (2026-11-20)
+### RS/RC adoption and release (#295, P2) — WAITING on rigs 838045bbdd (2026-11-20)
 - [x] `replicaset::claim` (keep / release / adopt) and `claim_pods` (merge
   patches with the Pod's resourceVersion; uncached owner read before adopting;
   a refused write fails the pass rather than making a replacement).
@@ -663,6 +698,11 @@ seccomp annotations), against the namespace's current enforce level.
   (stormcentral restarted at 'wait for the apiserver'); no test ran. Held
   `--after-run 0e2114d89b` (`rigs`, pvetest2, main 9a61694, carries caa709b;
   shared with #343/#388). Close on `replication-controller`.
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 
 ### Pod updates around SCC (#359, P0, review 198fa7c65883) — DONE 2026-11-20
 The review ran at 112d7e1 (2026-11-18), before #350's fix 3cef5d0
@@ -785,7 +825,7 @@ One commit per finding, the finding id in each; a unit test each.
 - Flip (the master's, not this repo's): `rustkube` row special → tree once
   stormcos#1665 lands and a release proves it on pve.
 
-### Protobuf /openapi/v2 (#343) — WAITING on rigs 0e2114d89b (pvetest2, main 9a61694) (2026-11-19)
+### Protobuf /openapi/v2 (#343) — WAITING on rigs 838045bbdd (pvetest1, main f002db9) (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:
   application/com.github.proto-openapi.spec.v2@v1.0+protobuf` answered JSON;
   client-go failed `proto: cannot parse invalid wire-format data`
@@ -816,6 +856,11 @@ One commit per finding, the finding id in each; a unit test each.
   stormcentral restarted during it (at 'wait for the apiserver'); no test ran.
   Re-queued `rigs` 0e2114d89b on pvetest2 at main 9a61694 (carries 1c0b6bb);
   held `--after-run 0e2114d89b`. Close on crd-openapi 16/16.
+- [x] 2026-11-27: `rigs` 0e2114d89b (pvetest2) errored before any test:
+  pvetest2's apiserver did not answer /readyz in 10 min, as every component's
+  runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
+  838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
+  held `--after-run 838045bbdd`.
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
   that is the built-in-schemas gap, #342, not this issue.
