@@ -424,7 +424,7 @@ handlers (read 2026-11-21).
 - [x] 2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b
   (carries a2e5883); held `--after-run cb87060b01`. Close when both rigs pass.
 
-### user.openshift.io Groups (#372, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
+### user.openshift.io Groups (#372, sc#151) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
   cluster handlers: discovery (`/apis` + the group-version), list kind
   `GroupList`, apiVersion `user.openshift.io/v1`, apply table, table printer
@@ -463,6 +463,9 @@ handlers (read 2026-11-21).
   test machine passes an install carrying the stormcluster#128 fix.
 - [x] 2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b
   (carries d9c470e; `oc-adm` in the day list); held `--after-run cb87060b01`.
+- [x] 2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted
+  at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
+  (`rigs`, pvetest2, main 9a61694, carries d9c470e).
   Close on oc-adm's Groups checks.
 
 ### manifests.rs review findings (#378: 96a66790f5c4, f25b22881436) — DONE 2026-11-20
