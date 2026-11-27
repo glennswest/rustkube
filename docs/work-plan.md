@@ -353,7 +353,7 @@ it reaches the registry" to us; the privileged-pod question went to option A
   (stormcentral refused `--after stormcos#1558` again); raised again in a
   master note. The Check still needs #1558's builder image.
 
-### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, WAITING on stormblock-registry#277 2026-11-27
+### Zero-touch onboarding: cluster-info + stormcentral's CSR (#388, stormcentral#1676) — CODE DONE, WAITING on a pve 14.10 install carrying stormblock-registry 266fbfb4 2026-11-27
 - [x] controller-manager `bootstrapsigner`: `kube-public/cluster-info`
   `kubeconfig` (server = `--apiserver`, CA = the `kube-root-ca.crt` bundle;
   kept, a changed one put back) and `jws-kubeconfig-<id>` per token with
@@ -428,6 +428,10 @@ it reaches the registry" to us; the privileged-pod question went to option A
   forge 502). Seen on pvetest1 and on a freshly passed pvetest2, so no pve
   machine can pull the rigs image. Filed stormblock-registry#277 (P0); held
   `--after` it. Then: `rigs` at main, close on `cluster-info`.
+- 2026-11-27 (master): #277 is fixed in stormblock-registry 266fbfb4, but a
+  14.09 node pulls the same way until it carries that commit, so do NOT
+  re-run `rigs` on a 14.09 node. #388 is parked `--after-install` of that
+  fix on a pve machine (14.10). Then: `rigs` at main, close on `cluster-info`.
 
 ### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
