@@ -4,7 +4,7 @@ Kept here whole, newest notes as they were. Write new intentions here.
 
 ## Work Plan
 
-### Image triggers (#386, sc#162) — CODE DONE, RIG BLOCKED 2026-11-25
+### Image triggers (#386, sc#162) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-25
 Ported from openshift-controller-manager `pkg/image/trigger` (annotations,
 deploymentconfigs, buildconfigs), `pkg/apps/deploymentconfig`
 (`triggerActivated`), openshift-apiserver `registry/deployconfig`
@@ -46,6 +46,9 @@ below are engineering.
   `--after-install stormcluster>=f1de3f6@any:pve` (item 5e042215104c).
   Close #386 when it passes. 2026-11-26: `rigs` cb87060b01 queued on
   pvetest2 at main 455564b (carries 7bbad9d); held `--after-run cb87060b01`.
+  2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted at
+  'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
+  (`rigs`, pvetest2, main 9a61694, carries 7bbad9d).
 - [ ] The issue's check against the real registry (stormblock-registry
   v0.93+) on a node: `oc set triggers deploy/web --from-image=mystream:latest
   -c web`, push, the Deployment rolls to the new digest.
