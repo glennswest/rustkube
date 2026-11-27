@@ -244,7 +244,7 @@ map) and bootstrappolicy (`system:deployer`, `system:deployers`).
 - [ ] The issue's Check with a real image on a node: a Custom image that
   scales new up and old down, and `oc logs dc/x` shows its output.
 
-### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, RIG BLOCKED 2026-11-23
+### apps.openshift.io DeploymentConfigs (#375, sc#151, sc#162) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-23
 Option A of the question on #375 (stormcentral's owner queue refused it:
 "a gap: session work — build it", #1680): rollouts run in the
 controller-manager, no deployer pod or image. Ported from
@@ -269,6 +269,9 @@ oc `pkg/cli/deployer` (read 2026-11-23).
   'stormcluster>=f1de3f6@any:pve'` (item b5ec48cd2449), as #372/#373/#388.
 - [x] 2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b
   (carries 86fef2d); held `--after-run cb87060b01`. Close on `deploymentconfigs`.
+- [x] 2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted
+  at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
+  (`rigs`, pvetest2, main 9a61694, carries 86fef2d).
 
 ### build.openshift.io Builds and BuildConfigs (#374, sc#151, sc#162) — ON MAIN, CHECK + RIG BLOCKED 2026-11-24
 Ported from openshift-apiserver and openshift-controller-manager `pkg/build`
