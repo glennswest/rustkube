@@ -204,7 +204,7 @@ runner's `reactor::requeue_after`, which #379 thought missing, exists).
   2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b (carries
   d12cbe4; `min-ready` is in the day list); held `--after-run cb87060b01`.
 
-### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, RIG BLOCKED 2026-11-25
+### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-25
 Ported from openshift-controller-manager `pkg/apps/deployer`
 (`makeDeployerPod`, `makeDeployerContainer`, the pod-phase → version-phase
 map) and bootstrappolicy (`system:deployer`, `system:deployers`).
@@ -231,6 +231,10 @@ map) and bootstrappolicy (`system:deployer`, `system:deployers`).
   machines (pvetest1/pvetest3 14.08 installs failed; pvetest2 sbregistry
   :5100 failing). Held --after-install stormcos>=f7f7ccb@any:pve, with
   #96/#295/#343/#388.
+  2026-11-26 (night): `rigs` cb87060b01 (pvetest2) was interrupted
+  (stormcentral restarted at 'wait for the apiserver'); no test ran. Held
+  `--after-run 0e2114d89b` (`rigs`, pvetest2, main 9a61694, carries b6c446d;
+  shared with #295/#343/#388).
 - [ ] The issue's Check with a real image on a node: a Custom image that
   scales new up and old down, and `oc logs dc/x` shows its output.
 
