@@ -624,7 +624,7 @@ seccomp annotations), against the namespace's current enforce level.
 - [x] sc-build 3bf3ae1 passed (all tests; no new controller-manager lint).
   Stage b43516a11f2f. Closed.
 
-### RS/RC adoption and release (#295, P2) — WAITING on stormcluster f1de3f6 installed, then the rig (2026-11-20)
+### RS/RC adoption and release (#295, P2) — WAITING on rigs 0e2114d89b (2026-11-20)
 - [x] `replicaset::claim` (keep / release / adopt) and `claim_pods` (merge
   patches with the Pod's resourceVersion; uncached owner read before adopting;
   a refused write fails the pass rather than making a replacement).
@@ -640,6 +640,10 @@ seccomp annotations), against the namespace's current enforce level.
   three pve machines (pvetest1/pvetest3 14.08 installs failed; pvetest2
   sbregistry :5100 failing). Held --after-install stormcos>=f7f7ccb@any:pve
   with #343/#388/#96; one `rigs` run at main covers #295, #343 and #388.
+  2026-11-26 (night): `rigs` cb87060b01 (pvetest2) was interrupted
+  (stormcentral restarted at 'wait for the apiserver'); no test ran. Held
+  `--after-run 0e2114d89b` (`rigs`, pvetest2, main 9a61694, carries caa709b;
+  shared with #343/#388). Close on `replication-controller`.
 
 ### Pod updates around SCC (#359, P0, review 198fa7c65883) — DONE 2026-11-20
 The review ran at 112d7e1 (2026-11-18), before #350's fix 3cef5d0
