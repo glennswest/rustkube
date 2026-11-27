@@ -376,7 +376,7 @@ it reaches the registry" to us; the privileged-pod question went to option A
 - Not ours: stormpump writes the token Secret, stormcert approves by policy
   (both filed). Done-when (stormcentral's fake-free test) is stormcentral's.
 
-### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, RIG BLOCKED 2026-11-21
+### security.openshift.io SCCs and the PodSecurityPolicy reviews (#373, sc#151) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-21
 Ported from openshift/apiserver-library-go `sccmatching`, `sccadmission`,
 `sccdefaults`, `util/sort` and openshift-apiserver's three review REST
 handlers (read 2026-11-21).
@@ -423,6 +423,9 @@ handlers (read 2026-11-21).
   test machine passes an install carrying the stormcluster#128 fix.
 - [x] 2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b
   (carries a2e5883); held `--after-run cb87060b01`. Close when both rigs pass.
+- [x] 2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted
+  at 'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
+  (`rigs`, pvetest2, main 9a61694, carries a2e5883).
 
 ### user.openshift.io Groups (#372, sc#151) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-21
 - [x] Serve `user.openshift.io/v1` `groups` (cluster-scoped) through the generic
