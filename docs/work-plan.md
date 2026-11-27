@@ -758,7 +758,7 @@ One commit per finding, the finding id in each; a unit test each.
 - Flip (the master's, not this repo's): `rustkube` row special → tree once
   stormcos#1665 lands and a release proves it on pve.
 
-### Protobuf /openapi/v2 (#343) — WAITING on a pve install carrying 1c0b6bb, then rigs (2026-11-19)
+### Protobuf /openapi/v2 (#343) — WAITING on rigs 0e2114d89b (pvetest2, main 9a61694) (2026-11-19)
 - `GET /openapi/v2` under client-go's `Accept:
   application/com.github.proto-openapi.spec.v2@v1.0+protobuf` answered JSON;
   client-go failed `proto: cannot parse invalid wire-format data`
@@ -785,6 +785,10 @@ One commit per finding, the finding id in each; a unit test each.
   release); pvetest2 refuses (sbregistry :5100 failing). Held
   `--after-install 'stormcos>=f7f7ccb@any:pve'` (a fresh passed pve install),
   then rigs at main.
+- 2026-11-26 (night): `rigs` cb87060b01 (pvetest2, 455564b) was interrupted —
+  stormcentral restarted during it (at 'wait for the apiserver'); no test ran.
+  Re-queued `rigs` 0e2114d89b on pvetest2 at main 9a61694 (carries 1c0b6bb);
+  held `--after-run 0e2114d89b`. Close on crd-openapi 16/16.
 - Built-in kinds still have no v2 definitions (upstream-feature-inventory:
   empty schemas), so `explain pod -o plaintext-openapiv2` finds no schema —
   that is the built-in-schemas gap, #342, not this issue.
