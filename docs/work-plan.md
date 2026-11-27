@@ -186,7 +186,7 @@ the test-secrets rule (generate keys in tests, plain placeholders), no allowlist
   left in the tree, the new value's entropy 2.09 < the rule's 3.5).
 - The two rigs changed only in the value; they run with the next `rigs` suite.
 
-### minReadySeconds in the workload controllers (#379, from #369) — CODE DONE, RIG BLOCKED 2026-11-25
+### minReadySeconds in the workload controllers (#379, from #369) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-25
 Upstream's `podutil.IsPodAvailable` as `controller-manager::availability`, with
 a requeue at the moment the next Ready pod becomes available (the indexed
 runner's `reactor::requeue_after`, which #379 thought missing, exists).
@@ -203,6 +203,9 @@ runner's `reactor::requeue_after`, which #379 thought missing, exists).
   `--after-install stormcluster>=f1de3f6@any:pve` (the #128 fix).
   2026-11-26: `rigs` cb87060b01 queued on pvetest2 at main 455564b (carries
   d12cbe4; `min-ready` is in the day list); held `--after-run cb87060b01`.
+  2026-11-26 (night): cb87060b01 was interrupted (stormcentral restarted at
+  'wait for the apiserver'); no test ran. Held `--after-run 0e2114d89b`
+  (`rigs`, pvetest2, main 9a61694, carries d12cbe4).
 
 ### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, WAITING on rigs 0e2114d89b 2026-11-25
 Ported from openshift-controller-manager `pkg/apps/deployer`
