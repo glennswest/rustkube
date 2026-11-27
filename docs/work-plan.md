@@ -220,7 +220,7 @@ runner's `reactor::requeue_after`, which #379 thought missing, exists).
   838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
   held `--after-run 838045bbdd`.
 
-### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, WAITING on rigs 838045bbdd 2026-11-25
+### DeploymentConfig Custom strategy (#392, from #375) — CODE DONE, BACK IN LINE (838045bbdd errored, infra) 2026-11-27
 Ported from openshift-controller-manager `pkg/apps/deployer`
 (`makeDeployerPod`, `makeDeployerContainer`, the pod-phase → version-phase
 map) and bootstrappolicy (`system:deployer`, `system:deployers`).
@@ -256,6 +256,11 @@ map) and bootstrappolicy (`system:deployer`, `system:deployers`).
   runs there now (flowsdn, stormvm, rustkube-node). Re-queued `rigs`
   838045bbdd on pvetest1 at main f002db9 (waits behind the night runs);
   held `--after-run 838045bbdd`.
+- [x] 2026-11-27: `rigs` 838045bbdd (pvetest1) errored before any test:
+  pvetest1's sbregistry could not pull the test image (forge 502; growing the
+  blob upload hit stormblock `POST /volumes/…/expand` 404). Infra, not this
+  code. Stopped by stormcentral for P0 #388 (back in line); its next `rigs`
+  run at main carries section 8 too.
 - [ ] The issue's Check with a real image on a node: a Custom image that
   scales new up and old down, and `oc logs dc/x` shows its output.
 
